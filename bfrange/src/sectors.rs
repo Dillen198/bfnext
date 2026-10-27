@@ -8,9 +8,13 @@
 //! a sector is for the first time they fly into it (and again after a while
 //! away), so nobody has to learn the map before their first sortie.
 
-use crate::{players::Players, records, util::{self, V3}};
+use crate::{
+    players::Players,
+    records,
+    util::{self, V3},
+};
 use bfprotocols::range::cfg::{RangeCfg, SectorCfg};
-use dcso3::{coalition::Side, MizLua};
+use dcso3::{MizLua, coalition::Side};
 use fxhash::FxHashMap;
 use log::{info, warn};
 
@@ -20,9 +24,16 @@ const ANNOUNCE_AGAIN_S: f64 = 900.;
 enum Geom {
     /// DCS x/z vertices
     Poly(Vec<(f64, f64)>),
-    Circle { c: V3, r: f64 },
+    Circle {
+        c: V3,
+        r: f64,
+    },
     /// the leg from `a` to `b`, `r` either side
-    Track { a: V3, b: V3, r: f64 },
+    Track {
+        a: V3,
+        b: V3,
+        r: f64,
+    },
 }
 
 pub struct Sector {
@@ -45,7 +56,9 @@ impl Sector {
                 for i in 0..v.len() {
                     let (xi, zi) = v[i];
                     let (xj, zj) = v[j];
-                    if (zi > pz) != (zj > pz) && px < (xj - xi) * (pz - zi) / (zj - zi) + xi {
+                    if (zi > pz) != (zj > pz)
+                        && px < (xj - xi) * (pz - zi) / (zj - zi) + xi
+                    {
                         inside = !inside;
                     }
                     j = i;
@@ -73,7 +86,11 @@ fn seg_dist(p: V3, a: V3, b: V3) -> f64 {
     let (ax, az, bx, bz) = (a.x, a.z, b.x, b.z);
     let (dx, dz) = (bx - ax, bz - az);
     let l2 = dx * dx + dz * dz;
-    let t = if l2 > 0. { (((p.x - ax) * dx + (p.z - az) * dz) / l2).clamp(0., 1.) } else { 0. };
+    let t = if l2 > 0. {
+        (((p.x - ax) * dx + (p.z - az) * dz) / l2).clamp(0., 1.)
+    } else {
+        0.
+    };
     let (cx, cz) = (ax + t * dx, az + t * dz);
     ((p.x - cx).powi(2) + (p.z - cz).powi(2)).sqrt()
 }
@@ -99,7 +116,11 @@ impl Sectors {
                         .map(|p| util::from_latlon(lua, p.lat, p.lon).map(|q| (q.x, q.z)))
                         .collect::<anyhow::Result<Vec<_>>>()?;
                     let n = v.len() as f64;
-                    let c = V3::new(v.iter().map(|p| p.0).sum::<f64>() / n, 0., v.iter().map(|p| p.1).sum::<f64>() / n);
+                    let c = V3::new(
+                        v.iter().map(|p| p.0).sum::<f64>() / n,
+                        0.,
+                        v.iter().map(|p| p.1).sum::<f64>() / n,
+                    );
                     let mut area = 0.;
                     for i in 0..v.len() {
                         let (x0, z0) = v[i];
@@ -109,7 +130,11 @@ impl Sectors {
                     Ok((Geom::Poly(v), c, area.abs() / 2.))
                 } else if let Some(c) = &sh.circle {
                     let p = util::from_latlon(lua, c.lat, c.lon)?;
-                    Ok((Geom::Circle { c: p, r: c.radius_m }, p, std::f64::consts::PI * c.radius_m * c.radius_m))
+                    Ok((
+                        Geom::Circle { c: p, r: c.radius_m },
+                        p,
+                        std::f64::consts::PI * c.radius_m * c.radius_m,
+                    ))
                 } else if let Some(t) = &sh.track {
                     let a = util::from_latlon(lua, t.lat, t.lon)?;
                     let b = util::offset(a, t.heading_deg, t.leg_m, 0.);
@@ -163,9 +188,19 @@ impl Sectors {
                 continue;
             }
             self.told.insert(key, now);
-            let other = if s.for_side(f.side) { "" } else { " (laid out for the other side)" };
-            let what = if s.cfg.purpose.is_empty() { String::new() } else { format!("\n{}", s.cfg.purpose) };
-            records::to_group(lua, f.group_id, &format!("Entering {}{other}{what}", s.title()), 12);
+            let other =
+                if s.for_side(f.side) { "" } else { " (laid out for the other side)" };
+            let what = if s.cfg.purpose.is_empty() {
+                String::new()
+            } else {
+                format!("\n{}", s.cfg.purpose)
+            };
+            records::to_group(
+                lua,
+                f.group_id,
+                &format!("Entering {}{other}{what}", s.title()),
+                12,
+            );
         }
         self.told.retain(|_, t| now - *t < ANNOUNCE_AGAIN_S);
     }
@@ -182,9 +217,24 @@ impl Sectors {
                 let where_ = if d == 0. {
                     "you are here".to_string()
                 } else {
-                    format!("{:03.0}/{:.0}nm", util::bearing(from, s.centre), d / util::NM)
+                    format!(
+                        "{:03.0}/{:.0}nm",
+                        util::bearing(from, s.centre),
+                        d / util::NM
+                    )
                 };
-                (d, format!("{} {where_}{}", s.title(), if s.cfg.purpose.is_empty() { String::new() } else { format!(" - {}", s.cfg.purpose) }))
+                (
+                    d,
+                    format!(
+                        "{} {where_}{}",
+                        s.title(),
+                        if s.cfg.purpose.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" - {}", s.cfg.purpose)
+                        }
+                    ),
+                )
             })
             .collect();
         v.sort_by(|a, b| a.0.total_cmp(&b.0));

@@ -306,24 +306,60 @@ fn loss_category(db: &StatsDb, round: RoundId, k: &Dead) -> &'static str {
 fn type_category(t: &str) -> &'static str {
     let t = t.to_lowercase();
     let has = |pats: &[&str]| pats.iter().any(|p| t.contains(p));
-    if has(&["mi-", "uh-", "ah-", "ch-", "ka-", "sa 342", "gazelle", "huey", "hind", "helicopter"])
-    {
+    if has(&[
+        "mi-",
+        "uh-",
+        "ah-",
+        "ch-",
+        "ka-",
+        "sa 342",
+        "gazelle",
+        "huey",
+        "hind",
+        "helicopter",
+    ]) {
         return "HELO";
     }
     if has(&[
-        "f-", "f/a-", "mig-", "su-", "a-10", "av8", "av-8", "tornado", "mirage", "m-2000", "c-130",
-        "c-17", "kc-", "e-3", "e-2", "b-1", "b-52", "tu-", "an-", "il-", "jf-17", "ajs37", "l-39",
-        "c-101", "mb-339", "yak-",
+        "f-", "f/a-", "mig-", "su-", "a-10", "av8", "av-8", "tornado", "mirage",
+        "m-2000", "c-130", "c-17", "kc-", "e-3", "e-2", "b-1", "b-52", "tu-", "an-",
+        "il-", "jf-17", "ajs37", "l-39", "c-101", "mb-339", "yak-",
     ]) {
         return "AIRCRAFT";
     }
-    if has(&["ship", "boat", "frigate", "destroyer", "cruiser", "carrier", "cvn", "corvette"]) {
+    if has(&[
+        "ship",
+        "boat",
+        "frigate",
+        "destroyer",
+        "cruiser",
+        "carrier",
+        "cvn",
+        "corvette",
+    ]) {
         return "NAVAL";
     }
     if has(&[
-        "sa-", "s-300", "s-400", "patriot", "roland", "gepard", "tunguska", "shilka", "zsu",
-        "zu-23", "vulcan", "strela", "osa ", "kub ", "buk ", "igla", "stinger", "avenger",
-        "chaparral", "linebacker",
+        "sa-",
+        "s-300",
+        "s-400",
+        "patriot",
+        "roland",
+        "gepard",
+        "tunguska",
+        "shilka",
+        "zsu",
+        "zu-23",
+        "vulcan",
+        "strela",
+        "osa ",
+        "kub ",
+        "buk ",
+        "igla",
+        "stinger",
+        "avenger",
+        "chaparral",
+        "linebacker",
     ]) {
         return "AIR DEF";
     }
@@ -331,26 +367,48 @@ fn type_category(t: &str) -> &'static str {
         return "RADAR";
     }
     if has(&[
-        "2s", "m-109", "sph ", "mlrs", "bm-21", "bm-27", "bm-30", "smerch", "uragan", "grad",
-        "howitzer", "mortar",
+        "2s", "m-109", "sph ", "mlrs", "bm-21", "bm-27", "bm-30", "smerch", "uragan",
+        "grad", "howitzer", "mortar",
     ]) {
         return "ARTY";
     }
     if has(&[
-        "t-55", "t-72", "t-80", "t-90", "m-60", "m1a", "abrams", "leopard", "challenger",
-        "merkava", "leclerc",
+        "t-55",
+        "t-72",
+        "t-80",
+        "t-90",
+        "m-60",
+        "m1a",
+        "abrams",
+        "leopard",
+        "challenger",
+        "merkava",
+        "leclerc",
     ]) {
         return "ARMOR";
     }
-    if has(&["bmp", "btr", "bmd", "mtlb", "brad", "marder", "warrior", "lav-", "m113", "aav"]) {
+    if has(&[
+        "bmp", "btr", "bmd", "mtlb", "brad", "marder", "warrior", "lav-", "m113", "aav",
+    ]) {
         return "APC";
     }
     if has(&["infantry", "soldier", "paratrooper", "manpad", "sniper"]) {
         return "INFANTRY";
     }
     if has(&[
-        "ural", "kamaz", "zil", "gaz", "hemtt", "m939", "m818", "truck", "tigr", "hummer", "hmmwv",
-        "transport", "fuel",
+        "ural",
+        "kamaz",
+        "zil",
+        "gaz",
+        "hemtt",
+        "m939",
+        "m818",
+        "truck",
+        "tigr",
+        "hummer",
+        "hmmwv",
+        "transport",
+        "fuel",
     ]) {
         return "LOGISTICS";
     }
@@ -464,7 +522,8 @@ fn dist_km(a: (f64, f64), b: (f64, f64)) -> f64 {
     let (lat2, lon2) = (b.0.to_radians(), b.1.to_radians());
     let dlat = lat2 - lat1;
     let dlon = lon2 - lon1;
-    let h = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
+    let h =
+        (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
     6371.0 * 2.0 * h.sqrt().asin()
 }
 
@@ -885,15 +944,23 @@ fn headline(items: &[NewsItem], facts: &DigestFacts, day: &str, f: &Factions) ->
         "opening_day" | "opening_line" => {
             pick(&["THE CAMPAIGN OPENS", "DAY ONE", "THE WAR BEGINS"], &[day]).to_string()
         }
-        "objective_traded" => format!("{} CHANGES HANDS AGAIN", top.subject.to_uppercase()),
-        "axis_activity" => format!("PRESSURE ON THE {} DIRECTION", top.subject.to_uppercase()),
-        "country_sector" => format!("THE FIGHTING MOVES INTO {}", top.subject.to_uppercase()),
+        "objective_traded" => {
+            format!("{} CHANGES HANDS AGAIN", top.subject.to_uppercase())
+        }
+        "axis_activity" => {
+            format!("PRESSURE ON THE {} DIRECTION", top.subject.to_uppercase())
+        }
+        "country_sector" => {
+            format!("THE FIGHTING MOVES INTO {}", top.subject.to_uppercase())
+        }
         "streak" => {
             let side =
                 if facts.blue_captures > facts.red_captures { &f.blue } else { &f.red };
             format!("{} ADVANCES ON A BROAD FRONT", side.to_uppercase())
         }
-        "front_stalled" => pick(&["STALEMATE HOLDS", "THE LINE DOES NOT MOVE"], &[day]).to_string(),
+        "front_stalled" => {
+            pick(&["STALEMATE HOLDS", "THE LINE DOES NOT MOVE"], &[day]).to_string()
+        }
         "static_front" => pick(
             &["NO CHANGE ON THE LINE OF CONTACT", "STATIC FRONT, HEAVY FIGHTING"],
             &[day],
@@ -903,10 +970,16 @@ fn headline(items: &[NewsItem], facts: &DigestFacts, day: &str, f: &Factions) ->
         "first_loss" => format!("{} LOSES ITS FIRST GROUND", top.subject.to_uppercase()),
         "attrition_spike" => "THE HEAVIEST DAY YET".to_string(),
         "sead" => format!("{} AIR DEFENCES TAKE THE BRUNT", top.subject.to_uppercase()),
-        "logistics_struck" => format!("{} REAR UNDER SUSTAINED ATTACK", top.subject.to_uppercase()),
+        "logistics_struck" => {
+            format!("{} REAR UNDER SUSTAINED ATTACK", top.subject.to_uppercase())
+        }
         "air_war_lopsided" => "ONE-SIDED DAY IN THE AIR".to_string(),
-        "losses_tally" => pick(&["COUNTING THE COST", "THE DAY'S BILL"], &[day]).to_string(),
-        "pressure" => format!("FIGHTING ON THE APPROACHES TO {}", top.subject.to_uppercase()),
+        "losses_tally" => {
+            pick(&["COUNTING THE COST", "THE DAY'S BILL"], &[day]).to_string()
+        }
+        "pressure" => {
+            format!("FIGHTING ON THE APPROACHES TO {}", top.subject.to_uppercase())
+        }
         _ if !facts.changed_hands.is_empty() => {
             format!("{} FALLS", facts.changed_hands[0].to_uppercase())
         }
@@ -943,7 +1016,8 @@ pub fn build(
 
     // --- the day's raw events -------------------------------------------
     let all_caps = db.recent_captures(round, 4000)?;
-    let today: Vec<_> = all_caps.iter().filter(|c| c.time >= start && c.time < end).collect();
+    let today: Vec<_> =
+        all_caps.iter().filter(|c| c.time >= start && c.time < end).collect();
 
     let mut facts = DigestFacts { campaign_day, ..Default::default() };
     let mut by_pilot: HashMap<String, u32> = HashMap::new();
@@ -970,7 +1044,8 @@ pub fn build(
     // map -- and the country each objective stands in -- fall out of data that
     // is already in the database. Nothing has to be sent from the engine, and
     // this is just as right for a round recorded months ago.
-    let theatre = geo::theatre_of(objs.iter().map(|(_, o)| (o.pos.latitude, o.pos.longitude)));
+    let theatre =
+        geo::theatre_of(objs.iter().map(|(_, o)| (o.pos.latitude, o.pos.longitude)));
     let country_at = |lat: f64, lon: f64| theatre.and_then(|t| t.country_at(lat, lon));
     facts.theatre = theatre.map(|t| t.name.to_string()).unwrap_or_default();
 
@@ -1029,11 +1104,8 @@ pub fn build(
     // The countries actually in play, busiest first -- this is the list the
     // dispatch is allowed to name ground by.
     {
-        let mut t: Vec<(String, u32)> = facts
-            .held_by_country
-            .iter()
-            .map(|(c, n)| (c.clone(), n.total()))
-            .collect();
+        let mut t: Vec<(String, u32)> =
+            facts.held_by_country.iter().map(|(c, n)| (c.clone(), n.total())).collect();
         t.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         facts.territory = t.into_iter().map(|(c, _)| c).collect();
     }
@@ -1072,9 +1144,10 @@ pub fn build(
             *home.entry(owner).or_default().entry(c.name.to_string()).or_default() += 1;
         }
         let ordered = |side: &str| -> Vec<(String, u32)> {
-            let mut v: Vec<(String, u32)> =
-                home.get(side).map(|m| m.iter().map(|(k, n)| (k.clone(), *n)).collect())
-                    .unwrap_or_default();
+            let mut v: Vec<(String, u32)> = home
+                .get(side)
+                .map(|m| m.iter().map(|(k, n)| (k.clone(), *n)).collect())
+                .unwrap_or_default();
             v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
             v
         };
@@ -1170,8 +1243,10 @@ pub fn build(
         let mut closest: Option<(f64, String, String)> = None;
         for (_, a) in objs.iter().filter(|(_, o)| format!("{:?}", o.owner) == "Blue") {
             for (_, b) in objs.iter().filter(|(_, o)| format!("{:?}", o.owner) == "Red") {
-                let d =
-                    dist_km((a.pos.latitude, a.pos.longitude), (b.pos.latitude, b.pos.longitude));
+                let d = dist_km(
+                    (a.pos.latitude, a.pos.longitude),
+                    (b.pos.latitude, b.pos.longitude),
+                );
                 if closest.as_ref().map(|(best, _, _)| d < *best).unwrap_or(true) {
                     closest = Some((d, a.name.to_string(), b.name.to_string()));
                 }
@@ -1192,7 +1267,8 @@ pub fn build(
         // the two is exactly what made the first cut of this feed thin.
         if day_losses >= 5 {
             angles.push(
-                Angle::new("static_front", "the front", 72).var("count", day_losses.to_string()),
+                Angle::new("static_front", "the front", 72)
+                    .var("count", day_losses.to_string()),
             );
         } else if quiet_days > 0 {
             angles.push(
@@ -1205,15 +1281,15 @@ pub fn build(
     } else {
         if quiet_days >= 2 {
             angles.push(
-                Angle::new("front_broken", "the front", 85).var("days", quiet_days.to_string()),
+                Angle::new("front_broken", "the front", 85)
+                    .var("days", quiet_days.to_string()),
             );
         }
 
         // The biggest single story: an objective that keeps turning over.
-        if let Some(c) = today
-            .iter()
-            .max_by_key(|c| turnovers.get(c.objective_name.as_str()).copied().unwrap_or(0))
-        {
+        if let Some(c) = today.iter().max_by_key(|c| {
+            turnovers.get(c.objective_name.as_str()).copied().unwrap_or(0)
+        }) {
             let n = turnovers.get(c.objective_name.as_str()).copied().unwrap_or(1);
             if n >= 3 {
                 angles.push(
@@ -1228,12 +1304,16 @@ pub fn build(
         // which is how these sectors get their names in practice.
         let mut axis: HashMap<String, u32> = HashMap::new();
         for c in &today {
-            let Some(p) = pos_of.get(c.objective_name.as_str()).copied() else { continue };
+            let Some(p) = pos_of.get(c.objective_name.as_str()).copied() else {
+                continue;
+            };
             let near = majors
                 .iter()
                 .map(|(n, mp)| (n, dist_km(p, *mp)))
                 .filter(|(_, d)| *d < 160.0)
-                .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+                .min_by(|a, b| {
+                    a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
+                });
             if let Some((n, _)) = near {
                 *axis.entry(n.clone()).or_default() += 1;
             }
@@ -1241,7 +1321,8 @@ pub fn build(
         if let Some((name, n)) = axis.iter().max_by_key(|(_, n)| **n) {
             if *n >= 2 {
                 angles.push(
-                    Angle::new("axis_activity", name.clone(), 66).var("count", n.to_string()),
+                    Angle::new("axis_activity", name.clone(), 66)
+                        .var("count", n.to_string()),
                 );
             }
         }
@@ -1310,8 +1391,10 @@ pub fn build(
         }
 
         // First ground a side has given up all round.
-        let losers: HashSet<String> =
-            today.iter().map(|c| other_side(&format!("{:?}", c.side)).to_string()).collect();
+        let losers: HashSet<String> = today
+            .iter()
+            .map(|c| other_side(&format!("{:?}", c.side)).to_string())
+            .collect();
         for l in losers {
             let lost_before = all_caps
                 .iter()
@@ -1362,7 +1445,8 @@ pub fn build(
         // The SEAD thread. Reported for whichever side is losing its network,
         // because that is the side whose sky is about to open up.
         if let Some(ad) = facts.losses.get("AIR DEF") {
-            let (side, n) = if ad.blue >= ad.red { ("Blue", ad.blue) } else { ("Red", ad.red) };
+            let (side, n) =
+                if ad.blue >= ad.red { ("Blue", ad.blue) } else { ("Red", ad.red) };
             if n >= 3 {
                 let name = factions.name(side).to_string();
                 angles.push(
@@ -1426,7 +1510,9 @@ pub fn build(
                     .var("lost", lost.to_string()),
             );
         } else {
-            angles.push(Angle::new("air_war", "the air war", 50).var("count", air.to_string()));
+            angles.push(
+                Angle::new("air_war", "the air war", 50).var("count", air.to_string()),
+            );
         }
     }
 
@@ -1479,7 +1565,10 @@ pub fn build(
             .iter()
             .take(4)
             .map(|(c, t)| {
-                format!("in {c}, {} to {} and {} to {}", t.blue, factions.blue, t.red, factions.red)
+                format!(
+                    "in {c}, {} to {} and {} to {}",
+                    t.blue, factions.blue, t.red, factions.red
+                )
             })
             .collect::<Vec<_>>()
             .join("; ");

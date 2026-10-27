@@ -22,8 +22,8 @@ for more details.
 
 use crate::db::Db;
 use bfprotocols::{cfg::SmartCommanderCfg, db::objective::ObjectiveId};
-use compact_str::CompactString;
 use chrono::{DateTime, Utc};
+use compact_str::CompactString;
 use dcso3::{coalition::Side, net::Ucid};
 use fxhash::FxHashMap;
 use log::{debug, info};
@@ -121,7 +121,8 @@ fn tick_objective_funding(db: &mut Db, cfg: &SmartCommanderCfg, ts: DateTime<Utc
     // `Db::objective_fund_ceilings`. A campaign with no start budget caps at
     // a fixed number of full passes instead.
     let ceilings = db.objective_fund_ceilings();
-    let fallback_ceiling = cfg.objective_fund_max_per_tick.max(0) as i64 * OBJECTIVE_FUND_CEILING_PASSES;
+    let fallback_ceiling =
+        cfg.objective_fund_max_per_tick.max(0) as i64 * OBJECTIVE_FUND_CEILING_PASSES;
     for (oid, obj) in &db.persisted.objectives {
         let side = obj.owner();
         if matches!(side, Side::Neutral) {
@@ -162,11 +163,8 @@ fn tick_objective_funding(db: &mut Db, cfg: &SmartCommanderCfg, ts: DateTime<Utc
         if budget <= 0 {
             continue;
         }
-        let total_want: i64 = asks
-            .iter()
-            .filter(|(s, ..)| *s == side)
-            .map(|(_, _, want, ..)| *want)
-            .sum();
+        let total_want: i64 =
+            asks.iter().filter(|(s, ..)| *s == side).map(|(_, _, want, ..)| *want).sum();
         if total_want <= 0 {
             continue;
         }
@@ -234,7 +232,8 @@ fn tick_holding_bonuses(
         // Rounded, and at least 1 for a side that holds anything: flooring
         // paid a side under 20% of the map (at the default 5) nothing at
         // all, exactly when it most needed the income.
-        let bonus = ((cfg.holding_bonus_per_objective as f64) * owned as f64 / total as f64)
+        let bonus = ((cfg.holding_bonus_per_objective as f64) * owned as f64
+            / total as f64)
             .round() as i32;
         let bonus = if owned > 0 { bonus.max(1) } else { bonus };
         if bonus <= 0 {

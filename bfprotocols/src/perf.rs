@@ -168,9 +168,7 @@ impl PerfStat {
             logistics_sea_routes,
             frontline,
         ];
-        let max_len = stats
-            .iter()
-            .fold(0, |l, st| std::cmp::max(l, st.name.len()));
+        let max_len = stats.iter().fold(0, |l, st| std::cmp::max(l, st.name.len()));
         for st in stats {
             st.log(max_len);
         }
@@ -260,7 +258,11 @@ impl PerfInner {
             ewr_tracks: HistStat::new(ewr_tracks, "ewr_tracks", false),
             ewr_reports: HistStat::new(ewr_reports, "ewr_reports", false),
             unit_culling: HistStat::new(unit_culling, "unit_culling", false),
-            remark_objectives: HistStat::new(remark_objectives, "remark_objectives", false),
+            remark_objectives: HistStat::new(
+                remark_objectives,
+                "remark_objectives",
+                false,
+            ),
             update_jtac_contacts: HistStat::new(
                 update_jtac_contacts,
                 "update_jtac_contacts",
@@ -271,7 +273,11 @@ impl PerfInner {
             spawn: HistStat::new(spawn, "spawn", false),
             despawn: HistStat::new(despawn, "despawn", false),
             advise_captured: HistStat::new(advise_captured, "advise_captured", false),
-            advise_capturable: HistStat::new(advise_capturable, "advise_capturable", false),
+            advise_capturable: HistStat::new(
+                advise_capturable,
+                "advise_capturable",
+                false,
+            ),
             jtac_target_positions: HistStat::new(
                 jtac_target_positions,
                 "jtac_target_positions",
@@ -285,13 +291,37 @@ impl PerfInner {
                 "logistics_distribute",
                 false,
             ),
-            logistics_deliver: HistStat::new(logistics_deliver, "logistics_deliver", false),
-            logistics_transfer: HistStat::new(logistics_transfer, "logistics_transfer", false),
-            logistics_sync_from: HistStat::new(logistics_sync_from, "logistics_sync_from", false),
-            logistics_sync_to: HistStat::new(logistics_sync_to, "logistics_sync_to", false),
+            logistics_deliver: HistStat::new(
+                logistics_deliver,
+                "logistics_deliver",
+                false,
+            ),
+            logistics_transfer: HistStat::new(
+                logistics_transfer,
+                "logistics_transfer",
+                false,
+            ),
+            logistics_sync_from: HistStat::new(
+                logistics_sync_from,
+                "logistics_sync_from",
+                false,
+            ),
+            logistics_sync_to: HistStat::new(
+                logistics_sync_to,
+                "logistics_sync_to",
+                false,
+            ),
             logistics_convoy: HistStat::new(logistics_convoy, "logistics_convoy", false),
-            logistics_air_routes: HistStat::new(logistics_air_routes, "logistics_air_routes", false),
-            logistics_sea_routes: HistStat::new(logistics_sea_routes, "logistics_sea_routes", false),
+            logistics_air_routes: HistStat::new(
+                logistics_air_routes,
+                "logistics_air_routes",
+                false,
+            ),
+            logistics_sea_routes: HistStat::new(
+                logistics_sea_routes,
+                "logistics_sea_routes",
+                false,
+            ),
             frontline: HistStat::new(frontline, "frontline", false),
             logistics_items: logistics_items.len() as u64,
         }
@@ -306,10 +336,7 @@ pub struct Perf {
 
 impl Clone for Perf {
     fn clone(&self) -> Self {
-        Self {
-            inner: Arc::clone(&self.inner),
-            frame: Arc::clone(&self.frame),
-        }
+        Self { inner: Arc::clone(&self.inner), frame: Arc::clone(&self.frame) }
     }
 }
 

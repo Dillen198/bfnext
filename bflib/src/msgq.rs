@@ -20,8 +20,8 @@ use dcso3::{
     env::miz::{GroupId, UnitId},
     net::{Net, PlayerId},
     trigger::{
-        Action, ArrowSpec, CircleSpec, LineSpec, MarkId, PolylineSpec, QuadSpec, RectSpec,
-        SideFilter, TextSpec,
+        Action, ArrowSpec, CircleSpec, LineSpec, MarkId, PolylineSpec, QuadSpec,
+        RectSpec, SideFilter, TextSpec,
     },
 };
 use fxhash::FxHashMap;
@@ -46,17 +46,8 @@ pub enum MarkDest {
 #[derive(Debug, Clone)]
 pub enum MsgTyp {
     Chat(Option<PlayerId>),
-    Panel {
-        to: PanelDest,
-        display_time: i64,
-        clear_view: bool,
-    },
-    Mark {
-        id: MarkId,
-        to: MarkDest,
-        position: LuaVec3,
-        read_only: bool,
-    },
+    Panel { to: PanelDest, display_time: i64, clear_view: bool },
+    Mark { id: MarkId, to: MarkDest, position: LuaVec3, read_only: bool },
 }
 
 #[derive(Debug, Clone)]
@@ -142,10 +133,7 @@ impl Cmd {
         match self {
             Cmd::DeleteMark(_) => None,
             Cmd::Send(msg) => match msg {
-                Msg::Message {
-                    typ: MsgTyp::Mark { id, .. },
-                    ..
-                } => Some(*id),
+                Msg::Message { typ: MsgTyp::Mark { id, .. }, .. } => Some(*id),
                 Msg::Message { .. } => None,
                 Msg::Circle { id, .. }
                 | Msg::Rect { id, .. }
@@ -166,10 +154,7 @@ impl Cmd {
     /// Does this command create the mark (as opposed to mutating one)?
     fn is_create(&self) -> bool {
         match self {
-            Cmd::Send(Msg::Message {
-                typ: MsgTyp::Mark { .. },
-                ..
-            })
+            Cmd::Send(Msg::Message { typ: MsgTyp::Mark { .. }, .. })
             | Cmd::Send(Msg::Circle { .. })
             | Cmd::Send(Msg::Rect { .. })
             | Cmd::Send(Msg::Quad { .. })
@@ -536,14 +521,15 @@ impl MsgQ {
         id
     }
 
-    pub fn panel_to_all<S: Into<String>>(&mut self, display_time: i64, clear_view: bool, text: S) {
+    pub fn panel_to_all<S: Into<String>>(
+        &mut self,
+        display_time: i64,
+        clear_view: bool,
+        text: S,
+    ) {
         self.send_with_priority(
             0,
-            MsgTyp::Panel {
-                to: PanelDest::All,
-                display_time,
-                clear_view,
-            },
+            MsgTyp::Panel { to: PanelDest::All, display_time, clear_view },
             text,
         )
     }
@@ -557,11 +543,7 @@ impl MsgQ {
     ) {
         self.send_with_priority(
             0,
-            MsgTyp::Panel {
-                to: PanelDest::Side(side),
-                display_time,
-                clear_view,
-            },
+            MsgTyp::Panel { to: PanelDest::Side(side), display_time, clear_view },
             text,
         )
     }
@@ -575,11 +557,7 @@ impl MsgQ {
     ) {
         self.send_with_priority(
             0,
-            MsgTyp::Panel {
-                to: PanelDest::Group(group),
-                display_time,
-                clear_view,
-            },
+            MsgTyp::Panel { to: PanelDest::Group(group), display_time, clear_view },
             text,
         )
     }
@@ -593,11 +571,7 @@ impl MsgQ {
     ) {
         self.send_with_priority(
             0,
-            MsgTyp::Panel {
-                to: PanelDest::Unit(unit),
-                display_time,
-                clear_view,
-            },
+            MsgTyp::Panel { to: PanelDest::Unit(unit), display_time, clear_view },
             text,
         )
     }
@@ -609,12 +583,7 @@ impl MsgQ {
         spec: CircleSpec,
         message: Option<String>,
     ) {
-        self.push(2, Cmd::Send(Msg::Circle {
-            id,
-            to,
-            spec,
-            message,
-        }))
+        self.push(2, Cmd::Send(Msg::Circle { id, to, spec, message }))
     }
 
     pub fn rect_to_all(
@@ -624,12 +593,7 @@ impl MsgQ {
         spec: RectSpec,
         message: Option<String>,
     ) {
-        self.push(2, Cmd::Send(Msg::Rect {
-            id,
-            to,
-            spec,
-            message,
-        }))
+        self.push(2, Cmd::Send(Msg::Rect { id, to, spec, message }))
     }
 
     pub fn quad_to_all(
@@ -639,12 +603,7 @@ impl MsgQ {
         spec: QuadSpec,
         message: Option<String>,
     ) {
-        self.push(2, Cmd::Send(Msg::Quad {
-            id,
-            to,
-            spec,
-            message,
-        }))
+        self.push(2, Cmd::Send(Msg::Quad { id, to, spec, message }))
     }
 
     /// Text markup goes in the markup queue, not the mark queue, even though it
@@ -674,12 +633,7 @@ impl MsgQ {
         spec: ArrowSpec,
         message: Option<String>,
     ) {
-        self.push(2, Cmd::Send(Msg::Arrow {
-            id,
-            to,
-            spec,
-            message,
-        }))
+        self.push(2, Cmd::Send(Msg::Arrow { id, to, spec, message }))
     }
 
     /// Queue a connected multi-point shape. Priority 2, same as every other
@@ -692,12 +646,7 @@ impl MsgQ {
         spec: PolylineSpec,
         message: Option<String>,
     ) {
-        self.push(2, Cmd::Send(Msg::Freeform {
-            id,
-            to,
-            spec,
-            message,
-        }))
+        self.push(2, Cmd::Send(Msg::Freeform { id, to, spec, message }))
     }
 
     pub fn set_markup_color(&mut self, id: MarkId, color: Color) {
@@ -722,10 +671,7 @@ impl MsgQ {
 
     /// Commands still to be sent (cancelled ones don't count).
     pub fn len(&self) -> usize {
-        self.q
-            .iter()
-            .fold(0usize, |acc, q| acc + q.len())
-            .saturating_sub(self.dead)
+        self.q.iter().fold(0usize, |acc, q| acc + q.len()).saturating_sub(self.dead)
     }
 
     /// Queue depth per priority (chat/panels, marks, markup) plus a breakdown
@@ -763,18 +709,9 @@ impl MsgQ {
     fn kind(cmd: &Cmd) -> &'static str {
         match cmd {
             Cmd::DeleteMark(_) => "DeleteMark",
-            Cmd::Send(Msg::Message {
-                typ: MsgTyp::Mark { .. },
-                ..
-            }) => "Mark",
-            Cmd::Send(Msg::Message {
-                typ: MsgTyp::Chat(_),
-                ..
-            }) => "Chat",
-            Cmd::Send(Msg::Message {
-                typ: MsgTyp::Panel { .. },
-                ..
-            }) => "Panel",
+            Cmd::Send(Msg::Message { typ: MsgTyp::Mark { .. }, .. }) => "Mark",
+            Cmd::Send(Msg::Message { typ: MsgTyp::Chat(_), .. }) => "Chat",
+            Cmd::Send(Msg::Message { typ: MsgTyp::Panel { .. }, .. }) => "Panel",
             Cmd::Send(Msg::Circle { .. }) => "Circle",
             Cmd::Send(Msg::Rect { .. }) => "Rect",
             Cmd::Send(Msg::Quad { .. }) => "Quad",
@@ -805,11 +742,8 @@ impl MsgQ {
         // (Cancelled entries in the markup queue only cost a skip inside
         // `pop`, and when nothing real is left in it the budget falls back to
         // the other two.)
-        let reserved = if self.q[2].is_empty() || max_rate < 2 {
-            0
-        } else {
-            (max_rate / 3).max(1)
-        };
+        let reserved =
+            if self.q[2].is_empty() || max_rate < 2 { 0 } else { (max_rate / 3).max(1) };
         let urgent_budget = max_rate.saturating_sub(reserved);
         let mut urgent = 0;
         let mut batch = Vec::with_capacity(max_rate.min(64));
@@ -842,16 +776,12 @@ impl MsgQ {
             let res = match cmd {
                 Cmd::DeleteMark(id) => act.remove_mark(id),
                 Cmd::Send(Msg::Message { typ, text }) => match typ {
-                    MsgTyp::Mark {
-                        id,
-                        to,
-                        position,
-                        read_only,
-                    } => match to {
-                        MarkDest::All => act.mark_to_all(id, text, position, read_only, None),
-                        MarkDest::Side(side) => {
-                            act.mark_to_coalition(id, text, position, side, read_only, None)
+                    MsgTyp::Mark { id, to, position, read_only } => match to {
+                        MarkDest::All => {
+                            act.mark_to_all(id, text, position, read_only, None)
                         }
+                        MarkDest::Side(side) => act
+                            .mark_to_coalition(id, text, position, side, read_only, None),
                         MarkDest::Group(group) => {
                             act.mark_to_group(id, text, position, group, read_only, None)
                         }
@@ -860,69 +790,56 @@ impl MsgQ {
                         None => net.send_chat(text, true),
                         Some(id) => net.send_chat_to(text, id, Some(PlayerId::from(1))),
                     },
-                    MsgTyp::Panel {
-                        to,
-                        display_time,
-                        clear_view,
-                    } => match to {
+                    MsgTyp::Panel { to, display_time, clear_view } => match to {
                         PanelDest::All => act.out_text(text, display_time, clear_view),
                         PanelDest::Group(gid) => {
                             act.out_text_for_group(gid, text, display_time, clear_view)
                         }
-                        PanelDest::Side(side) => {
-                            act.out_text_for_coalition(side, text, display_time, clear_view)
-                        }
+                        PanelDest::Side(side) => act.out_text_for_coalition(
+                            side,
+                            text,
+                            display_time,
+                            clear_view,
+                        ),
                         PanelDest::Unit(uid) => {
                             act.out_text_for_unit(uid, text, display_time, clear_view)
                         }
                     },
                 },
-                Cmd::Send(Msg::Circle {
-                    id,
-                    to,
-                    spec,
-                    message,
-                }) => act.circle_to_all(to, id, spec, message),
-                Cmd::Send(Msg::Rect {
-                    id,
-                    to,
-                    spec,
-                    message,
-                }) => act.rect_to_all(to, id, spec, message),
-                Cmd::Send(Msg::Quad {
-                    id,
-                    to,
-                    spec,
-                    message,
-                }) => act.quad_to_all(to, id, spec, message),
+                Cmd::Send(Msg::Circle { id, to, spec, message }) => {
+                    act.circle_to_all(to, id, spec, message)
+                }
+                Cmd::Send(Msg::Rect { id, to, spec, message }) => {
+                    act.rect_to_all(to, id, spec, message)
+                }
+                Cmd::Send(Msg::Quad { id, to, spec, message }) => {
+                    act.quad_to_all(to, id, spec, message)
+                }
                 Cmd::Send(Msg::Text { id, to, spec }) => act.text_to_all(to, id, spec),
-                Cmd::Send(Msg::Arrow {
-                    id,
-                    to,
-                    spec,
-                    message,
-                }) => act.arrow_to_all(to, id, spec, message),
-                Cmd::Send(Msg::Line {
-                    id,
-                    to,
-                    spec,
-                    message,
-                }) => act.line_to_all(to, id, spec, message),
-                Cmd::Send(Msg::Freeform {
-                    id,
-                    to,
-                    spec,
-                    message,
-                }) => act.freeform_to_all(to, id, spec, message),
-                Cmd::Send(Msg::SetMarkupColor { id, color }) => act.set_markup_color(id, color),
+                Cmd::Send(Msg::Arrow { id, to, spec, message }) => {
+                    act.arrow_to_all(to, id, spec, message)
+                }
+                Cmd::Send(Msg::Line { id, to, spec, message }) => {
+                    act.line_to_all(to, id, spec, message)
+                }
+                Cmd::Send(Msg::Freeform { id, to, spec, message }) => {
+                    act.freeform_to_all(to, id, spec, message)
+                }
+                Cmd::Send(Msg::SetMarkupColor { id, color }) => {
+                    act.set_markup_color(id, color)
+                }
                 Cmd::Send(Msg::SetMarkupFillColor { id, color }) => {
                     act.set_markup_fill_color(id, color)
                 }
                 Cmd::Send(Msg::SetMarkupStart { id, pos }) => {
                     act.set_markup_position_start(id, pos)
                 }
-                Cmd::Send(Msg::SetMarkupEnd { id, pos }) => act.set_markup_position_end(id, pos),
-                Cmd::Send(Msg::SetMarkupText { id, text }) => act.set_markup_text(id, text),
+                Cmd::Send(Msg::SetMarkupEnd { id, pos }) => {
+                    act.set_markup_position_end(id, pos)
+                }
+                Cmd::Send(Msg::SetMarkupText { id, text }) => {
+                    act.set_markup_text(id, text)
+                }
             };
             if let Err(e) = res {
                 error!("could not send message ({kind}) {:?}", e)
@@ -944,7 +861,9 @@ mod tests {
             .map(|c| match c {
                 Cmd::DeleteMark(_) => "delete".into(),
                 Cmd::Send(Msg::Message { text, .. }) => text.as_str().into(),
-                Cmd::Send(Msg::SetMarkupText { text, .. }) => format!("set:{}", text.as_str()),
+                Cmd::Send(Msg::SetMarkupText { text, .. }) => {
+                    format!("set:{}", text.as_str())
+                }
                 _ => "other".into(),
             })
             .collect()

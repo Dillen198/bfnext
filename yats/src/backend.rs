@@ -25,7 +25,9 @@
 
 use crate::codec::{self, Codec};
 use anyhow::{anyhow, bail, Context, Result};
-use redb::{ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition, TableHandle};
+use redb::{
+    ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition, TableHandle,
+};
 pub use sled::IVec;
 use std::{
     collections::HashMap,
@@ -102,7 +104,9 @@ impl Db {
     /// Open (or create) a sled database in the directory `path`.
     pub fn open_sled(path: impl AsRef<Path>) -> Result<Self> {
         Ok(sled::open(path.as_ref())
-            .with_context(|| format!("opening sled database {}", path.as_ref().display()))?
+            .with_context(|| {
+                format!("opening sled database {}", path.as_ref().display())
+            })?
             .into())
     }
 
@@ -312,7 +316,10 @@ impl Db {
     }
 
     pub(crate) fn register_reencoder(&self, name: &str, r: Reencoder) {
-        self.reencoders.lock().unwrap_or_else(|e| e.into_inner()).insert(name.to_string(), r);
+        self.reencoders
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(name.to_string(), r);
     }
 
     /// Re-encode every tree opened through this handle with `Tree::open`
@@ -321,7 +328,10 @@ impl Db {
     /// skipped; rows that do not decode as the tree's type, or that would not
     /// survive the change exactly, are left as they are and counted. With
     /// `check_only`, nothing is written: every row is just decoded.
-    pub fn reencode_all(&self, check_only: bool) -> Result<Vec<(String, crate::ReencodeStats)>> {
+    pub fn reencode_all(
+        &self,
+        check_only: bool,
+    ) -> Result<Vec<(String, crate::ReencodeStats)>> {
         let mut all: Vec<(String, Reencoder)> = self
             .reencoders
             .lock()
@@ -333,7 +343,8 @@ impl Db {
         let mut out = vec![];
         for (name, r) in all {
             let tree = self.open_tree(&name)?;
-            let stats = r(&tree, check_only).with_context(|| format!("re-encoding tree {name}"))?;
+            let stats = r(&tree, check_only)
+                .with_context(|| format!("re-encoding tree {name}"))?;
             out.push((name, stats));
         }
         self.flush()?;
@@ -343,7 +354,11 @@ impl Db {
     /// Copy every tree but `exclude` into a new redb file at `to`, from one
     /// read transaction: a point-in-time snapshot of the whole database while
     /// writes go on. redb only.
-    pub fn snapshot_redb(&self, to: &Path, exclude: &[&str]) -> Result<crate::convert::CopyStats> {
+    pub fn snapshot_redb(
+        &self,
+        to: &Path,
+        exclude: &[&str],
+    ) -> Result<crate::convert::CopyStats> {
         if self.engine() != Engine::Redb {
             bail!("snapshot_redb on a {} database", self.engine())
         }
@@ -417,8 +432,10 @@ fn read_u64(v: Option<&[u8]>) -> Result<u64> {
 /// bare `sled::Db`.
 pub trait OpenTree {
     #[doc(hidden)]
-    fn open_typed<K: crate::KV + 'static, V: crate::KV + 'static>(&self, name: &str)
-        -> Result<RawTree>;
+    fn open_typed<K: crate::KV + 'static, V: crate::KV + 'static>(
+        &self,
+        name: &str,
+    ) -> Result<RawTree>;
 }
 
 impl OpenTree for sled::Db {
@@ -483,7 +500,10 @@ impl RedbStore {
         Ok(())
     }
 
-    fn with_meta<R>(&self, f: impl FnOnce(&mut redb::Table<&'static [u8], &'static [u8]>) -> Result<R>) -> Result<R> {
+    fn with_meta<R>(
+        &self,
+        f: impl FnOnce(&mut redb::Table<&'static [u8], &'static [u8]>) -> Result<R>,
+    ) -> Result<R> {
         let tx = self.begin_write()?;
         let r = {
             let mut t = tx.open_table(meta_def())?;
@@ -531,7 +551,10 @@ impl RedbTree {
         Def::new(&self.name)
     }
 
-    fn write<R>(&self, f: impl FnOnce(&mut redb::Table<&'static [u8], &'static [u8]>) -> Result<R>) -> Result<R> {
+    fn write<R>(
+        &self,
+        f: impl FnOnce(&mut redb::Table<&'static [u8], &'static [u8]>) -> Result<R>,
+    ) -> Result<R> {
         let tx = self.store.begin_write()?;
         let r = {
             let mut t = tx.open_table(self.def())?;
@@ -603,7 +626,9 @@ enum RawInner {
 impl fmt::Debug for RawTree {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 {
-            RawInner::Sled(t) => write!(f, "RawTree(sled {:?})", String::from_utf8_lossy(&t.name())),
+            RawInner::Sled(t) => {
+                write!(f, "RawTree(sled {:?})", String::from_utf8_lossy(&t.name()))
+            }
             RawInner::Redb(t) => write!(f, "RawTree(redb {:?})", t.name),
         }
     }
@@ -650,7 +675,9 @@ impl RawTree {
             RawInner::Sled(t) => Ok(t.get(key)?),
             RawInner::Redb(t) => match t.read()? {
                 None => Ok(None),
-                Some(table) => Ok(table.get(key.as_ref())?.map(|g| IVec::from(g.value()))),
+                Some(table) => {
+                    Ok(table.get(key.as_ref())?.map(|g| IVec::from(g.value())))
+                }
             },
         }
     }
@@ -663,13 +690,19 @@ impl RawTree {
     }
 
     /// Set `key` to `value`, returning the value it had.
-    pub fn insert<K: AsRef<[u8]>, V: Into<IVec>>(&self, key: K, value: V) -> Result<Option<IVec>> {
+    pub fn insert<K: AsRef<[u8]>, V: Into<IVec>>(
+        &self,
+        key: K,
+        value: V,
+    ) -> Result<Option<IVec>> {
         match &self.0 {
             RawInner::Sled(t) => Ok(t.insert(key, value)?),
             RawInner::Redb(t) => {
                 let value: IVec = value.into();
                 t.write(|table| {
-                    Ok(table.insert(key.as_ref(), value.as_ref())?.map(|g| IVec::from(g.value())))
+                    Ok(table
+                        .insert(key.as_ref(), value.as_ref())?
+                        .map(|g| IVec::from(g.value())))
                 })
             }
         }
@@ -679,9 +712,9 @@ impl RawTree {
     pub fn remove<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
         match &self.0 {
             RawInner::Sled(t) => Ok(t.remove(key)?),
-            RawInner::Redb(t) => {
-                t.write(|table| Ok(table.remove(key.as_ref())?.map(|g| IVec::from(g.value()))))
-            }
+            RawInner::Redb(t) => t.write(|table| {
+                Ok(table.remove(key.as_ref())?.map(|g| IVec::from(g.value())))
+            }),
         }
     }
 
@@ -724,7 +757,10 @@ impl RawTree {
 
     /// Replace each `(key, old, new)` whose value is still exactly `old`, in
     /// one transaction. Returns how many were replaced.
-    pub fn replace_unchanged(&self, rows: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)>) -> Result<usize> {
+    pub fn replace_unchanged(
+        &self,
+        rows: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)>,
+    ) -> Result<usize> {
         if rows.is_empty() {
             return Ok(0);
         }
@@ -762,7 +798,9 @@ impl RawTree {
         new: Option<Vec<u8>>,
     ) -> Result<std::result::Result<(), Option<IVec>>> {
         match &self.0 {
-            RawInner::Sled(t) => Ok(t.compare_and_swap(key, old, new)?.map_err(|e| e.current)),
+            RawInner::Sled(t) => {
+                Ok(t.compare_and_swap(key, old, new)?.map_err(|e| e.current))
+            }
             RawInner::Redb(t) => t.write(|table| {
                 let cur = table.get(key.as_ref())?.map(|g| IVec::from(g.value()));
                 if cur.as_deref() != old {
@@ -877,7 +915,9 @@ impl RawTree {
         match &self.0 {
             RawInner::Sled(t) => Ok(t.pop_min()?),
             RawInner::Redb(t) => t.write(|table| {
-                Ok(table.pop_first()?.map(|(k, v)| (IVec::from(k.value()), IVec::from(v.value()))))
+                Ok(table
+                    .pop_first()?
+                    .map(|(k, v)| (IVec::from(k.value()), IVec::from(v.value()))))
             }),
         }
     }
@@ -886,7 +926,9 @@ impl RawTree {
         match &self.0 {
             RawInner::Sled(t) => Ok(t.pop_max()?),
             RawInner::Redb(t) => t.write(|table| {
-                Ok(table.pop_last()?.map(|(k, v)| (IVec::from(k.value()), IVec::from(v.value()))))
+                Ok(table
+                    .pop_last()?
+                    .map(|(k, v)| (IVec::from(k.value()), IVec::from(v.value()))))
             }),
         }
     }
@@ -894,12 +936,10 @@ impl RawTree {
     pub fn len(&self) -> usize {
         match &self.0 {
             RawInner::Sled(t) => t.len(),
-            RawInner::Redb(t) => t
-                .read()
-                .ok()
-                .flatten()
-                .and_then(|table| table.len().ok())
-                .unwrap_or(0) as usize,
+            RawInner::Redb(t) => {
+                t.read().ok().flatten().and_then(|table| table.len().ok()).unwrap_or(0)
+                    as usize
+            }
         }
     }
 
@@ -957,7 +997,10 @@ type Pair = (IVec, IVec);
 
 fn redb_pair(
     r: std::result::Result<
-        (redb::AccessGuard<'static, &'static [u8]>, redb::AccessGuard<'static, &'static [u8]>),
+        (
+            redb::AccessGuard<'static, &'static [u8]>,
+            redb::AccessGuard<'static, &'static [u8]>,
+        ),
         redb::StorageError,
     >,
 ) -> Result<Pair> {
@@ -1012,12 +1055,26 @@ mod tests {
             }
             assert_eq!(
                 keys(t.iter()),
-                vec![b"\x00".to_vec(), b"a".to_vec(), b"ab".to_vec(), b"abc".to_vec(), b"b".to_vec(), b"\xff".to_vec(), b"\xff\xff".to_vec()],
+                vec![
+                    b"\x00".to_vec(),
+                    b"a".to_vec(),
+                    b"ab".to_vec(),
+                    b"abc".to_vec(),
+                    b"b".to_vec(),
+                    b"\xff".to_vec(),
+                    b"\xff\xff".to_vec()
+                ],
                 "{db:?}"
             );
             assert_eq!(keys(t.scan_prefix(b"ab")), vec![b"ab".to_vec(), b"abc".to_vec()]);
-            assert_eq!(keys(t.scan_prefix(b"\xff")), vec![b"\xff".to_vec(), b"\xff\xff".to_vec()]);
-            assert_eq!(keys(t.range(&b"a"[..]..&b"b"[..])), vec![b"a".to_vec(), b"ab".to_vec(), b"abc".to_vec()]);
+            assert_eq!(
+                keys(t.scan_prefix(b"\xff")),
+                vec![b"\xff".to_vec(), b"\xff\xff".to_vec()]
+            );
+            assert_eq!(
+                keys(t.range(&b"a"[..]..&b"b"[..])),
+                vec![b"a".to_vec(), b"ab".to_vec(), b"abc".to_vec()]
+            );
             assert_eq!(t.range(&b"a"[..]..&b"b"[..]).rev().count(), 3);
             // an inverted range is empty, not a panic
             assert!(keys(t.range(&b"b"[..]..&b"a"[..])).is_empty());
@@ -1035,7 +1092,8 @@ mod tests {
     fn update_and_cas() {
         both(|db| {
             let t = db.open_tree("t").unwrap();
-            let (old, new) = t.update(b"k", |v| Some(v.map_or(vec![1], |v| vec![v[0] + 1]))).unwrap();
+            let (old, new) =
+                t.update(b"k", |v| Some(v.map_or(vec![1], |v| vec![v[0] + 1]))).unwrap();
             assert_eq!((old, new.as_deref()), (None, Some(&[1u8][..])));
             t.update(b"k", |v| Some(vec![v.unwrap()[0] + 1])).unwrap();
             assert_eq!(t.get(b"k").unwrap().as_deref(), Some(&[2u8][..]));
@@ -1070,16 +1128,19 @@ mod tests {
         use crate::Tree;
         for e in [Engine::Sled, Engine::Redb] {
             let db = Db::temporary(e).unwrap();
-            let t: Tree<(u64, u64), (String, f64, Vec<u32>)> = Tree::open(&db, "t").unwrap();
+            let t: Tree<(u64, u64), (String, f64, Vec<u32>)> =
+                Tree::open(&db, "t").unwrap();
             let n = 20_000u64;
             let start = std::time::Instant::now();
             for i in 0..n {
-                t.insert(&(i % 97, i), &(format!("pilot {i}"), i as f64, vec![1, 2, 3])).unwrap();
+                t.insert(&(i % 97, i), &(format!("pilot {i}"), i as f64, vec![1, 2, 3]))
+                    .unwrap();
             }
             let ins = start.elapsed();
             let start = std::time::Instant::now();
             for i in 0..n {
-                t.update_and_fetch(&(i % 97, i), |v| v.map(|(s, f, l)| (s, f + 1.0, l))).unwrap();
+                t.update_and_fetch(&(i % 97, i), |v| v.map(|(s, f, l)| (s, f + 1.0, l)))
+                    .unwrap();
             }
             let upd = start.elapsed();
             let start = std::time::Instant::now();
@@ -1097,7 +1158,8 @@ mod tests {
 
     #[test]
     fn redb_reopens_with_data_and_ids() {
-        let path = std::env::temp_dir().join(format!("yats-reopen-{}.redb", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("yats-reopen-{}.redb", std::process::id()));
         let _ = std::fs::remove_file(&path);
         {
             let db = Db::open_redb(&path).unwrap();
@@ -1107,7 +1169,10 @@ mod tests {
         }
         {
             let db = Db::open_redb(&path).unwrap();
-            assert_eq!(db.open_tree("t").unwrap().get(b"k").unwrap().as_deref(), Some(&b"v"[..]));
+            assert_eq!(
+                db.open_tree("t").unwrap().get(b"k").unwrap().as_deref(),
+                Some(&b"v"[..])
+            );
             assert_eq!(db.generate_id().unwrap(), 77);
             assert_eq!(db.tree_names().unwrap(), vec![b"t".to_vec()]);
         }

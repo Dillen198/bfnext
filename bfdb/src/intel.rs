@@ -67,8 +67,10 @@ pub(crate) fn parse_filename(name: &str) -> ParsedCapture {
     static DATE: OnceLock<Regex> = OnceLock::new();
     static TIME: OnceLock<Regex> = OnceLock::new();
 
-    let lat_re = LAT.get_or_init(|| re(r"(?i)\b([NS])\s*(\d{1,3})-(\d{1,2})-(\d{1,2}(?:\.\d+)?)"));
-    let lon_re = LON.get_or_init(|| re(r"(?i)\b([EW])\s*(\d{1,3})-(\d{1,2})-(\d{1,2}(?:\.\d+)?)"));
+    let lat_re =
+        LAT.get_or_init(|| re(r"(?i)\b([NS])\s*(\d{1,3})-(\d{1,2})-(\d{1,2}(?:\.\d+)?)"));
+    let lon_re =
+        LON.get_or_init(|| re(r"(?i)\b([EW])\s*(\d{1,3})-(\d{1,2})-(\d{1,2}(?:\.\d+)?)"));
     let alt_re = ALT.get_or_init(|| re(r"(?i)\bALT\s*([+-]?\d+(?:\.\d+)?)"));
     let hdg_re = HDG.get_or_init(|| re(r"(?i)\bHDG\s*([+-]?\d+(?:\.\d+)?)"));
     let pitch_re = PITCH.get_or_init(|| re(r"(?i)\bPITCH\s*([+-]?\d+(?:\.\d+)?)"));
@@ -104,9 +106,7 @@ pub(crate) fn parse_filename(name: &str) -> ParsedCapture {
             out.lon = Some(v);
         }
     }
-    out.alt_ft = alt_re
-        .captures(name)
-        .and_then(|c| c[1].parse::<f64>().ok());
+    out.alt_ft = alt_re.captures(name).and_then(|c| c[1].parse::<f64>().ok());
     out.heading_deg = hdg_re
         .captures(name)
         .and_then(|c| c[1].parse::<f64>().ok())
@@ -122,7 +122,11 @@ pub(crate) fn parse_filename(name: &str) -> ParsedCapture {
         )
     });
     let time = time_re.captures(name).and_then(|c| {
-        NaiveTime::from_hms_opt(c[1].parse().ok()?, c[2].parse().ok()?, c[3].parse().ok()?)
+        NaiveTime::from_hms_opt(
+            c[1].parse().ok()?,
+            c[2].parse().ok()?,
+            c[3].parse().ok()?,
+        )
     });
     if let (Some(d), Some(t)) = (date, time) {
         // In-mission clock, treated as UTC -- there's no reliable timezone
@@ -155,7 +159,9 @@ mod tests {
 
     #[test]
     fn southern_western_hemisphere_is_negative() {
-        let p = parse_filename("TARPS S34-30-00 W070-00-00 ALT+10000 HDG090 PITCH-05 ROLL+10.png");
+        let p = parse_filename(
+            "TARPS S34-30-00 W070-00-00 ALT+10000 HDG090 PITCH-05 ROLL+10.png",
+        );
         assert!((p.lat.unwrap() - (-34.5)).abs() < 1e-9);
         assert!((p.lon.unwrap() - (-70.0)).abs() < 1e-9);
         assert_eq!(p.pitch_deg, Some(-5.0));

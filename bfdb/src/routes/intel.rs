@@ -17,16 +17,22 @@ pub(crate) const MAX_INTEL_CAPTURES_PER_USER: usize = 120;
 
 /// Recon uploads per Discord user: 40 in 10 minutes is a full TARPS run
 /// uploaded in one go, and stops a script filling the disk.
-pub(crate) static INTEL_UPLOADS: std::sync::LazyLock<websec::RateLimiter<std::string::String>> =
-    std::sync::LazyLock::new(|| {
-        websec::RateLimiter::new(
-            40,
-            std::time::Duration::from_secs(600),
-            std::time::Duration::from_secs(300),
-        )
-    });
+pub(crate) static INTEL_UPLOADS: std::sync::LazyLock<
+    websec::RateLimiter<std::string::String>,
+> = std::sync::LazyLock::new(|| {
+    websec::RateLimiter::new(
+        40,
+        std::time::Duration::from_secs(600),
+        std::time::Duration::from_secs(300),
+    )
+});
 
-pub(crate) fn intel_json(id: &Uuid, c: &IntelCapture, viewer_discord: &str, viewer_admin: bool) -> serde_json::Value {
+pub(crate) fn intel_json(
+    id: &Uuid,
+    c: &IntelCapture,
+    viewer_discord: &str,
+    viewer_admin: bool,
+) -> serde_json::Value {
     serde_json::json!({
         "id":               id.to_string(),
         "side":             format!("{:?}", c.side),
@@ -110,9 +116,8 @@ pub(crate) async fn api_intel_upload(
     // admin may direct an upload with `?side=`.
     let side = c.side;
     let round = active_round_or_err(&db, &inst)?;
-    let (side_count, mine) = task::block_in_place(|| {
-        db.intel_counts(round, side, &c.session.discord_id)
-    })?;
+    let (side_count, mine) =
+        task::block_in_place(|| db.intel_counts(round, side, &c.session.discord_id))?;
     if side_count >= MAX_INTEL_CAPTURES_PER_SIDE {
         return Err(websec::too_many(format!(
             "recon intel limit reached for this coalition this round ({MAX_INTEL_CAPTURES_PER_SIDE})"
@@ -129,7 +134,11 @@ pub(crate) async fn api_intel_upload(
     let content_type = sniffed.to_string();
     let filename = filename_hdr
         .as_deref()
-        .map(|h| urlencoding::decode(h).map(|c| c.into_owned()).unwrap_or_else(|_| h.to_string()))
+        .map(|h| {
+            urlencoding::decode(h)
+                .map(|c| c.into_owned())
+                .unwrap_or_else(|_| h.to_string())
+        })
         .unwrap_or_default();
     let parsed = intel::parse_filename(&filename);
     let name = c
@@ -190,8 +199,9 @@ pub(crate) async fn api_intel_get_image(
     if !c.god_mode && cap.side != c.side {
         return Err(websec::forbidden("not authorized for this coalition's intel").into());
     }
-    let (_stored_type, bytes) = task::block_in_place(|| db.intel_get_image(&cap.image_id))?
-        .ok_or_else(|| websec::not_found("image not found"))?;
+    let (_stored_type, bytes) =
+        task::block_in_place(|| db.intel_get_image(&cap.image_id))?
+            .ok_or_else(|| websec::not_found("image not found"))?;
     // Served by what the bytes are, sandboxed: photos uploaded before the
     // upload check existed carry whatever type their uploader claimed.
     Ok(websec::serve_upload(bytes, "private, max-age=31536000, immutable"))
@@ -199,11 +209,11 @@ pub(crate) async fn api_intel_get_image(
 
 #[derive(Deserialize)]
 pub(crate) struct IntelAdjustBody {
-    pub(crate) id:     std::string::String,
-    pub(crate) lat:    Option<f64>,
-    pub(crate) lon:    Option<f64>,
+    pub(crate) id: std::string::String,
+    pub(crate) lat: Option<f64>,
+    pub(crate) lon: Option<f64>,
     pub(crate) placed: Option<bool>,
-    pub(crate) note:   Option<std::string::String>,
+    pub(crate) note: Option<std::string::String>,
     pub(crate) adjust: Option<db::IntelAdjust>,
 }
 
@@ -218,7 +228,8 @@ pub(crate) async fn api_intel_adjust(
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
-    let cap_id: Uuid = body.id.parse().map_err(|e| websec::bad_request(format!("bad id: {e}")))?;
+    let cap_id: Uuid =
+        body.id.parse().map_err(|e| websec::bad_request(format!("bad id: {e}")))?;
     let mut cap = task::block_in_place(|| db.intel_get_by_id(&cap_id))?
         .ok_or_else(|| websec::not_found("capture not found"))?;
     let owns = cap.uploaded_by == c.session.discord_id;
@@ -226,7 +237,10 @@ pub(crate) async fn api_intel_adjust(
         return Err(websec::forbidden("not authorized for this coalition's intel").into());
     }
     if !c.god_mode && !c.session.is_admin && !owns {
-        return Err(websec::forbidden("only the uploader or an admin can edit this capture").into());
+        return Err(websec::forbidden(
+            "only the uploader or an admin can edit this capture",
+        )
+        .into());
     }
     if let Some(lat) = body.lat {
         cap.lat = lat;
@@ -270,7 +284,8 @@ pub(crate) async fn api_intel_delete(
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
-    let cap_id: Uuid = body.id.parse().map_err(|e| websec::bad_request(format!("bad id: {e}")))?;
+    let cap_id: Uuid =
+        body.id.parse().map_err(|e| websec::bad_request(format!("bad id: {e}")))?;
     let cap = task::block_in_place(|| db.intel_get_by_id(&cap_id))?
         .ok_or_else(|| websec::not_found("capture not found"))?;
     let owns = cap.uploaded_by == c.session.discord_id;
@@ -278,7 +293,10 @@ pub(crate) async fn api_intel_delete(
         return Err(websec::forbidden("not authorized for this coalition's intel").into());
     }
     if !c.god_mode && !c.session.is_admin && !owns {
-        return Err(websec::forbidden("only the uploader or an admin can delete this capture").into());
+        return Err(websec::forbidden(
+            "only the uploader or an admin can delete this capture",
+        )
+        .into());
     }
     task::block_in_place(|| db.intel_delete(cap.round, &cap_id))?;
     log::info!("INTEL: {} deleted capture {cap_id}", c.session.discord_id);
@@ -309,16 +327,21 @@ pub(crate) async fn api_intel_purge(
 
 /// Plan saves per Discord user: generous for someone dragging waypoints and
 /// saving as they go, short of a script filling the tree.
-pub(crate) static PLAN_WRITES: std::sync::LazyLock<websec::RateLimiter<std::string::String>> =
-    std::sync::LazyLock::new(|| {
-        websec::RateLimiter::new(
-            120,
-            std::time::Duration::from_secs(600),
-            std::time::Duration::from_secs(300),
-        )
-    });
+pub(crate) static PLAN_WRITES: std::sync::LazyLock<
+    websec::RateLimiter<std::string::String>,
+> = std::sync::LazyLock::new(|| {
+    websec::RateLimiter::new(
+        120,
+        std::time::Duration::from_secs(600),
+        std::time::Duration::from_secs(300),
+    )
+});
 
-pub(crate) fn plan_json(p: &flightplans::Stored, viewer_discord: &str, viewer_admin: bool) -> serde_json::Value {
+pub(crate) fn plan_json(
+    p: &flightplans::Stored,
+    viewer_discord: &str,
+    viewer_admin: bool,
+) -> serde_json::Value {
     serde_json::json!({
         "id":      p.id.to_string(),
         "side":    p.side,
@@ -331,7 +354,12 @@ pub(crate) fn plan_json(p: &flightplans::Stored, viewer_discord: &str, viewer_ad
 }
 
 /// The plan `id` on this instance, if the caller's coalition may see it.
-pub(crate) fn plan_for_caller(db: &StatsDb, inst: &InstanceState, c: &Caller, id: &str) -> std::result::Result<flightplans::Stored, Error> {
+pub(crate) fn plan_for_caller(
+    db: &StatsDb,
+    inst: &InstanceState,
+    c: &Caller,
+    id: &str,
+) -> std::result::Result<flightplans::Stored, Error> {
     let id: Uuid = id.parse().map_err(|e| websec::bad_request(format!("bad id: {e}")))?;
     let p = task::block_in_place(|| db.flight_plans().get(&inst.id, &id))?
         .ok_or_else(|| websec::not_found("plan not found"))?;
@@ -356,7 +384,10 @@ pub(crate) async fn api_plans_list(
         Some(side_name(c.side))
     };
     let plans = task::block_in_place(|| db.flight_plans().list(&inst.id, side))?;
-    let json: Vec<_> = plans.iter().map(|p| plan_json(p, &c.session.discord_id, c.session.is_admin)).collect();
+    let json: Vec<_> = plans
+        .iter()
+        .map(|p| plan_json(p, &c.session.discord_id, c.session.is_admin))
+        .collect();
     Ok(warp::reply::json(&json))
 }
 
@@ -381,13 +412,17 @@ pub(crate) async fn api_plans_save(
     if !c.session.is_admin && !PLAN_WRITES.hit(&c.session.discord_id) {
         return Err(websec::too_many("too many plan saves; wait a few minutes").into());
     }
-    let plan = flightplans::validate(body.plan).map_err(|e| websec::bad_request(e.to_string()))?;
+    let plan = flightplans::validate(body.plan)
+        .map_err(|e| websec::bad_request(e.to_string()))?;
     let now = chrono::Utc::now();
     let stored = match body.id {
         Some(id) => {
             let mut p = plan_for_caller(&db, &inst, &c, &id)?;
             if !c.session.is_admin && p.by != c.session.discord_id {
-                return Err(websec::forbidden("only the author or an admin can change this plan").into());
+                return Err(websec::forbidden(
+                    "only the author or an admin can change this plan",
+                )
+                .into());
             }
             p.plan = plan;
             p.updated = now;
@@ -395,13 +430,18 @@ pub(crate) async fn api_plans_save(
         }
         None => {
             let side = side_name(c.side);
-            task::block_in_place(|| db.flight_plans().check_quota(&inst.id, side, &c.session.discord_id))
-                .map_err(|e| websec::bad_request(e.to_string()))?;
+            task::block_in_place(|| {
+                db.flight_plans().check_quota(&inst.id, side, &c.session.discord_id)
+            })
+            .map_err(|e| websec::bad_request(e.to_string()))?;
             flightplans::Stored {
                 id: Uuid::new_v4(),
                 side: side.into(),
                 by: c.session.discord_id.clone(),
-                by_name: c.ucid().and_then(|u| db.pilot_name(u)).unwrap_or_else(|| c.session.username.clone()),
+                by_name: c
+                    .ucid()
+                    .and_then(|u| db.pilot_name(u))
+                    .unwrap_or_else(|| c.session.username.clone()),
                 created: now,
                 updated: now,
                 plan,
@@ -424,7 +464,10 @@ pub(crate) async fn api_plans_delete(
     let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
     let p = plan_for_caller(&db, &inst, &c, &body.id)?;
     if !c.god_mode && !c.session.is_admin && p.by != c.session.discord_id {
-        return Err(websec::forbidden("only the author or an admin can delete this plan").into());
+        return Err(websec::forbidden(
+            "only the author or an admin can delete this plan",
+        )
+        .into());
     }
     task::block_in_place(|| db.flight_plans().delete(&inst.id, &p.id))?;
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
@@ -432,7 +475,12 @@ pub(crate) async fn api_plans_delete(
 
 // ── Recon intel markup ─────────────────────────────────────────────────────
 
-pub(crate) fn markup_json(id: &Uuid, m: &IntelMarkup, viewer_discord: &str, viewer_admin: bool) -> serde_json::Value {
+pub(crate) fn markup_json(
+    id: &Uuid,
+    m: &IntelMarkup,
+    viewer_discord: &str,
+    viewer_admin: bool,
+) -> serde_json::Value {
     serde_json::json!({
         "id":      id.to_string(),
         "kind":    m.kind,
@@ -475,11 +523,11 @@ pub(crate) async fn api_intel_markup_list(
 
 #[derive(Deserialize)]
 pub(crate) struct IntelMarkupBody {
-    pub(crate) kind:   std::string::String,
+    pub(crate) kind: std::string::String,
     pub(crate) points: Vec<[f64; 2]>,
-    pub(crate) color:  std::string::String,
-    pub(crate) width:  f64,
-    pub(crate) text:   Option<std::string::String>,
+    pub(crate) color: std::string::String,
+    pub(crate) width: f64,
+    pub(crate) text: Option<std::string::String>,
 }
 
 /// POST /api/intel/markup — add a markup shape (coalition-shared).
@@ -499,13 +547,21 @@ pub(crate) async fn api_intel_markup_add(
     // Stored and then drawn into every coalition member's map; only a plain
     // hex colour and a known shape name get through.
     if !websec::valid_hex_color(&body.color) {
-        return Err(websec::bad_request("markup colour must be a hex colour like #ff0000").into());
+        return Err(websec::bad_request(
+            "markup colour must be a hex colour like #ff0000",
+        )
+        .into());
     }
-    if !matches!(body.kind.as_str(), "pencil" | "line" | "rect" | "circle" | "x" | "text") {
-        return Err(websec::bad_request(format!("unknown markup kind {:?}", body.kind)).into());
+    if !matches!(body.kind.as_str(), "pencil" | "line" | "rect" | "circle" | "x" | "text")
+    {
+        return Err(
+            websec::bad_request(format!("unknown markup kind {:?}", body.kind)).into()
+        );
     }
     if body.text.as_ref().map_or(false, |t| t.len() > 500) {
-        return Err(websec::bad_request("markup text is limited to 500 characters").into());
+        return Err(
+            websec::bad_request("markup text is limited to 500 characters").into()
+        );
     }
     let id = Uuid::new_v4();
     let name = c
@@ -525,7 +581,12 @@ pub(crate) async fn api_intel_markup_add(
         at: chrono::Utc::now(),
     };
     task::block_in_place(|| db.intel_markup_put(id, m.clone()))?;
-    Ok(warp::reply::json(&markup_json(&id, &m, &c.session.discord_id, c.session.is_admin)))
+    Ok(warp::reply::json(&markup_json(
+        &id,
+        &m,
+        &c.session.discord_id,
+        c.session.is_admin,
+    )))
 }
 
 /// POST /api/intel/markup/delete — remove a markup shape (author or admin).
@@ -538,14 +599,18 @@ pub(crate) async fn api_intel_markup_delete(
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
-    let id: Uuid = body.id.parse().map_err(|e| websec::bad_request(format!("bad id: {e}")))?;
+    let id: Uuid =
+        body.id.parse().map_err(|e| websec::bad_request(format!("bad id: {e}")))?;
     let m = task::block_in_place(|| db.intel_markup_get(&id))?
         .ok_or_else(|| websec::not_found("markup not found"))?;
     if !c.god_mode && m.side != c.side {
         return Err(websec::forbidden("not authorized for this coalition's intel").into());
     }
     if !c.god_mode && !c.session.is_admin && m.by != c.session.discord_id {
-        return Err(websec::forbidden("only the author or an admin can delete this markup").into());
+        return Err(websec::forbidden(
+            "only the author or an admin can delete this markup",
+        )
+        .into());
     }
     task::block_in_place(|| db.intel_markup_delete(m.round, &id))?;
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))

@@ -193,8 +193,7 @@ impl Db {
 
     /// Is `name` the emergency repair crate?
     pub fn is_emergency_repair_crate(&self, name: &str) -> bool {
-        self.emergency_repair_crate()
-            .map_or(false, |c| c.name.as_str() == name)
+        self.emergency_repair_crate().map_or(false, |c| c.name.as_str() == name)
     }
 
     /// Can `oid` pay for one repair step out of its own stores? Mirrors the
@@ -256,7 +255,8 @@ impl Db {
         origin: ObjectiveId,
         now: DateTime<Utc>,
     ) -> Result<std::result::Result<CompactString, CompactString>> {
-        let Some(er) = self.ephemeral.cfg.emergency_repair.clone().filter(|e| e.enabled) else {
+        let Some(er) = self.ephemeral.cfg.emergency_repair.clone().filter(|e| e.enabled)
+        else {
             return Ok(Err("emergency repairs are switched off on this server".into()));
         };
         // Zones can overlap; if one of them is ours, that is the one meant.
@@ -271,7 +271,10 @@ impl Db {
             }
         }
         let Some(oid) = hit else {
-            info!("[EMERGENCY_REPAIR] refused: crate from {by} at ({:.0}, {:.0}) is not inside any objective zone", pos.x, pos.y);
+            info!(
+                "[EMERGENCY_REPAIR] refused: crate from {by} at ({:.0}, {:.0}) is not inside any objective zone",
+                pos.x, pos.y
+            );
             return Ok(Err(
                 "an emergency repair crate has to be unpacked INSIDE the zone of the friendly base it is for".into(),
             ));
@@ -306,7 +309,10 @@ impl Db {
         if points_on && er.cost_points > 0 {
             let have = self.persisted.players.get(&by).map(|p| p.points).unwrap_or(0);
             if have < er.cost_points as i32 {
-                info!("[EMERGENCY_REPAIR] {name}: refused crate from {by}: {have} points, {} needed", er.cost_points);
+                info!(
+                    "[EMERGENCY_REPAIR] {name}: refused crate from {by}: {have} points, {} needed",
+                    er.cost_points
+                );
                 return Ok(Err(format_compact!(
                     "an emergency repair costs {} points and you have {have}",
                     er.cost_points
@@ -329,7 +335,9 @@ impl Db {
         };
         let health_before = target.health;
         if !self.repair_objective(oid, now)? {
-            info!("[EMERGENCY_REPAIR] {name}: refused crate from {by}: no damaged group it could rebuild");
+            info!(
+                "[EMERGENCY_REPAIR] {name}: refused crate from {by}: no damaged group it could rebuild"
+            );
             return Ok(Err(format_compact!(
                 "{name} has no destroyed group an emergency repair can rebuild"
             )));
@@ -451,7 +459,9 @@ mod tests {
 
     #[test]
     fn refusal_text_names_the_base() {
-        assert!(Refusal::UnderAttack.explain("Kutaisi").contains("Kutaisi is under attack"));
+        assert!(
+            Refusal::UnderAttack.explain("Kutaisi").contains("Kutaisi is under attack")
+        );
         assert!(Refusal::Cooldown(125).explain("Kutaisi").contains("2m 05s"));
     }
 }

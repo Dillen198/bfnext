@@ -5,16 +5,13 @@
 
 use super::*;
 use crate::storage::{self, Backend, MigrateOpts};
-use bfprotocols::{
-    cfg::UnitTags,
-    shots::Shot,
-    stats::Unit as StatUnit,
-};
+use bfprotocols::{cfg::UnitTags, shots::Shot, stats::Unit as StatUnit};
 use dcso3::object::DcsOid;
 use std::{collections::BTreeMap, marker::PhantomData};
 
 fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("bfdb-storage-{name}-{}", Uuid::new_v4()));
+    let dir =
+        std::env::temp_dir().join(format!("bfdb-storage-{name}-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -23,8 +20,10 @@ fn scratch(name: &str) -> PathBuf {
 /// background tasks `new` spawns: those hold the database open for the rest
 /// of the test, and these tests reopen it.
 fn open_quiet(path: &Path, backend: Backend) -> StatsDb {
-    let cfg: InstanceCfg =
-        serde_json::from_value(serde_json::json!({ "id": crate::instance::DEFAULT_INSTANCE })).unwrap();
+    let cfg: InstanceCfg = serde_json::from_value(
+        serde_json::json!({ "id": crate::instance::DEFAULT_INSTANCE }),
+    )
+    .unwrap();
     let db = storage::open(path, backend).unwrap();
     let t = StatsDb::open_trees(&HashMap::new(), db, Registry::single(cfg)).unwrap();
     t.check_schema_version().unwrap();
@@ -54,7 +53,12 @@ fn dead(at: DateTime<Utc>, shooter: Ucid) -> Dead {
         uid: bfprotocols::db::group::UnitId::from(3),
         ucid: None,
     };
-    let player = Who::Player { unit: oid(6), side: Side::Blue, ucid: shooter, slot: SlotId::Unit(42) };
+    let player = Who::Player {
+        unit: oid(6),
+        side: Side::Blue,
+        ucid: shooter,
+        slot: SlotId::Unit(42),
+    };
     Dead {
         victim: ai.clone(),
         time: at,
@@ -80,8 +84,18 @@ fn drive(db: &StatsDb) {
     let obj = ObjectiveId::from(1);
     let stats = vec![
         Stat::NewRound { sortie: "campaign".into() },
-        Stat::Register { name: "Alpha".into(), id: u1, side: Side::Blue, initial_points: 100 },
-        Stat::Register { name: "Bravo".into(), id: u2, side: Side::Red, initial_points: 50 },
+        Stat::Register {
+            name: "Alpha".into(),
+            id: u1,
+            side: Side::Blue,
+            initial_points: 100,
+        },
+        Stat::Register {
+            name: "Bravo".into(),
+            id: u2,
+            side: Side::Red,
+            initial_points: 50,
+        },
         Stat::Connect { id: u1, addr: "192.0.2.1".into(), name: "Alpha".into() },
         Stat::Objective {
             name: "Batumi".into(),
@@ -93,7 +107,10 @@ fn drive(db: &StatsDb) {
         Stat::Slot {
             id: u1,
             slot: SlotId::Unit(42),
-            typ: Some(StatUnit { typ: Vehicle::from("F-16C_50"), tags: UnitTags(BitFlags::empty()) }),
+            typ: Some(StatUnit {
+                typ: Vehicle::from("F-16C_50"),
+                tags: UnitTags(BitFlags::empty()),
+            }),
         },
         Stat::Takeoff { id: u1 },
         Stat::Kill(dead(t(8), u1)),
@@ -122,8 +139,16 @@ fn drive(db: &StatsDb) {
         },
     )
     .unwrap();
-    db.ban_player(u2, BanRecord { name: "Bravo".into(), banned_at: t(100), until: None, reason: "test".into() })
-        .unwrap();
+    db.ban_player(
+        u2,
+        BanRecord {
+            name: "Bravo".into(),
+            banned_at: t(100),
+            until: None,
+            reason: "test".into(),
+        },
+    )
+    .unwrap();
     db.audit_put(&AuditEntry {
         at: t(101),
         who: "local:admin".into(),
@@ -146,8 +171,19 @@ fn drive(db: &StatsDb) {
     )
     .unwrap();
     let rid = db.all_rounds().unwrap()[0].1;
-    db.append_trail_point(rid, &"unit-1".to_string(), 1_760_000_050, 41.0, 42.0, 1000.0, 90.0).unwrap();
-    db.news_image_data.insert(&("default".into(), rid, "2026-10-27".into()), &(0..=255u8).collect()).unwrap();
+    db.append_trail_point(
+        rid,
+        &"unit-1".to_string(),
+        1_760_000_050,
+        41.0,
+        42.0,
+        1000.0,
+        90.0,
+    )
+    .unwrap();
+    db.news_image_data
+        .insert(&("default".into(), rid, "2026-10-27".into()), &(0..=255u8).collect())
+        .unwrap();
 }
 
 /// What the read side of the API says about `drive`'s data, as text.
@@ -155,7 +191,8 @@ fn observe(db: &StatsDb) -> Vec<std::string::String> {
     let (u1, u2) = (ucid(1), ucid(2));
     let rounds = db.all_rounds().unwrap();
     let rid = rounds[0].1;
-    let numbers: BTreeMap<u64, u32> = db.round_numbers().unwrap().into_iter().map(|(k, v)| (k.0, v)).collect();
+    let numbers: BTreeMap<u64, u32> =
+        db.round_numbers().unwrap().into_iter().map(|(k, v)| (k.0, v)).collect();
     vec![
         format!("{rounds:?}"),
         format!("{numbers:?}"),
@@ -170,7 +207,14 @@ fn observe(db: &StatsDb) -> Vec<std::string::String> {
         format!("{:?}", db.objectives_for_round(rid).unwrap()),
         format!("{:?}", db.aircraft_usage(rid).unwrap()),
         format!("{:?}", db.list_admin_bans().unwrap()),
-        format!("{:?}", db.list_sessions().unwrap().into_iter().map(|s| s.username).collect::<Vec<_>>()),
+        format!(
+            "{:?}",
+            db.list_sessions()
+                .unwrap()
+                .into_iter()
+                .map(|s| s.username)
+                .collect::<Vec<_>>()
+        ),
         format!("{:?}", db.get_session(Uuid::from_u128(1)).unwrap().map(|s| s.username)),
         format!("{:?}", db.audit_list(10, None).unwrap()),
         format!("{:?}", db.wiki_get_page("storage/test").unwrap()),
@@ -241,13 +285,18 @@ async fn every_stored_type_round_trips_on_both_engines() {
         let stats = StatsDb::reencode_store(&other, false).unwrap();
         let mut total = yats::ReencodeStats::default();
         for (tree, st) in &stats {
-            assert_eq!((st.undecodable, st.unverified), (0, 0), "{from} -> {to}: {tree}: {st:?}");
+            assert_eq!(
+                (st.undecodable, st.unverified),
+                (0, 0),
+                "{from} -> {to}: {tree}: {st:?}"
+            );
             total += *st;
         }
         assert!(total.reencoded > 20, "{from} -> {to}: {total:?}");
         assert!(yats::convert::verify(db.sled(), &other, true, 1).unwrap().ok());
         // and the re-encoded copy reads back as the original does
-        let reread = StatsDb::open_trees(&HashMap::new(), other, db.instances().clone()).unwrap();
+        let reread =
+            StatsDb::open_trees(&HashMap::new(), other, db.instances().clone()).unwrap();
         assert_eq!(observe(&reread), observe(&db), "{from} -> {to}");
     }
     let _ = std::fs::remove_dir_all(&dir);
@@ -283,7 +332,8 @@ async fn converts_a_sled_database_with_legacy_rows_and_rolls_back() {
     {
         let sled = sled::open(&db_path).unwrap();
         // a pre-hash login, keyed by the raw cookie id
-        let old: Tree<Uuid, LegacySessionData> = Tree::open(&sled, "auth_sessions").unwrap();
+        let old: Tree<Uuid, LegacySessionData> =
+            Tree::open(&sled, "auth_sessions").unwrap();
         old.insert(
             &legacy_id,
             &LegacySessionData {
@@ -297,13 +347,21 @@ async fn converts_a_sled_database_with_legacy_rows_and_rolls_back() {
         .unwrap();
         // a pre-session_v2 session row whose engine config no build can read
         let sess = sled.open_tree("session").unwrap();
-        sess.insert(yats::serialize(&(RoundId(0), t(1))).unwrap(), vec![1u8, 2, 3]).unwrap();
-        // a session_v2 row (engine config as JSON)
-        let v2: Tree<(RoundId, DateTime<Utc>), SessionRec> = Tree::open(&sled, "session_v2").unwrap();
-        v2.insert(&(RoundId(0), t(2)), &SessionRec { stop_time: Some(t(3)), end: None, cfg_json: "{}".into() })
+        sess.insert(yats::serialize(&(RoundId(0), t(1))).unwrap(), vec![1u8, 2, 3])
             .unwrap();
+        // a session_v2 row (engine config as JSON)
+        let v2: Tree<(RoundId, DateTime<Utc>), SessionRec> =
+            Tree::open(&sled, "session_v2").unwrap();
+        v2.insert(
+            &(RoundId(0), t(2)),
+            &SessionRec { stop_time: Some(t(3)), end: None, cfg_json: "{}".into() },
+        )
+        .unwrap();
         // raw JSON trees (training range, replays) are copied as bytes
-        sled.open_tree("range_records").unwrap().insert(b"inst\0k", &br#"{"id":"k"}"#[..]).unwrap();
+        sled.open_tree("range_records")
+            .unwrap()
+            .insert(b"inst\0k", &br#"{"id":"k"}"#[..])
+            .unwrap();
         sled.flush().unwrap();
     }
     let source_files = fingerprint(&db_path);
@@ -321,8 +379,13 @@ async fn converts_a_sled_database_with_legacy_rows_and_rolls_back() {
     assert!(dry.last.ok());
     let target = storage::location(&db_path, Backend::Redb);
     assert!(!target.exists());
-    let leftovers: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
-    assert_eq!(leftovers, vec![std::ffi::OsString::from("db")], "dry run left {leftovers:?}");
+    let leftovers: Vec<_> =
+        std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(
+        leftovers,
+        vec![std::ffi::OsString::from("db")],
+        "dry run left {leftovers:?}"
+    );
 
     // the real thing
     o.dry_run = false;
@@ -331,7 +394,10 @@ async fn converts_a_sled_database_with_legacy_rows_and_rolls_back() {
     assert!(rep.last.ok() && rep.exact.as_ref().unwrap().ok());
     assert!(target.is_file());
     let typed: BTreeMap<_, _> = rep.typed.iter().cloned().collect();
-    assert_eq!(typed["session"].undecodable, 1, "the unreadable legacy session is kept, and reported");
+    assert_eq!(
+        typed["session"].undecodable, 1,
+        "the unreadable legacy session is kept, and reported"
+    );
     assert_eq!(typed["auth_sessions"].reencoded, 1);
     assert_eq!(typed["session_v2"].reencoded, 1);
     assert_eq!(fingerprint(&db_path), source_files, "the sled database was not modified");
@@ -348,14 +414,31 @@ async fn converts_a_sled_database_with_legacy_rows_and_rolls_back() {
         assert_eq!(after.remove(13), r#"["legacy", "alpha"]"#);
         before.remove(13);
         assert_eq!(after, before);
-        assert_eq!(db.get_session(legacy_id).unwrap().map(|s| s.username).as_deref(), Some("legacy"));
+        assert_eq!(
+            db.get_session(legacy_id).unwrap().map(|s| s.username).as_deref(),
+            Some("legacy")
+        );
         let raw = db.sled().open_tree("pilots").unwrap().first().unwrap().unwrap().1;
         assert!(yats::codec::is_msgpack(&raw), "rows were re-encoded");
-        assert!(db.sled().open_tree("range_records").unwrap().get(b"inst\0k").unwrap().is_some());
+        assert!(db
+            .sled()
+            .open_tree("range_records")
+            .unwrap()
+            .get(b"inst\0k")
+            .unwrap()
+            .is_some());
         let kid = KillId::new(db.sled()).unwrap();
         // a write after the cutover, which a rollback has to carry back
-        db.ban_player(ucid(9), BanRecord { name: "Late".into(), banned_at: t(500), until: None, reason: "x".into() })
-            .unwrap();
+        db.ban_player(
+            ucid(9),
+            BanRecord {
+                name: "Late".into(),
+                banned_at: t(500),
+                until: None,
+                reason: "x".into(),
+            },
+        )
+        .unwrap();
         assert!(kid.0 > 0);
     }
 
@@ -370,7 +453,10 @@ async fn converts_a_sled_database_with_legacy_rows_and_rolls_back() {
         let raw = sled.open_tree("pilots").unwrap().first().unwrap().unwrap().1;
         assert!(!yats::codec::is_msgpack(&raw), "rolled back rows are bincode again");
         let bans: Tree<Ucid, BanRecord> = Tree::open(&sled, "admin_bans").unwrap();
-        assert!(bans.get(&ucid(9)).unwrap().is_some(), "the post-cutover write came back");
+        assert!(
+            bans.get(&ucid(9)).unwrap().is_some(),
+            "the post-cutover write came back"
+        );
         // no id handed out on redb is handed out again
         let next = sled.generate_id().unwrap();
         let redb = Db::open_redb(&target).unwrap();

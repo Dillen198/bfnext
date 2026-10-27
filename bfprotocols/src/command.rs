@@ -400,14 +400,20 @@ mod tests {
     #[test]
     fn orders_parse_with_floats() {
         // The workspace builds serde_json with arbitrary_precision.
-        let o: CommandOrder = serde_json::from_str(r#"{"move":{"group":7,"to":[42.1,43.5]}}"#).unwrap();
+        let o: CommandOrder =
+            serde_json::from_str(r#"{"move":{"group":7,"to":[42.1,43.5]}}"#).unwrap();
         assert!(matches!(o, CommandOrder::Move { group: 7, .. }));
-        let o: CommandOrder = serde_json::from_str(r#"{"launch":{"kind":"strike","objective":3}}"#).unwrap();
+        let o: CommandOrder =
+            serde_json::from_str(r#"{"launch":{"kind":"strike","objective":3}}"#)
+                .unwrap();
         assert!(matches!(o, CommandOrder::Launch { objective: 3, .. }));
-        let o: CommandOrder = serde_json::from_str(r#"{"barrage":{"at":[42.0,44.25]}}"#).unwrap();
+        let o: CommandOrder =
+            serde_json::from_str(r#"{"barrage":{"at":[42.0,44.25]}}"#).unwrap();
         assert!(matches!(o, CommandOrder::Barrage { .. }));
         let o: CommandOrder =
             serde_json::from_str(r#"{"buy_formation":{"key":"formation:MBT / T-90M","count":6,"to":[35.1,36.5]}}"#).unwrap();
-        assert!(matches!(o, CommandOrder::BuyFormation { count: 6, ref via, .. } if via.is_empty()));
+        assert!(
+            matches!(o, CommandOrder::BuyFormation { count: 6, ref via, .. } if via.is_empty())
+        );
     }
 }

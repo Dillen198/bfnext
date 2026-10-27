@@ -109,7 +109,11 @@ impl Default for PopulationScalingCfg {
 /// A multiplier from config that must never shrink anything: NaN, negative
 /// and sub-1 values all mean "no effect".
 fn at_least_one(m: f64) -> f64 {
-    if m.is_finite() && m > 1. { m } else { 1. }
+    if m.is_finite() && m > 1. {
+        m
+    } else {
+        1.
+    }
 }
 
 impl PopulationScalingCfg {
@@ -235,7 +239,8 @@ mod tests {
 
     #[test]
     fn empty_blocks_take_defaults() {
-        let p: PopulationScalingCfg = serde_json::from_value(serde_json::json!({})).unwrap();
+        let p: PopulationScalingCfg =
+            serde_json::from_value(serde_json::json!({})).unwrap();
         assert!(p.enabled);
         assert_eq!(p.min_defenders, 1);
         assert_eq!(p.capture_time_mult_when_undefended, 2.);
@@ -257,7 +262,8 @@ mod tests {
     #[test]
     fn emergency_crate_name_must_be_unique() {
         let mut cfg = super::super::Cfg::default();
-        let taken = cfg.repair_crate.values().next().expect("default repair crate").clone();
+        let taken =
+            cfg.repair_crate.values().next().expect("default repair crate").clone();
         let mut own = taken.clone();
         own.name = "Emergency Repair".into();
         cfg.emergency_repair = Some(EmergencyRepairCfg {

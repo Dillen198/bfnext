@@ -24,7 +24,12 @@ pub(crate) struct Airfield {
 
 impl Airfield {
     pub(crate) fn new(ctl: Controller, inst: &str) -> Self {
-        Airfield { ctl, inst: inst.to_string(), align_tried: false, missing_logged: false }
+        Airfield {
+            ctl,
+            inst: inst.to_string(),
+            align_tried: false,
+            missing_logged: false,
+        }
     }
 }
 
@@ -34,7 +39,10 @@ impl Facility for Airfield {
     }
 
     fn radios(&self) -> Vec<(Pos, Vec<FreqSpec>)> {
-        Pos::ALL.iter().filter_map(|p| self.ctl.ap.positions.get(p).map(|f| (*p, f.clone()))).collect()
+        Pos::ALL
+            .iter()
+            .filter_map(|p| self.ctl.ap.positions.get(p).map(|f| (*p, f.clone())))
+            .collect()
     }
 
     fn facility(&self, pos: Pos) -> String {
@@ -50,14 +58,21 @@ impl Facility for Airfield {
     }
 
     fn update(&mut self, pic: &Picture) -> Vec<Tx> {
-        let Some(field) = pic.atc.airfields.iter().find(|a| self.ctl.ap.is_named(&a.name)).cloned() else {
+        let Some(field) =
+            pic.atc.airfields.iter().find(|a| self.ctl.ap.is_named(&a.name)).cloned()
+        else {
             if !self.missing_logged {
                 self.missing_logged = true;
                 log::warn!(
                     "[{}] range ATC: {} is not in the engine's picture (has: {})",
                     self.inst,
                     self.ctl.ap.dcs_name,
-                    pic.atc.airfields.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", ")
+                    pic.atc
+                        .airfields
+                        .iter()
+                        .map(|a| a.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 );
             }
             return vec![];
@@ -66,7 +81,9 @@ impl Facility for Airfield {
             let dcs: Vec<(String, P2)> = field
                 .runways
                 .iter()
-                .filter_map(|r| Some((r.name.clone(), self.ctl.ap.local(r.thr_lat?, r.thr_lon?))))
+                .filter_map(|r| {
+                    Some((r.name.clone(), self.ctl.ap.local(r.thr_lat?, r.thr_lon?)))
+                })
                 .collect();
             if !dcs.is_empty() {
                 self.align_tried = true;
@@ -92,11 +109,22 @@ impl Facility for Airfield {
         self.ctl.update(&field, &pic.atc.traffic, pic.now)
     }
 
-    fn respond(&mut self, pos: Pos, who: &Caller, heard: &str, parsed: Option<Parsed>, now: f64) -> Vec<Tx> {
+    fn respond(
+        &mut self,
+        pos: Pos,
+        who: &Caller,
+        heard: &str,
+        parsed: Option<Parsed>,
+        now: f64,
+    ) -> Vec<Tx> {
         self.ctl.respond(pos, who, heard, parsed, now)
     }
 
-    fn caller(&mut self, who: &Caller, parsed: Option<&Parsed>) -> (Option<String>, Option<String>) {
+    fn caller(
+        &mut self,
+        who: &Caller,
+        parsed: Option<&Parsed>,
+    ) -> (Option<String>, Option<String>) {
         match self.ctl.identify(who, parsed).and_then(|k| self.ctl.flights.get(&k)) {
             Some(f) => (Some(f.call.clone()), type_label(&f.ac.typ)),
             None => (None, None),

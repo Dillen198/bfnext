@@ -1,4 +1,4 @@
-﻿/*
+/*
 Copyright 2024 Eric Stokes.
 
 This file is part of bflib.
@@ -36,7 +36,6 @@ fn default_red_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 0,
             weight: 800,
-
         },
         Troop {
             name: "Anti Tank".into(),
@@ -53,7 +52,6 @@ fn default_red_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 1,
             weight: 1000,
-
         },
         Troop {
             name: "Mortar".into(),
@@ -70,7 +68,6 @@ fn default_red_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 5,
             weight: 1200,
-
         },
         Troop {
             name: "Igla".into(),
@@ -82,7 +79,6 @@ fn default_red_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 5,
             weight: 500,
-
         },
     ]
 }
@@ -104,7 +100,6 @@ fn default_blue_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 0,
             weight: 800,
-
         },
         Troop {
             name: "Anti Tank".into(),
@@ -121,7 +116,6 @@ fn default_blue_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 1,
             weight: 1000,
-
         },
         Troop {
             name: "Mortar".into(),
@@ -138,7 +132,6 @@ fn default_blue_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 5,
             weight: 1200,
-
         },
         Troop {
             name: "Stinger".into(),
@@ -155,7 +148,6 @@ fn default_blue_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 5,
             weight: 500,
-
         },
     ]
 }
@@ -164,9 +156,7 @@ fn default_red_deployables() -> Vec<Deployable> {
     vec![
         Deployable {
             path: vec!["Radar SAMs".into(), "SA 6 Kub".into()],
-            kind: DeployableKind::Group {
-                template: "DEPSA6".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPSA6".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             limit_enforce: LimitEnforceTyp::DeleteOldest,
@@ -209,9 +199,7 @@ fn default_red_deployables() -> Vec<Deployable> {
         },
         Deployable {
             path: vec!["Radar SAMs".into(), "SA 11 Buk".into()],
-            kind: DeployableKind::Group {
-                template: "DEPSA11".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPSA11".into() },
             persist: PersistTyp::Forever,
             limit: 2,
             limit_enforce: LimitEnforceTyp::DeleteOldest,
@@ -263,9 +251,7 @@ fn default_red_deployables() -> Vec<Deployable> {
         },
         Deployable {
             path: vec!["Radar SAMs".into(), "SA15 Tor".into()],
-            kind: DeployableKind::Group {
-                template: "DEPSA15".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPSA15".into() },
             persist: PersistTyp::Forever,
             limit: 2,
             limit_enforce: LimitEnforceTyp::DeleteOldest,
@@ -289,9 +275,7 @@ fn default_red_deployables() -> Vec<Deployable> {
         },
         Deployable {
             path: vec!["Radar SAMs".into(), "SA8 Osa".into()],
-            kind: DeployableKind::Group {
-                template: "DEPSA8".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPSA8".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             limit_enforce: LimitEnforceTyp::DeleteOldest,
@@ -315,9 +299,7 @@ fn default_red_deployables() -> Vec<Deployable> {
         },
         Deployable {
             path: vec!["AAA".into(), "ZU23 Emplacement".into()],
-            kind: DeployableKind::Group {
-                template: "DEPZU23".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPZU23".into() },
             persist: PersistTyp::Forever,
             limit: 10,
             limit_enforce: LimitEnforceTyp::DeleteOldest,
@@ -341,9 +323,7 @@ fn default_red_deployables() -> Vec<Deployable> {
         },
         Deployable {
             path: vec!["AAA".into(), "Shilka".into()],
-            kind: DeployableKind::Group {
-                template: "DEPSHILKA".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPSHILKA".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             cost: 10,
@@ -367,9 +347,7 @@ fn default_red_deployables() -> Vec<Deployable> {
         },
         Deployable {
             path: vec!["AAA".into(), "Tunguska".into()],
-            kind: DeployableKind::Group {
-                template: "DEPTUNGUSKA".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPTUNGUSKA".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             cost: 15,
@@ -393,9 +371,7 @@ fn default_red_deployables() -> Vec<Deployable> {
         },
         Deployable {
             path: vec!["IR SAMs".into(), "SA13 Strela".into()],
-            kind: DeployableKind::Group {
-                template: "DEPSA13".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPSA13".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             cost: 15,
@@ -419,9 +395,7 @@ fn default_red_deployables() -> Vec<Deployable> {
         },
         Deployable {
             path: vec!["Ground Units".into(), "SPH 2S19 Msta 152MM".into()],
-            kind: DeployableKind::Group {
-                template: "DEPMSTA".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPMSTA".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             cost: 15,
@@ -445,9 +419,7 @@ fn default_red_deployables() -> Vec<Deployable> {
         },
         Deployable {
             path: vec!["Ground Units".into(), "T72".into()],
-            kind: DeployableKind::Group {
-                template: "DEPT72".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPT72".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             cost: 50,
@@ -470,15 +442,13 @@ fn default_red_deployables() -> Vec<Deployable> {
                 default_laser_code: 1688,
                 name: None,
             }),
-gci: None,
+            gci: None,
             deprecated_logistics: None,
             deprecated_template: None,
         },
         Deployable {
             path: vec!["Ground Units".into(), "BMP3".into()],
-            kind: DeployableKind::Group {
-                template: "DEPBMP3".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPBMP3".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             cost: 25,
@@ -501,15 +471,13 @@ gci: None,
                 default_laser_code: 1688,
                 name: None,
             }),
-gci: None,
+            gci: None,
             deprecated_logistics: None,
             deprecated_template: None,
         },
         Deployable {
             path: vec!["Ground Units".into(), "Ammo Truck".into()],
-            kind: DeployableKind::Group {
-                template: "DEPRAMMO".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPRAMMO".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             cost: 5,
@@ -533,9 +501,7 @@ gci: None,
         },
         Deployable {
             path: vec!["EWRs".into(), "1L13".into()],
-            kind: DeployableKind::Group {
-                template: "DEP1L13".into(),
-            },
+            kind: DeployableKind::Group { template: "DEP1L13".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             cost: 5,
@@ -676,9 +642,7 @@ fn default_blue_deployables() -> Vec<Deployable> {
     vec![
         Deployable {
             path: vec!["Radar SAMs".into(), "Roland ADS".into()],
-            kind: DeployableKind::Group {
-                template: "DEPROLAND".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPROLAND".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             cost: 35,
@@ -702,9 +666,7 @@ fn default_blue_deployables() -> Vec<Deployable> {
         },
         Deployable {
             path: vec!["Radar SAMs".into(), "Hawk System".into()],
-            kind: DeployableKind::Group {
-                template: "DEPHAWK".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPHAWK".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             cost: 35,
@@ -765,9 +727,7 @@ fn default_blue_deployables() -> Vec<Deployable> {
         },
         Deployable {
             path: vec!["IR SAMs".into(), "Avenger".into()],
-            kind: DeployableKind::Group {
-                template: "DEPAVENGER".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPAVENGER".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             cost: 15,
@@ -791,9 +751,7 @@ fn default_blue_deployables() -> Vec<Deployable> {
         },
         Deployable {
             path: vec!["IR SAMs".into(), "Linebacker".into()],
-            kind: DeployableKind::Group {
-                template: "DEPLINEBACKER".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPLINEBACKER".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             cost: 25,
@@ -817,9 +775,7 @@ fn default_blue_deployables() -> Vec<Deployable> {
         },
         Deployable {
             path: vec!["AAA".into(), "Flakpanzergepard".into()],
-            kind: DeployableKind::Group {
-                template: "DEPGEPARD".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPGEPARD".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             cost: 25,
@@ -843,9 +799,7 @@ fn default_blue_deployables() -> Vec<Deployable> {
         },
         Deployable {
             path: vec!["AAA".into(), "Vulkan".into()],
-            kind: DeployableKind::Group {
-                template: "DEPVULKAN".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPVULKAN".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             cost: 15,
@@ -869,9 +823,7 @@ fn default_blue_deployables() -> Vec<Deployable> {
         },
         Deployable {
             path: vec!["Ground Units".into(), "Firtina 155MM".into()],
-            kind: DeployableKind::Group {
-                template: "DEPFIRTINA".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPFIRTINA".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             cost: 15,
@@ -895,9 +847,7 @@ fn default_blue_deployables() -> Vec<Deployable> {
         },
         Deployable {
             path: vec!["Ground Units".into(), "M2A2 Bradley".into()],
-            kind: DeployableKind::Group {
-                template: "DEPBRADLEY".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPBRADLEY".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             cost: 25,
@@ -920,15 +870,13 @@ fn default_blue_deployables() -> Vec<Deployable> {
                 default_laser_code: 1688,
                 name: None,
             }),
-gci: None,
+            gci: None,
             deprecated_logistics: None,
             deprecated_template: None,
         },
         Deployable {
             path: vec!["Ground Units".into(), "2A6M Leopard".into()],
-            kind: DeployableKind::Group {
-                template: "DEPLEOPARD".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPLEOPARD".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             cost: 50,
@@ -951,15 +899,13 @@ gci: None,
                 default_laser_code: 1688,
                 name: None,
             }),
-gci: None,
+            gci: None,
             deprecated_logistics: None,
             deprecated_template: None,
         },
         Deployable {
             path: vec!["Ground Units".into(), "Ammo Truck".into()],
-            kind: DeployableKind::Group {
-                template: "DEPBAMMO".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPBAMMO".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             cost: 5,
@@ -983,9 +929,7 @@ gci: None,
         },
         Deployable {
             path: vec!["EWRs".into(), "AN/FPS-117".into()],
-            kind: DeployableKind::Group {
-                template: "DEPFPS117".into(),
-            },
+            kind: DeployableKind::Group { template: "DEPFPS117".into() },
             persist: PersistTyp::Forever,
             limit: 4,
             cost: 5,
@@ -1047,10 +991,7 @@ gci: None,
         fat_cow_deployable(
             "B",
             9000,
-            [
-                ("weapons.missiles.AGM_114K", 16),
-                ("weapons.nurs.HYDRA_70_M151", 76),
-            ],
+            [("weapons.missiles.AGM_114K", 16), ("weapons.nurs.HYDRA_70_M151", 76)],
         ),
     ]
 }
@@ -1220,18 +1161,9 @@ fn default_unit_classification() -> FxHashMap<Vehicle, UnitTags> {
             ("Hawk sr".into(), SAM | LR | RadarGuided | SearchRadar),
             ("Hawk tr".into(), SAM | LR | RadarGuided | TrackRadar),
             ("Hawk ln".into(), SAM | LR | RadarGuided | Launcher),
-            (
-                "M1134 Stryker ATGM".into(),
-                APC | MR | ATGM | SmallArms | Driveable,
-            ),
-            (
-                "M-2 Bradley".into(),
-                APC | MR | ATGM | LightCannon | Driveable,
-            ),
-            (
-                "M-1 Abrams".into(),
-                Armor | MR | HeavyCannon | SmallArms | Driveable,
-            ),
+            ("M1134 Stryker ATGM".into(), APC | MR | ATGM | SmallArms | Driveable),
+            ("M-2 Bradley".into(), APC | MR | ATGM | LightCannon | Driveable),
+            ("M-1 Abrams".into(), Armor | MR | HeavyCannon | SmallArms | Driveable),
             ("outpost".into(), Logistics | SR | SmallArms),
             ("bofors40".into(), AAA | LR),
             ("M 818".into(), Logistics | Unarmed),
@@ -1257,36 +1189,15 @@ fn default_unit_classification() -> FxHashMap<Vehicle, UnitTags> {
                 "Soldier stinger".into(),
                 SAM | Infantry | SR | IRGuided | Launcher | Driveable,
             ),
-            (
-                "Stinger comm".into(),
-                SAM | Infantry | ControlUnit | Unarmed,
-            ),
-            (
-                "T155_Firtina".into(),
-                Armor | LR | Artillery | SmallArms | Driveable,
-            ),
-            (
-                "Leopard-2".into(),
-                Armor | MR | HeavyCannon | SmallArms | Driveable,
-            ),
+            ("Stinger comm".into(), SAM | Infantry | ControlUnit | Unarmed),
+            ("T155_Firtina".into(), Armor | LR | Artillery | SmallArms | Driveable),
+            ("Leopard-2".into(), Armor | MR | HeavyCannon | SmallArms | Driveable),
             ("ZSU-23-4 Shilka".into(), AAA | MR | RadarGuided | Driveable),
             ("ZSU_57_2".into(), AAA | LR | Driveable),
-            (
-                "Strela-10M3".into(),
-                SAM | SR | IRGuided | Launcher | Driveable,
-            ),
-            (
-                "Strela-1 9P31".into(),
-                SAM | SR | IRGuided | Launcher | Driveable,
-            ),
-            (
-                "SA-11 Buk CC 9S470M1".into(),
-                SAM | LR | RadarGuided | ControlUnit,
-            ),
-            (
-                "SA-11 Buk SR 9S18M1".into(),
-                SAM | LR | RadarGuided | SearchRadar,
-            ),
+            ("Strela-10M3".into(), SAM | SR | IRGuided | Launcher | Driveable),
+            ("Strela-1 9P31".into(), SAM | SR | IRGuided | Launcher | Driveable),
+            ("SA-11 Buk CC 9S470M1".into(), SAM | LR | RadarGuided | ControlUnit),
+            ("SA-11 Buk SR 9S18M1".into(), SAM | LR | RadarGuided | SearchRadar),
             (
                 "SA-11 Buk LN 9A310M1".into(),
                 SAM | LR | RadarGuided | TrackRadar | Launcher,
@@ -1294,18 +1205,9 @@ fn default_unit_classification() -> FxHashMap<Vehicle, UnitTags> {
             ("BMD-1".into(), APC | MR | ATGM | LightCannon | Driveable),
             ("BMP-1".into(), APC | MR | ATGM | LightCannon | Driveable),
             ("BMP-3".into(), APC | MR | ATGM | LightCannon | Driveable),
-            (
-                "T-80UD".into(),
-                Armor | MR | ATGM | HeavyCannon | SmallArms | Driveable,
-            ),
-            (
-                "T-72B".into(),
-                Armor | MR | HeavyCannon | SmallArms | Driveable,
-            ),
-            (
-                "T-55".into(),
-                Armor | MR | HeavyCannon | SmallArms | Driveable,
-            ),
+            ("T-80UD".into(), Armor | MR | ATGM | HeavyCannon | SmallArms | Driveable),
+            ("T-72B".into(), Armor | MR | HeavyCannon | SmallArms | Driveable),
+            ("T-55".into(), Armor | MR | HeavyCannon | SmallArms | Driveable),
             ("S-60_Type59_Artillery".into(), AAA | LR),
             ("ZU-23 Emplacement Closed".into(), AAA | SR),
             ("ATZ-10".into(), Logistics | Unarmed),
@@ -1313,10 +1215,7 @@ fn default_unit_classification() -> FxHashMap<Vehicle, UnitTags> {
             ("Infantry AK ver3".into(), Infantry | SR | SmallArms),
             ("Infantry AK ver2".into(), Infantry | SR | SmallArms),
             ("Paratrooper RPG-16".into(), Infantry | MR | RPG),
-            (
-                "Kub 1S91 str".into(),
-                SAM | MR | RadarGuided | SearchRadar | TrackRadar,
-            ),
+            ("Kub 1S91 str".into(), SAM | MR | RadarGuided | SearchRadar | TrackRadar),
             ("Kub 2P25 ln".into(), SAM | MR | RadarGuided | Launcher),
             (
                 "Tor 9A331".into(),
@@ -1333,10 +1232,7 @@ fn default_unit_classification() -> FxHashMap<Vehicle, UnitTags> {
                 SAM | SR | RadarGuided | SearchRadar | TrackRadar | Launcher | Driveable,
             ),
             ("ZU-23 Emplacement".into(), AAA | SR),
-            (
-                "2S6 Tunguska".into(),
-                SAM | AAA | SR | OpticallyGuided | Launcher,
-            ),
+            ("2S6 Tunguska".into(), SAM | AAA | SR | OpticallyGuided | Launcher),
             ("Cow".into(), Logistics | Unarmed),
             ("FARP Ammo Dump Coating".into(), Logistics | Unarmed),
             ("FARP Fuel Depot".into(), Logistics | Unarmed),
@@ -1362,15 +1258,9 @@ fn default_unit_classification() -> FxHashMap<Vehicle, UnitTags> {
             ("UH-1H".into(), Helicopter.into()),
             ("M-2000C".into(), Aircraft.into()),
             ("Mi-8MT".into(), Helicopter.into()),
-            (
-                "SA-18 Igla-S manpad".into(),
-                SAM | SR | IRGuided | Launcher | Driveable,
-            ),
+            ("SA-18 Igla-S manpad".into(), SAM | SR | IRGuided | Launcher | Driveable),
             ("SA-18 Igla comm".into(), SAM | SR | IRGuided | ControlUnit),
-            (
-                "SA-18 Igla-S comm".into(),
-                SAM | SR | IRGuided | ControlUnit,
-            ),
+            ("SA-18 Igla-S comm".into(), SAM | SR | IRGuided | ControlUnit),
             ("Ka-50_3".into(), Helicopter.into()),
             ("Ka-50".into(), Helicopter.into()),
             ("Infantry AK".into(), Infantry | SR | SmallArms),
@@ -2522,7 +2412,7 @@ impl Default for Cfg {
                         range: 16000,
                         nolos: true,
                         default_laser_code: 1688,
-                name: None,
+                        name: None,
                     },
                 ),
                 (
@@ -2531,7 +2421,7 @@ impl Default for Cfg {
                         range: 16000,
                         nolos: true,
                         default_laser_code: 1688,
-                name: None,
+                        name: None,
                     },
                 ),
             ]),
@@ -2563,10 +2453,10 @@ impl Default for Cfg {
             carrier: Some(CarrierCfg {
                 repair_cost: 5000,
                 respawn_cost: 15000,
-                movement_speed: 5.0,               // ~10 knots
-                spawn_repositioning_speed: 100.0,  // ~194 knots, used to quickly navigate back to last position after restart
-                repair_time: 600,                  // 10 minutes
-                groups: vec![],                    // Carrier groups defined here, or auto-detected by BCARRIER/RCARRIER prefix
+                movement_speed: 5.0,              // ~10 knots
+                spawn_repositioning_speed: 100.0, // ~194 knots, used to quickly navigate back to last position after restart
+                repair_time: 600,                 // 10 minutes
+                groups: vec![], // Carrier groups defined here, or auto-detected by BCARRIER/RCARRIER prefix
             }),
             special_sam_sites: vec![],
             special_sam_capture_radius_m: 609.6, // 2000 ft
@@ -2628,6 +2518,3 @@ impl Default for Cfg {
         }
     }
 }
-
-
-

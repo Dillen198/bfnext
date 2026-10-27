@@ -55,7 +55,11 @@ fn tree_name(n: &[u8]) -> String {
 /// Copy every tree of `from` into `to` (which should be empty), then make
 /// sure `to` hands out no id `from` might already have. `progress` is called
 /// after each tree. Returns what was copied.
-pub fn copy_all(from: &Db, to: &Db, mut progress: impl FnMut(&str, u64)) -> Result<CopyStats> {
+pub fn copy_all(
+    from: &Db,
+    to: &Db,
+    mut progress: impl FnMut(&str, u64),
+) -> Result<CopyStats> {
     let mut stats = CopyStats::default();
     for name in from.tree_names()? {
         let src = from.open_tree(&name)?;
@@ -135,7 +139,12 @@ impl VerifyReport {
 /// count as absent. Every
 /// `sample_every`-th pair is also fetched from the copy by key, which checks
 /// its index as well as its iteration order.
-pub fn verify(source: &Db, copy: &Db, allow_reencoded: bool, sample_every: u64) -> Result<VerifyReport> {
+pub fn verify(
+    source: &Db,
+    copy: &Db,
+    allow_reencoded: bool,
+    sample_every: u64,
+) -> Result<VerifyReport> {
     if sample_every == 0 {
         bail!("sample_every must be at least 1")
     }
@@ -180,16 +189,24 @@ pub fn verify(source: &Db, copy: &Db, allow_reencoded: bool, sample_every: u64) 
                         continue;
                     }
                     if va != vb {
-                        if allow_reencoded && codec::is_msgpack(&va) != codec::is_msgpack(&vb) {
+                        if allow_reencoded
+                            && codec::is_msgpack(&va) != codec::is_msgpack(&vb)
+                        {
                             rep.reencoded += 1;
                         } else {
-                            rep.push(Mismatch::Value { tree: tree.clone(), key: ka.to_vec() });
+                            rep.push(Mismatch::Value {
+                                tree: tree.clone(),
+                                key: ka.to_vec(),
+                            });
                         }
                     }
                     if na % sample_every == 0 {
                         rep.lookups += 1;
                         if b.get(&ka)?.as_deref() != Some(&vb[..]) {
-                            rep.push(Mismatch::Lookup { tree: tree.clone(), key: ka.to_vec() });
+                            rep.push(Mismatch::Lookup {
+                                tree: tree.clone(),
+                                key: ka.to_vec(),
+                            });
                         }
                     }
                 }
@@ -215,7 +232,8 @@ mod tests {
     fn fill(db: &Db) {
         let a: Tree<(u32, String), Vec<u8>> = Tree::open(db, "a").unwrap();
         for i in 0..2500u32 {
-            a.insert(&(i % 7, format!("k{i}")), &vec![i as u8; (i % 13) as usize]).unwrap();
+            a.insert(&(i % 7, format!("k{i}")), &vec![i as u8; (i % 13) as usize])
+                .unwrap();
         }
         let b: Tree<u64, (f64, String)> = Tree::open(db, "b").unwrap();
         b.insert(&7, &(1.5, "x".into())).unwrap();
@@ -227,7 +245,8 @@ mod tests {
 
     #[test]
     fn copies_both_ways_and_verifies() {
-        for (from_e, to_e) in [(Engine::Sled, Engine::Redb), (Engine::Redb, Engine::Sled)] {
+        for (from_e, to_e) in [(Engine::Sled, Engine::Redb), (Engine::Redb, Engine::Sled)]
+        {
             let from = Db::temporary(from_e).unwrap();
             fill(&from);
             let to = Db::temporary(to_e).unwrap();
@@ -263,8 +282,13 @@ mod tests {
         let rep = verify(&from, &to, false, 1).unwrap();
         assert!(!rep.ok());
         assert!(rep.mismatches.contains(&Mismatch::ExtraTree("zzz".into())));
-        assert!(rep.mismatches.iter().any(|m| matches!(m, Mismatch::Value { tree, .. } if tree == "b")));
-        assert!(rep.mismatches.iter().any(|m| matches!(m, Mismatch::Count { tree, source: 1, copy: 2 } if tree == "b")));
+        assert!(rep
+            .mismatches
+            .iter()
+            .any(|m| matches!(m, Mismatch::Value { tree, .. } if tree == "b")));
+        assert!(rep.mismatches.iter().any(
+            |m| matches!(m, Mismatch::Count { tree, source: 1, copy: 2 } if tree == "b")
+        ));
     }
 
     #[test]
@@ -273,7 +297,8 @@ mod tests {
         fill(&from);
         let to = Db::temporary_redb().unwrap();
         copy_all(&from, &to, |_, _| ()).unwrap();
-        let st = Tree::<u64, (f64, String)>::open(&to, "b").unwrap().reencode(false).unwrap();
+        let st =
+            Tree::<u64, (f64, String)>::open(&to, "b").unwrap().reencode(false).unwrap();
         assert_eq!((st.rows, st.reencoded), (1, 1));
         assert!(!verify(&from, &to, false, 1).unwrap().ok());
         let rep = verify(&from, &to, true, 1).unwrap();

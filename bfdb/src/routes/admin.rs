@@ -11,7 +11,11 @@ pub(crate) async fn api_admin_audit(
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_admin(session_id, db.clone()).await?;
-    let limit = q.get("limit").and_then(|s| s.parse::<usize>().ok()).unwrap_or(200).clamp(1, 1000);
+    let limit = q
+        .get("limit")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(200)
+        .clamp(1, 1000);
     let before = match q.get("before") {
         Some(b) => Some(
             chrono::DateTime::parse_from_rfc3339(b)
@@ -54,9 +58,7 @@ pub(crate) async fn api_admin_reset_lives_all(
     let who = require_role(session_id, db.clone(), admin::Role::OPS).await?;
     let reply = call_engine_rpc_str(&db, &inst, "reset-lives-all", vec![]).await?;
     audit(&db, &who, "reset all lives", Some(&reply), Some(&inst.id));
-    Ok(warp::reply::json(
-        &serde_json::json!({"ok": true, "message": reply}),
-    ))
+    Ok(warp::reply::json(&serde_json::json!({"ok": true, "message": reply})))
 }
 
 #[derive(serde::Deserialize)]
@@ -96,10 +98,19 @@ pub(crate) async fn api_admin_side_switch(
         &db,
         &inst,
         "side-switch",
-        vec![("player", Value::from(player.to_string())), ("side", Value::from(side.to_string()))],
+        vec![
+            ("player", Value::from(player.to_string())),
+            ("side", Value::from(side.to_string())),
+        ],
     )
     .await?;
-    audit(&db, &who, "side switch", Some(&format!("{player} -> {side}: {reply}")), Some(&inst.id));
+    audit(
+        &db,
+        &who,
+        "side switch",
+        Some(&format!("{player} -> {side}: {reply}")),
+        Some(&inst.id),
+    );
     Ok(warp::reply::json(&serde_json::json!({"ok": true, "message": reply})))
 }
 
@@ -113,13 +124,18 @@ pub(crate) async fn api_admin_merge_rounds(
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let who = require_admin(session_id, db.clone()).await?;
-    let dry_run = query
-        .get("dry_run")
-        .map(|v| v != "false" && v != "0")
-        .unwrap_or(true);
+    let dry_run = query.get("dry_run").map(|v| v != "false" && v != "0").unwrap_or(true);
     let msg = task::block_in_place(|| db.merge_all_rounds(dry_run))?;
-    audit(&db, &who, if dry_run { "merge rounds (dry run)" } else { "merge rounds" }, Some(&msg), None);
-    Ok(warp::reply::json(&serde_json::json!({ "ok": true, "dry_run": dry_run, "message": msg })))
+    audit(
+        &db,
+        &who,
+        if dry_run { "merge rounds (dry run)" } else { "merge rounds" },
+        Some(&msg),
+        None,
+    );
+    Ok(warp::reply::json(
+        &serde_json::json!({ "ok": true, "dry_run": dry_run, "message": msg }),
+    ))
 }
 
 /// POST /api/admin/rebuild-stats  — queue an in-process rebuild: the JSONL
@@ -258,12 +274,17 @@ pub(crate) async fn api_admin_ops_proxy(
     let who = require_role(session_id, db.clone(), admin::Role::OPS).await?;
     let path = tail.as_str();
     let json_err = |status: StatusCode, msg: String| {
-        warp::reply::with_status(warp::reply::json(&serde_json::json!({ "error": msg })), status)
-            .into_response()
+        warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({ "error": msg })),
+            status,
+        )
+        .into_response()
     };
     if path.is_empty()
         || path.contains("..")
-        || !path.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-'))
+        || !path
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-'))
     {
         return Ok(json_err(StatusCode::BAD_REQUEST, format!("bad ops path {path:?}")));
     }
@@ -282,14 +303,15 @@ pub(crate) async fn api_admin_ops_proxy(
     }
     // One client for every OPS call: its connection pool to the bot is
     // reused instead of rebuilt (TLS and all) per request.
-    static OPS_HTTP: std::sync::LazyLock<std::result::Result<reqwest::Client, std::string::String>> =
-        std::sync::LazyLock::new(|| {
-            reqwest::Client::builder()
-                // an update check downloads the release; give it room
-                .timeout(std::time::Duration::from_secs(300))
-                .build()
-                .map_err(|e| e.to_string())
-        });
+    static OPS_HTTP: std::sync::LazyLock<
+        std::result::Result<reqwest::Client, std::string::String>,
+    > = std::sync::LazyLock::new(|| {
+        reqwest::Client::builder()
+            // an update check downloads the release; give it room
+            .timeout(std::time::Duration::from_secs(300))
+            .build()
+            .map_err(|e| e.to_string())
+    });
     let http = OPS_HTTP.as_ref().map_err(|e| anyhow::anyhow!("http client: {e}"))?;
     let req = if method == warp::http::Method::POST {
         http.post(&url)
@@ -303,7 +325,9 @@ pub(crate) async fn api_admin_ops_proxy(
         Err(e) => {
             return Ok(json_err(
                 StatusCode::BAD_GATEWAY,
-                format!("the bot's WebService is not answering ({e}) -- is DCSServerBot running?"),
+                format!(
+                "the bot's WebService is not answering ({e}) -- is DCSServerBot running?"
+            ),
             ))
         }
     };
@@ -347,9 +371,17 @@ pub(crate) const CFG_BACKUPS_KEPT: usize = 20;
 /// Delete all but the newest `keep` `<cfg>.bak.<YYYYmmddHHMMSS>` copies of
 /// `cfg`. Every save made one and nothing removed them.
 pub(crate) fn prune_cfg_backups(cfg: &std::path::Path, keep: usize) {
-    let (Some(dir), Some(name)) = (cfg.parent(), cfg.file_name().and_then(|n| n.to_str())) else { return };
+    let (Some(dir), Some(name)) =
+        (cfg.parent(), cfg.file_name().and_then(|n| n.to_str()))
+    else {
+        return;
+    };
     let prefix = format!("{name}.bak.");
-    let Ok(rd) = std::fs::read_dir(if dir.as_os_str().is_empty() { std::path::Path::new(".") } else { dir }) else {
+    let Ok(rd) = std::fs::read_dir(if dir.as_os_str().is_empty() {
+        std::path::Path::new(".")
+    } else {
+        dir
+    }) else {
         return;
     };
     let mut baks: Vec<PathBuf> = rd
@@ -359,7 +391,9 @@ pub(crate) fn prune_cfg_backups(cfg: &std::path::Path, keep: usize) {
             p.file_name()
                 .and_then(|n| n.to_str())
                 .and_then(|n| n.strip_prefix(&prefix))
-                .map_or(false, |ts| ts.len() == 14 && ts.bytes().all(|b| b.is_ascii_digit()))
+                .map_or(false, |ts| {
+                    ts.len() == 14 && ts.bytes().all(|b| b.is_ascii_digit())
+                })
         })
         .collect();
     // the timestamp sorts as text
@@ -381,10 +415,9 @@ pub(crate) async fn api_admin_cfg_get(
 ) -> std::result::Result<impl warp::Reply, Error> {
     let path: Arc<Option<PathBuf>> = Arc::new(inst.cfg.engine_config.clone());
     require_role(session_id, db.clone(), admin::Role::OPS).await?;
-    let path = path
-        .as_ref()
-        .clone()
-        .ok_or_else(|| websec::not_found("engine config not configured (missing --engine-config)"))?;
+    let path = path.as_ref().clone().ok_or_else(|| {
+        websec::not_found("engine config not configured (missing --engine-config)")
+    })?;
     let data = task::block_in_place(|| -> Result<String> {
         std::fs::read_to_string(&path)
             .map_err(|e| anyhow::anyhow!("reading {:?}: {e}", path))
@@ -423,10 +456,9 @@ pub(crate) async fn api_admin_cfg_post(
 ) -> std::result::Result<impl warp::Reply, Error> {
     let path: Arc<Option<PathBuf>> = Arc::new(inst.cfg.engine_config.clone());
     let who = require_role(session_id, db.clone(), admin::Role::OPS).await?;
-    let path = path
-        .as_ref()
-        .clone()
-        .ok_or_else(|| websec::not_found("engine config not configured (missing --engine-config)"))?;
+    let path = path.as_ref().clone().ok_or_else(|| {
+        websec::not_found("engine config not configured (missing --engine-config)")
+    })?;
     let _validated: bfprotocols::cfg::Cfg = serde_json::from_value(body.cfg.clone())
         .map_err(|e| websec::bad_request(format!("config is invalid: {e}")))?;
     let pretty = serde_json::to_string_pretty(&body.cfg)
@@ -438,8 +470,9 @@ pub(crate) async fn api_admin_cfg_post(
                 path.file_name().and_then(|n| n.to_str()).unwrap_or("cfg"),
                 chrono::Utc::now().format("%Y%m%d%H%M%S")
             ));
-            std::fs::copy(&path, &backup)
-                .map_err(|e| anyhow::anyhow!("backing up {:?} to {:?}: {e}", path, backup))?;
+            std::fs::copy(&path, &backup).map_err(|e| {
+                anyhow::anyhow!("backing up {:?} to {:?}: {e}", path, backup)
+            })?;
             prune_cfg_backups(&path, CFG_BACKUPS_KEPT);
         }
         std::fs::write(&path, pretty)
@@ -500,25 +533,33 @@ pub(crate) async fn api_admin_banned(
     let data = task::block_in_place(|| -> Result<(String, usize)> {
         let web_bans = db.list_admin_bans()?;
         let cfg_bans = db.session_bans_from_cfg()?;
-        let entries: Vec<_> = web_bans.iter().map(|(ucid, rec)| serde_json::json!({
-            "ucid":      ucid.to_string(),
-            "name":      rec.name,
-            "banned_at": rec.banned_at.to_rfc3339(),
-            "until":     rec.until.map(|t| t.to_rfc3339()),
-            "reason":    rec.reason,
-            "source":    "web",
-        })).chain(cfg_bans.iter().filter_map(|(ucid, name, until)| {
-            // Don't duplicate entries already in web_bans
-            if web_bans.iter().any(|(u, _)| u == ucid) { return None }
-            Some(serde_json::json!({
-                "ucid":      ucid.to_string(),
-                "name":      name,
-                "banned_at": serde_json::Value::Null,
-                "until":     until.map(|t| t.to_rfc3339()),
-                "reason":    "",
-                "source":    "engine",
+        let entries: Vec<_> = web_bans
+            .iter()
+            .map(|(ucid, rec)| {
+                serde_json::json!({
+                    "ucid":      ucid.to_string(),
+                    "name":      rec.name,
+                    "banned_at": rec.banned_at.to_rfc3339(),
+                    "until":     rec.until.map(|t| t.to_rfc3339()),
+                    "reason":    rec.reason,
+                    "source":    "web",
+                })
+            })
+            .chain(cfg_bans.iter().filter_map(|(ucid, name, until)| {
+                // Don't duplicate entries already in web_bans
+                if web_bans.iter().any(|(u, _)| u == ucid) {
+                    return None;
+                }
+                Some(serde_json::json!({
+                    "ucid":      ucid.to_string(),
+                    "name":      name,
+                    "banned_at": serde_json::Value::Null,
+                    "until":     until.map(|t| t.to_rfc3339()),
+                    "reason":    "",
+                    "source":    "engine",
+                }))
             }))
-        })).collect();
+            .collect();
         page_json(entries, &q, ADMIN_LIST_CAP)
     })?;
     Ok(paged_response(data))
@@ -541,11 +582,11 @@ pub(crate) async fn api_admin_engine_errors(
 
 #[derive(serde::Deserialize)]
 pub(crate) struct BanBody {
-    pub(crate) ucid:   std::string::String,
-    pub(crate) name:   std::string::String,
+    pub(crate) ucid: std::string::String,
+    pub(crate) name: std::string::String,
     #[serde(default)]
     pub(crate) reason: std::string::String,
-    pub(crate) until:  Option<std::string::String>,   // ISO-8601 or null
+    pub(crate) until: Option<std::string::String>, // ISO-8601 or null
 }
 
 /// POST /api/admin/ban  — add or update a ban record
@@ -555,9 +596,13 @@ pub(crate) async fn api_admin_ban(
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let who = require_role(session_id, db.clone(), admin::Role::MODERATION).await?;
-    let ucid = body.ucid.parse::<dcso3::net::Ucid>()
+    let ucid = body
+        .ucid
+        .parse::<dcso3::net::Ucid>()
         .map_err(|e| Error(websec::bad_request(format!("invalid ucid: {e}"))))?;
-    let until = body.until.as_deref()
+    let until = body
+        .until
+        .as_deref()
         .filter(|s| !s.is_empty())
         .map(|s| s.parse::<chrono::DateTime<chrono::Utc>>())
         .transpose()
@@ -585,7 +630,9 @@ pub(crate) async fn api_admin_unban(
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let who = require_role(session_id, db.clone(), admin::Role::MODERATION).await?;
-    let ucid = body.ucid.parse::<dcso3::net::Ucid>()
+    let ucid = body
+        .ucid
+        .parse::<dcso3::net::Ucid>()
         .map_err(|e| Error(websec::bad_request(format!("invalid ucid: {e}"))))?;
     let removed = task::block_in_place(|| db.unban_player(&ucid))?;
     audit(&db, &who, "unban", Some(&body.ucid), None);

@@ -21,9 +21,9 @@ for more details.
 //! distance and the front line for logistics pay, and the fund a captured
 //! base hands over.
 
-use super::{objective::Objective, Db};
+use super::{Db, objective::Objective};
 use bfprotocols::db::objective::ObjectiveId;
-use compact_str::{format_compact, CompactString};
+use compact_str::{CompactString, format_compact};
 use dcso3::{coalition::Side, net::Ucid};
 use log::info;
 
@@ -70,11 +70,7 @@ impl Db {
                 }
             }
         }
-        if contested == 0 {
-            0.5
-        } else {
-            mine as f64 / contested as f64
-        }
+        if contested == 0 { 0.5 } else { mine as f64 / contested as f64 }
     }
 
     /// Players in a slot (spectators excluded) on `side`, and on both sides.
@@ -115,12 +111,7 @@ impl Db {
     }
 
     fn new_player_join(&self) -> i64 {
-        self.ephemeral
-            .cfg
-            .points
-            .as_ref()
-            .map(|p| p.new_player_join as i64)
-            .unwrap_or(0)
+        self.ephemeral.cfg.points.as_ref().map(|p| p.new_player_join as i64).unwrap_or(0)
     }
 
     /// The side's typical balance: the median of its pilots who have earned
@@ -198,7 +189,8 @@ impl Db {
         if !econ.enabled || econ.late_joiner_fraction <= 0. {
             return (join as i32, 0);
         }
-        let share = (self.reference_balance(side) as f64 * econ.late_joiner_fraction) as i64;
+        let share =
+            (self.reference_balance(side) as f64 * econ.late_joiner_fraction) as i64;
         let start = share.max(join).min(i32::MAX as i64);
         (start as i32, (start - join).max(0) as i32)
     }
@@ -264,7 +256,8 @@ impl Db {
         let unpacker_side = self.persisted.players.get(&unpacker).map(|p| p.side);
         let hauler = hauler.filter(|h| {
             *h != unpacker
-                && self.persisted.players.get(h).map(|p| Some(p.side)) == Some(unpacker_side)
+                && self.persisted.players.get(h).map(|p| Some(p.side))
+                    == Some(unpacker_side)
         });
         match hauler {
             None => {
@@ -276,7 +269,11 @@ impl Db {
                 let hauler_pts = total - unpacker_pts;
                 self.earn_points(&h, hauler_pts, &detail);
                 if unpacker_pts > 0 {
-                    self.earn_points(&unpacker, unpacker_pts, &format_compact!("{detail}, unpacked"));
+                    self.earn_points(
+                        &unpacker,
+                        unpacker_pts,
+                        &format_compact!("{detail}, unpacked"),
+                    );
                 }
             }
         }

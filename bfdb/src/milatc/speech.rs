@@ -31,20 +31,37 @@ pub(crate) fn digit_word(d: u32) -> &'static str {
 }
 
 fn digits_spoken(s: &str) -> String {
-    s.chars()
-        .filter_map(|c| c.to_digit(10))
-        .map(digit_word)
-        .collect::<Vec<_>>()
-        .join(" ")
+    s.chars().filter_map(|c| c.to_digit(10)).map(digit_word).collect::<Vec<_>>().join(" ")
 }
 
 /// Cardinal words for small counts and distances ("ten miles").
 fn cardinal(n: u32) -> String {
     const ONES: [&str; 20] = [
-        "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
-        "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
+        "zero",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
     ];
-    const TENS: [&str; 10] = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
+    const TENS: [&str; 10] = [
+        "", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty",
+        "ninety",
+    ];
     match n {
         0..=19 => ONES[n as usize].to_string(),
         20..=99 => {
@@ -66,7 +83,11 @@ fn altitude_spoken(ft: u32) -> String {
     let hundreds = (ft % 1000) / 100;
     let mut parts = vec![];
     if thousands > 0 {
-        let t = if thousands >= 10 { digits_spoken(&thousands.to_string()) } else { digit_word(thousands).to_string() };
+        let t = if thousands >= 10 {
+            digits_spoken(&thousands.to_string())
+        } else {
+            digit_word(thousands).to_string()
+        };
         parts.push(format!("{t} thousand"));
     }
     if hundreds > 0 {
@@ -151,7 +172,10 @@ pub(crate) fn speak(written: &str) -> String {
                 }
                 // 340.2 / 29.92: a frequency (or anything with a decimal)
                 if let (Some(Tok::Other('.')), Some(Tok::Num(m))) = (next, after) {
-                    push(&mut out, &format!("{} point {}", digits_spoken(n), digits_spoken(m)));
+                    push(
+                        &mut out,
+                        &format!("{} point {}", digits_spoken(n), digits_spoken(m)),
+                    );
                     i += 3;
                     continue;
                 }
@@ -159,7 +183,9 @@ pub(crate) fn speak(written: &str) -> String {
                 if let (Some(Tok::Other('-')), Some(Tok::Num(m))) = (next, after) {
                     let mut s = format!("{} {}", digits_spoken(n), digits_spoken(m));
                     let mut j = i + 3;
-                    while let (Some(Tok::Other('-')), Some(Tok::Num(k))) = (t.get(j), t.get(j + 1)) {
+                    while let (Some(Tok::Other('-')), Some(Tok::Num(k))) =
+                        (t.get(j), t.get(j + 1))
+                    {
                         s.push(' ');
                         s.push_str(&digits_spoken(k));
                         j += 2;
@@ -234,7 +260,8 @@ pub(crate) fn format_callsign(word: &str, digits: &str) -> String {
 pub(crate) fn freq(mhz: f64) -> String {
     let s = format!("{mhz:.3}");
     let s = s.trim_end_matches('0');
-    let s = s.strip_suffix('.').map(|x| format!("{x}.0")).unwrap_or_else(|| s.to_string());
+    let s =
+        s.strip_suffix('.').map(|x| format!("{x}.0")).unwrap_or_else(|| s.to_string());
     s
 }
 
@@ -314,19 +341,28 @@ pub(crate) fn taxiway(name: &str) -> String {
 /// The ATIS information letter.
 pub(crate) fn letter(n: u8) -> &'static str {
     const L: [&str; 26] = [
-        "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "India", "Juliet", "Kilo",
-        "Lima", "Mike", "November", "Oscar", "Papa", "Quebec", "Romeo", "Sierra", "Tango", "Uniform",
-        "Victor", "Whiskey", "X-ray", "Yankee", "Zulu",
+        "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel",
+        "India", "Juliet", "Kilo", "Lima", "Mike", "November", "Oscar", "Papa", "Quebec",
+        "Romeo", "Sierra", "Tango", "Uniform", "Victor", "Whiskey", "X-ray", "Yankee",
+        "Zulu",
     ];
     L[(n % 26) as usize]
 }
 
 /// Clock direction / compass word for "15 miles north".
 pub(crate) fn compass(brg: f64) -> &'static str {
-    const C: [&str; 8] = ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"];
+    const C: [&str; 8] = [
+        "north",
+        "northeast",
+        "east",
+        "southeast",
+        "south",
+        "southwest",
+        "west",
+        "northwest",
+    ];
     C[(((brg.rem_euclid(360.) + 22.5) / 45.) as usize) % 8]
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -342,11 +378,17 @@ mod tests {
             speak("climb and maintain 4,000, expect FL220, departure 363.8, squawk 4215"),
             "climb and maintain four thousand, expect flight level two two zero, departure three six three point eight, squawk four two one five"
         );
-        assert_eq!(speak("pattern altitude 2,100"), "pattern altitude two thousand one hundred");
+        assert_eq!(
+            speak("pattern altitude 2,100"),
+            "pattern altitude two thousand one hundred"
+        );
         assert_eq!(speak("12,500"), "one two thousand five hundred");
         assert_eq!(speak("10 miles from touchdown"), "ten miles from touchdown");
         assert_eq!(speak("altimeter 2992"), "altimeter two niner niner two");
-        assert_eq!(speak("traffic two o'clock, 3 miles"), "traffic two o'clock, three miles");
+        assert_eq!(
+            speak("traffic two o'clock, 3 miles"),
+            "traffic two o'clock, three miles"
+        );
     }
 
     #[test]

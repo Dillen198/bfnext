@@ -63,13 +63,13 @@ pub enum IntelUnitClass {
 impl IntelUnitClass {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Armor      => "Armor",
+            Self::Armor => "Armor",
             Self::AirDefense => "ADS",
-            Self::Artillery  => "ARTY",
-            Self::Infantry   => "INF",
-            Self::AirBase    => "AIRBASE",
-            Self::Naval      => "NAVAL",
-            Self::Unknown    => "UNK",
+            Self::Artillery => "ARTY",
+            Self::Infantry => "INF",
+            Self::AirBase => "AIRBASE",
+            Self::Naval => "NAVAL",
+            Self::Unknown => "UNK",
         }
     }
 
@@ -115,12 +115,12 @@ impl IntelSource {
     /// Exponential decay half-life for this source, using the active config.
     pub fn half_life_secs(self, cfg: &ElintConfig) -> u32 {
         match self {
-            Self::ReconFlight    => cfg.half_life_recon_secs,
-            Self::SpecialForces  => cfg.half_life_sf_secs,
-            Self::Awacs          => cfg.half_life_awacs_secs,
-            Self::EwrFusion      => cfg.half_life_ewr_secs,
-            Self::Jtac           => cfg.half_life_jtac_secs,
-            Self::HumanInt       => cfg.half_life_sf_secs,
+            Self::ReconFlight => cfg.half_life_recon_secs,
+            Self::SpecialForces => cfg.half_life_sf_secs,
+            Self::Awacs => cfg.half_life_awacs_secs,
+            Self::EwrFusion => cfg.half_life_ewr_secs,
+            Self::Jtac => cfg.half_life_jtac_secs,
+            Self::HumanInt => cfg.half_life_sf_secs,
         }
     }
 
@@ -210,16 +210,17 @@ impl IntelDatabase {
         let assoc_sq = cfg.contact_cluster_radius_m.powi(2);
 
         // Look for an existing contact of the same class close enough to merge.
-        let existing_id = self.by_side
-            .get(&side)
-            .and_then(|ids| {
-                ids.iter().find(|&&id| {
+        let existing_id = self.by_side.get(&side).and_then(|ids| {
+            ids.iter()
+                .find(|&&id| {
                     self.contacts.get(&id).map_or(false, |c| {
                         c.unit_class == unit_class
-                            && na::distance_squared(&c.pos.into(), &pos.into()) <= assoc_sq
+                            && na::distance_squared(&c.pos.into(), &pos.into())
+                                <= assoc_sq
                     })
-                }).copied()
-            });
+                })
+                .copied()
+        });
 
         if let Some(id) = existing_id {
             if let Some(c) = self.contacts.get_mut(&id) {
@@ -255,31 +256,37 @@ impl IntelDatabase {
                     // contact cap every further detection added permanent
                     // clutter that no decay could ever clear.
                     if let Some(c) = self.contacts.remove(&evict_id) {
-                        self.orphaned_marks
-                            .push((c.map_mark_rect, c.map_mark_label, c.map_mark_ring));
+                        self.orphaned_marks.push((
+                            c.map_mark_rect,
+                            c.map_mark_label,
+                            c.map_mark_ring,
+                        ));
                     }
                     side_ids.retain(|&id| id != evict_id);
                 }
             }
             let id = ContactId::new();
-            self.contacts.insert(id, IntelContact {
+            self.contacts.insert(
                 id,
-                side,
-                enemy_side,
-                pos,
-                pos_uncertainty_m: source.pos_uncertainty_m(),
-                unit_class,
-                unit_count,
-                source,
-                confidence: 1.0,
-                detected_at: now,
-                map_mark_rect: None,
-                map_mark_ring: None,
-                mark_pos: pos,
-                mark_confidence: 1.0,
-                map_mark_label: None,
-                jtac_units: SmallVec::new(),
-            });
+                IntelContact {
+                    id,
+                    side,
+                    enemy_side,
+                    pos,
+                    pos_uncertainty_m: source.pos_uncertainty_m(),
+                    unit_class,
+                    unit_count,
+                    source,
+                    confidence: 1.0,
+                    detected_at: now,
+                    map_mark_rect: None,
+                    map_mark_ring: None,
+                    mark_pos: pos,
+                    mark_confidence: 1.0,
+                    map_mark_label: None,
+                    jtac_units: SmallVec::new(),
+                },
+            );
             self.by_side.entry(side).or_default().push(id);
             id
         }
@@ -295,7 +302,8 @@ impl IntelDatabase {
         dt_secs: f64,
     ) -> (Vec<ContactId>, Vec<(Option<MarkId>, Option<MarkId>, Option<MarkId>)>) {
         let mut updated: Vec<ContactId> = Vec::new();
-        let mut removed: Vec<(Option<MarkId>, Option<MarkId>, Option<MarkId>)> = Vec::new();
+        let mut removed: Vec<(Option<MarkId>, Option<MarkId>, Option<MarkId>)> =
+            Vec::new();
         let ln2 = std::f64::consts::LN_2;
 
         self.contacts.retain(|_, c| {
@@ -346,7 +354,16 @@ impl IntelDatabase {
         cfg: &ElintConfig,
         now: DateTime<Utc>,
     ) -> ContactId {
-        let id = self.upsert(side, enemy_side, pos, unit_class, 1, IntelSource::Jtac, cfg, now);
+        let id = self.upsert(
+            side,
+            enemy_side,
+            pos,
+            unit_class,
+            1,
+            IntelSource::Jtac,
+            cfg,
+            now,
+        );
         if let Some(c) = self.contacts.get_mut(&id) {
             if !c.jtac_units.contains(&uid) {
                 c.jtac_units.push(uid);
@@ -375,8 +392,7 @@ impl IntelDatabase {
     /// `orphaned_marks` for `Ephemeral::tick_intel_decay` to delete.
     fn remove_contact(&mut self, id: ContactId) {
         let Some(c) = self.contacts.remove(&id) else { return };
-        self.orphaned_marks
-            .push((c.map_mark_rect, c.map_mark_label, c.map_mark_ring));
+        self.orphaned_marks.push((c.map_mark_rect, c.map_mark_label, c.map_mark_ring));
         if let Some(ids) = self.by_side.get_mut(&c.side) {
             ids.retain(|i| *i != id);
         }
@@ -423,7 +439,8 @@ impl IntelDatabase {
             .flat_map(|ids| ids.iter())
             .filter_map(|id| self.contacts.get(id))
             .map(|c| {
-                let dist = na::distance(&observer_pos.into(), &c.pos.into()).max(1.0) as f32;
+                let dist =
+                    na::distance(&observer_pos.into(), &c.pos.into()).max(1.0) as f32;
                 let score = c.confidence / dist * 10_000.0;
                 (c, score)
             })
@@ -451,8 +468,8 @@ impl IntelDatabase {
         };
         let side_label = match contact.enemy_side {
             dcso3::coalition::Side::Blue => "BLU",
-            dcso3::coalition::Side::Red  => "RED",
-            _                            => "NEU",
+            dcso3::coalition::Side::Red => "RED",
+            _ => "NEU",
         };
         let acc_km = (contact.pos_uncertainty_m / 1000.0).max(0.1);
         if cfg.show_confidence_on_map {
@@ -480,8 +497,27 @@ mod tests {
         let now = Utc::now();
         let mut db = IntelDatabase::default();
         let (a, b) = (UnitId::from(1), UnitId::from(2));
-        let id = db.note_jtac_unit(Side::Blue, Side::Red, a, at(0.), IntelUnitClass::Armor, &cfg, now);
-        assert_eq!(db.note_jtac_unit(Side::Blue, Side::Red, b, at(50.), IntelUnitClass::Armor, &cfg, now), id);
+        let id = db.note_jtac_unit(
+            Side::Blue,
+            Side::Red,
+            a,
+            at(0.),
+            IntelUnitClass::Armor,
+            &cfg,
+            now,
+        );
+        assert_eq!(
+            db.note_jtac_unit(
+                Side::Blue,
+                Side::Red,
+                b,
+                at(50.),
+                IntelUnitClass::Armor,
+                &cfg,
+                now
+            ),
+            id
+        );
         db.contacts.get_mut(&id).unwrap().map_mark_label = Some(MarkId::new());
         // One of two tanks burns: the contact still has something in it.
         assert_eq!(db.retire_jtac_units(|u| u == a), 0);
@@ -501,9 +537,25 @@ mod tests {
         let now = Utc::now();
         let mut db = IntelDatabase::default();
         let a = UnitId::from(1);
-        let old = db.note_jtac_unit(Side::Blue, Side::Red, a, at(0.), IntelUnitClass::Armor, &cfg, now);
+        let old = db.note_jtac_unit(
+            Side::Blue,
+            Side::Red,
+            a,
+            at(0.),
+            IntelUnitClass::Armor,
+            &cfg,
+            now,
+        );
         // Well past the cluster radius: a new contact, and the old one empties.
-        let new = db.note_jtac_unit(Side::Blue, Side::Red, a, at(5_000.), IntelUnitClass::Armor, &cfg, now);
+        let new = db.note_jtac_unit(
+            Side::Blue,
+            Side::Red,
+            a,
+            at(5_000.),
+            IntelUnitClass::Armor,
+            &cfg,
+            now,
+        );
         assert_ne!(old, new);
         assert!(!db.contacts.contains_key(&old));
         assert!(db.contacts.contains_key(&new));
@@ -516,9 +568,26 @@ mod tests {
         let now = Utc::now();
         let mut db = IntelDatabase::default();
         let a = UnitId::from(1);
-        let id = db.note_jtac_unit(Side::Blue, Side::Red, a, at(0.), IntelUnitClass::Armor, &cfg, now);
+        let id = db.note_jtac_unit(
+            Side::Blue,
+            Side::Red,
+            a,
+            at(0.),
+            IntelUnitClass::Armor,
+            &cfg,
+            now,
+        );
         // A recon pass confirms the site after the JTAC saw it.
-        let id2 = db.upsert(Side::Blue, Side::Red, at(10.), IntelUnitClass::Armor, 4, IntelSource::ReconFlight, &cfg, now);
+        let id2 = db.upsert(
+            Side::Blue,
+            Side::Red,
+            at(10.),
+            IntelUnitClass::Armor,
+            4,
+            IntelSource::ReconFlight,
+            &cfg,
+            now,
+        );
         assert_eq!(id, id2);
         assert_eq!(db.retire_jtac_units(|_| true), 0);
         assert!(db.contacts.contains_key(&id));
@@ -530,8 +599,24 @@ mod tests {
         let now = Utc::now();
         let mut db = IntelDatabase::default();
         let a = UnitId::from(1);
-        let blue = db.note_jtac_unit(Side::Blue, Side::Red, a, at(0.), IntelUnitClass::Armor, &cfg, now);
-        let red = db.note_jtac_unit(Side::Red, Side::Blue, UnitId::from(2), at(0.), IntelUnitClass::Armor, &cfg, now);
+        let blue = db.note_jtac_unit(
+            Side::Blue,
+            Side::Red,
+            a,
+            at(0.),
+            IntelUnitClass::Armor,
+            &cfg,
+            now,
+        );
+        let red = db.note_jtac_unit(
+            Side::Red,
+            Side::Blue,
+            UnitId::from(2),
+            at(0.),
+            IntelUnitClass::Armor,
+            &cfg,
+            now,
+        );
         assert_eq!(db.retire_jtac_units(|_| false), 0);
         assert_eq!(db.retire_jtac_units(|u| u == UnitId::from(2)), 1);
         assert!(db.contacts.contains_key(&blue));

@@ -70,7 +70,11 @@ fn walk(s: &[RelSample]) -> Walk {
     let reciprocal = |x: &RelSample| (180. - wrap(x.rel).abs()) < 25.;
     // final: back from touchdown while lined up, near the centreline, short of the threshold (or just past it)
     let mut i = s.len() - 1;
-    while i > 0 && aligned(&s[i - 1]) && s[i - 1].across.abs() < 1500. && s[i - 1].along <= s[i].along + 50. {
+    while i > 0
+        && aligned(&s[i - 1])
+        && s[i - 1].across.abs() < 1500.
+        && s[i - 1].along <= s[i].along + 50.
+    {
         i -= 1;
     }
     // base: the turn before final
@@ -123,7 +127,8 @@ impl Leg {
 
 /// The leg of every sample (`s` oldest first; after `t_touch` is the rollout).
 pub fn legs(s: &[RelSample], t_touch: f64) -> Vec<Leg> {
-    let mut out: Vec<Leg> = s.iter().map(|x| if x.t > t_touch { Leg::Rollout } else { Leg::Other }).collect();
+    let mut out: Vec<Leg> =
+        s.iter().map(|x| if x.t > t_touch { Leg::Rollout } else { Leg::Other }).collect();
     let pre = s.iter().filter(|x| x.t <= t_touch).count();
     if pre < 5 {
         return out;
@@ -153,14 +158,16 @@ pub fn pattern(s: &[RelSample], t_touch: f64) -> FieldPattern {
     let final_len = (s[s.len() - 1].along - roll.along).abs();
     p.rollout_nm = Some((-roll.along).max(0.) / NM);
     p.rollout_alt_ft = Some(roll.agl * M_TO_FT);
-    p.final_gs_kts = median(s[fin..].iter().filter(|x| x.along < 0.).map(|x| x.gs_kts).collect());
+    p.final_gs_kts =
+        median(s[fin..].iter().filter(|x| x.along < 0.).map(|x| x.gs_kts).collect());
     let (base_start, k) = (w.base, w.downwind);
     let dw = &s[k..base_start];
     let dw_secs = dw.last().map(|l| l.t - dw[0].t).unwrap_or(0.);
     if dw.len() >= 3 && dw_secs >= 8. {
         p.base_at_m = Some(s[base_start.min(s.len() - 1)].along);
         p.downwind_alt_ft = median(dw.iter().map(|x| x.agl * M_TO_FT).collect());
-        if let Some(ab) = dw.iter().min_by(|a, b| a.along.abs().total_cmp(&b.along.abs())) {
+        if let Some(ab) = dw.iter().min_by(|a, b| a.along.abs().total_cmp(&b.along.abs()))
+        {
             if ab.along.abs() < 1500. {
                 p.abeam_nm = Some(ab.across.abs() / NM);
                 p.abeam_alt_ft = Some(ab.agl * M_TO_FT);
@@ -204,7 +211,10 @@ pub fn pattern(s: &[RelSample], t_touch: f64) -> FieldPattern {
     }
     if let Some(b) = p.base_at_m {
         if b < -1.5 * NM {
-            p.calls.push(format!("extended downwind, base {:.1} nm past the threshold", -b / NM));
+            p.calls.push(format!(
+                "extended downwind, base {:.1} nm past the threshold",
+                -b / NM
+            ));
         }
     }
     if p.kind != "straight_in" {
@@ -215,9 +225,17 @@ pub fn pattern(s: &[RelSample], t_touch: f64) -> FieldPattern {
         }
     }
     // overshooting the final: the track crosses well beyond the centreline after the roll-out
-    let over = s[fin..].iter().filter(|x| x.along < -300.).map(|x| x.across).fold(0., |m: f64, a| if a.abs() > m.abs() { a } else { m });
+    let over = s[fin..]
+        .iter()
+        .filter(|x| x.along < -300.)
+        .map(|x| x.across)
+        .fold(0., |m: f64, a| if a.abs() > m.abs() { a } else { m });
     if over.abs() > 150. {
-        p.calls.push(format!("overshot the final, {:.0} m {} of centreline", over.abs(), if over > 0. { "right" } else { "left" }));
+        p.calls.push(format!(
+            "overshot the final, {:.0} m {} of centreline",
+            over.abs(),
+            if over > 0. { "right" } else { "left" }
+        ));
     }
     p
 }
@@ -237,7 +255,13 @@ pub struct TaxiSample {
 pub const TAXI_LIMIT_KTS: f64 = 30.;
 
 /// The rollout and taxi after a touchdown at `t_touch`; `s` oldest first, from the touchdown on.
-pub fn taxi(s: &[TaxiSample], t_touch: f64, rwy_len: f64, rwy_width: f64, end: &str) -> FieldTaxi {
+pub fn taxi(
+    s: &[TaxiSample],
+    t_touch: f64,
+    rwy_len: f64,
+    rwy_width: f64,
+    end: &str,
+) -> FieldTaxi {
     let mut t = FieldTaxi { end: end.into(), ..Default::default() };
     if s.is_empty() {
         return t;
@@ -248,7 +272,11 @@ pub fn taxi(s: &[TaxiSample], t_touch: f64, rwy_len: f64, rwy_width: f64, end: &
     t.rollout_m = (s[slow].along - td.along).max(0.);
     t.rollout_s = s[slow].t - t_touch;
     // clear of the runway: off its rectangle (with a little margin)
-    let on_rwy = |x: &TaxiSample| x.across.abs() <= rwy_width / 2. + 4. && x.along >= -30. && x.along <= rwy_len + 30.;
+    let on_rwy = |x: &TaxiSample| {
+        x.across.abs() <= rwy_width / 2. + 4.
+            && x.along >= -30.
+            && x.along <= rwy_len + 30.
+    };
     if let Some(e) = s.iter().position(|x| !on_rwy(x)) {
         t.runway_clear_s = Some(s[e].t - t_touch);
         t.exit_at_m = Some(s[e].along);
@@ -256,7 +284,10 @@ pub fn taxi(s: &[TaxiSample], t_touch: f64, rwy_len: f64, rwy_width: f64, end: &
     // the taxi: from slowing to taxi speed to the end
     let taxi = &s[slow..];
     t.taxi_time_s = taxi.last().map(|l| l.t - taxi[0].t).unwrap_or(0.);
-    t.taxi_distance_m = taxi.windows(2).map(|w| ((w[1].x - w[0].x).powi(2) + (w[1].z - w[0].z).powi(2)).sqrt()).sum();
+    t.taxi_distance_m = taxi
+        .windows(2)
+        .map(|w| ((w[1].x - w[0].x).powi(2) + (w[1].z - w[0].z).powi(2)).sqrt())
+        .sum();
     t.max_taxi_kts = taxi.iter().map(|x| x.gs_kts).fold(0., f64::max);
     // stops: moving, then under 1 kt for 3 s or more
     let mut stopped_since: Option<f64> = None;
@@ -298,7 +329,14 @@ pub(crate) mod tests {
         let mut s = vec![];
         let mut t = 0.;
         let mut push = |along: f64, across: f64, agl_ft: f64, rel: f64, gs: f64| {
-            s.push(RelSample { t, along, across, agl: agl_ft / M_TO_FT, rel, gs_kts: gs });
+            s.push(RelSample {
+                t,
+                along,
+                across,
+                agl: agl_ft / M_TO_FT,
+                rel,
+                gs_kts: gs,
+            });
             t += 1.;
         };
         // initial: 3 nm out to 1000 m down the runway, lined up
@@ -310,7 +348,13 @@ pub(crate) mod tests {
         // the break: a 180 to the left, descending
         for k in 0..12 {
             let th = (k as f64 + 0.5) / 12. * std::f64::consts::PI;
-            push(1000. + th.sin() * 400., -(1. - th.cos()) * 1.2 * NM / 2., 1500. - k as f64 * 40., -(k as f64 + 0.5) * 15., 250.)
+            push(
+                1000. + th.sin() * 400.,
+                -(1. - th.cos()) * 1.2 * NM / 2.,
+                1500. - k as f64 * 40.,
+                -(k as f64 + 0.5) * 15.,
+                250.,
+            )
         }
         // downwind: back past the threshold
         let mut a = 1000.;
@@ -321,7 +365,13 @@ pub(crate) mod tests {
         // base: the turn in
         for k in 0..10 {
             let th = (k as f64 + 0.5) / 10. * std::f64::consts::PI;
-            push(-1200. - th.sin() * 350., -1.2 * NM * th.cos().max(0.).max((1. - th / std::f64::consts::PI) * 0.6), 900. - k as f64 * 30., 180. - (k as f64 + 0.5) * 18., 140.);
+            push(
+                -1200. - th.sin() * 350.,
+                -1.2 * NM * th.cos().max(0.).max((1. - th / std::f64::consts::PI) * 0.6),
+                900. - k as f64 * 30.,
+                180. - (k as f64 + 0.5) * 18.,
+                140.,
+            );
         }
         // final: 0.6 nm in to the touchdown
         let mut a = -0.6 * NM;
@@ -352,7 +402,11 @@ pub(crate) mod tests {
         let lg = legs(&s, td);
         let mut order: Vec<Leg> = lg.clone();
         order.dedup();
-        assert_eq!(order, vec![Leg::Initial, Leg::Break, Leg::Downwind, Leg::Base, Leg::Final], "{order:?}");
+        assert_eq!(
+            order,
+            vec![Leg::Initial, Leg::Break, Leg::Downwind, Leg::Base, Leg::Final],
+            "{order:?}"
+        );
         let first_final = lg.iter().position(|l| *l == Leg::Final).unwrap();
         assert!(((-s[first_final].along).max(0.) / NM - r).abs() < 1e-9);
     }
@@ -375,7 +429,14 @@ pub(crate) mod tests {
         let mut a = -6. * NM;
         let mut t = 0.;
         while a < 300. {
-            s.push(RelSample { t, along: a, across: 0., agl: (-a).max(0.) * 0.0524, rel: 1., gs_kts: 140. });
+            s.push(RelSample {
+                t,
+                along: a,
+                across: 0.,
+                agl: (-a).max(0.) * 0.0524,
+                rel: 1.,
+                gs_kts: 140.,
+            });
             a += 100.;
             t += 1.4;
         }
@@ -398,8 +459,21 @@ pub(crate) mod tests {
         }
         // turn off and taxi, too fast for a while, one stop, then park
         for k in 0..40 {
-            let g = if (10..15).contains(&k) { 38. } else if (20..26).contains(&k) { 0. } else { 15. };
-            s.push(TaxiSample { t, along, across: 30. + k as f64 * 8., gs_kts: g, x: along, z: 30. + k as f64 * 8. });
+            let g = if (10..15).contains(&k) {
+                38.
+            } else if (20..26).contains(&k) {
+                0.
+            } else {
+                15.
+            };
+            s.push(TaxiSample {
+                t,
+                along,
+                across: 30. + k as f64 * 8.,
+                gs_kts: g,
+                x: along,
+                z: 30. + k as f64 * 8.,
+            });
             t += 1.;
         }
         let x = taxi(&s, 100., 2400., 45., "parked");

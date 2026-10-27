@@ -18,16 +18,18 @@ use anyhow::Result;
 pub use backend::{Db, Engine, IVec, OpenTree, RawIter, RawTree};
 use bincode::Options;
 pub use codec::Codec;
+pub use envelope::{Envelope, Versioned};
 use serde::Serialize;
+use sled::transaction::{
+    ConflictableTransactionResult, TransactionError, TransactionResult,
+};
 pub use sled::{open, Config};
-use sled::transaction::{ConflictableTransactionResult, TransactionError, TransactionResult};
 use std::{
     fmt,
     iter::{DoubleEndedIterator, Iterator},
     marker::PhantomData,
     ops::{Bound, RangeBounds},
 };
-pub use envelope::{Envelope, Versioned};
 use transaction::TransactionalTree;
 
 /// A flash-sympathetic persistent lock-free B+ tree.
@@ -88,11 +90,26 @@ impl<A: KV, B: KV, C: KV, D: KV, E: KV> Prefix<(A, B, C, D)> for (A, B, C, D, E)
 impl<A: KV, B: KV, C: KV, D: KV, E: KV, F: KV> Prefix<A> for (A, B, C, D, E, F) {}
 impl<A: KV, B: KV, C: KV, D: KV, E: KV, F: KV> Prefix<(A, B)> for (A, B, C, D, E, F) {}
 impl<A: KV, B: KV, C: KV, D: KV, E: KV, F: KV> Prefix<(A, B, C)> for (A, B, C, D, E, F) {}
-impl<A: KV, B: KV, C: KV, D: KV, E: KV, F: KV> Prefix<(A, B, C, D)> for (A, B, C, D, E, F) {}
-impl<A: KV, B: KV, C: KV, D: KV, E: KV, F: KV> Prefix<(A, B, C, D, E)> for (A, B, C, D, E, F) {}
-impl<A: KV, B: KV, C: KV, D: KV, E: KV, F: KV, G: KV> Prefix<A> for (A, B, C, D, E, F, G) {}
-impl<A: KV, B: KV, C: KV, D: KV, E: KV, F: KV, G: KV> Prefix<(A, B)> for (A, B, C, D, E, F, G) {}
-impl<A: KV, B: KV, C: KV, D: KV, E: KV, F: KV, G: KV> Prefix<(A, B, C)> for (A, B, C, D, E, F, G) {}
+impl<A: KV, B: KV, C: KV, D: KV, E: KV, F: KV> Prefix<(A, B, C, D)>
+    for (A, B, C, D, E, F)
+{
+}
+impl<A: KV, B: KV, C: KV, D: KV, E: KV, F: KV> Prefix<(A, B, C, D, E)>
+    for (A, B, C, D, E, F)
+{
+}
+impl<A: KV, B: KV, C: KV, D: KV, E: KV, F: KV, G: KV> Prefix<A>
+    for (A, B, C, D, E, F, G)
+{
+}
+impl<A: KV, B: KV, C: KV, D: KV, E: KV, F: KV, G: KV> Prefix<(A, B)>
+    for (A, B, C, D, E, F, G)
+{
+}
+impl<A: KV, B: KV, C: KV, D: KV, E: KV, F: KV, G: KV> Prefix<(A, B, C)>
+    for (A, B, C, D, E, F, G)
+{
+}
 impl<A: KV, B: KV, C: KV, D: KV, E: KV, F: KV, G: KV> Prefix<(A, B, C, D)>
     for (A, B, C, D, E, F, G)
 {
@@ -270,11 +287,7 @@ impl<K, V> Tree<K, V> {
         K: KV,
         V: KV,
     {
-        Ok(self
-            .inner
-            .get(serialize(key)?)?
-            .map(|v| deserialize(&v))
-            .transpose()?)
+        Ok(self.inner.get(serialize(key)?)?.map(|v| deserialize(&v)).transpose()?)
     }
 
     /// Retrieve a value from the Tree if it exists. The key must be in serialized form.
@@ -283,11 +296,7 @@ impl<K, V> Tree<K, V> {
         K: KV,
         V: KV,
     {
-        Ok(self
-            .inner
-            .get(key_bytes.as_ref())?
-            .map(|v| deserialize(&v))
-            .transpose()?)
+        Ok(self.inner.get(key_bytes.as_ref())?.map(|v| deserialize(&v)).transpose()?)
     }
 
     /// Deserialize a key and retrieve it's value from the Tree if it exists.
@@ -300,7 +309,12 @@ impl<K, V> Tree<K, V> {
         Ok(self
             .inner
             .get(key_bytes.as_ref())?
-            .map(|v| Ok::<_, anyhow::Error>((decode_key(key_bytes.as_ref())?, deserialize(&v)?)))
+            .map(|v| {
+                Ok::<_, anyhow::Error>((
+                    decode_key(key_bytes.as_ref())?,
+                    deserialize(&v)?,
+                ))
+            })
             .transpose()?)
     }
 
@@ -310,11 +324,7 @@ impl<K, V> Tree<K, V> {
         K: KV,
         V: KV,
     {
-        Ok(self
-            .inner
-            .remove(serialize(key)?)?
-            .map(|v| deserialize(&v))
-            .transpose()?)
+        Ok(self.inner.remove(serialize(key)?)?.map(|v| deserialize(&v)).transpose()?)
     }
 
     /// Delete a key without decoding its old value. `remove` hands the old
@@ -355,7 +365,11 @@ impl<K, V> Tree<K, V> {
     {
         let old_b = old.map(|old| self.enc(old)).transpose()?;
         let new_b = new.map(|new| self.enc(new)).transpose()?;
-        match self.inner.compare_and_swap(serialize(key)?, old_b.as_deref(), new_b.clone())? {
+        match self.inner.compare_and_swap(
+            serialize(key)?,
+            old_b.as_deref(),
+            new_b.clone(),
+        )? {
             Ok(()) => Ok(Ok(())),
             Err(current) => Ok(Err(CompareAndSwapError {
                 current: current.as_ref().map(|b| deserialize(b)).transpose()?,
@@ -753,7 +767,9 @@ fn reencode_is_exact<V: KV>(old: &[u8], new: &[u8]) -> bool {
     } else {
         old.to_vec()
     };
-    let Ok(back) = deserialize::<V>(new).and_then(|v| serialize(&v)) else { return false };
+    let Ok(back) = deserialize::<V>(new).and_then(|v| serialize(&v)) else {
+        return false;
+    };
     if back == reference {
         return true;
     }
@@ -847,11 +863,7 @@ impl<K, V> Iter<K, V> {
     }
 
     pub fn from_raw(iter: RawIter) -> Self {
-        Iter {
-            inner: iter,
-            _key: PhantomData,
-            _value: PhantomData,
-        }
+        Iter { inner: iter, _key: PhantomData, _value: PhantomData }
     }
 
     /// Iterate over the keys alone, never decoding a value. Useful when the
@@ -969,11 +981,7 @@ impl<K, V> Batch<K, V> {
 // Implementing Default manually to not require K and V to implement Default.
 impl<K, V> Default for Batch<K, V> {
     fn default() -> Self {
-        Self {
-            ops: Vec::new(),
-            _key: PhantomData,
-            _value: PhantomData,
-        }
+        Self { ops: Vec::new(), _key: PhantomData, _value: PhantomData }
     }
 }
 
@@ -995,17 +1003,11 @@ impl<K, V> Subscriber<K, V> {
         K: KV,
         V: KV,
     {
-        self.inner
-            .next_timeout(timeout)
-            .map(|e| Event::from_sled(&e))
+        self.inner.next_timeout(timeout).map(|e| Event::from_sled(&e))
     }
 
     pub fn from_sled(subscriber: sled::Subscriber) -> Self {
-        Self {
-            inner: subscriber,
-            _key: PhantomData,
-            _value: PhantomData,
-        }
+        Self { inner: subscriber, _key: PhantomData, _value: PhantomData }
     }
 }
 
@@ -1019,10 +1021,7 @@ impl<K: KV + Unpin, V: KV + Unpin> Future for Subscriber<K, V> {
     type Output = Option<Result<Event<K, V>>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.project()
-            .inner
-            .poll(cx)
-            .map(|opt| opt.map(|e| Event::from_sled(&e)))
+        self.project().inner.poll(cx).map(|opt| opt.map(|e| Event::from_sled(&e)))
     }
 }
 
@@ -1055,13 +1054,10 @@ impl<K, V> Event<K, V> {
         V: KV,
     {
         match event {
-            sled::Event::Insert { key, value } => Ok(Self::Insert {
-                key: deserialize(key)?,
-                value: deserialize(value)?,
-            }),
-            sled::Event::Remove { key } => Ok(Self::Remove {
-                key: deserialize(key)?,
-            }),
+            sled::Event::Insert { key, value } => {
+                Ok(Self::Insert { key: deserialize(key)?, value: deserialize(value)? })
+            }
+            sled::Event::Remove { key } => Ok(Self::Remove { key: deserialize(key)? }),
         }
     }
 }
@@ -1134,7 +1130,8 @@ mod tests {
 
         let expect_results = [(6, 2), (10, 2)];
 
-        let got: Vec<(u32, u32)> = tree.range(6..11).unwrap().map(|r| r.unwrap()).collect();
+        let got: Vec<(u32, u32)> =
+            tree.range(6..11).unwrap().map(|r| r.unwrap()).collect();
         assert_eq!(got, expect_results);
     }
 
@@ -1175,12 +1172,18 @@ mod tests {
     fn test_merge_operator_bad_value_is_a_noop() {
         let db = sled::Config::new().temporary(true).open().unwrap();
         let tree: Tree<u32, u64> = Tree::open(&db, "test_tree").unwrap();
-        tree.set_merge_operator(|_k, old: Option<u64>, v: u64| Some(old.unwrap_or(0) + v));
+        tree.set_merge_operator(|_k, old: Option<u64>, v: u64| {
+            Some(old.unwrap_or(0) + v)
+        });
         tree.insert(&1, &5).unwrap();
         tree.merge(&1, &2).unwrap();
         assert_eq!(tree.get(&1).unwrap(), Some(7));
         // an undecodable merge operand must not panic, and must not change the value
-        tree.inner.as_sled().unwrap().merge(serialize(&1u32).unwrap(), vec![9u8]).unwrap();
+        tree.inner
+            .as_sled()
+            .unwrap()
+            .merge(serialize(&1u32).unwrap(), vec![9u8])
+            .unwrap();
         assert_eq!(tree.get(&1).unwrap(), Some(7));
     }
 
@@ -1193,21 +1196,37 @@ mod tests {
             let tree: Tree<(u32, String), Vec<u64>> = Tree::open(&db, "t").unwrap();
             // a legacy row, as a converter copies it
             tree.inner
-                .insert(serialize(&(5u32, "e".to_string())).unwrap(), serialize(&vec![5u64]).unwrap())
+                .insert(
+                    serialize(&(5u32, "e".to_string())).unwrap(),
+                    serialize(&vec![5u64]).unwrap(),
+                )
                 .unwrap();
             for (i, s) in [(1u32, "a"), (3, "c"), (3, "b"), (9, "z")] {
                 tree.insert(&(i, s.to_string()), &vec![i as u64]).unwrap();
             }
-            let keys: Vec<(u32, String)> = tree.iter().keys().map(|r| r.unwrap()).collect();
+            let keys: Vec<(u32, String)> =
+                tree.iter().keys().map(|r| r.unwrap()).collect();
             let want: Vec<(u32, String)> =
-                [(1, "a"), (3, "b"), (3, "c"), (5, "e"), (9, "z")].map(|(i, s)| (i, s.to_string())).into();
+                [(1, "a"), (3, "b"), (3, "c"), (5, "e"), (9, "z")]
+                    .map(|(i, s)| (i, s.to_string()))
+                    .into();
             assert_eq!(keys, want, "{engine}");
             assert_eq!(tree.scan_prefix(&3u32).unwrap().count(), 2);
-            assert_eq!(tree.range((3u32, String::new())..(9u32, String::new())).unwrap().count(), 3);
+            assert_eq!(
+                tree.range((3u32, String::new())..(9u32, String::new())).unwrap().count(),
+                3
+            );
             assert_eq!(tree.iter().rev().next().unwrap().unwrap().0 .0, 9);
             assert_eq!(tree.first().unwrap().unwrap().1, vec![1]);
             assert_eq!(tree.get(&(5, "e".into())).unwrap(), Some(vec![5]));
-            let new = tree.update_and_fetch(&(5, "e".into()), |v| v.map(|mut v| { v.push(6); v })).unwrap();
+            let new = tree
+                .update_and_fetch(&(5, "e".into()), |v| {
+                    v.map(|mut v| {
+                        v.push(6);
+                        v
+                    })
+                })
+                .unwrap();
             assert_eq!(new, Some(vec![5, 6]));
             let old = tree.fetch_and_update(&(1, "a".into()), |_| None).unwrap();
             assert_eq!(old, Some(vec![1]));
@@ -1219,7 +1238,11 @@ mod tests {
             tree.apply_batch(b).unwrap();
             assert_eq!(tree.last().unwrap().unwrap().0, (7, "q".into()));
             // values written now are in the engine's codec
-            let raw = tree.inner.get(serialize(&(7u32, "q".to_string())).unwrap()).unwrap().unwrap();
+            let raw = tree
+                .inner
+                .get(serialize(&(7u32, "q".to_string())).unwrap())
+                .unwrap()
+                .unwrap();
             assert_eq!(codec::is_msgpack(&raw), engine == Engine::Redb);
             let st = tree.reencode(false).unwrap();
             assert_eq!(st.undecodable + st.unverified, 0);
@@ -1246,10 +1269,7 @@ mod tests {
 
         assert_eq!(
             res,
-            Err(CompareAndSwapError {
-                current: Some(current),
-                proposed: Some(proposed),
-            }),
+            Err(CompareAndSwapError { current: Some(current), proposed: Some(proposed) }),
         );
     }
 }

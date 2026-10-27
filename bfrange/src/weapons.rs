@@ -15,13 +15,15 @@
 use crate::util::{self, V3};
 use bfprotocols::range::{TrackPt, WeaponClass};
 use dcso3::{
+    LuaEnv, LuaVec3, MizLua,
     coalition::Side,
     env::miz::GroupId,
     land::Land,
     net::Ucid,
     object::{DcsObject, DcsOid},
-    weapon::{ClassWeapon, GuidanceType, MissileCategory, Weapon, WeaponCategory, WeaponDesc},
-    LuaEnv, LuaVec3, MizLua,
+    weapon::{
+        ClassWeapon, GuidanceType, MissileCategory, Weapon, WeaponCategory, WeaponDesc,
+    },
 };
 use log::{debug, info, warn};
 use mlua::FromLua;
@@ -98,13 +100,16 @@ pub fn read_guidance_table(lua: MizLua) {
             return;
         }
     };
-    let listed: Vec<std::string::String> = table.iter().map(|(k, n)| format!("{k}={n}")).collect();
+    let listed: Vec<std::string::String> =
+        table.iter().map(|(k, n)| format!("{k}={n}")).collect();
     info!("DCS Weapon.GuidanceType: {}", listed.join(", "));
     let mut live = vec![];
     let mut mismatch = vec![];
     for (k, n) in &table {
         let Some(label) = label_of_dcs_key(k) else {
-            warn!("Weapon.GuidanceType.{k}={n} is new to the range: shown as dcso3 decodes it");
+            warn!(
+                "Weapon.GuidanceType.{k}={n} is new to the range: shown as dcso3 decodes it"
+            );
             continue;
         };
         let Ok(n8) = u8::try_from(*n) else { continue };
@@ -320,7 +325,12 @@ impl Tracker {
             }
             let t = self.live.swap_remove(i);
             let pos = impact_point(lua, t.last_pos, t.last_vel, now - t.last_t);
-            debug!("{} from {} impacted after {:.1}s", t.weapon, t.shooter.name, now - t.t0);
+            debug!(
+                "{} from {} impacted after {:.1}s",
+                t.weapon,
+                t.shooter.name,
+                now - t.t0
+            );
             done.push(Impact { tof: now - t.t0, pos, w: t });
         }
         done
@@ -343,7 +353,9 @@ pub fn impact_point(lua: MizLua, p: V3, v: V3, since: f64) -> V3 {
             // start a little behind the last read, so a weapon read just
             // below the surface of a slope still intersects it
             let start = p - dir * 5.;
-            if let Ok(Some(ip)) = land.get_ip_opt(LuaVec3(start), LuaVec3(dir), reach + 5.) {
+            if let Ok(Some(ip)) =
+                land.get_ip_opt(LuaVec3(start), LuaVec3(dir), reach + 5.)
+            {
                 return ip.0;
             }
         }

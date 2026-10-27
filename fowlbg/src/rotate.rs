@@ -41,14 +41,21 @@ mod tests {
     fn name_pattern() {
         let t = Utc.with_ymd_and_hms(2026, 10, 27, 10, 11, 12).unwrap();
         let p = Path::new("Logs").join("bfnext.txt");
-        assert_eq!(rotated_path(&p, t), Path::new("Logs").join("bfnext20261027T101112Z.txt"));
+        assert_eq!(
+            rotated_path(&p, t),
+            Path::new("Logs").join("bfnext20261027T101112Z.txt")
+        );
         let p = Path::new("Logs").join("range.jsonl");
-        assert_eq!(rotated_path(&p, t), Path::new("Logs").join("range20261027T101112Z.jsonl"));
+        assert_eq!(
+            rotated_path(&p, t),
+            Path::new("Logs").join("range20261027T101112Z.jsonl")
+        );
     }
 
     #[test]
     fn rotate_moves_and_keeps_the_first() {
-        let dir = std::env::temp_dir().join(format!("fowlbg-rotate-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("fowlbg-rotate-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let p = dir.join("x.txt");

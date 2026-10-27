@@ -18,7 +18,7 @@ use crate::{
     env::miz::{Country, GroupId, UnitId},
     simple_enum, wrapped_table, Color, LuaEnv, LuaVec3, MizLua, String,
 };
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use mlua::{prelude::*, Value};
 use serde_derive::{Deserialize, Serialize};
 use std::ops::Deref;
@@ -34,10 +34,9 @@ pub struct Zone {
 impl FromLua for Zone {
     fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
         match value {
-            Value::Table(tbl) => Ok(Self {
-                point: tbl.raw_get("point")?,
-                radius: tbl.raw_get("radius")?,
-            }),
+            Value::Table(tbl) => {
+                Ok(Self { point: tbl.raw_get("point")?, radius: tbl.raw_get("radius")? })
+            }
             _ => Err(cvt_err("trigger::Zone")),
         }
     }
@@ -97,7 +96,7 @@ impl SideFilter {
             (Self::Neutral, Side::Neutral) => true,
             (Self::Blue, Side::Blue) => true,
             (Self::Red, Side::Red) => true,
-            (_, _) => false
+            (_, _) => false,
         }
     }
 }
@@ -208,11 +207,7 @@ const FREEFORM_SHAPE_ID: i64 = 7;
 wrapped_table!(Action, None);
 
 impl Action {
-    pub fn set_user_flag<K: IntoLua, V: IntoLua>(
-        &self,
-        key: K,
-        value: V,
-    ) -> Result<()> {
+    pub fn set_user_flag<K: IntoLua, V: IntoLua>(&self, key: K, value: V) -> Result<()> {
         Ok(self.call_function("setUserFlag", (key, value))?)
     }
 
@@ -246,7 +241,12 @@ impl Action {
         Ok(self.call_function("illuminationBomb", (position, power))?)
     }
 
-    pub fn signal_flare(&self, position: LuaVec3, color: FlareColor, azimuth: u16) -> Result<()> {
+    pub fn signal_flare(
+        &self,
+        position: LuaVec3,
+        color: FlareColor,
+        azimuth: u16,
+    ) -> Result<()> {
         Ok(self.call_function("signalFlare", (position, color, azimuth))?)
     }
 
@@ -294,7 +294,12 @@ impl Action {
         Ok(self.call_function("outSoundForUnit", (unit, file))?)
     }
 
-    pub fn out_text(&self, text: String, display_time: i64, clear_view: bool) -> Result<()> {
+    pub fn out_text(
+        &self,
+        text: String,
+        display_time: i64,
+        clear_view: bool,
+    ) -> Result<()> {
         Ok(self.call_function("outText", (text, display_time, clear_view))?)
     }
 
@@ -331,7 +336,8 @@ impl Action {
         display_time: i64,
         clear_view: bool,
     ) -> Result<()> {
-        Ok(self.call_function("outTextForGroup", (group, text, display_time, clear_view))?)
+        Ok(self
+            .call_function("outTextForGroup", (group, text, display_time, clear_view))?)
     }
 
     pub fn out_text_for_unit(
@@ -482,7 +488,12 @@ impl Action {
         )?)
     }
 
-    pub fn text_to_all(&self, side: SideFilter, id: MarkId, spec: TextSpec) -> Result<()> {
+    pub fn text_to_all(
+        &self,
+        side: SideFilter,
+        id: MarkId,
+        spec: TextSpec,
+    ) -> Result<()> {
         Ok(self.call_function(
             "textToAll",
             (
@@ -516,10 +527,7 @@ impl Action {
     ) -> Result<()> {
         use mlua::MultiValue;
         if spec.points.len() < 3 {
-            bail!(
-                "freeform_to_all needs at least 3 points, got {}",
-                spec.points.len()
-            )
+            bail!("freeform_to_all needs at least 3 points, got {}", spec.points.len())
         }
         let mut args: Vec<Value> = Vec::with_capacity(spec.points.len() + 8);
         args.push(FREEFORM_SHAPE_ID.into_lua(&self.lua)?);

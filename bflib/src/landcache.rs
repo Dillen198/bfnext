@@ -99,11 +99,7 @@ impl LandCache {
             ),
             max_size,
             hand: 0,
-            stats: Stats {
-                calls: 0,
-                hits: 0,
-                diffs: 0,
-            },
+            stats: Stats { calls: 0, hits: 0, diffs: 0 },
         }
     }
 
@@ -145,17 +141,16 @@ impl LandCache {
         while self.h.len() >= self.max_size {
             self.evict_one()
         }
-        self.h.insert(
-            key,
-            CacheEntry {
-                visible,
-                hits: 1,
-                referenced: false,
-            },
-        );
+        self.h.insert(key, CacheEntry { visible, hits: 1, referenced: false });
     }
 
-    pub fn is_visible(&mut self, land: &Land, d: f64, p0: Vector3, p1: Vector3) -> Result<bool> {
+    pub fn is_visible(
+        &mut self,
+        land: &Land,
+        d: f64,
+        p0: Vector3,
+        p1: Vector3,
+    ) -> Result<bool> {
         self.stats.calls += 1;
         let t0 = Tile::new(d, p0);
         let t1 = Tile::new(d, p1);

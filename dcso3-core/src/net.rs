@@ -19,7 +19,9 @@ use fixedstr::str48;
 use serde_derive::{Deserialize, Serialize};
 use std::str::FromStr;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 #[serde(into = "crate::String")]
 #[serde(try_from = "crate::String")]
 pub enum SlotId {
@@ -60,7 +62,9 @@ impl Into<String> for SlotId {
         String::from(match self {
             Self::Unit(i) => format_compact!("{i}"),
             Self::Spectator => format_compact!("0"),
-            Self::ArtilleryCommander(s, n) => format_compact!("artillery_commander_{s}_{n}"),
+            Self::ArtilleryCommander(s, n) => {
+                format_compact!("artillery_commander_{s}_{n}")
+            }
             Self::ForwardObserver(s, n) => format_compact!("forward_observer_{s}_{n}"),
             Self::Instructor(s, n) => format_compact!("instructor_{s}_{n}"),
             Self::Observer(s, n) => format_compact!("observer_{s}_{n}"),
@@ -270,7 +274,8 @@ mod lua_impls {
                     }
                 }
                 Value::String(s) => {
-                    Self::parse_string_slot(s.to_str().map_err(lua_err)?.trim()).map_err(lua_err)
+                    Self::parse_string_slot(s.to_str().map_err(lua_err)?.trim())
+                        .map_err(lua_err)
                 }
                 v => Err(lua_err(format!("invalid slot type {:?}", v))),
             }

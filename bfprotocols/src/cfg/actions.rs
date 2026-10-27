@@ -76,7 +76,9 @@ pub struct BomberCfg {
 }
 
 /// What a `Strike` action goes after.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub enum StrikeMission {
     /// Bomb an enemy objective's buildings (its logistics) -- an F-117 with
     /// GBU-27s. Aimed at an enemy objective.
@@ -266,11 +268,21 @@ pub struct ArtilleryCfg {
     pub shoot_and_scoot_m: Option<f64>,
 }
 
-pub(super) fn default_arty_max() -> f64 { 30_000.0 }
-pub(super) fn default_arty_min() -> f64 { 4_000.0 }
-pub(super) fn default_arty_radius() -> f64 { 200.0 }
-pub(super) fn default_arty_group_count() -> usize { 3 }
-pub(super) fn default_arty_cooldown() -> u32 { 60 }
+pub(super) fn default_arty_max() -> f64 {
+    30_000.0
+}
+pub(super) fn default_arty_min() -> f64 {
+    4_000.0
+}
+pub(super) fn default_arty_radius() -> f64 {
+    200.0
+}
+pub(super) fn default_arty_group_count() -> usize {
+    3
+}
+pub(super) fn default_arty_cooldown() -> u32 {
+    60
+}
 
 impl Default for ArtilleryCfg {
     fn default() -> Self {

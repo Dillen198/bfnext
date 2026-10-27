@@ -112,7 +112,8 @@ pub(crate) fn pilot_profile(
     let mut per_kind: BTreeMap<String, (usize, Vec<f64>, Option<u64>)> = BTreeMap::new();
     let mut airframes: HashMap<String, usize> = HashMap::new();
     let trend_from = now - Duration::weeks(26);
-    let mut trend: BTreeMap<String, BTreeMap<String, (usize, Vec<f64>)>> = BTreeMap::new();
+    let mut trend: BTreeMap<String, BTreeMap<String, (usize, Vec<f64>)>> =
+        BTreeMap::new();
     for s in &rows {
         let e = per_kind.entry(s.kind().to_string()).or_default();
         e.0 += 1;
@@ -137,12 +138,12 @@ pub(crate) fn pilot_profile(
     let per_kind: serde_json::Map<String, Value> = per_kind
         .into_iter()
         .map(|(k, (n, scores, last))| {
-            let best = scores.iter().cloned().fold(None, |m: Option<f64>, x| {
-                Some(m.map_or(x, |m| m.max(x)))
-            });
-            let last = last
-                .and_then(|t| DateTime::from_timestamp_millis(t as i64))
-                .map(rfc);
+            let best = scores
+                .iter()
+                .cloned()
+                .fold(None, |m: Option<f64>, x| Some(m.map_or(x, |m| m.max(x))));
+            let last =
+                last.and_then(|t| DateTime::from_timestamp_millis(t as i64)).map(rfc);
             (
                 k,
                 json!({
@@ -214,7 +215,9 @@ pub(crate) fn greenie(
         let Some(r) = s.decode() else { continue };
         let RangeResult::Trap(t) = &r.result else { continue };
         if let Some(c) = carrier {
-            if !t.carrier.eq_ignore_ascii_case(c) && !t.carrier_type.eq_ignore_ascii_case(c) {
+            if !t.carrier.eq_ignore_ascii_case(c)
+                && !t.carrier_type.eq_ignore_ascii_case(c)
+            {
                 continue;
             }
         }
@@ -317,7 +320,8 @@ pub(crate) fn leaderboards(rows: &[Stored]) -> Value {
     let mut by: HashMap<String, P> = HashMap::new();
     // (sorted pair, 30 s bucket) -> already applied, so the two participants'
     // records of one duel update the ratings once.
-    let mut duel_seen: std::collections::HashSet<(String, String, i64)> = Default::default();
+    let mut duel_seen: std::collections::HashSet<(String, String, i64)> =
+        Default::default();
     let mut elo: HashMap<String, f64> = HashMap::new();
     // oldest first: Elo is order dependent
     for s in rows {
@@ -401,7 +405,9 @@ pub(crate) fn leaderboards(rows: &[Stored]) -> Value {
             RangeResult::Missile(m) => {
                 if m.perspective == "target" {
                     match m.outcome {
-                        MissileOutcome::Defeated | MissileOutcome::Timeout => p.defeated += 1,
+                        MissileOutcome::Defeated | MissileOutcome::Timeout => {
+                            p.defeated += 1
+                        }
                         MissileOutcome::Kill | MissileOutcome::Hit => p.killed += 1,
                     }
                 }
@@ -419,7 +425,8 @@ pub(crate) fn leaderboards(rows: &[Stored]) -> Value {
                 p.hz_sorties += 1;
                 p.hz_air += h.air_kills;
                 p.hz_ground += h.ground_kills;
-                p.hz_deaths += h.trainer_deaths + (h.outcome == HotZoneOutcome::ShotDown) as u32;
+                p.hz_deaths +=
+                    h.trainer_deaths + (h.outcome == HotZoneOutcome::ShotDown) as u32;
             }
             RangeResult::LowLevel(l) => {
                 if let Some(sc) = r.score {
@@ -469,8 +476,12 @@ pub(crate) fn leaderboards(rows: &[Stored]) -> Value {
     let mut field_landing = vec![];
     let mut deck_landing = vec![];
     let mut csar = vec![];
-    let fmin = |v: &[f64]| v.iter().cloned().fold(None, |m: Option<f64>, x| Some(m.map_or(x, |m| m.min(x))));
-    let fmax = |v: &[f64]| v.iter().cloned().fold(None, |m: Option<f64>, x| Some(m.map_or(x, |m| m.max(x))));
+    let fmin = |v: &[f64]| {
+        v.iter().cloned().fold(None, |m: Option<f64>, x| Some(m.map_or(x, |m| m.min(x))))
+    };
+    let fmax = |v: &[f64]| {
+        v.iter().cloned().fold(None, |m: Option<f64>, x| Some(m.map_or(x, |m| m.max(x))))
+    };
     for (ucid, p) in &by {
         if p.bomb_miss.len() >= 5 {
             bombing.push(json!({
@@ -561,7 +572,9 @@ pub(crate) fn leaderboards(rows: &[Stored]) -> Value {
             f(b, k).partial_cmp(&f(a, k)).unwrap_or(std::cmp::Ordering::Equal)
         }
     };
-    bombing.sort_by(|a, b| f(a, "cep_m").partial_cmp(&f(b, "cep_m")).unwrap_or(std::cmp::Ordering::Equal));
+    bombing.sort_by(|a, b| {
+        f(a, "cep_m").partial_cmp(&f(b, "cep_m")).unwrap_or(std::cmp::Ordering::Equal)
+    });
     strafe.sort_by(desc("avg_accuracy"));
     lso.sort_by(desc("avg_points"));
     aar.sort_by(desc("avg_score"));
@@ -577,20 +590,29 @@ pub(crate) fn leaderboards(rows: &[Stored]) -> Value {
             }
         }
     };
-    sead.sort_by(|a, b| desc("radar_up")(a, b).then(desc("count")(a, b)).then(desc("sites_destroyed")(a, b)));
+    sead.sort_by(|a, b| {
+        desc("radar_up")(a, b)
+            .then(desc("count")(a, b))
+            .then(desc("sites_destroyed")(a, b))
+    });
     hot_zone.sort_by(|a, b| {
         let k = |v: &Value| f(v, "air_kills") + f(v, "ground_kills");
-        k(b).partial_cmp(&k(a)).unwrap_or(std::cmp::Ordering::Equal).then(asc("deaths")(a, b))
+        k(b).partial_cmp(&k(a))
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(asc("deaths")(a, b))
     });
     low_level.sort_by(|a, b| desc("best_score")(a, b).then(asc("best_tot_s")(a, b)));
     field_landing.sort_by(desc("avg_score"));
-    deck_landing.sort_by(|a, b| desc("avg_score")(a, b).then(asc("avg_distance_m")(a, b)));
+    deck_landing
+        .sort_by(|a, b| desc("avg_score")(a, b).then(asc("avg_distance_m")(a, b)));
     csar.sort_by(asc("fastest_s"));
     md.sort_by(|a, b| {
         let ra = f(a, "defeated") / f(a, "count");
         let rb = f(b, "defeated") / f(b, "count");
         rb.partial_cmp(&ra).unwrap_or(std::cmp::Ordering::Equal).then(
-            f(b, "defeated").partial_cmp(&f(a, "defeated")).unwrap_or(std::cmp::Ordering::Equal),
+            f(b, "defeated")
+                .partial_cmp(&f(a, "defeated"))
+                .unwrap_or(std::cmp::Ordering::Equal),
         )
     });
     json!({
@@ -611,7 +633,11 @@ pub(crate) fn leaderboards(rows: &[Stored]) -> Value {
 
 // ── grouped impacts ────────────────────────────────────────────────────
 
-pub(crate) fn station_impacts(rows: &[Stored], station: &str, pilot: Option<&str>) -> Value {
+pub(crate) fn station_impacts(
+    rows: &[Stored],
+    station: &str,
+    pilot: Option<&str>,
+) -> Value {
     let mut impacts = vec![];
     let mut misses = vec![];
     let mut target = Value::Null;
@@ -636,7 +662,8 @@ pub(crate) fn station_impacts(rows: &[Stored], station: &str, pilot: Option<&str
             continue;
         }
         misses.push(b.miss_m);
-        let weapon = if b.weapon_display.is_empty() { &b.weapon } else { &b.weapon_display };
+        let weapon =
+            if b.weapon_display.is_empty() { &b.weapon } else { &b.weapon_display };
         impacts.push(json!({
             "id": s.id,
             "north_m": r1(b.impact_north_m),
@@ -660,7 +687,9 @@ pub(crate) fn station_impacts(rows: &[Stored], station: &str, pilot: Option<&str
 
 /// Unguided drops for the ballistics calibration: (weapon, result), newest
 /// first.
-pub(crate) fn unguided_drops(rows: &[Stored]) -> Vec<(String, bfprotocols::range::BombResult)> {
+pub(crate) fn unguided_drops(
+    rows: &[Stored],
+) -> Vec<(String, bfprotocols::range::BombResult)> {
     rows.iter()
         .rev()
         .filter(|s| s.kind() == "bomb")
@@ -682,7 +711,9 @@ mod tests {
         assert_eq!(median(&[3., 1., 2.]), Some(2.));
         assert_eq!(median(&[4., 1., 2., 3.]), Some(2.5));
         assert_eq!(median(&[]), None);
-        let t = DateTime::parse_from_rfc3339("2026-09-23T10:00:00Z").unwrap().with_timezone(&Utc);
+        let t = DateTime::parse_from_rfc3339("2026-09-23T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         assert_eq!(week_of(t), "2026-09-21");
     }
 

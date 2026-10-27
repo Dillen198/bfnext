@@ -69,7 +69,6 @@ impl Theatre {
     pub fn country_at(&self, lat: f64, lon: f64) -> Option<&'static Country> {
         self.countries.iter().find(|c| c.contains(lat, lon))
     }
-
 }
 
 impl Country {
@@ -110,7 +109,9 @@ fn point_in_ring(lat: f64, lon: f64, ring: &[(f64, f64)]) -> bool {
 /// Sinai box and only a few in the shared slice, so Sinai wins, and the
 /// reverse for a Syria campaign. It also shrugs off one objective a long way
 /// out to sea. Ties go to whichever terrain is declared first.
-pub fn theatre_of<I: IntoIterator<Item = (f64, f64)>>(points: I) -> Option<&'static Theatre> {
+pub fn theatre_of<I: IntoIterator<Item = (f64, f64)>>(
+    points: I,
+) -> Option<&'static Theatre> {
     let mut tally = vec![0u32; THEATRES.len()];
     for (lat, lon) in points {
         for (i, t) in THEATRES.iter().enumerate() {
@@ -413,7 +414,8 @@ const UAE: &[(f64, f64)] = &[
 ];
 const QATAR: &[(f64, f64)] =
     &[(26.15, 51.05), (26.20, 51.60), (24.55, 51.60), (24.55, 50.80), (25.50, 50.75)];
-const BAHRAIN: &[(f64, f64)] = &[(26.35, 50.42), (26.35, 50.70), (25.75, 50.70), (25.75, 50.42)];
+const BAHRAIN: &[(f64, f64)] =
+    &[(26.35, 50.42), (26.35, 50.70), (25.75, 50.70), (25.75, 50.42)];
 const KUWAIT: &[(f64, f64)] =
     &[(30.10, 46.50), (30.10, 48.45), (28.50, 48.45), (28.55, 47.70), (29.10, 46.55)];
 const IRAQ_SE: &[(f64, f64)] =
@@ -566,7 +568,8 @@ const FRANCE_N: &[(f64, f64)] = &[
     (50.10, 1.40),
     (50.95, 2.00),
 ];
-const BELGIUM: &[(f64, f64)] = &[(51.50, 3.00), (51.50, 6.20), (49.50, 5.80), (49.80, 4.20), (51.00, 2.55)];
+const BELGIUM: &[(f64, f64)] =
+    &[(51.50, 3.00), (51.50, 6.20), (49.50, 5.80), (49.80, 4.20), (51.00, 2.55)];
 
 // Germany (Cold War) ---------------------------------------------------------
 const EAST_GERMANY: &[(f64, f64)] = &[
@@ -702,10 +705,14 @@ const CHILE: &[(f64, f64)] = &[
 ];
 
 // Marianas -------------------------------------------------------------------
-const GUAM: &[(f64, f64)] = &[(13.70, 144.60), (13.66, 145.02), (13.22, 144.95), (13.23, 144.61)];
-const SAIPAN: &[(f64, f64)] = &[(15.32, 145.68), (15.32, 145.85), (14.94, 145.85), (14.94, 145.68)];
-const TINIAN: &[(f64, f64)] = &[(15.10, 145.56), (15.10, 145.72), (14.88, 145.72), (14.88, 145.56)];
-const ROTA: &[(f64, f64)] = &[(14.22, 145.08), (14.22, 145.32), (14.08, 145.32), (14.08, 145.08)];
+const GUAM: &[(f64, f64)] =
+    &[(13.70, 144.60), (13.66, 145.02), (13.22, 144.95), (13.23, 144.61)];
+const SAIPAN: &[(f64, f64)] =
+    &[(15.32, 145.68), (15.32, 145.85), (14.94, 145.85), (14.94, 145.68)];
+const TINIAN: &[(f64, f64)] =
+    &[(15.10, 145.56), (15.10, 145.72), (14.88, 145.72), (14.88, 145.56)];
+const ROTA: &[(f64, f64)] =
+    &[(14.22, 145.08), (14.22, 145.32), (14.08, 145.32), (14.08, 145.08)];
 
 // Nevada ---------------------------------------------------------------------
 const NEVADA_US: &[(f64, f64)] =
@@ -909,16 +916,19 @@ mod tests {
     /// campaign be attributed to the wrong map.
     #[test]
     fn only_neighbouring_terrains_share_a_bounding_box() {
-        const NEIGHBOURS: &[(&str, &str)] =
-            &[("Syria", "Sinai"), ("Syria", "Iraq"), ("Persian Gulf", "Iraq"),
-              ("Persian Gulf", "Afghanistan")];
+        const NEIGHBOURS: &[(&str, &str)] = &[
+            ("Syria", "Sinai"),
+            ("Syria", "Iraq"),
+            ("Persian Gulf", "Iraq"),
+            ("Persian Gulf", "Afghanistan"),
+        ];
         for (i, a) in THEATRES.iter().enumerate() {
             for b in THEATRES.iter().skip(i + 1) {
                 let lat = a.lat.0.max(b.lat.0) <= a.lat.1.min(b.lat.1);
                 let lon = a.lon.0.max(b.lon.0) <= a.lon.1.min(b.lon.1);
-                let known = NEIGHBOURS
-                    .iter()
-                    .any(|(x, y)| (*x == a.name && *y == b.name) || (*x == b.name && *y == a.name));
+                let known = NEIGHBOURS.iter().any(|(x, y)| {
+                    (*x == a.name && *y == b.name) || (*x == b.name && *y == a.name)
+                });
                 assert!(!(lat && lon) || known, "{} overlaps {}", a.name, b.name);
             }
         }
@@ -957,7 +967,8 @@ mod tests {
 
     #[test]
     fn lists_read_like_copy() {
-        let v = |s: &[&str]| join_names(&s.iter().map(|x| x.to_string()).collect::<Vec<_>>());
+        let v =
+            |s: &[&str]| join_names(&s.iter().map(|x| x.to_string()).collect::<Vec<_>>());
         assert_eq!(v(&["Syria"]), "Syria");
         assert_eq!(v(&["Israel", "Jordan"]), "Israel and Jordan");
         assert_eq!(v(&["Israel", "Turkey", "Jordan"]), "Israel, Turkey and Jordan");

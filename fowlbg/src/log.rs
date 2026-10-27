@@ -45,9 +45,13 @@ pub fn netidx_noise(m: &Metadata) -> bool {
     let level = m.level();
     (level > Level::Error && t.starts_with("netidx::subscriber"))
         || (level > Level::Warn
-            && ["netidx::resolver_client", "netidx::channel", "netidx_archive::logfile_collection"]
-                .iter()
-                .any(|p| t.starts_with(p)))
+            && [
+                "netidx::resolver_client",
+                "netidx::channel",
+                "netidx_archive::logfile_collection",
+            ]
+            .iter()
+            .any(|p| t.starts_with(p)))
 }
 
 /// A logger with the netidx noise filter in front of it.
@@ -138,7 +142,11 @@ impl<T: Task> LogHandle<T> {
             let dropped = DROPPED.swap(0, Ordering::Relaxed);
             if dropped > 0 {
                 let mut b = BytesMut::from(
-                    format!("WARN [{}] log queue full: {dropped} log line(s) dropped\n", self.name).as_bytes(),
+                    format!(
+                        "WARN [{}] log queue full: {dropped} log line(s) dropped\n",
+                        self.name
+                    )
+                    .as_bytes(),
                 );
                 b.extend_from_slice(&line);
                 line = b.freeze();
@@ -204,7 +212,10 @@ mod tests {
     fn noise_filter() {
         assert!(netidx_noise(&meta(Level::Warn, "netidx::subscriber::connection")));
         assert!(!netidx_noise(&meta(Level::Error, "netidx::subscriber")));
-        assert!(netidx_noise(&meta(Level::Info, "netidx::resolver_client::write_client")));
+        assert!(netidx_noise(&meta(
+            Level::Info,
+            "netidx::resolver_client::write_client"
+        )));
         assert!(!netidx_noise(&meta(Level::Warn, "netidx::resolver_client")));
         assert!(netidx_noise(&meta(Level::Info, "netidx::channel")));
         assert!(netidx_noise(&meta(Level::Debug, "netidx_archive::logfile_collection")));

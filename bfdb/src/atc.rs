@@ -27,8 +27,8 @@
 //! rather than realism. Tower sequences traffic, warns about it, and always
 //! eventually clears you.
 
-use crate::worker::host::EngineHost;
 use crate::voice::{modulation_byte, srs, stt, tts, FreqSpec, Radio};
+use crate::worker::host::EngineHost;
 use bfprotocols::atc::{AtcAirfield, AtcPicture, AtcTraffic};
 use dcso3::coalition::Side;
 use serde::Deserialize;
@@ -177,11 +177,7 @@ fn plan_frequencies(cfg: &AtcConfig, fields: &[&AtcAirfield]) -> Vec<FieldFreqs>
         if over.map_or(true, |o| o.tower.is_none() && o.atis.is_none()) {
             auto_slot += 1;
         }
-        out.push(FieldFreqs {
-            name: name.to_string(),
-            tower,
-            atis,
-        });
+        out.push(FieldFreqs { name: name.to_string(), tower, atis });
     }
     out
 }
@@ -207,9 +203,10 @@ struct AtisState {
 
 fn letter_word(i: u8) -> &'static str {
     const L: [&str; 26] = [
-        "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india",
-        "juliet", "kilo", "lima", "mike", "november", "oscar", "papa", "quebec", "romeo",
-        "sierra", "tango", "uniform", "victor", "whiskey", "xray", "yankee", "zulu",
+        "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
+        "india", "juliet", "kilo", "lima", "mike", "november", "oscar", "papa", "quebec",
+        "romeo", "sierra", "tango", "uniform", "victor", "whiskey", "xray", "yankee",
+        "zulu",
     ];
     L[(i % 26) as usize]
 }
@@ -237,11 +234,7 @@ fn atis_materially_changed(s: &AtisState, a: &AtcAirfield) -> bool {
 /// whether it can actually rearm and refuel you.
 fn atis_text(a: &AtcAirfield, letter: u8, pattern_alt_ft: u32) -> String {
     let mut s = String::with_capacity(320);
-    s.push_str(&format!(
-        "{} information {}. ",
-        a.name,
-        letter_word(letter)
-    ));
+    s.push_str(&format!("{} information {}. ", a.name, letter_word(letter)));
 
     if !a.open {
         s.push_str("Field is closed. ");
@@ -294,7 +287,9 @@ fn atis_text(a: &AtcAirfield, letter: u8, pattern_alt_ft: u32) -> String {
 
     // The campaign-aware part.
     if a.threatened {
-        s.push_str("Caution, field is under threat, expect hostile activity in the vicinity. ");
+        s.push_str(
+            "Caution, field is under threat, expect hostile activity in the vicinity. ",
+        );
     }
     match (a.supply, a.fuel) {
         (0, 0) => s.push_str("Rearming and refuelling unavailable. "),
@@ -355,7 +350,11 @@ pub(crate) fn parse_atc(text: &str, field: &str) -> Option<AtcRequest> {
         AtcRequest::Initial
     } else if has("go around") || has("going around") {
         AtcRequest::GoAround
-    } else if has("gear down") || has("cleared to land") || has("request landing") || has("land") {
+    } else if has("gear down")
+        || has("cleared to land")
+        || has("request landing")
+        || has("land")
+    {
         AtcRequest::Landing
     } else if has("inbound") || has("recovery") || has("straight in") {
         AtcRequest::Inbound
@@ -392,7 +391,8 @@ fn tower_reply(
 
     // Who else is in the way. Airborne inside 10 nm, or anything moving on the
     // ground, is worth a word.
-    let airborne = traffic.iter().filter(|t| !t.on_ground && t.field_rng_m < 18_520).count();
+    let airborne =
+        traffic.iter().filter(|t| !t.on_ground && t.field_rng_m < 18_520).count();
     let rolling = traffic.iter().filter(|t| t.on_ground && t.speed_kts > 15).count();
 
     match req {
@@ -495,7 +495,9 @@ fn spell_runway(r: &str) -> String {
     let mut out: Vec<String> = Vec::new();
     for c in r.chars() {
         match c {
-            d if d.is_ascii_digit() => out.push(digit_word(d.to_digit(10).unwrap()).to_string()),
+            d if d.is_ascii_digit() => {
+                out.push(digit_word(d.to_digit(10).unwrap()).to_string())
+            }
             'L' | 'l' => out.push("left".into()),
             'R' | 'r' => out.push("right".into()),
             'C' | 'c' => out.push("center".into()),
@@ -585,7 +587,11 @@ fn atis_calls(
             Some(s) => {
                 let l = (s.letter + 1) % 26;
                 let t = atis_text(a, l, cfg.pattern_altitude_ft);
-                log::info!("atc[{side:?}] {}: new ATIS information {}", a.name, letter_word(l));
+                log::info!(
+                    "atc[{side:?}] {}: new ATIS information {}",
+                    a.name,
+                    letter_word(l)
+                );
                 (l, t)
             }
             None => {
@@ -641,10 +647,7 @@ fn match_traffic<'a>(
         }
     }
     let norm = |s: &str| {
-        s.chars()
-            .filter(|c| c.is_alphanumeric())
-            .collect::<String>()
-            .to_lowercase()
+        s.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase()
     };
     let a = norm(&tr.name);
     if !a.is_empty() {
@@ -758,15 +761,16 @@ pub(crate) async fn run(
     loop {
         ticker.tick().await;
         for (side, key) in [(Side::Blue, "blue"), (Side::Red, "red")] {
-            let picture = match fetch_atc(&inst, if side == Side::Red { "red" } else { "blue" })
-                .await
-            {
-                Ok(p) => p,
-                Err(e) => {
-                    log::debug!("atc[{side:?}] poll failed: {e}");
-                    continue;
-                }
-            };
+            let picture =
+                match fetch_atc(&inst, if side == Side::Red { "red" } else { "blue" })
+                    .await
+                {
+                    Ok(p) => p,
+                    Err(e) => {
+                        log::debug!("atc[{side:?}] poll failed: {e}");
+                        continue;
+                    }
+                };
             let refs: Vec<&AtcAirfield> = picture.airfields.iter().collect();
             let plan = plan_frequencies(&cfg, &refs);
             let st = state.get_mut(key).unwrap();
@@ -777,7 +781,8 @@ pub(crate) async fn run(
             keys.sort_unstable();
             if keys != st.tuned {
                 st.tuned = keys;
-                let mut radios: Vec<Radio> = plan.iter().map(|f| f.tower.clone()).collect();
+                let mut radios: Vec<Radio> =
+                    plan.iter().map(|f| f.tower.clone()).collect();
                 radios.extend(plan.iter().filter_map(|f| f.atis.clone()));
                 if let Some(c) = voice.client(side) {
                     c.set_radios(radios);
@@ -809,9 +814,7 @@ pub(crate) fn answer(
     plan: &[FieldFreqs],
 ) -> Option<(Vec<Radio>, String)> {
     // Which field owns the frequency it came in on?
-    let field = plan
-        .iter()
-        .find(|f| (f.tower.freq_hz - tr.freq_hz).abs() <= 500.0)?;
+    let field = plan.iter().find(|f| (f.tower.freq_hz - tr.freq_hz).abs() <= 500.0)?;
     let a = picture.airfields.iter().find(|a| a.name == field.name)?;
     let req = parse_atc(heard, &a.name)?;
 
@@ -834,10 +837,7 @@ pub(crate) fn answer(
         .filter(|t| flight.map_or(true, |f| f.ucid != t.ucid))
         .collect();
 
-    Some((
-        vec![field.tower.clone()],
-        tower_reply(cfg, a, &req, &who, &traffic),
-    ))
+    Some((vec![field.tower.clone()], tower_reply(cfg, a, &req, &who, &traffic)))
 }
 
 /// The SRS clients and TTS engines ATC speaks through, plus the latest picture
@@ -858,13 +858,7 @@ impl AtcVoice {
         tts_blue: tts::Tts,
         tts_red: tts::Tts,
     ) -> Self {
-        AtcVoice {
-            blue,
-            red,
-            tts_blue,
-            tts_red,
-            cache: Default::default(),
-        }
+        AtcVoice { blue, red, tts_blue, tts_red, cache: Default::default() }
     }
 
     fn client(&self, side: Side) -> Option<srs::SrsClient> {
@@ -896,19 +890,15 @@ impl AtcVoice {
 }
 
 /// Poll the engine for one coalition's ATC picture.
-async fn fetch_atc(
-    inst: &EngineHost,
-    side: &'static str,
-) -> Result<AtcPicture, String> {
+async fn fetch_atc(inst: &EngineHost, side: &'static str) -> Result<AtcPicture, String> {
     let res = tokio::time::timeout(
         Duration::from_secs(8),
         inst.rpc_str("query-atc", vec![("side", netidx::publisher::Value::from(side))]),
     )
     .await;
     match res {
-        Ok(Ok(json)) => {
-            serde_json::from_str::<AtcPicture>(&json).map_err(|e| format!("bad query-atc JSON: {e}"))
-        }
+        Ok(Ok(json)) => serde_json::from_str::<AtcPicture>(&json)
+            .map_err(|e| format!("bad query-atc JSON: {e}")),
         Ok(Err(e)) => Err(format!("query-atc RPC error: {e:?}")),
         Err(_) => Err("query-atc timed out".to_string()),
     }
@@ -976,13 +966,14 @@ impl AtcVoice {
                 None
             }
         };
-        let side_tts = |model: &Option<std::path::PathBuf>, voice: &Option<String>| -> tts::Tts {
-            tts::Tts::from_cfg(
-                gci.piper_exe.as_ref(),
-                model.as_ref().or(gci.piper_model.as_ref()),
-                voice.as_ref().or(gci.tts_voice.as_ref()),
-            )
-        };
+        let side_tts =
+            |model: &Option<std::path::PathBuf>, voice: &Option<String>| -> tts::Tts {
+                tts::Tts::from_cfg(
+                    gci.piper_exe.as_ref(),
+                    model.as_ref().or(gci.piper_model.as_ref()),
+                    voice.as_ref().or(gci.tts_voice.as_ref()),
+                )
+            };
         let mk = |coalition: u8, name: &str, pw: &str| -> Option<srs::SrsClient> {
             srs::SrsClient::start(
                 &gci.srs_host,

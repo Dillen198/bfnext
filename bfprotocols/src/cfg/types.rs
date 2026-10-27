@@ -18,7 +18,19 @@ for more details.
 
 use super::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord, Default, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    Hash,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Default,
+    schemars::JsonSchema,
+)]
 pub struct Vehicle(pub String);
 
 impl fmt::Display for Vehicle {
@@ -108,7 +120,19 @@ impl Rule {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[bitflags]
 #[repr(u64)]
 pub enum UnitTag {
@@ -172,7 +196,17 @@ pub enum UnitTag {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Default,
+    Serialize,
+    Deserialize,
     schemars::JsonSchema,
 )]
 #[serde(from = "Vec<UnitTag>", into = "Vec<UnitTag>")]
@@ -225,7 +259,19 @@ impl Into<Vec<UnitTag>> for UnitTags {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    Hash,
+    schemars::JsonSchema,
+)]
 pub enum LifeType {
     Standard,
     Intercept,

@@ -197,13 +197,86 @@ fn is_digit_tok(t: &str) -> bool {
 
 /// Words that are never a callsign's name part.
 const NOT_A_CALLSIGN: &[&str] = &[
-    "tower", "ground", "approach", "departure", "clearance", "delivery", "final", "gca", "radar", "runway", "with",
-    "information", "flight", "level", "passing", "for", "climbing", "descending", "squawk", "miles", "mile",
-    "heading", "at", "is", "of", "and", "the", "request", "requesting", "inbound", "point", "angels", "taxi",
-    "holding", "short", "ready", "number", "on", "to", "by", "via", "cleared", "contact", "frequency", "maintain",
-    "altitude", "feet", "thousand", "hundred", "north", "south", "east", "west", "left", "right", "center",
-    "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "kilo", "lima", "x",
-    "decimal", "copy", "roger", "wilco", "readback", "this", "it", "we", "are", "two", "ship", "flight",
+    "tower",
+    "ground",
+    "approach",
+    "departure",
+    "clearance",
+    "delivery",
+    "final",
+    "gca",
+    "radar",
+    "runway",
+    "with",
+    "information",
+    "flight",
+    "level",
+    "passing",
+    "for",
+    "climbing",
+    "descending",
+    "squawk",
+    "miles",
+    "mile",
+    "heading",
+    "at",
+    "is",
+    "of",
+    "and",
+    "the",
+    "request",
+    "requesting",
+    "inbound",
+    "point",
+    "angels",
+    "taxi",
+    "holding",
+    "short",
+    "ready",
+    "number",
+    "on",
+    "to",
+    "by",
+    "via",
+    "cleared",
+    "contact",
+    "frequency",
+    "maintain",
+    "altitude",
+    "feet",
+    "thousand",
+    "hundred",
+    "north",
+    "south",
+    "east",
+    "west",
+    "left",
+    "right",
+    "center",
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel",
+    "india",
+    "kilo",
+    "lima",
+    "x",
+    "decimal",
+    "copy",
+    "roger",
+    "wilco",
+    "readback",
+    "this",
+    "it",
+    "we",
+    "are",
+    "two",
+    "ship",
+    "flight",
 ];
 
 /// The callsign a pilot gave: a name word followed by two or three digits.
@@ -218,7 +291,11 @@ fn callsign_in(text: &str, facility: &str) -> Option<String> {
     let fac = facility.to_lowercase();
     for i in 0..t.len() {
         let w = &t[i];
-        if is_digit_tok(w) || w.len() < 3 || NOT_A_CALLSIGN.contains(&w.as_str()) || fac.contains(w.as_str()) {
+        if is_digit_tok(w)
+            || w.len() < 3
+            || NOT_A_CALLSIGN.contains(&w.as_str())
+            || fac.contains(w.as_str())
+        {
             continue;
         }
         let mut digits = String::new();
@@ -312,8 +389,16 @@ pub(crate) fn altitude(text: &str) -> Option<i32> {
     }
     // A bare "4000" / "12500" after an altitude word.
     for i in 0..t.len() {
-        if matches!(t[i].as_str(), "passing" | "maintain" | "maintaining" | "at" | "level" | "climbing" | "descending")
-        {
+        if matches!(
+            t[i].as_str(),
+            "passing"
+                | "maintain"
+                | "maintaining"
+                | "at"
+                | "level"
+                | "climbing"
+                | "descending"
+        ) {
             let (n, j) = num_at(i + 1, 5);
             if j - (i + 1) >= 4 && n >= 1000 {
                 return Some(n as i32);
@@ -354,14 +439,21 @@ fn spelled(text: &str, abbr: &str) -> bool {
     if word(text, abbr) {
         return true;
     }
-    let toks: Vec<String> = text.split(|c: char| !c.is_alphanumeric()).filter(|x| !x.is_empty()).map(|x| x.to_lowercase()).collect();
+    let toks: Vec<String> = text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|x| !x.is_empty())
+        .map(|x| x.to_lowercase())
+        .collect();
     let want: Vec<String> = abbr.chars().map(|c| c.to_string()).collect();
     toks.windows(want.len()).any(|w| w == want.as_slice())
 }
 
 /// What a request for an approach asked for.
 fn approach_kind(t: &str) -> Approach {
-    if any(t, &["precision approach", "precision radar", "talk down", "talkdown"]) || spelled(t, "par") || spelled(t, "gca") {
+    if any(t, &["precision approach", "precision radar", "talk down", "talkdown"])
+        || spelled(t, "par")
+        || spelled(t, "gca")
+    {
         Approach::Par
     } else if spelled(t, "ils") || any(t, &["localizer"]) {
         Approach::Ils
@@ -401,8 +493,27 @@ fn option_kind(t: &str) -> LandingOption {
 fn range_request(t: &str) -> bool {
     let t = t.replace("range control", "");
     has(&t, "request")
-        && any(&t, &["range", "circle", "pit", "strafe", "bomb", "array", "target", "lane", "convoy", "r-72", "r72"])
-        && !any(&t, &["taxi", "clearance", "startup", "start up", "takeoff", "take off", "departure", "approach", "landing"])
+        && any(
+            &t,
+            &[
+                "range", "circle", "pit", "strafe", "bomb", "array", "target", "lane",
+                "convoy", "r-72", "r72",
+            ],
+        )
+        && !any(
+            &t,
+            &[
+                "taxi",
+                "clearance",
+                "startup",
+                "start up",
+                "takeoff",
+                "take off",
+                "departure",
+                "approach",
+                "landing",
+            ],
+        )
 }
 
 pub(crate) fn parse(text: &str, facility: &str) -> Option<Parsed> {
@@ -412,78 +523,327 @@ pub(crate) fn parse(text: &str, facility: &str) -> Option<Parsed> {
         return Option::None;
     }
     use Intent::*;
-    let intent = if any(t, &["mayday", "pan pan", "pan-pan", "declaring an emergency", "declare emergency", "emergency"]) {
+    let intent = if any(
+        t,
+        &[
+            "mayday",
+            "pan pan",
+            "pan-pan",
+            "declaring an emergency",
+            "declare emergency",
+            "emergency",
+        ],
+    ) {
         Emergency
     } else if word(t, "ball") || word(t, "clara") || has(t, "no ball") {
         Ball
     } else if word(t, "commencing") || has(t, "commencing approach") {
         Commencing
-    } else if any(t, &["ip inbound", "i p inbound", "in from the", "in hot", "rolling in", "in dry", "inbound from the ip", "turning in"]) {
+    } else if any(
+        t,
+        &[
+            "ip inbound",
+            "i p inbound",
+            "in from the",
+            "in hot",
+            "rolling in",
+            "in dry",
+            "inbound from the ip",
+            "turning in",
+        ],
+    ) {
         IpInbound
-    } else if any(t, &["off safe", "off target", "off dry", "off hot", "coming off", "off the target"]) {
+    } else if any(
+        t,
+        &["off safe", "off target", "off dry", "off hot", "coming off", "off the target"],
+    ) {
         OffTarget
-    } else if any(t, &["departing the range", "leaving the range", "off the range", "out of the range", "winchester", "clearing the range", "exiting the range"]) {
+    } else if any(
+        t,
+        &[
+            "departing the range",
+            "leaving the range",
+            "off the range",
+            "out of the range",
+            "winchester",
+            "clearing the range",
+            "exiting the range",
+        ],
+    ) {
         DepartingRange
-    } else if any(t, &["request range", "range time", "request the range", "request into", "request entry", "request station", "request the circle", "request the pit", "request bomb", "request strafe", "request a slot", "request slot", "cleared into"]) && !has(t, "cleared into the")
+    } else if any(
+        t,
+        &[
+            "request range",
+            "range time",
+            "request the range",
+            "request into",
+            "request entry",
+            "request station",
+            "request the circle",
+            "request the pit",
+            "request bomb",
+            "request strafe",
+            "request a slot",
+            "request slot",
+            "cleared into",
+        ],
+    ) && !has(t, "cleared into the")
         || range_request(t)
     {
         RequestRange
-    } else if any(t, &["request rejoin", "request fuel", "request gas", "request a drink", "need fuel", "need gas", "for gas", "for fuel", "request to join", "request join", "request tanking", "on the boom", "for the boom", "request contact"]) {
+    } else if any(
+        t,
+        &[
+            "request rejoin",
+            "request fuel",
+            "request gas",
+            "request a drink",
+            "need fuel",
+            "need gas",
+            "for gas",
+            "for fuel",
+            "request to join",
+            "request join",
+            "request tanking",
+            "on the boom",
+            "for the boom",
+            "request contact",
+        ],
+    ) {
         RequestFuel
-    } else if any(t, &["fuel complete", "topped off", "complete with fuel", "disconnecting", "full of gas", "thanks for the gas", "thanks for the fuel"]) && !has(t, "fuel state") {
+    } else if any(
+        t,
+        &[
+            "fuel complete",
+            "topped off",
+            "complete with fuel",
+            "disconnecting",
+            "full of gas",
+            "thanks for the gas",
+            "thanks for the fuel",
+        ],
+    ) && !has(t, "fuel state")
+    {
         FuelComplete
     } else if word(t, "marshal") && any(t, &["angels", "state", " miles", " dme"]) {
         // the carrier check-in: "Marshal, 401, 30 miles, angels 20, state 6.2"
         CheckIn
-    } else if any(t, &["radio check", "how do you read", "how do you hear", "comm check"]) {
+    } else if any(t, &["radio check", "how do you read", "how do you hear", "comm check"])
+    {
         RadioCheck
-    } else if any(t, &["say again", "repeat your last", "say last", "didn't copy", "did not copy"]) {
+    } else if any(
+        t,
+        &["say again", "repeat your last", "say last", "didn't copy", "did not copy"],
+    ) {
         SayAgain
-    } else if any(t, &["going around", "go around", "missed approach", "executing missed"]) {
+    } else if any(
+        t,
+        &["going around", "go around", "missed approach", "executing missed"],
+    ) {
         GoingAround
     } else if any(t, &["unable"]) {
         Unable
-    } else if any(t, &["request clearance", "ready to copy", "clearance to", "ifr clearance", "request ifr", "copy clearance"]) {
+    } else if any(
+        t,
+        &[
+            "request clearance",
+            "ready to copy",
+            "clearance to",
+            "ifr clearance",
+            "request ifr",
+            "copy clearance",
+        ],
+    ) {
         RequestClearance
-    } else if squawk(t).is_some() && any(t, &["cleared", "maintain", "climb", "expect", "departure frequency"]) {
+    } else if squawk(t).is_some()
+        && any(t, &["cleared", "maintain", "climb", "expect", "departure frequency"])
+    {
         ClearanceReadback
-    } else if any(t, &["request startup", "request start up", "request start", "ready to start", "request engine start", "start up"]) {
+    } else if any(
+        t,
+        &[
+            "request startup",
+            "request start up",
+            "request start",
+            "ready to start",
+            "request engine start",
+            "start up",
+        ],
+    ) {
         RequestStartup
-    } else if any(t, &["clear of the runway", "clear of runway", "clear the runway", "off the runway", "vacated", "clear of the active"]) {
+    } else if any(
+        t,
+        &[
+            "clear of the runway",
+            "clear of runway",
+            "clear the runway",
+            "off the runway",
+            "vacated",
+            "clear of the active",
+        ],
+    ) {
         ClearOfRunway
-    } else if any(t, &["request crossing", "request to cross", "cross runway", "request cross"]) && !has(t, "cleared to cross") {
+    } else if any(
+        t,
+        &["request crossing", "request to cross", "cross runway", "request cross"],
+    ) && !has(t, "cleared to cross")
+    {
         RequestCrossing
-    } else if has(t, "taxi") && any(t, &["parking", "ramp", "the line", "transient", "chocks", "hangar", "spot", "back"]) {
+    } else if has(t, "taxi")
+        && any(
+            t,
+            &[
+                "parking",
+                "ramp",
+                "the line",
+                "transient",
+                "chocks",
+                "hangar",
+                "spot",
+                "back",
+            ],
+        )
+    {
         RequestTaxiParking
-    } else if any(t, &["request taxi", "ready to taxi", "ready for taxi", "taxi for departure", "request to taxi", "taxi to the active", "taxi to runway"])
-        && !has(t, "cleared")
+    } else if any(
+        t,
+        &[
+            "request taxi",
+            "ready to taxi",
+            "ready for taxi",
+            "taxi for departure",
+            "request to taxi",
+            "taxi to the active",
+            "taxi to runway",
+        ],
+    ) && !has(t, "cleared")
     {
         RequestTaxi
-    } else if any(t, &["ready for departure", "ready for takeoff", "ready for take off", "request takeoff", "request take off", "ready to go", "holding short ready", "number one ready", "ready in sequence"]) {
+    } else if any(
+        t,
+        &[
+            "ready for departure",
+            "ready for takeoff",
+            "ready for take off",
+            "request takeoff",
+            "request take off",
+            "ready to go",
+            "holding short ready",
+            "number one ready",
+            "ready in sequence",
+        ],
+    ) {
         ReadyForDeparture
     } else if any(t, &["initial"]) && !any(t, &["request", "expect"]) {
         ReportInitial
-    } else if any(t, &["the break", "breaking", "in the break", "break"]) && !has(t, "approved") {
+    } else if any(t, &["the break", "breaking", "in the break", "break"])
+        && !has(t, "approved")
+    {
         ReportBreak
-    } else if any(t, &["base", "gear down", "wheels down", "three green", "gear check"]) && !has(t, "cleared to land") {
+    } else if any(t, &["base", "gear down", "wheels down", "three green", "gear check"])
+        && !has(t, "cleared to land")
+    {
         ReportBase
     } else if any(t, &["downwind"]) && !has(t, "report") {
         ReportDownwind
     } else if any(t, &["on final", "short final", "mile final", "miles final"]) {
         ReportFinal
-    } else if any(t, &["request closed", "closed traffic", "request closed traffic", "closed pull"]) {
+    } else if any(
+        t,
+        &["request closed", "closed traffic", "request closed traffic", "closed pull"],
+    ) {
         RequestClosed
-    } else if any(t, &["request tacan", "request visual", "request overhead", "request straight in", "request precision", "request approach", "request the overhead", "request a visual", "request the break", "approach request", "for the overhead", "for an overhead", "for a visual"])
-        || (has(t, "request") && (spelled(t, "par") || spelled(t, "ils") || spelled(t, "gca")))
+    } else if any(
+        t,
+        &[
+            "request tacan",
+            "request visual",
+            "request overhead",
+            "request straight in",
+            "request precision",
+            "request approach",
+            "request the overhead",
+            "request a visual",
+            "request the break",
+            "approach request",
+            "for the overhead",
+            "for an overhead",
+            "for a visual",
+        ],
+    ) || (has(t, "request")
+        && (spelled(t, "par") || spelled(t, "ils") || spelled(t, "gca")))
     {
         RequestApproach
-    } else if any(t, &["request frequency change", "frequency change", "switching", "request switch", "leaving frequency", "going to", "push", "off frequency"]) {
+    } else if any(
+        t,
+        &[
+            "request frequency change",
+            "frequency change",
+            "switching",
+            "request switch",
+            "leaving frequency",
+            "going to",
+            "push",
+            "off frequency",
+        ],
+    ) {
         RequestFrequencyChange
-    } else if any(t, &["request weather", "say weather", "request altimeter", "say altimeter", "request winds", "say winds", "request the numbers", "request field conditions"]) {
+    } else if any(
+        t,
+        &[
+            "request weather",
+            "say weather",
+            "request altimeter",
+            "say altimeter",
+            "request winds",
+            "say winds",
+            "request the numbers",
+            "request field conditions",
+        ],
+    ) {
         RequestWeather
-    } else if any(t, &["check in", "checking in", "inbound", "with you", "passing", "climbing", "leveling", "level at", "radar contact"]) {
+    } else if any(
+        t,
+        &[
+            "check in",
+            "checking in",
+            "inbound",
+            "with you",
+            "passing",
+            "climbing",
+            "leveling",
+            "level at",
+            "radar contact",
+        ],
+    ) {
         CheckIn
-    } else if any(t, &["cleared for takeoff", "cleared to land", "line up and wait", "hold short", "cleared to cross", "wilco", "roger", "copy", "will report", "contact", "switching to", "taxi via", "cleared the option", "cleared touch and go", "cleared low approach", "readback", "turn left", "turn right", "heading", "descend", "maintain"]) {
+    } else if any(
+        t,
+        &[
+            "cleared for takeoff",
+            "cleared to land",
+            "line up and wait",
+            "hold short",
+            "cleared to cross",
+            "wilco",
+            "roger",
+            "copy",
+            "will report",
+            "contact",
+            "switching to",
+            "taxi via",
+            "cleared the option",
+            "cleared touch and go",
+            "cleared low approach",
+            "readback",
+            "turn left",
+            "turn right",
+            "heading",
+            "descend",
+            "maintain",
+        ],
+    ) {
         Readback
     } else {
         return Option::None;
@@ -512,11 +872,25 @@ mod tests {
 
     #[test]
     fn callsigns() {
-        assert_eq!(callsign("Andersen Ground, Viper one one, request taxi", "Andersen").as_deref(), Some("Viper 1-1"));
-        assert_eq!(callsign("andersen tower viper 11 ready for departure", "Andersen").as_deref(), Some("Viper 1-1"));
-        assert_eq!(callsign("Enfield 2-1, request startup", "Andersen").as_deref(), Some("Enfield 2-1"));
+        assert_eq!(
+            callsign("Andersen Ground, Viper one one, request taxi", "Andersen")
+                .as_deref(),
+            Some("Viper 1-1")
+        );
+        assert_eq!(
+            callsign("andersen tower viper 11 ready for departure", "Andersen")
+                .as_deref(),
+            Some("Viper 1-1")
+        );
+        assert_eq!(
+            callsign("Enfield 2-1, request startup", "Andersen").as_deref(),
+            Some("Enfield 2-1")
+        );
         assert_eq!(callsign("Andersen tower, runway 06R", "Andersen"), None);
-        assert_eq!(callsign("Marshal, Rhino 11, 30 miles, angels 20", "Lincoln").as_deref(), Some("Rhino 1-1"));
+        assert_eq!(
+            callsign("Marshal, Rhino 11, 30 miles, angels 20", "Lincoln").as_deref(),
+            Some("Rhino 1-1")
+        );
     }
 
     #[test]
@@ -533,32 +907,65 @@ mod tests {
 
     #[test]
     fn standard_calls() {
-        assert_eq!(p("Andersen Ground, Viper 11, request taxi").intent, Intent::RequestTaxi);
-        assert_eq!(p("Andersen Clearance, Viper 11, request clearance to the range").intent, Intent::RequestClearance);
+        assert_eq!(
+            p("Andersen Ground, Viper 11, request taxi").intent,
+            Intent::RequestTaxi
+        );
+        assert_eq!(
+            p("Andersen Clearance, Viper 11, request clearance to the range").intent,
+            Intent::RequestClearance
+        );
         assert_eq!(
             p("cleared to the range complex, maintain 4000, departure 363.8, squawk 4215, Viper 11").intent,
             Intent::ClearanceReadback
         );
-        assert_eq!(p("Andersen Tower, Viper 11, holding short 06R, ready for departure").intent, Intent::ReadyForDeparture);
+        assert_eq!(
+            p("Andersen Tower, Viper 11, holding short 06R, ready for departure").intent,
+            Intent::ReadyForDeparture
+        );
         assert_eq!(p("Viper 11 cleared for takeoff runway 06R").intent, Intent::Readback);
         let a = p("Andersen Approach, Viper 11, 30 miles north, angels 15, request PAR full stop");
         assert_eq!(a.intent, Intent::RequestApproach);
         assert_eq!(a.approach, Approach::Par);
         assert_eq!(a.option, LandingOption::FullStop);
-        assert_eq!(p("Andersen Approach, Viper 11, inbound for the overhead").approach, Approach::Overhead);
-        assert_eq!(p("Andersen Departure, Viper 11, passing 2000 for 4000").intent, Intent::CheckIn);
-        assert_eq!(p("Andersen Tower, Viper 11, initial runway 06R").intent, Intent::ReportInitial);
+        assert_eq!(
+            p("Andersen Approach, Viper 11, inbound for the overhead").approach,
+            Approach::Overhead
+        );
+        assert_eq!(
+            p("Andersen Departure, Viper 11, passing 2000 for 4000").intent,
+            Intent::CheckIn
+        );
+        assert_eq!(
+            p("Andersen Tower, Viper 11, initial runway 06R").intent,
+            Intent::ReportInitial
+        );
         assert_eq!(p("Viper 11 base, gear down").intent, Intent::ReportBase);
         assert_eq!(p("Viper 11 going around").intent, Intent::GoingAround);
-        assert_eq!(p("Andersen Ground, Viper 11, clear of the runway, taxi to parking").intent, Intent::ClearOfRunway);
-        assert_eq!(p("Andersen Ground, Viper 11, request taxi to parking").intent, Intent::RequestTaxiParking);
+        assert_eq!(
+            p("Andersen Ground, Viper 11, clear of the runway, taxi to parking").intent,
+            Intent::ClearOfRunway
+        );
+        assert_eq!(
+            p("Andersen Ground, Viper 11, request taxi to parking").intent,
+            Intent::RequestTaxiParking
+        );
         assert_eq!(p("Andersen Tower Viper 11 radio check").intent, Intent::RadioCheck);
         assert_eq!(p("Mayday mayday Viper 11 engine failure").intent, Intent::Emergency);
-        assert_eq!(p("Range Control, Viper 11, request R-7201 bomb circle").intent, Intent::RequestRange);
+        assert_eq!(
+            p("Range Control, Viper 11, request R-7201 bomb circle").intent,
+            Intent::RequestRange
+        );
         assert_eq!(p("Viper 11, IP inbound").intent, Intent::IpInbound);
         assert_eq!(p("Viper 11 off safe").intent, Intent::OffTarget);
-        assert_eq!(p("Range Control, Viper 11, winchester, departing the range").intent, Intent::DepartingRange);
-        assert_eq!(p("Texaco 11, Viper 11, request rejoin, 4000 pounds").intent, Intent::RequestFuel);
+        assert_eq!(
+            p("Range Control, Viper 11, winchester, departing the range").intent,
+            Intent::DepartingRange
+        );
+        assert_eq!(
+            p("Texaco 11, Viper 11, request rejoin, 4000 pounds").intent,
+            Intent::RequestFuel
+        );
         assert_eq!(p("Texaco 11, Viper 11, fuel complete").intent, Intent::FuelComplete);
         assert_eq!(p("Viper 11, Hornet ball, 5.2").intent, Intent::Ball);
         assert_eq!(p("Viper 11 commencing").intent, Intent::Commencing);

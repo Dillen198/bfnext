@@ -8,11 +8,11 @@
 //! `<instance>\0<id>` rather than by round: a route over the map is still good
 //! after a campaign reset, so the reset leaves these alone.
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use yats::{Db, RawTree as Tree};
 use uuid::Uuid;
+use yats::{Db, RawTree as Tree};
 
 /// The F/A-18C holds 59 waypoints and DCS-DTC's F-16 page 699; 99 is plenty
 /// for a planned route and keeps one plan well under the request limit.
@@ -67,10 +67,17 @@ pub(crate) struct OffsetPair {
 fn offset(o: Offset, what: &str) -> Result<Offset> {
     let ok = |v: f64, lo: f64, hi: f64| v.is_finite() && (lo..=hi).contains(&v);
     // 80 NM is the longest VIP/VRP leg the F-16 takes.
-    if !ok(o.range_ft, 0.0, 486_090.0) || !ok(o.bearing_deg, 0.0, 360.0) || !ok(o.elev_ft, -1500.0, 80_000.0) {
+    if !ok(o.range_ft, 0.0, 486_090.0)
+        || !ok(o.bearing_deg, 0.0, 360.0)
+        || !ok(o.elev_ft, -1500.0, 80_000.0)
+    {
         bail!("{what}: range, bearing or elevation out of range")
     }
-    Ok(Offset { range_ft: o.range_ft.round(), bearing_deg: (o.bearing_deg * 10.0).round() / 10.0, elev_ft: o.elev_ft.round() })
+    Ok(Offset {
+        range_ft: o.range_ft.round(),
+        bearing_deg: (o.bearing_deg * 10.0).round() / 10.0,
+        elev_ft: o.elev_ft.round(),
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -137,7 +144,9 @@ fn check_systems(s: &serde_json::Map<String, serde_json::Value>) -> Result<()> {
         bail!("too many avionics targets in one plan")
     }
     for k in s.keys() {
-        if k.len() > 48 || !k.chars().all(|c| c.is_ascii_alphanumeric() || "-_.: ".contains(c)) {
+        if k.len() > 48
+            || !k.chars().all(|c| c.is_ascii_alphanumeric() || "-_.: ".contains(c))
+        {
             bail!("bad avionics target {k:?}")
         }
     }
@@ -265,10 +274,28 @@ pub(crate) fn validate(p: Plan) -> Result<Plan> {
                     if w.oa.len() > 2 {
                         bail!("waypoint {n}: at most two offset aimpoints")
                     }
-                    w.oa.into_iter().map(|o| offset(o, "an offset aimpoint")).collect::<Result<_>>()?
+                    w.oa.into_iter()
+                        .map(|o| offset(o, "an offset aimpoint"))
+                        .collect::<Result<_>>()?
                 },
-                vip: w.vip.map(|p| -> Result<_> { Ok(OffsetPair { point: offset(p.point, "the VIP target")?, pup: offset(p.pup, "the VIP pull-up")? }) }).transpose()?,
-                vrp: w.vrp.map(|p| -> Result<_> { Ok(OffsetPair { point: offset(p.point, "the VRP")?, pup: offset(p.pup, "the VRP pull-up")? }) }).transpose()?,
+                vip: w
+                    .vip
+                    .map(|p| -> Result<_> {
+                        Ok(OffsetPair {
+                            point: offset(p.point, "the VIP target")?,
+                            pup: offset(p.pup, "the VIP pull-up")?,
+                        })
+                    })
+                    .transpose()?,
+                vrp: w
+                    .vrp
+                    .map(|p| -> Result<_> {
+                        Ok(OffsetPair {
+                            point: offset(p.point, "the VRP")?,
+                            pup: offset(p.pup, "the VRP pull-up")?,
+                        })
+                    })
+                    .transpose()?,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -378,13 +405,17 @@ mod tests {
         p.waypoints[1].oa = vec![o, o];
         p.waypoints[1].vip = Some(OffsetPair { point: o, pup: o });
         let v = validate(p).unwrap();
-        assert_eq!(v.waypoints[1].oa[0], Offset { range_ft: 3000.0, bearing_deg: 90.0, elev_ft: 120.0 });
+        assert_eq!(
+            v.waypoints[1].oa[0],
+            Offset { range_ft: 3000.0, bearing_deg: 90.0, elev_ft: 120.0 }
+        );
         assert!(v.waypoints[1].vip.is_some());
         let mut bad = plan();
         bad.waypoints[0].oa = vec![o, o, o];
         assert!(validate(bad).is_err());
         let mut bad = plan();
-        bad.waypoints[0].vrp = Some(OffsetPair { point: Offset { bearing_deg: 400.0, ..o }, pup: o });
+        bad.waypoints[0].vrp =
+            Some(OffsetPair { point: Offset { bearing_deg: 400.0, ..o }, pup: o });
         assert!(validate(bad).is_err());
     }
 
@@ -396,7 +427,12 @@ mod tests {
             speed_kts: 420.0,
             start_time: Some("08:30".into()),
             waypoints: vec![wpt("HOME"), wpt("IP")],
-            comm1: vec![Channel { preset: 1, freq_mhz: 251.0004, label: "AWACS".into(), modulation: "am".into() }],
+            comm1: vec![Channel {
+                preset: 1,
+                freq_mhz: 251.0004,
+                label: "AWACS".into(),
+                modulation: "am".into(),
+            }],
             comm2: vec![],
             include_comms: true,
             notes: String::new(),
@@ -431,7 +467,10 @@ mod tests {
         assert!(bad(|p| p.waypoints = (0..=MAX_WAYPOINTS).map(|_| wpt("X")).collect()));
         assert!(bad(|p| p.notes = "\u{7}".into()));
         assert!(bad(|p| {
-            p.systems.insert("native:F-16C_50".into(), serde_json::json!({ "x": "a".repeat(MAX_SYSTEMS_BYTES) }));
+            p.systems.insert(
+                "native:F-16C_50".into(),
+                serde_json::json!({ "x": "a".repeat(MAX_SYSTEMS_BYTES) }),
+            );
         }));
         assert!(bad(|p| {
             let mut v = serde_json::json!(1);
@@ -444,7 +483,10 @@ mod tests {
             p.systems.insert("<bad>".into(), serde_json::json!({}));
         }));
         let mut ok = plan();
-        ok.systems.insert("native:F-16C_50".into(), serde_json::json!({ "MPD": { "CMDS": { "x": 1 } } }));
+        ok.systems.insert(
+            "native:F-16C_50".into(),
+            serde_json::json!({ "MPD": { "CMDS": { "x": 1 } } }),
+        );
         assert_eq!(validate(ok).unwrap().systems.len(), 1);
     }
 

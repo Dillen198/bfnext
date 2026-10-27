@@ -183,7 +183,8 @@ pub(crate) fn roster(db: &StatsDb, inst: &InstanceState) -> Result<Roster> {
         out.push(CommanderStatus {
             ucid,
             name: ucid.to_string(),
-            commander: side.is_some() && (admin || g.map_or(false, |g| g.grant == CommanderGrant::Granted)),
+            commander: side.is_some()
+                && (admin || g.map_or(false, |g| g.grant == CommanderGrant::Granted)),
             side,
             score: 0.,
             tier: 1,
@@ -195,7 +196,9 @@ pub(crate) fn roster(db: &StatsDb, inst: &InstanceState) -> Result<Roster> {
             admin,
         });
     }
-    out.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    out.sort_by(|a, b| {
+        b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+    });
     let r = Arc::new(out);
     ROSTERS.lock().unwrap().insert(inst.id.clone(), (Instant::now(), r.clone()));
     Ok(r)
@@ -203,13 +206,22 @@ pub(crate) fn roster(db: &StatsDb, inst: &InstanceState) -> Result<Roster> {
 
 /// One pilot's standing on this server, if they have ever scored or been
 /// granted anything.
-pub(crate) fn status_of(db: &StatsDb, inst: &InstanceState, ucid: &Ucid) -> Result<Option<CommanderStatus>> {
+pub(crate) fn status_of(
+    db: &StatsDb,
+    inst: &InstanceState,
+    ucid: &Ucid,
+) -> Result<Option<CommanderStatus>> {
     Ok(roster(db, inst)?.iter().find(|s| s.ucid == *ucid).cloned())
 }
 
 /// May `ucid`, on `side`, give orders on this server? True for everyone when
 /// the server doesn't require commanders.
-pub(crate) fn may_command(db: &StatsDb, inst: &InstanceState, ucid: &Ucid, side: Side) -> Result<bool> {
+pub(crate) fn may_command(
+    db: &StatsDb,
+    inst: &InstanceState,
+    ucid: &Ucid,
+    side: Side,
+) -> Result<bool> {
     if !command_cfg(inst).require_commander {
         return Ok(true);
     }
@@ -218,7 +230,12 @@ pub(crate) fn may_command(db: &StatsDb, inst: &InstanceState, ucid: &Ucid, side:
 
 /// Is `ucid` a commander of `side` here, whatever the server requires for
 /// ground orders? The HQ override needs this.
-pub(crate) fn is_commander(db: &StatsDb, inst: &InstanceState, ucid: &Ucid, side: Side) -> Result<bool> {
+pub(crate) fn is_commander(
+    db: &StatsDb,
+    inst: &InstanceState,
+    ucid: &Ucid,
+    side: Side,
+) -> Result<bool> {
     let want = side_name(side);
     Ok(roster(db, inst)?.iter().any(|s| s.ucid == *ucid && s.commander && s.side == want))
 }
@@ -290,8 +307,12 @@ pub(crate) async fn push(db: &StatsDb, inst: &InstanceState) {
     );
     match tokio::time::timeout(Duration::from_secs(10), call).await {
         Ok(Ok(_)) => (),
-        Ok(Err(e)) => log::debug!("[{}] commanders: engine didn't take the roster: {e}", inst.id),
-        Err(_) => log::debug!("[{}] commanders: engine didn't answer set-commanders", inst.id),
+        Ok(Err(e)) => {
+            log::debug!("[{}] commanders: engine didn't take the roster: {e}", inst.id)
+        }
+        Err(_) => {
+            log::debug!("[{}] commanders: engine didn't answer set-commanders", inst.id)
+        }
     }
 }
 

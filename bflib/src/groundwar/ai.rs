@@ -35,9 +35,9 @@ for more details.
 
 use super::at_sea;
 use crate::{
-    db::formation::{FormationId, Order, Posture},
-    modern_war::tempo::{phase_at, Phase},
     Context,
+    db::formation::{FormationId, Order, Posture},
+    modern_war::tempo::{Phase, phase_at},
 };
 use bfprotocols::{
     cfg::{GroundAiCfg, GroundWarCfg},
@@ -45,7 +45,7 @@ use bfprotocols::{
 };
 use chrono::prelude::*;
 use compact_str::format_compact;
-use dcso3::{coalition::Side, MizLua, Vector2};
+use dcso3::{MizLua, Vector2, coalition::Side};
 use log::{debug, info};
 
 fn dist(a: Vector2, b: Vector2) -> f64 {
@@ -183,9 +183,17 @@ fn order_checked(
     order(lua, ctx, id, order_, now)
 }
 
-fn order(lua: MizLua, ctx: &mut Context, id: FormationId, order: Order, now: DateTime<Utc>) -> bool {
+fn order(
+    lua: MizLua,
+    ctx: &mut Context,
+    id: FormationId,
+    order: Order,
+    now: DateTime<Utc>,
+) -> bool {
     if ctx.groundwar.rt.gave_up_on(id, &order, now) {
-        debug!("ground war AI: not sending formation {id} on {order:?} again: it got stuck on it");
+        debug!(
+            "ground war AI: not sending formation {id} on {order:?} again: it got stuck on it"
+        );
         return false;
     }
     match ctx.db.order_formation(&mut ctx.groundwar.rt, lua, id, order, None, now) {
@@ -218,8 +226,13 @@ fn value(kind: &ObjectiveKind) -> f64 {
 /// The objectives `side` could attack, each with its score (lower is
 /// better): within `max_m` of ground the side holds, closer and weaker first,
 /// weighted by what it is worth.
-fn rank_targets(objs: &[Obj], side: Side, max_m: f64) -> Vec<(ObjectiveId, Vector2, f64)> {
-    let own: Vec<Vector2> = objs.iter().filter(|o| o.owner == side).map(|o| o.pos).collect();
+fn rank_targets(
+    objs: &[Obj],
+    side: Side,
+    max_m: f64,
+) -> Vec<(ObjectiveId, Vector2, f64)> {
+    let own: Vec<Vector2> =
+        objs.iter().filter(|o| o.owner == side).map(|o| o.pos).collect();
     let gap = |p: Vector2| own.iter().map(|q| dist(*q, p)).fold(f64::INFINITY, f64::min);
     let mut out: Vec<(ObjectiveId, Vector2, f64)> = objs
         .iter()
@@ -255,11 +268,19 @@ fn targets_for(
         .filter(|(id, _, _)| attackers.get(id).copied().unwrap_or(0) < concentration)
         .map(|(id, p, score)| (Some(*id) != axis, score + dist(*p, pos) / 2., *id, *p))
         .collect();
-    out.sort_by(|a, b| (a.0, a.1).partial_cmp(&(b.0, b.1)).unwrap_or(std::cmp::Ordering::Equal));
+    out.sort_by(|a, b| {
+        (a.0, a.1).partial_cmp(&(b.0, b.1)).unwrap_or(std::cmp::Ordering::Equal)
+    });
     out.into_iter().map(|(_, _, id, p)| (id, p)).collect()
 }
 
-pub(super) fn think(lua: MizLua, ctx: &mut Context, cfg: &GroundWarCfg, ai: &GroundAiCfg, now: DateTime<Utc>) {
+pub(super) fn think(
+    lua: MizLua,
+    ctx: &mut Context,
+    cfg: &GroundWarCfg,
+    ai: &GroundAiCfg,
+    now: DateTime<Utc>,
+) {
     let tempo = ctx
         .db
         .ephemeral
@@ -286,10 +307,9 @@ pub(super) fn think(lua: MizLua, ctx: &mut Context, cfg: &GroundWarCfg, ai: &Gro
             .filter(|(_, h)| h.steer_ground_war && h.sides.contains(&side))
             .and_then(|_| ctx.hq.ground_steer(side));
         let (offensive, axis) = match steer {
-            Some((posture, effort)) => (
-                posture != bfprotocols::hq::Posture::Defensive,
-                effort.or(axis),
-            ),
+            Some((posture, effort)) => {
+                (posture != bfprotocols::hq::Posture::Defensive, effort.or(axis))
+            }
             None => (offensive, axis),
         };
         let offensive = offensive && !empty;
@@ -345,7 +365,11 @@ fn think_side(
     // 1. Pull back the battered. (A broken formation is already falling
     //    back on its own.)
     for f in forms(ctx, side, now) {
-        if f.ai && !f.broken && f.pct < cfg.withdraw_strength_pct as u32 && !matches!(f.order, Order::Withdraw(_)) {
+        if f.ai
+            && !f.broken
+            && f.pct < cfg.withdraw_strength_pct as u32
+            && !matches!(f.order, Order::Withdraw(_))
+        {
             let home_ok = owned.iter().any(|o| o.id == f.home);
             let dest = if home_ok { Some(f.home) } else { nearest_owned(f.pos) };
             if let Some(dest) = dest {
@@ -359,11 +383,20 @@ fn think_side(
     let supply_bases: Vec<(ObjectiveId, Vector2)> = ctx
         .db
         .objectives()
-        .filter(|(_, o)| o.owner() == side && !at_sea(o.kind()) && o.supply() >= cfg.combat.supply_base_pct)
+        .filter(|(_, o)| {
+            o.owner() == side
+                && !at_sea(o.kind())
+                && o.supply() >= cfg.combat.supply_base_pct
+        })
         .map(|(id, o)| (*id, o.pos()))
         .collect();
     for f in forms(ctx, side, now) {
-        if !f.ai || f.broken || f.in_supply || f.supply >= 0.35 || matches!(f.order, Order::Withdraw(_)) {
+        if !f.ai
+            || f.broken
+            || f.in_supply
+            || f.supply >= 0.35
+            || matches!(f.order, Order::Withdraw(_))
+        {
             continue;
         }
         let Some((dest, dpos)) = supply_bases
@@ -377,7 +410,11 @@ fn think_side(
             continue;
         }
         if order_checked(lua, ctx, f.id, Order::Defend(dest), f.pos, Some(dpos), now) {
-            info!("ground war AI: formation {} is low on supply ({:.0}%), falling back to resupply", f.id, f.supply * 100.);
+            info!(
+                "ground war AI: formation {} is low on supply ({:.0}%), falling back to resupply",
+                f.id,
+                f.supply * 100.
+            );
         }
     }
 
@@ -395,18 +432,22 @@ fn think_side(
         }
         let fs = forms(ctx, side, now);
         let covered = fs.iter().any(|f| {
-            f.order == Order::Defend(o.id) || (f.idle() && dist(f.pos, o.pos) <= cfg.arrive_m * 2.)
+            f.order == Order::Defend(o.id)
+                || (f.idle() && dist(f.pos, o.pos) <= cfg.arrive_m * 2.)
         });
         if covered {
             continue;
         }
         let pick = fs
             .iter()
-            .filter(|f| f.ai && f.idle() && !f.broken && f.pct >= cfg.withdraw_strength_pct as u32)
+            .filter(|f| {
+                f.ai && f.idle() && !f.broken && f.pct >= cfg.withdraw_strength_pct as u32
+            })
             .filter(|f| dist(f.pos, o.pos) <= RESPONSE_M)
             .min_by(|a, b| dist(a.pos, o.pos).total_cmp(&dist(b.pos, o.pos)));
         if let Some(f) = pick {
-            if order_checked(lua, ctx, f.id, Order::Defend(o.id), f.pos, Some(o.pos), now) {
+            if order_checked(lua, ctx, f.id, Order::Defend(o.id), f.pos, Some(o.pos), now)
+            {
                 responses += 1;
                 ctx.groundwar.rt.event(
                     side,
@@ -421,7 +462,10 @@ fn think_side(
                         15,
                         false,
                         side,
-                        format_compact!("GROUND COMMAND: counter-attacking at {}.", o.name),
+                        format_compact!(
+                            "GROUND COMMAND: counter-attacking at {}.",
+                            o.name
+                        ),
                     );
                 }
             }
@@ -452,16 +496,27 @@ fn think_side(
             if !ok {
                 continue;
             }
-            match ctx.db.raise_formation(&mut ctx.groundwar.rt, lua, side, o.id, None, now) {
+            match ctx.db.raise_formation(
+                &mut ctx.groundwar.rt,
+                lua,
+                side,
+                o.id,
+                None,
+                now,
+            ) {
                 Ok(id) => {
-                    let name = ctx.db.formation(id).map(|f| f.name.clone()).unwrap_or_default();
+                    let name =
+                        ctx.db.formation(id).map(|f| f.name.clone()).unwrap_or_default();
                     info!("ground war AI: {side:?} raised {name} at {}", o.name);
                     if cfg.announce {
                         ctx.db.ephemeral.msgs().panel_to_side(
                             15,
                             false,
                             side,
-                            format_compact!("GROUND COMMAND: {name} formed up at {}.", o.name),
+                            format_compact!(
+                                "GROUND COMMAND: {name} formed up at {}.",
+                                o.name
+                            ),
                         );
                     }
                     break;
@@ -478,7 +533,8 @@ fn think_side(
     if offensive {
         let ranked = rank_targets(&objs, side, ai.max_attack_m);
         let fs = forms(ctx, side, now);
-        let mut attackers: fxhash::FxHashMap<ObjectiveId, usize> = fxhash::FxHashMap::default();
+        let mut attackers: fxhash::FxHashMap<ObjectiveId, usize> =
+            fxhash::FxHashMap::default();
         for f in &fs {
             if let Order::Attack(t) = f.order {
                 *attackers.entry(t).or_default() += 1;
@@ -496,7 +552,8 @@ fn think_side(
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         let spare = idle.len().saturating_sub(ai.reserve as usize);
-        let mut sent: fxhash::FxHashMap<ObjectiveId, usize> = fxhash::FxHashMap::default();
+        let mut sent: fxhash::FxHashMap<ObjectiveId, usize> =
+            fxhash::FxHashMap::default();
         for f in idle.into_iter().take(spare) {
             let opts = targets_for(
                 f.pos,
@@ -507,7 +564,15 @@ fn think_side(
                 ai.concentration as usize,
             );
             for (target, tpos) in opts.into_iter().take(TRIES_PER_FORMATION) {
-                if order_checked(lua, ctx, f.id, Order::Attack(target), f.pos, Some(tpos), now) {
+                if order_checked(
+                    lua,
+                    ctx,
+                    f.id,
+                    Order::Attack(target),
+                    f.pos,
+                    Some(tpos),
+                    now,
+                ) {
                     *attackers.entry(target).or_default() += 1;
                     *sent.entry(target).or_default() += 1;
                     break;
@@ -528,12 +593,18 @@ fn think_side(
         }
         if cfg.announce {
             for (target, n) in sent {
-                let tname = objs.iter().find(|o| o.id == target).map(|o| o.name.clone()).unwrap_or_default();
+                let tname = objs
+                    .iter()
+                    .find(|o| o.id == target)
+                    .map(|o| o.name.clone())
+                    .unwrap_or_default();
                 ctx.db.ephemeral.msgs().panel_to_side(
                     15,
                     false,
                     side,
-                    format_compact!("GROUND COMMAND: {n} formation(s) advancing on {tname}."),
+                    format_compact!(
+                        "GROUND COMMAND: {n} formation(s) advancing on {tname}."
+                    ),
                 );
             }
         }
@@ -551,7 +622,15 @@ fn think_side(
             .min_by(|a, b| front_dist(a.pos).total_cmp(&front_dist(b.pos)));
         if let Some(o) = screen {
             if dist(o.pos, f.pos) > cfg.arrive_m * 2. {
-                order_checked(lua, ctx, f.id, Order::Defend(o.id), f.pos, Some(o.pos), now);
+                order_checked(
+                    lua,
+                    ctx,
+                    f.id,
+                    Order::Defend(o.id),
+                    f.pos,
+                    Some(o.pos),
+                    now,
+                );
             }
         }
     }
@@ -614,10 +693,14 @@ mod tests {
         let ranked = rank_targets(&objs, Side::Blue, 60_000.);
         let far_east = Vector2::new(310_000., 0.);
         let t = targets_for(far_east, &ranked, None, 60_000., &none(), 2);
-        assert_eq!(t.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![ObjectiveId::from(6)]);
+        assert_eq!(
+            t.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            vec![ObjectiveId::from(6)]
+        );
         // The axis comes first when it is in reach, and is skipped when not.
         let west = Vector2::new(5_000., 0.);
-        let t = targets_for(west, &ranked, Some(ObjectiveId::from(6)), 60_000., &none(), 2);
+        let t =
+            targets_for(west, &ranked, Some(ObjectiveId::from(6)), 60_000., &none(), 2);
         assert_eq!(t[0].0, ObjectiveId::from(2));
         // A target with its full complement of attackers is passed over.
         let mut full = none();

@@ -39,7 +39,8 @@ impl PubHistStat {
             fifty: publisher.publish(base.append("50th"), fifty)?,
             ninety: publisher.publish(base.append("90th"), ninety)?,
             ninety_nine: publisher.publish(base.append("99th"), ninety_nine)?,
-            ninety_nine_nine: publisher.publish(base.append("99.9th"), ninety_nine_nine)?,
+            ninety_nine_nine: publisher
+                .publish(base.append("99.9th"), ninety_nine_nine)?,
         })
     }
 
@@ -175,7 +176,8 @@ impl PubPerf {
             timer_get_time0,
         } = api_perf;
         let players = publisher.publish(base.append("players"), players)?;
-        let logistics_items = publisher.publish(base.append("logistics_items"), logistics_items)?;
+        let logistics_items =
+            publisher.publish(base.append("logistics_items"), logistics_items)?;
         let base = base.append("perf");
         Ok(Self {
             players,
@@ -197,13 +199,21 @@ impl PubPerf {
             get_position: PubHistStat::new(publisher, &base, get_position)?,
             get_velocity: PubHistStat::new(publisher, &base, get_velocity)?,
             in_air: PubHistStat::new(publisher, &base, in_air)?,
-            jtac_target_positions: PubHistStat::new(publisher, &base, jtac_target_positions)?,
+            jtac_target_positions: PubHistStat::new(
+                publisher,
+                &base,
+                jtac_target_positions,
+            )?,
             land_get_height: PubHistStat::new(publisher, &base, land_get_height)?,
             land_is_visible: PubHistStat::new(publisher, &base, land_is_visible)?,
             logistics: PubHistStat::new(publisher, &base, logistics)?,
             logistics_deliver: PubHistStat::new(publisher, &base, logistics_deliver)?,
             logistics_transfer: PubHistStat::new(publisher, &base, logistics_transfer)?,
-            logistics_distribute: PubHistStat::new(publisher, &base, logistics_distribute)?,
+            logistics_distribute: PubHistStat::new(
+                publisher,
+                &base,
+                logistics_distribute,
+            )?,
             logistics_sync_from: PubHistStat::new(publisher, &base, logistics_sync_from)?,
             logistics_sync_to: PubHistStat::new(publisher, &base, logistics_sync_to)?,
             player_positions: PubHistStat::new(publisher, &base, player_positions)?,
@@ -216,14 +226,26 @@ impl PubPerf {
             timer_get_abs_time: PubHistStat::new(publisher, &base, timer_get_abs_time)?,
             timer_get_time: PubHistStat::new(publisher, &base, timer_get_time)?,
             timer_get_time0: PubHistStat::new(publisher, &base, timer_get_time0)?,
-            timer_remove_function: PubHistStat::new(publisher, &base, timer_remove_function)?,
-            timer_schedule_function: PubHistStat::new(publisher, &base, timer_schedule_function)?,
+            timer_remove_function: PubHistStat::new(
+                publisher,
+                &base,
+                timer_remove_function,
+            )?,
+            timer_schedule_function: PubHistStat::new(
+                publisher,
+                &base,
+                timer_schedule_function,
+            )?,
             unit_culling: PubHistStat::new(publisher, &base, unit_culling)?,
             unit_get_by_name: PubHistStat::new(publisher, &base, unit_get_by_name)?,
             unit_get_desc: PubHistStat::new(publisher, &base, unit_get_desc)?,
             unit_is_exist: PubHistStat::new(publisher, &base, unit_is_exist)?,
             unit_positions: PubHistStat::new(publisher, &base, unit_positions)?,
-            update_jtac_contacts: PubHistStat::new(publisher, &base, update_jtac_contacts)?,
+            update_jtac_contacts: PubHistStat::new(
+                publisher,
+                &base,
+                update_jtac_contacts,
+            )?,
         })
     }
 
@@ -305,14 +327,12 @@ impl PubPerf {
         self.get_position.update(batch, get_position);
         self.get_velocity.update(batch, get_velocity);
         self.in_air.update(batch, in_air);
-        self.jtac_target_positions
-            .update(batch, jtac_target_positions);
+        self.jtac_target_positions.update(batch, jtac_target_positions);
         self.land_get_height.update(batch, land_get_height);
         self.land_is_visible.update(batch, land_is_visible);
         self.logistics_deliver.update(batch, logistics_deliver);
         self.logistics_transfer.update(batch, logistics_transfer);
-        self.logistics_distribute
-            .update(batch, logistics_distribute);
+        self.logistics_distribute.update(batch, logistics_distribute);
         self.logistics_sync_from.update(batch, logistics_sync_from);
         self.logistics_sync_to.update(batch, logistics_sync_to);
         self.logistics.update(batch, logistics);
@@ -327,16 +347,13 @@ impl PubPerf {
         self.timer_get_abs_time.update(batch, timer_get_abs_time);
         self.timer_get_time0.update(batch, timer_get_time0);
         self.timer_get_time.update(batch, timer_get_time);
-        self.timer_remove_function
-            .update(batch, timer_remove_function);
-        self.timer_schedule_function
-            .update(batch, timer_schedule_function);
+        self.timer_remove_function.update(batch, timer_remove_function);
+        self.timer_schedule_function.update(batch, timer_schedule_function);
         self.unit_culling.update(batch, unit_culling);
         self.unit_get_by_name.update(batch, unit_get_by_name);
         self.unit_get_desc.update(batch, unit_get_desc);
         self.unit_is_exist.update(batch, unit_is_exist);
         self.unit_positions.update(batch, unit_positions);
-        self.update_jtac_contacts
-            .update(batch, update_jtac_contacts);
+        self.update_jtac_contacts.update(batch, update_jtac_contacts);
     }
 }

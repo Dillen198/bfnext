@@ -169,7 +169,9 @@ pub(crate) struct Air {
 }
 
 fn usable(l: &AtmoLayer) -> bool {
-    [l.alt_m, l.wind_from_deg, l.wind_kts, l.temp_c, l.pressure_hpa].iter().all(|v| v.is_finite())
+    [l.alt_m, l.wind_from_deg, l.wind_kts, l.temp_c, l.pressure_hpa]
+        .iter()
+        .all(|v| v.is_finite())
         && l.pressure_hpa > 0.
         && l.temp_c > -273.15
 }
@@ -185,7 +187,14 @@ impl Atmo {
                 let to = (l.wind_from_deg + 180.).to_radians();
                 let w = l.wind_kts * KT;
                 let p = l.pressure_hpa * 100.;
-                Level { h: l.alt_m, n: w * to.cos(), e: w * to.sin(), t: l.temp_c + 273.15, p, ln_p: p.ln() }
+                Level {
+                    h: l.alt_m,
+                    n: w * to.cos(),
+                    e: w * to.sin(),
+                    t: l.temp_c + 273.15,
+                    p,
+                    ln_p: p.ln(),
+                }
             })
             .collect();
         if levels.is_empty() {
@@ -204,9 +213,19 @@ impl Atmo {
         // outside the profile: the end layer's wind and temperature, and
         // pressure from the hydrostatic equation at that temperature
         let (n, e, t, p) = if h <= first.h {
-            (first.n, first.e, first.t, first.p * (-G * (h - first.h) / (R_AIR * first.t)).exp())
+            (
+                first.n,
+                first.e,
+                first.t,
+                first.p * (-G * (h - first.h) / (R_AIR * first.t)).exp(),
+            )
         } else if h >= last.h {
-            (last.n, last.e, last.t, last.p * (-G * (h - last.h) / (R_AIR * last.t)).exp())
+            (
+                last.n,
+                last.e,
+                last.t,
+                last.p * (-G * (h - last.h) / (R_AIR * last.t)).exp(),
+            )
         } else {
             // lv[lo].h <= h < lv[hi].h throughout
             let (mut lo, mut hi) = (0, lv.len() - 1);
@@ -289,7 +308,11 @@ impl Launch {
     pub(crate) fn air(&self, h: f64) -> Air {
         match &self.atmo {
             Some(a) => a.at(h),
-            None => Air { wind_along_mps: self.wind_along_mps, wind_cross_mps: self.wind_cross_mps, rho: isa_density(h) },
+            None => Air {
+                wind_along_mps: self.wind_along_mps,
+                wind_cross_mps: self.wind_cross_mps,
+                rho: isa_density(h),
+            },
         }
     }
 }
@@ -341,7 +364,12 @@ pub(crate) fn simulate(b: &Body, l: &Launch, k: f64) -> Impact {
             let f = s[2] / (s[2] - n[2]);
             let x = s[0] + f * (n[0] - s[0]);
             let y = s[1] + f * (n[1] - s[1]);
-            return Impact { along_m: x, cross_m: y, range_m: x.hypot(y), tof_s: t + f * DT };
+            return Impact {
+                along_m: x,
+                cross_m: y,
+                range_m: x.hypot(y),
+                tof_s: t + f * DT,
+            };
         }
         s = n;
         t += DT;
@@ -368,10 +396,13 @@ impl Sample {
     /// `None` when the record lacks the geometry (no release/impact position).
     pub(crate) fn from_bomb(b: &BombResult) -> Option<Self> {
         let r = &b.release;
-        if (r.pos.lat == 0. && r.pos.lon == 0.) || (b.impact.lat == 0. && b.impact.lon == 0.) {
+        if (r.pos.lat == 0. && r.pos.lon == 0.)
+            || (b.impact.lat == 0. && b.impact.lon == 0.)
+        {
             return None;
         }
-        let z0 = if r.pos.alt_m != 0. { r.pos.alt_m - b.impact.alt_m } else { r.alt_agl_m };
+        let z0 =
+            if r.pos.alt_m != 0. { r.pos.alt_m - b.impact.alt_m } else { r.alt_agl_m };
         let gs = if r.gs_kts > 0. { r.gs_kts } else { r.tas_kts } * KT;
         if !(z0 > 0.) || !(gs > 0.) {
             return None;
@@ -453,7 +484,10 @@ pub(crate) struct Calibration {
 
 /// Fit every unguided weapon with enough recorded drops. `drops` is
 /// (weapon type name, result), newest first.
-pub(crate) fn calibrate(weapons: &[WeaponBallistics], drops: &[(String, BombResult)]) -> Vec<Calibration> {
+pub(crate) fn calibrate(
+    weapons: &[WeaponBallistics],
+    drops: &[(String, BombResult)],
+) -> Vec<Calibration> {
     let mut by: std::collections::BTreeMap<&str, Vec<Sample>> = Default::default();
     for (w, b) in drops {
         let v = by.entry(w.as_str()).or_default();
@@ -496,7 +530,11 @@ mod tests {
     use bfprotocols::range::{BombQuality, Release, WeaponClass};
 
     fn mk82() -> Body {
-        Body { mass_kg: 241., area_m2: std::f64::consts::PI * (0.273f64 / 2.).powi(2), cd_ref: 0.3 }
+        Body {
+            mass_kg: 241.,
+            area_m2: std::f64::consts::PI * (0.273f64 / 2.).powi(2),
+            cd_ref: 0.3,
+        }
     }
 
     fn launch(z0: f64, gs: f64, dive: f64) -> Launch {
@@ -623,10 +661,13 @@ mod tests {
     fn uniform_profile_matches_constant_model() {
         let b = mk82();
         let (hdg, from, kts) = (75., 300., 25.);
-        let layers: Vec<AtmoLayer> = (0..=80).map(|i| layer(i as f64 * 100., from, kts)).collect();
+        let layers: Vec<AtmoLayer> =
+            (0..=80).map(|i| layer(i as f64 * 100., from, kts)).collect();
         let a = (from + 180. - hdg).to_radians();
         let w = kts * KT;
-        for (z0, ground, gs, dive) in [(1500., 200., 230., 0.), (4500., 350., 250., 30.), (6000., 0., 240., 10.)] {
+        for (z0, ground, gs, dive) in
+            [(1500., 200., 230., 0.), (4500., 350., 250., 30.), (6000., 0., 240., 10.)]
+        {
             let flat = Launch {
                 z0_m: z0,
                 ground_msl_m: ground,
@@ -639,9 +680,24 @@ mod tests {
             let layered = Launch { atmo: Atmo::new(&layers, hdg), ..flat.clone() };
             assert!(layered.atmo.is_some());
             let (i0, i1) = (simulate(&b, &flat, 1.1), simulate(&b, &layered, 1.1));
-            assert!((i0.along_m - i1.along_m).abs() < 0.03, "along {} vs {}", i0.along_m, i1.along_m);
-            assert!((i0.cross_m - i1.cross_m).abs() < 0.03, "cross {} vs {}", i0.cross_m, i1.cross_m);
-            assert!((i0.tof_s - i1.tof_s).abs() < 1e-3, "tof {} vs {}", i0.tof_s, i1.tof_s);
+            assert!(
+                (i0.along_m - i1.along_m).abs() < 0.03,
+                "along {} vs {}",
+                i0.along_m,
+                i1.along_m
+            );
+            assert!(
+                (i0.cross_m - i1.cross_m).abs() < 0.03,
+                "cross {} vs {}",
+                i0.cross_m,
+                i1.cross_m
+            );
+            assert!(
+                (i0.tof_s - i1.tof_s).abs() < 1e-3,
+                "tof {} vs {}",
+                i0.tof_s,
+                i1.tof_s
+            );
         }
     }
 
@@ -656,16 +712,29 @@ mod tests {
             [0., 1000., 2000.]
                 .iter()
                 .map(|&h| layer(h, hdg + 180., 0.))
-                .chain([2500., 4000., 6000., 8000.].iter().map(|&h| layer(h, hdg + 180., tail)))
+                .chain(
+                    [2500., 4000., 6000., 8000.]
+                        .iter()
+                        .map(|&h| layer(h, hdg + 180., tail)),
+                )
                 .collect()
         };
         let (calm, windy) = (prof(0.), prof(40.));
         let fly = |z0: f64, layers: &[AtmoLayer]| {
-            simulate(&b, &Launch { atmo: Atmo::new(layers, hdg), ..launch(z0, 230., 0.) }, 1.0)
+            simulate(
+                &b,
+                &Launch { atmo: Atmo::new(layers, hdg), ..launch(z0, 230., 0.) },
+                1.0,
+            )
         };
         assert_eq!(fly(1000., &calm), fly(1000., &windy));
         let (hi_calm, hi_wind) = (fly(6000., &calm), fly(6000., &windy));
-        assert!(hi_wind.along_m > hi_calm.along_m + 50., "{} vs {}", hi_wind.along_m, hi_calm.along_m);
+        assert!(
+            hi_wind.along_m > hi_calm.along_m + 50.,
+            "{} vs {}",
+            hi_wind.along_m,
+            hi_calm.along_m
+        );
         assert!(hi_wind.cross_m.abs() < 1e-6);
     }
 
@@ -682,7 +751,11 @@ mod tests {
         };
         // out of order, and the 1000 m layer has no pressure so is dropped
         let a = Atmo::new(
-            &[lay(3000., 0., 30., -4.5, 701.), lay(1000., 0., 0., 0., 0.), lay(500., 270., 10., 15., 955.)],
+            &[
+                lay(3000., 0., 30., -4.5, 701.),
+                lay(1000., 0., 0., 0., 0.),
+                lay(500., 270., 10., 15., 955.),
+            ],
             0.,
         )
         .unwrap();
@@ -735,7 +808,12 @@ mod tests {
         assert_eq!(new.launch.wind_along_mps, old.launch.wind_along_mps);
         assert_eq!(new.measured_range_m, old.measured_range_m);
         let b = mk82();
-        assert!((simulate(&b, &new.launch, 1.).cross_m - simulate(&b, &old.launch, 1.).cross_m).abs() > 1.);
+        assert!(
+            (simulate(&b, &new.launch, 1.).cross_m
+                - simulate(&b, &old.launch, 1.).cross_m)
+                .abs()
+                > 1.
+        );
     }
 
     #[test]

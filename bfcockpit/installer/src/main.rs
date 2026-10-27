@@ -35,7 +35,10 @@ fn main() {
             .map(PathBuf::from);
         let code = match profile {
             // half a day: the plugin starts a new one next session anyway
-            Some(p) => match installer::auto_update(&p, std::time::Duration::from_secs(12 * 3600)) {
+            Some(p) => match installer::auto_update(
+                &p,
+                std::time::Duration::from_secs(12 * 3600),
+            ) {
                 Ok(_) => 0,
                 Err(_) => 1,
             },
@@ -380,11 +383,17 @@ mod installer_ui {
                     let Some(ui) = evt_ui.upgrade() else { return };
                     match evt {
                         nwg::Event::OnButtonClick => {
-                            if handle == ui.install_btn { ui.apply(false) }
-                            else if handle == ui.uninstall_btn { ui.apply(true) }
-                            else if handle == ui.refresh_btn { ui.rescan() }
-                            else if handle == ui.add_btn { ui.add_profile() }
-                            else if handle == ui.close_btn { nwg::stop_thread_dispatch() }
+                            if handle == ui.install_btn {
+                                ui.apply(false)
+                            } else if handle == ui.uninstall_btn {
+                                ui.apply(true)
+                            } else if handle == ui.refresh_btn {
+                                ui.rescan()
+                            } else if handle == ui.add_btn {
+                                ui.add_profile()
+                            } else if handle == ui.close_btn {
+                                nwg::stop_thread_dispatch()
+                            }
                         }
                         nwg::Event::OnWindowClose => {
                             if handle == ui.window {
@@ -413,4 +422,3 @@ mod installer_ui {
         }
     }
 }
-

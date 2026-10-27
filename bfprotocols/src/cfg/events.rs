@@ -48,11 +48,21 @@ pub struct WeatherEffectsCfg {
     pub ewr_weather_range_multiplier: f64,
 }
 
-pub(super) fn default_rain_speed_mult() -> f64 { 0.8 }
-pub(super) fn default_storm_speed_mult() -> f64 { 0.6 }
-pub(super) fn default_snow_speed_mult() -> f64 { 0.5 }
-pub(super) fn default_min_vis_fixed_wing() -> f64 { 800.0 }
-pub(super) fn default_ewr_weather_mult() -> f64 { 0.85 }
+pub(super) fn default_rain_speed_mult() -> f64 {
+    0.8
+}
+pub(super) fn default_storm_speed_mult() -> f64 {
+    0.6
+}
+pub(super) fn default_snow_speed_mult() -> f64 {
+    0.5
+}
+pub(super) fn default_min_vis_fixed_wing() -> f64 {
+    800.0
+}
+pub(super) fn default_ewr_weather_mult() -> f64 {
+    0.85
+}
 
 impl Default for WeatherEffectsCfg {
     fn default() -> Self {
@@ -82,9 +92,15 @@ pub struct TimeOfDayEffectsCfg {
     pub night_end_hour: u8,
 }
 
-pub(super) fn default_night_kill_bonus() -> f64 { 1.5 }
-pub(super) fn default_night_start() -> u8 { 22 }
-pub(super) fn default_night_end() -> u8 { 6 }
+pub(super) fn default_night_kill_bonus() -> f64 {
+    1.5
+}
+pub(super) fn default_night_start() -> u8 {
+    22
+}
+pub(super) fn default_night_end() -> u8 {
+    6
+}
 
 impl Default for TimeOfDayEffectsCfg {
     fn default() -> Self {
@@ -387,15 +403,26 @@ pub struct CampaignEventsCfg {
     /// Sphere radius (metres) passed to world.removeJunk. Default: 500_000 (covers most maps).
     #[serde(default = "default_junk_removal_radius")]
     pub junk_removal_radius_m: f64,
-
 }
 
-pub(super) fn default_cap_respawn_cooldown() -> u64 { 1800 }
-pub(super) fn default_cap_balance_gap() -> u32 { 2 }
-pub(super) fn default_cap_max_sorties_per_hour() -> u32 { 6 }
-pub(super) fn default_helo_max_sorties_per_hour() -> u32 { 4 }
-pub(super) fn default_cap_engaged_extension_secs() -> u32 { 180 }
-pub(super) fn default_cap_template_weight() -> u32 { 1 }
+pub(super) fn default_cap_respawn_cooldown() -> u64 {
+    1800
+}
+pub(super) fn default_cap_balance_gap() -> u32 {
+    2
+}
+pub(super) fn default_cap_max_sorties_per_hour() -> u32 {
+    6
+}
+pub(super) fn default_helo_max_sorties_per_hour() -> u32 {
+    4
+}
+pub(super) fn default_cap_engaged_extension_secs() -> u32 {
+    180
+}
+pub(super) fn default_cap_template_weight() -> u32 {
+    1
+}
 
 /// One entry in a reactive-response template roster
 /// (`cap_templates_red`/`_blue`, `helo_templates_red`/`_blue`).
@@ -425,45 +452,121 @@ pub struct CapTemplateCfg {
     pub min_threat: u32,
 }
 
-pub(super) fn default_helo_duration() -> u32 { 1800 }
-pub(super) fn default_helo_altitude_agl_m() -> f64 { 300.0 }
-pub(super) fn default_helo_speed_ms() -> f64 { 60.0 }
-pub(super) fn default_helo_max_push_m() -> f64 { 30_000.0 }
-pub(super) fn default_helo_engage_radius_m() -> f64 { 15_000.0 }
-pub(super) fn default_helo_idle_rtb_secs() -> u32 { 420 }
-pub(super) fn default_helo_trigger_radius() -> f64 { 40_000.0 }
-pub(super) fn default_helo_max_concurrent() -> usize { 2 }
-pub(super) fn default_helo_max_per_side() -> usize { 1 }
-pub(super) fn default_helo_min_threat() -> u32 { 2 }
-pub(super) fn default_helo_respawn_cooldown() -> u64 { 900 }
-pub(super) fn default_helo_balance_gap() -> u32 { 2 }
+pub(super) fn default_helo_duration() -> u32 {
+    1800
+}
+pub(super) fn default_helo_altitude_agl_m() -> f64 {
+    300.0
+}
+pub(super) fn default_helo_speed_ms() -> f64 {
+    60.0
+}
+pub(super) fn default_helo_max_push_m() -> f64 {
+    30_000.0
+}
+pub(super) fn default_helo_engage_radius_m() -> f64 {
+    15_000.0
+}
+pub(super) fn default_helo_idle_rtb_secs() -> u32 {
+    420
+}
+pub(super) fn default_helo_trigger_radius() -> f64 {
+    40_000.0
+}
+pub(super) fn default_helo_max_concurrent() -> usize {
+    2
+}
+pub(super) fn default_helo_max_per_side() -> usize {
+    1
+}
+pub(super) fn default_helo_min_threat() -> u32 {
+    2
+}
+pub(super) fn default_helo_respawn_cooldown() -> u64 {
+    900
+}
+pub(super) fn default_helo_balance_gap() -> u32 {
+    2
+}
 
-pub(super) fn default_event_check_interval() -> u32 { 300 }
-pub(super) fn default_event_probability() -> f64 { 0.15 }
-pub(super) fn default_max_events() -> u32 { 3 }
-pub(super) fn default_vip_reward() -> i32 { 300 }
-pub(super) fn default_evac_reward() -> i32 { 50 }
-pub(super) fn default_barrage_duration() -> u32 { 300 }
-pub(super) fn default_ambush_duration() -> u32 { 600 }
-pub(super) fn default_cap_altitude_m() -> f64 { 8000.0 }
-pub(super) fn default_cap_speed_ms() -> f64 { 250.0 }
-pub(super) fn default_cap_max_push_m() -> f64 { 60000.0 }
-pub(super) fn default_cap_engage_radius_m() -> f64 { 45000.0 }
-pub(super) fn default_cap_idle_rtb_secs() -> u32 { 240 }
-pub(super) fn default_cap_duration() -> u32 { 600 }
-pub(super) fn default_cap_orbit_radius() -> f64 { 15_000.0 }
-pub(super) fn default_cap_probability() -> f64 { 0.35 }
-pub(super) fn default_capture_time() -> u32 { 180 }
-pub(super) fn default_capture_garrison_revive_fraction() -> f64 { 0.25 }
-pub(super) fn default_capture_cooldown_secs() -> u32 { 120 }
-pub(super) fn default_barrage_radius_m() -> f64 { 500.0 }
-pub(super) fn default_barrage_max_groups() -> usize { 5 }
-pub(super) fn default_cap_trigger_radius() -> f64 { 90_000.0 }
-pub(super) fn default_cap_max_concurrent() -> usize { 3 }
-pub(super) fn default_cap_max_per_side() -> usize { 2 }
-pub(super) fn default_cap_min_threat() -> u32 { 2 }
-pub(super) fn default_junk_removal_interval() -> u32 { 300 }
-pub(super) fn default_junk_removal_radius() -> f64 { 500_000.0 }
+pub(super) fn default_event_check_interval() -> u32 {
+    300
+}
+pub(super) fn default_event_probability() -> f64 {
+    0.15
+}
+pub(super) fn default_max_events() -> u32 {
+    3
+}
+pub(super) fn default_vip_reward() -> i32 {
+    300
+}
+pub(super) fn default_evac_reward() -> i32 {
+    50
+}
+pub(super) fn default_barrage_duration() -> u32 {
+    300
+}
+pub(super) fn default_ambush_duration() -> u32 {
+    600
+}
+pub(super) fn default_cap_altitude_m() -> f64 {
+    8000.0
+}
+pub(super) fn default_cap_speed_ms() -> f64 {
+    250.0
+}
+pub(super) fn default_cap_max_push_m() -> f64 {
+    60000.0
+}
+pub(super) fn default_cap_engage_radius_m() -> f64 {
+    45000.0
+}
+pub(super) fn default_cap_idle_rtb_secs() -> u32 {
+    240
+}
+pub(super) fn default_cap_duration() -> u32 {
+    600
+}
+pub(super) fn default_cap_orbit_radius() -> f64 {
+    15_000.0
+}
+pub(super) fn default_cap_probability() -> f64 {
+    0.35
+}
+pub(super) fn default_capture_time() -> u32 {
+    180
+}
+pub(super) fn default_capture_garrison_revive_fraction() -> f64 {
+    0.25
+}
+pub(super) fn default_capture_cooldown_secs() -> u32 {
+    120
+}
+pub(super) fn default_barrage_radius_m() -> f64 {
+    500.0
+}
+pub(super) fn default_barrage_max_groups() -> usize {
+    5
+}
+pub(super) fn default_cap_trigger_radius() -> f64 {
+    90_000.0
+}
+pub(super) fn default_cap_max_concurrent() -> usize {
+    3
+}
+pub(super) fn default_cap_max_per_side() -> usize {
+    2
+}
+pub(super) fn default_cap_min_threat() -> u32 {
+    2
+}
+pub(super) fn default_junk_removal_interval() -> u32 {
+    300
+}
+pub(super) fn default_junk_removal_radius() -> f64 {
+    500_000.0
+}
 
 impl Default for CampaignEventsCfg {
     fn default() -> Self {
@@ -557,10 +660,18 @@ pub struct PilotExperienceCfg {
     pub rank_thresholds: Vec<(u32, String)>,
 }
 
-pub(super) fn default_xp_air_kill() -> u32 { 100 }
-pub(super) fn default_xp_ground_kill() -> u32 { 50 }
-pub(super) fn default_xp_sortie() -> u32 { 25 }
-pub(super) fn default_xp_delivery() -> u32 { 75 }
+pub(super) fn default_xp_air_kill() -> u32 {
+    100
+}
+pub(super) fn default_xp_ground_kill() -> u32 {
+    50
+}
+pub(super) fn default_xp_sortie() -> u32 {
+    25
+}
+pub(super) fn default_xp_delivery() -> u32 {
+    75
+}
 pub(super) fn default_rank_thresholds() -> Vec<(u32, String)> {
     vec![
         (0, "Cadet".into()),

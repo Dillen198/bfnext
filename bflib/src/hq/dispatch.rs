@@ -19,11 +19,11 @@ for more details.
 //! have called, on the engine's account (no player charged, none credited),
 //! and pays from the side's treasury only once the operation is actually up.
 
-use super::{planner::Cand, requests, Handle, Op, OpStatus};
+use super::{Handle, Op, OpStatus, planner::Cand, requests};
 use crate::{
+    Context,
     db::actions::{ActionArgs, ActionCmd, WithJtac, WithObj, WithPos},
     spawnctx::SpawnCtx,
-    Context,
 };
 use bfprotocols::{
     cfg::{ActionKind, HqCfg},
@@ -31,9 +31,9 @@ use bfprotocols::{
     hq::OpKind,
     perf::PerfInner,
 };
-use chrono::{prelude::*, Duration};
-use compact_str::{format_compact, CompactString};
-use dcso3::{coalition::Side, net::Ucid, MizLua};
+use chrono::{Duration, prelude::*};
+use compact_str::{CompactString, format_compact};
+use dcso3::{MizLua, coalition::Side, net::Ucid};
 use fxhash::FxHashSet;
 use log::{info, warn};
 
@@ -57,27 +57,47 @@ fn run_action(
     owner: Option<Ucid>,
     c: &Cand,
 ) -> Result<Option<GroupId>, CompactString> {
-    let (name, action) = c.action.clone().ok_or_else(|| CompactString::from("no action configured"))?;
+    let (name, action) =
+        c.action.clone().ok_or_else(|| CompactString::from("no action configured"))?;
     let args = match &action.kind {
-        ActionKind::Recon(cfg) => ActionArgs::Recon(WithPos { cfg: cfg.clone(), pos: c.pos }),
-        ActionKind::Drone(cfg) => ActionArgs::Drone(WithPos { cfg: cfg.clone(), pos: c.pos }),
-        ActionKind::Artillery(cfg) => ActionArgs::Artillery(WithPos { cfg: cfg.clone(), pos: c.pos }),
+        ActionKind::Recon(cfg) => {
+            ActionArgs::Recon(WithPos { cfg: cfg.clone(), pos: c.pos })
+        }
+        ActionKind::Drone(cfg) => {
+            ActionArgs::Drone(WithPos { cfg: cfg.clone(), pos: c.pos })
+        }
+        ActionKind::Artillery(cfg) => {
+            ActionArgs::Artillery(WithPos { cfg: cfg.clone(), pos: c.pos })
+        }
         ActionKind::Reinforce(cfg) => {
-            let oid = c.target.ok_or_else(|| CompactString::from("a reinforcement needs an objective"))?;
+            let oid = c.target.ok_or_else(|| {
+                CompactString::from("a reinforcement needs an objective")
+            })?;
             ActionArgs::Reinforce(WithObj { cfg: cfg.clone(), oid })
         }
         ActionKind::Bomber(cfg) => {
-            let jtac = c.jtac.clone().ok_or_else(|| CompactString::from("a bomber needs a JTAC target"))?;
+            let jtac = c
+                .jtac
+                .clone()
+                .ok_or_else(|| CompactString::from("a bomber needs a JTAC target"))?;
             ActionArgs::Bomber(WithJtac { cfg: cfg.clone(), jtac })
         }
-        ActionKind::Awacs(cfg) => ActionArgs::Awacs(WithPos { cfg: cfg.clone(), pos: c.pos }),
-        ActionKind::Tanker(cfg) => ActionArgs::Tanker(WithPos { cfg: cfg.clone(), pos: c.pos }),
+        ActionKind::Awacs(cfg) => {
+            ActionArgs::Awacs(WithPos { cfg: cfg.clone(), pos: c.pos })
+        }
+        ActionKind::Tanker(cfg) => {
+            ActionArgs::Tanker(WithPos { cfg: cfg.clone(), pos: c.pos })
+        }
         ActionKind::NavalCruiseMissileStrike(cfg) => {
-            let oid = c.target.ok_or_else(|| CompactString::from("a naval strike needs an objective"))?;
+            let oid = c.target.ok_or_else(|| {
+                CompactString::from("a naval strike needs an objective")
+            })?;
             ActionArgs::NavalCruiseMissileStrike(WithObj { cfg: cfg.clone(), oid })
         }
         ActionKind::LogisticsRepair(cfg) => {
-            let oid = c.target.ok_or_else(|| CompactString::from("an air repair needs an objective"))?;
+            let oid = c
+                .target
+                .ok_or_else(|| CompactString::from("an air repair needs an objective"))?;
             ActionArgs::LogisticsRepair(WithObj { cfg: cfg.clone(), oid })
         }
         _ => return Err(format_compact!("{name} is not an action the HQ runs this way")),
@@ -85,7 +105,16 @@ fn run_action(
     let spctx = SpawnCtx::new(lua).map_err(err)?;
     let before = action_groups(ctx, side);
     ctx.db
-        .start_treasury_action(lua, perf, &spctx, &ctx.idx, &ctx.jtac, side, owner, ActionCmd { name, action, args })
+        .start_treasury_action(
+            lua,
+            perf,
+            &spctx,
+            &ctx.idx,
+            &ctx.jtac,
+            side,
+            owner,
+            ActionCmd { name, action, args },
+        )
         .map_err(err)?;
     Ok(action_groups(ctx, side).difference(&before).next().copied())
 }
@@ -103,18 +132,35 @@ fn launch_inner(
 ) -> Res {
     match c.kind {
         OpKind::Cap | OpKind::Strike | OpKind::Sead => {
-            let (_, action) = c.action.clone().ok_or_else(|| CompactString::from("no action configured"))?;
+            let (_, action) = c
+                .action
+                .clone()
+                .ok_or_else(|| CompactString::from("no action configured"))?;
             let id = ctx.hq.next_id();
             let name = format_compact!("HQ {} {id}", c.kind.label());
             let spctx = SpawnCtx::new(lua).map_err(err)?;
             let gid = ctx
                 .db
-                .spawn_auto_package(perf, &spctx, &ctx.idx, side, name.as_str().into(), action, c.pos)
+                .spawn_auto_package(
+                    perf,
+                    &spctx,
+                    &ctx.idx,
+                    side,
+                    name.as_str().into(),
+                    action,
+                    c.pos,
+                )
                 .map_err(err)?;
-            let expires = now + Duration::seconds(cfg.package_lifetime_secs.max(300) as i64);
+            let expires =
+                now + Duration::seconds(cfg.package_lifetime_secs.max(300) as i64);
             Ok((Handle::Package { gid, expires }, format_compact!("{name} airborne")))
         }
-        OpKind::Recon | OpKind::Reinforce | OpKind::Bomber | OpKind::Awacs | OpKind::Tanker | OpKind::AirRepair => {
+        OpKind::Recon
+        | OpKind::Reinforce
+        | OpKind::Bomber
+        | OpKind::Awacs
+        | OpKind::Tanker
+        | OpKind::AirRepair => {
             let gid = run_action(lua, ctx, perf, side, owner, c)?;
             match gid {
                 Some(gid) => Ok((Handle::Group(gid), "under way".into())),
@@ -137,7 +183,9 @@ fn launch_inner(
                     .artillery
                     .clone()
                     .ok_or_else(|| CompactString::from("no artillery config"))?;
-                ctx.db.artillery_strike(lua, side, None, WithPos { cfg, pos: c.pos }).map_err(err)?;
+                ctx.db
+                    .artillery_strike(lua, side, None, WithPos { cfg, pos: c.pos })
+                    .map_err(err)?;
             }
             Ok((Handle::Fired, "fire mission sent".into()))
         }
@@ -165,7 +213,10 @@ fn launch_inner(
             for m in msgs {
                 ctx.db.ephemeral.msgs().panel_to_all(15, false, m);
             }
-            Ok((Handle::Fired, format_compact!("{} launcher(s) firing", c.shooters.len())))
+            Ok((
+                Handle::Fired,
+                format_compact!("{} launcher(s) firing", c.shooters.len()),
+            ))
         }
         OpKind::Ambush => {
             let ecfg = ctx
@@ -177,7 +228,16 @@ fn launch_inner(
                 .ok_or_else(|| CompactString::from("campaign events are off"))?;
             let cands = ctx.event_scheduler.build_candidates(&ctx.db);
             let (mut msgs, mut effects) = (vec![], vec![]);
-            let ok = ctx.event_scheduler.spawn_convoy_ambush(&ctx.db, &ecfg, now, side, &cands, &mut msgs, &mut effects, None);
+            let ok = ctx.event_scheduler.spawn_convoy_ambush(
+                &ctx.db,
+                &ecfg,
+                now,
+                side,
+                &cands,
+                &mut msgs,
+                &mut effects,
+                None,
+            );
             ctx.event_scheduler.pending_effects.extend(effects);
             for m in msgs {
                 ctx.db.ephemeral.msgs().panel_to_all(15, false, m);
@@ -190,19 +250,26 @@ fn launch_inner(
         }
         OpKind::Convoy => {
             let dest = c.target.ok_or_else(|| CompactString::from("no destination"))?;
-            let (id, how) = ctx.db.hq_dispatch_supply(lua, side, dest, now).map_err(err)?;
+            let (id, how) =
+                ctx.db.hq_dispatch_supply(lua, side, dest, now).map_err(err)?;
             ctx.db.ephemeral.hq_watch.insert(id.clone());
             Ok((Handle::Transport(id), format_compact!("{how} dispatched")))
         }
         OpKind::HeloSupply => {
             let dest = c.target.ok_or_else(|| CompactString::from("no destination"))?;
-            let id = ctx.db.call_helo_resource_delivery(lua, side, None, dest, now).map_err(err)?;
+            let id = ctx
+                .db
+                .call_helo_resource_delivery(lua, side, None, dest, now)
+                .map_err(err)?;
             ctx.db.ephemeral.hq_watch.insert(id.clone());
             Ok((Handle::Transport(id), "helo starting up".into()))
         }
         OpKind::HeloTroops => {
             let dest = c.target.ok_or_else(|| CompactString::from("no destination"))?;
-            let id = ctx.db.call_helo_troop_insertion(lua, side, owner, true, dest, now).map_err(err)?;
+            let id = ctx
+                .db
+                .call_helo_troop_insertion(lua, side, owner, true, dest, now)
+                .map_err(err)?;
             ctx.db.ephemeral.hq_watch.insert(id.clone());
             Ok((Handle::Transport(id), "helo starting up".into()))
         }
@@ -230,7 +297,11 @@ fn package_flights(
     let pic = super::picture::build(ctx, cfg, side, ctx.now());
     let night = ctx.hq.night;
     let Ok(spctx) = SpawnCtx::new(lua) else { return out };
-    let fly = |ctx: &mut Context, perf: &mut PerfInner, kind: OpKind, role: &'static str, pos| {
+    let fly = |ctx: &mut Context,
+               perf: &mut PerfInner,
+               kind: OpKind,
+               role: &'static str,
+               pos| {
         // The escort is chosen for the enemy air over the target; the SEAD
         // for the air defence it is going after.
         let target = if kind == OpKind::Sead { "sam" } else { "base" };
@@ -239,12 +310,22 @@ fn package_flights(
             .get(&kind)
             .and_then(|a| super::planner::pick_air(&a.options, &sit))
             .map(|o| o.action.clone());
-        let Some(action) = chosen.or_else(|| avail.get(&kind).and_then(|a| a.action.clone()).map(|(_, a)| a)) else {
+        let Some(action) = chosen
+            .or_else(|| avail.get(&kind).and_then(|a| a.action.clone()).map(|(_, a)| a))
+        else {
             return None;
         };
         let id = ctx.hq.next_id();
         let name = format_compact!("HQ {role} {id}");
-        match ctx.db.spawn_auto_package(perf, &spctx, &ctx.idx, side, name.as_str().into(), action, pos) {
+        match ctx.db.spawn_auto_package(
+            perf,
+            &spctx,
+            &ctx.idx,
+            side,
+            name.as_str().into(),
+            action,
+            pos,
+        ) {
             Ok(gid) => Some(gid),
             Err(e) => {
                 info!("hq: {side:?} {role} for {} would not launch: {e:#}", c.name);
@@ -262,7 +343,11 @@ fn package_flights(
             out.push((gid, "escort"));
             if let Some(main) = main {
                 let since = ctx.now();
-                ctx.hq.side(side).escorts.push(super::PendingEscort { escort: gid, escorted: main, since });
+                ctx.hq.side(side).escorts.push(super::PendingEscort {
+                    escort: gid,
+                    escorted: main,
+                    since,
+                });
             }
         }
     }
@@ -324,7 +409,8 @@ pub(crate) fn launch(
     let r = ctx.db.persisted.hq.side_mut(side).record.entry(c.kind).or_default();
     r.launched += 1;
     let id = ctx.hq.next_id();
-    let text = format_compact!("HQ: {} on {} -- {} ({})", c.kind.label(), c.name, c.why, detail);
+    let text =
+        format_compact!("HQ: {} on {} -- {} ({})", c.kind.label(), c.name, c.why, detail);
     info!("hq: {side:?} {text} [score {:.0}, cost {cost}, treasury {bal}]", c.score);
     let fires = c.kind.line() == bfprotocols::hq::Line::Fires;
     {
@@ -350,7 +436,12 @@ pub(crate) fn launch(
         });
     }
     if let Some(rid) = c.request {
-        requests::answered(ctx, side, rid, &format_compact!("{} tasked ({detail})", c.kind.label()));
+        requests::answered(
+            ctx,
+            side,
+            rid,
+            &format_compact!("{} tasked ({detail})", c.kind.label()),
+        );
     }
     if cfg.announce {
         ctx.db.ephemeral.msgs().panel_to_side(

@@ -25,14 +25,17 @@ use crate::{
     util::{self, V3},
 };
 use bfprotocols::range::{
-    cfg::RangeCfg, grading,
-    pattern_legs::{self, RelSample, TaxiSample},
     FieldLandingOutcome, FieldLandingResult, PilotRef, RangeResult, Track, TrackPt,
+    cfg::RangeCfg,
+    grading,
+    pattern_legs::{self, RelSample, TaxiSample},
 };
-use std::collections::BTreeMap;
-use dcso3::{airbase::AirbaseCategory, coalition::Side, env::miz::GroupId, world::World, MizLua};
+use dcso3::{
+    MizLua, airbase::AirbaseCategory, coalition::Side, env::miz::GroupId, world::World,
+};
 use fxhash::FxHashMap;
 use log::{info, warn};
+use std::collections::BTreeMap;
 use std::collections::VecDeque;
 
 /// Sample aircraft this close to a field, and this low.
@@ -126,15 +129,26 @@ pub struct Pattern {
 /// The runway end number closest to a true landing heading, from DCS's
 /// "09-27" style name.
 pub(crate) fn designator(name: &str, hdg: f64) -> String {
-    let parts: Vec<&str> = name.split(['-', '/', ' ']).map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
-    let num = |s: &str| s.chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse::<f64>().ok();
+    let parts: Vec<&str> =
+        name.split(['-', '/', ' ']).map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    let num = |s: &str| {
+        s.chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse::<f64>()
+            .ok()
+    };
     parts
         .iter()
-        .filter_map(|p| num(p).map(|n| (util::angdiff(n * 10., hdg).abs(), p.to_string())))
+        .filter_map(|p| {
+            num(p).map(|n| (util::angdiff(n * 10., hdg).abs(), p.to_string()))
+        })
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .filter(|(d, _)| *d < 40.)
         .map(|(_, p)| p)
-        .unwrap_or_else(|| format!("{:02}", ((hdg / 10.).round() as i64 - 1).rem_euclid(36) + 1))
+        .unwrap_or_else(|| {
+            format!("{:02}", ((hdg / 10.).round() as i64 - 1).rem_euclid(36) + 1)
+        })
 }
 
 impl Pattern {
@@ -149,13 +163,19 @@ impl Pattern {
                     continue;
                 }
                 let name = ab.as_object()?.get_name()?.to_string();
-                if !cfg.pattern.fields.is_empty() && !cfg.pattern.fields.iter().any(|f| f.eq_ignore_ascii_case(&name)) {
+                if !cfg.pattern.fields.is_empty()
+                    && !cfg.pattern.fields.iter().any(|f| f.eq_ignore_ascii_case(&name))
+                {
                     continue;
                 }
                 let mut rwys = vec![];
                 for rw in ab.get_runways()? {
                     let Ok(rw) = rw else { continue };
-                    let (Ok(c), Ok(course), Ok(len), Ok(w)) = (rw.position(), rw.course(), rw.length(), rw.width()) else { continue };
+                    let (Ok(c), Ok(course), Ok(len), Ok(w)) =
+                        (rw.position(), rw.course(), rw.length(), rw.width())
+                    else {
+                        continue;
+                    };
                     if len < 300. {
                         continue;
                     }
@@ -181,17 +201,40 @@ impl Pattern {
     }
 
     /// 5 Hz sampling of fixed-wing players low near a field.
-    pub fn tick(&mut self, lua: MizLua, cfg: &RangeCfg, players: &Players, rec: &mut Recorder, now: f64) {
+    pub fn tick(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        players: &Players,
+        rec: &mut Recorder,
+        now: f64,
+    ) {
         // landings whose touch-and-go window has closed: the grade goes out
         // now; a full stop is then followed through the taxi
-        let due: Vec<String> = self.pending.iter().filter(|(_, p)| now >= p.due).map(|(u, _)| u.clone()).collect();
+        let due: Vec<String> = self
+            .pending
+            .iter()
+            .filter(|(_, p)| now >= p.due)
+            .map(|(u, _)| u.clone())
+            .collect();
         for u in due {
             if let Some(p) = self.pending.remove(&u) {
                 self.message(lua, cfg, &p);
-                if p.res.outcome == FieldLandingOutcome::TouchAndGo || !players.flying.contains_key(&u) {
+                if p.res.outcome == FieldLandingOutcome::TouchAndGo
+                    || !players.flying.contains_key(&u)
+                {
                     self.record(lua, rec, p, vec![], None);
                 } else {
-                    self.taxiing.insert(u, Taxiing { p, samples: vec![], pts: vec![], last: f64::NEG_INFINITY, still_since: None });
+                    self.taxiing.insert(
+                        u,
+                        Taxiing {
+                            p,
+                            samples: vec![],
+                            pts: vec![],
+                            last: f64::NEG_INFINITY,
+                            still_since: None,
+                        },
+                    );
                 }
             }
         }
@@ -202,12 +245,15 @@ impl Pattern {
         self.last_sample = now;
         self.track.retain(|u, _| players.flying.contains_key(u));
         for f in players.flying.values().filter(|f| !f.is_helo && !f.is_ground) {
-            let near = self.fields.iter().any(|fl| util::dist2(fl.pos, f.pos) < NEAR_M) && f.alt_agl < LOW_M;
+            let near = self.fields.iter().any(|fl| util::dist2(fl.pos, f.pos) < NEAR_M)
+                && f.alt_agl < LOW_M;
             if !near {
                 self.track.remove(&f.unit_name);
                 continue;
             }
-            let (p, v) = match dcso3::unit::Unit::get_by_name(lua, &f.unit_name).and_then(|u| Ok((u.get_point()?.0, u.get_velocity()?.0))) {
+            let (p, v) = match dcso3::unit::Unit::get_by_name(lua, &f.unit_name)
+                .and_then(|u| Ok((u.get_point()?.0, u.get_velocity()?.0)))
+            {
                 Ok(x) => x,
                 Err(_) => (f.pos, f.vel),
             };
@@ -225,7 +271,13 @@ impl Pattern {
 
     /// One sample a second of every aircraft being followed after a full
     /// stop, and the end of its taxi.
-    fn follow_taxi(&mut self, lua: MizLua, players: &Players, rec: &mut Recorder, now: f64) {
+    fn follow_taxi(
+        &mut self,
+        lua: MizLua,
+        players: &Players,
+        rec: &mut Recorder,
+        now: f64,
+    ) {
         let mut done: Vec<(String, &'static str)> = vec![];
         for (u, tx) in self.taxiing.iter_mut() {
             if now - tx.last < 1. {
@@ -236,20 +288,39 @@ impl Pattern {
                 done.push((u.clone(), "left"));
                 continue;
             };
-            let (p, v) = match dcso3::unit::Unit::get_by_name(lua, u).and_then(|un| Ok((un.get_point()?.0, un.get_velocity()?.0))) {
+            let (p, v) = match dcso3::unit::Unit::get_by_name(lua, u)
+                .and_then(|un| Ok((un.get_point()?.0, un.get_velocity()?.0)))
+            {
                 Ok(x) => x,
                 Err(_) => (f.pos, f.vel),
             };
             let (along, across) = tx.p.frame.rel(p);
             let gs = util::gs_kts(v);
-            tx.samples.push(TaxiSample { t: now, along, across, gs_kts: gs, x: p.x, z: p.z });
+            tx.samples.push(TaxiSample {
+                t: now,
+                along,
+                across,
+                gs_kts: gs,
+                x: p.x,
+                z: p.z,
+            });
             let g = util::geo(lua, p);
-            tx.pts.push(TrackPt { t: now - tx.p.t_touch, lat: g.lat, lon: g.lon, alt_m: g.alt_m, speed_kts: gs });
-            let on_rwy = across.abs() <= tx.p.frame.width / 2. + 4. && (-30. ..=tx.p.frame.len + 30.).contains(&along);
+            tx.pts.push(TrackPt {
+                t: now - tx.p.t_touch,
+                lat: g.lat,
+                lon: g.lon,
+                alt_m: g.alt_m,
+                speed_kts: gs,
+            });
+            let on_rwy = across.abs() <= tx.p.frame.width / 2. + 4.
+                && (-30. ..=tx.p.frame.len + 30.).contains(&along);
             if gs < 1. {
                 let since = *tx.still_since.get_or_insert(now);
                 if now - since >= PARKED_S {
-                    done.push((u.clone(), if on_rwy { "stopped_on_runway" } else { "parked" }));
+                    done.push((
+                        u.clone(),
+                        if on_rwy { "stopped_on_runway" } else { "parked" },
+                    ));
                     continue;
                 }
             } else {
@@ -271,7 +342,17 @@ impl Pattern {
         let mut samples = tx.samples;
         if samples.is_empty() || samples[0].t > p.t_touch + 0.5 {
             let (a, c) = (p.res.touchdown_from_threshold_m, p.res.centreline_m);
-            samples.insert(0, TaxiSample { t: p.t_touch, along: a, across: c, gs_kts: p.res.touchdown_gs_kts, x: f64::NAN, z: f64::NAN });
+            samples.insert(
+                0,
+                TaxiSample {
+                    t: p.t_touch,
+                    along: a,
+                    across: c,
+                    gs_kts: p.res.touchdown_gs_kts,
+                    x: f64::NAN,
+                    z: f64::NAN,
+                },
+            );
             if samples.len() > 1 {
                 samples[0].x = samples[1].x;
                 samples[0].z = samples[1].z;
@@ -283,12 +364,24 @@ impl Pattern {
     }
 
     /// RUNWAY_TOUCH at an airfield.
-    pub fn touch(&mut self, lua: MizLua, cfg: &RangeCfg, f: &Flying, place: &str, now: f64) {
+    pub fn touch(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        f: &Flying,
+        place: &str,
+        now: f64,
+    ) {
         if f.is_helo || f.is_ground {
             return;
         }
         let Some(field) = self.fields.iter().find(|fl| fl.name == place) else { return };
-        if self.last_touch.insert(f.unit_name.clone(), now).map(|t| now - t < 20.).unwrap_or(false) {
+        if self
+            .last_touch
+            .insert(f.unit_name.clone(), now)
+            .map(|t| now - t < 20.)
+            .unwrap_or(false)
+        {
             // a bounce: note it on the card already waiting
             if let Some(p) = self.pending.get_mut(&f.unit_name) {
                 if !p.res.calls.iter().any(|c| c == "bounced") {
@@ -297,8 +390,14 @@ impl Pattern {
             }
             return;
         }
-        let samples: Vec<Sample> = self.track.get(&f.unit_name).map(|q| q.iter().copied().collect()).unwrap_or_default();
-        let (p, v) = match dcso3::unit::Unit::get_by_name(lua, &f.unit_name).and_then(|u| Ok((u.get_point()?.0, u.get_velocity()?.0))) {
+        let samples: Vec<Sample> = self
+            .track
+            .get(&f.unit_name)
+            .map(|q| q.iter().copied().collect())
+            .unwrap_or_default();
+        let (p, v) = match dcso3::unit::Unit::get_by_name(lua, &f.unit_name)
+            .and_then(|u| Ok((u.get_point()?.0, u.get_velocity()?.0)))
+        {
             Ok(x) => x,
             Err(_) => (f.pos, f.vel),
         };
@@ -314,7 +413,10 @@ impl Pattern {
                     let (s, c) = dir.to_radians().sin_cos();
                     let along = d.x * c + d.z * s;
                     let across = -d.x * s + d.z * c;
-                    if along.abs() <= rw.length / 2. + 400. && across.abs() <= rw.width / 2. + 120. && off < 30. {
+                    if along.abs() <= rw.length / 2. + 400.
+                        && across.abs() <= rw.width / 2. + 120.
+                        && off < 30.
+                    {
                         if best.map(|b| off < b.0).unwrap_or(true) {
                             best = Some((off, rw, dir));
                         }
@@ -323,11 +425,18 @@ impl Pattern {
             }
         }
         let Some((_, rw, dir)) = best else {
-            info!("pattern: {} touched down at {place} but not on a runway we know", f.name);
+            info!(
+                "pattern: {} touched down at {place} but not on a runway we know",
+                f.name
+            );
             return;
         };
         let (s, c) = dir.to_radians().sin_cos();
-        let thr = V3::new(rw.centre.x - c * rw.length / 2., rw.centre.y, rw.centre.z - s * rw.length / 2.);
+        let thr = V3::new(
+            rw.centre.x - c * rw.length / 2.,
+            rw.centre.y,
+            rw.centre.z - s * rw.length / 2.,
+        );
         let rel = |q: V3| {
             let d = q - thr;
             (d.x * c + d.z * s, -d.x * s + d.z * c)
@@ -353,7 +462,8 @@ impl Pattern {
                 .min_by(|a, b| (a.1 - dist).abs().total_cmp(&(b.1 - dist).abs()))
                 .filter(|(_, r, _)| (r - dist).abs() < 350.)
                 .map(|(x, r, cr)| {
-                    let gs = ((x.p.y - elev) / r).atan().to_degrees() - cfg.pattern.glideslope_deg;
+                    let gs = ((x.p.y - elev) / r).atan().to_degrees()
+                        - cfg.pattern.glideslope_deg;
                     let lu = (cr / r).atan().to_degrees();
                     (gs, lu, -x.v.y * 60. * util::M_TO_FT)
                 })
@@ -361,17 +471,27 @@ impl Pattern {
         let one = at(util::NM);
         let half = at(util::NM / 2.);
         let stable = match (one, half) {
-            (Some(a), Some(b)) => [a, b].iter().all(|(gs, lu, vs)| gs.abs() < 1. && lu.abs() < 3. && *vs < 1200.),
+            (Some(a), Some(b)) => [a, b]
+                .iter()
+                .all(|(gs, lu, vs)| gs.abs() < 1. && lu.abs() < 3. && *vs < 1200.),
             _ => false,
         };
         let undershoot = along < 0.;
         let mut calls = vec![];
         let err = along - aim;
         if err.abs() > 150. {
-            calls.push(format!("{:.0} m {}", err.abs(), if err > 0. { "long" } else { "short" }));
+            calls.push(format!(
+                "{:.0} m {}",
+                err.abs(),
+                if err > 0. { "long" } else { "short" }
+            ));
         }
         if across.abs() > 5. {
-            calls.push(format!("{:.0} m {} of centreline", across.abs(), if across > 0. { "right" } else { "left" }));
+            calls.push(format!(
+                "{:.0} m {} of centreline",
+                across.abs(),
+                if across > 0. { "right" } else { "left" }
+            ));
         }
         if fpm > 600. {
             calls.push(format!("hard landing, {fpm:.0} fpm"));
@@ -379,10 +499,16 @@ impl Pattern {
         match one {
             Some((gs, lu, _)) => {
                 if gs.abs() >= 1. {
-                    calls.push(format!("{} at 1 nm ({gs:+.1}°)", if gs > 0. { "high" } else { "low" }));
+                    calls.push(format!(
+                        "{} at 1 nm ({gs:+.1}°)",
+                        if gs > 0. { "high" } else { "low" }
+                    ));
                 }
                 if lu.abs() >= 3. {
-                    calls.push(format!("lined up {} at 1 nm", if lu > 0. { "right" } else { "left" }));
+                    calls.push(format!(
+                        "lined up {} at 1 nm",
+                        if lu > 0. { "right" } else { "left" }
+                    ));
                 }
             }
             None => calls.push("no straight-in final (no 1 nm sample)".into()),
@@ -390,14 +516,22 @@ impl Pattern {
         if undershoot {
             calls.push("touched down short of the threshold".into());
         }
-        let quality = grading::field_landing_quality(err, across, fpm, stable, undershoot);
+        let quality =
+            grading::field_landing_quality(err, across, fpm, stable, undershoot);
         // the pattern, from the track in the runway frame
         let frame = Frame { thr, s, c, len: rw.length, width: rw.width };
         let rel: Vec<RelSample> = samples
             .iter()
             .map(|x| {
                 let (a, cr) = frame.rel(x.p);
-                RelSample { t: x.t, along: a, across: cr, agl: x.p.y - elev, rel: util::angdiff(util::hdg(x.v), dir), gs_kts: util::gs_kts(x.v) }
+                RelSample {
+                    t: x.t,
+                    along: a,
+                    across: cr,
+                    agl: x.p.y - elev,
+                    rel: util::angdiff(util::hdg(x.v), dir),
+                    gs_kts: util::gs_kts(x.v),
+                }
             })
             .collect();
         let pattern = pattern_legs::pattern(&rel, now);
@@ -407,13 +541,23 @@ impl Pattern {
             if x.t - last >= 1. {
                 last = x.t;
                 let g = util::geo(lua, x.p);
-                pattern_pts.push(TrackPt { t: x.t - now, lat: g.lat, lon: g.lon, alt_m: g.alt_m, speed_kts: util::gs_kts(x.v) });
+                pattern_pts.push(TrackPt {
+                    t: x.t - now,
+                    lat: g.lat,
+                    lon: g.lon,
+                    alt_m: g.alt_m,
+                    speed_kts: util::gs_kts(x.v),
+                });
             }
         }
         let res = FieldLandingResult {
             airfield: field.name.clone(),
             runway: designator(&rw.name, dir),
-            outcome: if undershoot { FieldLandingOutcome::Undershoot } else { FieldLandingOutcome::FullStop },
+            outcome: if undershoot {
+                FieldLandingOutcome::Undershoot
+            } else {
+                FieldLandingOutcome::FullStop
+            },
             touchdown_from_threshold_m: along,
             aim_error_m: err,
             centreline_m: across,
@@ -486,20 +630,40 @@ impl Pattern {
                     r.touchdown_gs_kts,
                     if r.stable { ", stable approach" } else { ", unstable approach" },
                     r.quality.label(),
-                    if r.calls.is_empty() { String::new() } else { format!("\n{}", r.calls.join("; ")) }
+                    if r.calls.is_empty() {
+                        String::new()
+                    } else {
+                        format!("\n{}", r.calls.join("; "))
+                    }
                 ),
                 cfg.message_s,
             );
             if let Some(pt) = &r.pattern {
                 if !pt.calls.is_empty() {
-                    records::to_group(lua, p.gid, &format!("PATTERN ({}): {}", pt.kind.replace('_', " "), pt.calls.join("; ")), cfg.message_s);
+                    records::to_group(
+                        lua,
+                        p.gid,
+                        &format!(
+                            "PATTERN ({}): {}",
+                            pt.kind.replace('_', " "),
+                            pt.calls.join("; ")
+                        ),
+                        cfg.message_s,
+                    );
                 }
             }
         }
     }
 
     /// The record, with the pattern and the taxi as its track.
-    fn record(&self, lua: MizLua, rec: &mut Recorder, p: Pending, taxi_pts: Vec<TrackPt>, _why: Option<&str>) {
+    fn record(
+        &self,
+        lua: MizLua,
+        rec: &mut Recorder,
+        p: Pending,
+        taxi_pts: Vec<TrackPt>,
+        _why: Option<&str>,
+    ) {
         let score = p.res.quality.score();
         let mut paths = BTreeMap::new();
         if !p.pattern_pts.is_empty() {
@@ -509,10 +673,25 @@ impl Pattern {
             paths.insert("taxi".to_string(), taxi_pts);
         }
         let track = (!paths.is_empty()).then_some(Track::Path { paths });
-        rec.emit(lua, p.pilot, &p.typ, p.side, &p.callsign, Some(score), RangeResult::FieldLanding(p.res), track);
+        rec.emit(
+            lua,
+            p.pilot,
+            &p.typ,
+            p.side,
+            &p.callsign,
+            Some(score),
+            RangeResult::FieldLanding(p.res),
+            track,
+        );
     }
 
-    pub fn player_out(&mut self, lua: MizLua, cfg: &RangeCfg, rec: &mut Recorder, unit: &str) {
+    pub fn player_out(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        rec: &mut Recorder,
+        unit: &str,
+    ) {
         self.track.remove(unit);
         self.last_touch.remove(unit);
         if let Some(p) = self.pending.remove(unit) {

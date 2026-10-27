@@ -31,8 +31,22 @@ pub(crate) struct Insight {
     pub(crate) evidence: Vec<String>,
 }
 
-fn ins(id: &str, kind: &str, sev: &'static str, title: String, detail: String, ev: Vec<String>) -> Insight {
-    Insight { id: id.into(), kind: kind.into(), severity: sev, title, detail, evidence: ev }
+fn ins(
+    id: &str,
+    kind: &str,
+    sev: &'static str,
+    title: String,
+    detail: String,
+    ev: Vec<String>,
+) -> Insight {
+    Insight {
+        id: id.into(),
+        kind: kind.into(),
+        severity: sev,
+        title,
+        detail,
+        evidence: ev,
+    }
 }
 
 fn mean(v: impl Iterator<Item = f64>) -> Option<(f64, usize)> {
@@ -83,7 +97,11 @@ fn bombs(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
         return;
     }
     let good = median(
-        &bombs.iter().map(|(_, b)| b.good_radius_m).filter(|g| *g > 0.).collect::<Vec<_>>(),
+        &bombs
+            .iter()
+            .map(|(_, b)| b.good_radius_m)
+            .filter(|g| *g > 0.)
+            .collect::<Vec<_>>(),
     )
     .unwrap_or(25.);
     let thr = 0.5 * good;
@@ -212,11 +230,13 @@ fn strafe(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
             fouls.iter().map(|(r, _)| r.id.clone()).collect(),
         ));
     }
-    let valid: Vec<_> = passes.iter().filter(|(_, s)| s.quality != StrafeQuality::Invalid).collect();
+    let valid: Vec<_> =
+        passes.iter().filter(|(_, s)| s.quality != StrafeQuality::Invalid).collect();
     if valid.len() >= 3 {
         let (m, n) = mean(valid.iter().map(|(_, s)| s.accuracy_pct)).unwrap();
         if m < 25. {
-            let far = mean(valid.iter().map(|(_, s)| s.min_range_m)).map(|x| x.0).unwrap_or(0.);
+            let far =
+                mean(valid.iter().map(|(_, s)| s.min_range_m)).map(|x| x.0).unwrap_or(0.);
             out.push(ins(
                 "strafe_low_accuracy",
                 "strafe",
@@ -292,8 +312,10 @@ fn traps(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
             ));
         }
     }
-    let groove: Vec<(f64, String)> =
-        passes.iter().filter_map(|(r, t)| t.groove_time_s.map(|g| (g, r.id.clone()))).collect();
+    let groove: Vec<(f64, String)> = passes
+        .iter()
+        .filter_map(|(r, t)| t.groove_time_s.map(|g| (g, r.id.clone())))
+        .collect();
     if groove.len() >= 5 {
         let (m, n) = mean(groove.iter().map(|(g, _)| *g)).unwrap();
         if m < 15. {
@@ -329,7 +351,8 @@ fn traps(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
         .filter(|(_, t)| matches!(t.outcome, PassOutcome::Trap | PassOutcome::Bolter))
         .collect();
     if landed.len() >= 5 {
-        let b: Vec<_> = landed.iter().filter(|(_, t)| t.outcome == PassOutcome::Bolter).collect();
+        let b: Vec<_> =
+            landed.iter().filter(|(_, t)| t.outcome == PassOutcome::Bolter).collect();
         let rate = b.len() as f64 / landed.len() as f64;
         if rate >= 0.3 {
             out.push(ins(
@@ -395,9 +418,12 @@ fn aar(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
         return;
     }
     let n = sessions.len() as f64;
-    let fa = sessions.iter().map(|(_, a)| a.stability.fore_aft_sd_m / 2.0).sum::<f64>() / n;
-    let lat = sessions.iter().map(|(_, a)| a.stability.lateral_sd_m / 1.5).sum::<f64>() / n;
-    let vert = sessions.iter().map(|(_, a)| a.stability.vertical_sd_m / 1.5).sum::<f64>() / n;
+    let fa =
+        sessions.iter().map(|(_, a)| a.stability.fore_aft_sd_m / 2.0).sum::<f64>() / n;
+    let lat =
+        sessions.iter().map(|(_, a)| a.stability.lateral_sd_m / 1.5).sum::<f64>() / n;
+    let vert =
+        sessions.iter().map(|(_, a)| a.stability.vertical_sd_m / 1.5).sum::<f64>() / n;
     let mut axes = [
         (fa, "fore-aft", "Chase the tanker with small, early throttle inputs and use a fixed reference on the tanker for closure."),
         (lat, "lateral", "Use rudder-free, small bank corrections and pick a lateral reference (the tanker's centreline or engine) and hold it."),
@@ -447,7 +473,8 @@ fn missiles(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
         .collect();
     let def: Vec<_> = all.iter().filter(|(_, m)| m.perspective == "target").collect();
     if def.len() >= 3 {
-        let reacted: Vec<f64> = def.iter().filter_map(|(_, m)| m.defense.reaction_s).collect();
+        let reacted: Vec<f64> =
+            def.iter().filter_map(|(_, m)| m.defense.reaction_s).collect();
         let never = def.iter().filter(|(_, m)| m.defense.reaction_s.is_none()).count();
         let slow = mean(reacted.iter().cloned()).map(|x| x.0).unwrap_or(0.);
         if slow > 3. || never * 3 >= def.len() {
@@ -468,7 +495,9 @@ fn missiles(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
         }
         let hot: Vec<_> = def
             .iter()
-            .filter(|(_, m)| m.time_of_flight_s > 0. && m.defense.hot_s / m.time_of_flight_s > 0.4)
+            .filter(|(_, m)| {
+                m.time_of_flight_s > 0. && m.defense.hot_s / m.time_of_flight_s > 0.4
+            })
             .collect();
         if hot.len() * 3 >= def.len() && !hot.is_empty() {
             out.push(ins(
@@ -482,7 +511,8 @@ fn missiles(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
                 hot.iter().map(|(r, _)| r.id.clone()).collect(),
             ));
         }
-        let sams: Vec<_> = def.iter().filter(|(_, m)| m.weapon_category == "sam").collect();
+        let sams: Vec<_> =
+            def.iter().filter(|(_, m)| m.weapon_category == "sam").collect();
         if sams.len() >= 3 {
             let high: Vec<_> = sams.iter().filter(|(_, m)| !m.defense.went_low).collect();
             if high.len() * 10 >= sams.len() * 7 {
@@ -500,7 +530,9 @@ fn missiles(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
         }
         let beat = def
             .iter()
-            .filter(|(_, m)| matches!(m.outcome, MissileOutcome::Defeated | MissileOutcome::Timeout))
+            .filter(|(_, m)| {
+                matches!(m.outcome, MissileOutcome::Defeated | MissileOutcome::Timeout)
+            })
             .count();
         if def.len() >= 5 && beat * 10 >= def.len() * 8 {
             out.push(ins(
@@ -516,13 +548,31 @@ fn missiles(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
     // shooting: kill rate by launch-range band
     let shots: Vec<_> = all.iter().filter(|(_, m)| m.perspective != "target").collect();
     let nm = 1852.;
-    let bands = [(0., 10. * nm, "inside 10 nm"), (10. * nm, 20. * nm, "10-20 nm"), (20. * nm, 35. * nm, "20-35 nm"), (35. * nm, f64::MAX, "beyond 35 nm")];
+    let bands = [
+        (0., 10. * nm, "inside 10 nm"),
+        (10. * nm, 20. * nm, "10-20 nm"),
+        (20. * nm, 35. * nm, "20-35 nm"),
+        (35. * nm, f64::MAX, "beyond 35 nm"),
+    ];
     let mut rates = vec![];
     for (lo, hi, label) in bands {
-        let set: Vec<_> = shots.iter().filter(|(_, m)| m.launch.range_m >= lo && m.launch.range_m < hi).collect();
+        let set: Vec<_> = shots
+            .iter()
+            .filter(|(_, m)| m.launch.range_m >= lo && m.launch.range_m < hi)
+            .collect();
         if set.len() >= 3 {
-            let k = set.iter().filter(|(_, m)| matches!(m.outcome, MissileOutcome::Kill | MissileOutcome::Hit)).count();
-            rates.push((k as f64 / set.len() as f64, label, set.len(), set.iter().map(|(r, _)| r.id.clone()).collect::<Vec<_>>()));
+            let k = set
+                .iter()
+                .filter(|(_, m)| {
+                    matches!(m.outcome, MissileOutcome::Kill | MissileOutcome::Hit)
+                })
+                .count();
+            rates.push((
+                k as f64 / set.len() as f64,
+                label,
+                set.len(),
+                set.iter().map(|(r, _)| r.id.clone()).collect::<Vec<_>>(),
+            ));
         }
     }
     if rates.len() >= 2 {
@@ -561,8 +611,13 @@ fn sead(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
         return;
     }
     // anti-radiation shots that were fired at a dark radar
-    let arm: Vec<_> = kills.iter().filter(|(_, s)| s.guidance.eq_ignore_ascii_case("arm")).cloned().collect();
-    let dark: Vec<_> = arm.iter().filter(|(_, s)| !s.site_was_emitting).cloned().collect();
+    let arm: Vec<_> = kills
+        .iter()
+        .filter(|(_, s)| s.guidance.eq_ignore_ascii_case("arm"))
+        .cloned()
+        .collect();
+    let dark: Vec<_> =
+        arm.iter().filter(|(_, s)| !s.site_was_emitting).cloned().collect();
     if arm.len() >= 3 && dark.len() * 10 >= arm.len() * 4 {
         out.push(ins(
             "sead_arm_dark",
@@ -589,7 +644,13 @@ fn sead(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
                 x.3 = x.3.max(sd.trainer_deaths);
                 x.4.push(r.id.clone());
             }
-            None => sorties.push((sd.network.as_str(), t, sd.shots_at_you, sd.trainer_deaths, vec![r.id.clone()])),
+            None => sorties.push((
+                sd.network.as_str(),
+                t,
+                sd.shots_at_you,
+                sd.trainer_deaths,
+                vec![r.id.clone()],
+            )),
         }
     }
     let deaths: u32 = sorties.iter().map(|x| x.3).sum();
@@ -627,14 +688,16 @@ fn sead(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
             }
         }
     }
-    let destroyed: Vec<_> = kills.iter().filter(|(_, s)| s.site_destroyed).cloned().collect();
+    let destroyed: Vec<_> =
+        kills.iter().filter(|(_, s)| s.site_destroyed).cloned().collect();
     if destroyed.len() >= 3 && deaths == 0 {
         out.push(ins(
             "sead_clean",
             "sead",
             "good",
             format!("{} sites rolled back", destroyed.len()),
-            "Every radar at those sites is dead and no SAM got close to you doing it.".into(),
+            "Every radar at those sites is dead and no SAM got close to you doing it."
+                .into(),
             vec![],
         ));
     }
@@ -690,7 +753,11 @@ fn hot_zone(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
             ids(&sorties),
         ));
     }
-    let landed: Vec<_> = sorties.iter().filter(|(_, h)| h.outcome == HotZoneOutcome::Landed).cloned().collect();
+    let landed: Vec<_> = sorties
+        .iter()
+        .filter(|(_, h)| h.outcome == HotZoneOutcome::Landed)
+        .cloned()
+        .collect();
     if landed.len() >= 2 {
         out.push(ins(
             "hz_no_egress",
@@ -731,7 +798,8 @@ fn low_level(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
     let n = runs.len();
     let (below, _) = mean(runs.iter().map(|(_, l)| l.pct_below_ceiling)).unwrap();
     if below < 90. {
-        let busts: Vec<_> = runs.iter().filter(|(_, l)| l.pct_below_ceiling < 95.).cloned().collect();
+        let busts: Vec<_> =
+            runs.iter().filter(|(_, l)| l.pct_below_ceiling < 95.).cloned().collect();
         let ceil = runs[0].1.max_allowed_agl_ft;
         out.push(ins(
             "ll_ceiling",
@@ -748,7 +816,8 @@ fn low_level(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
             ids(&busts),
         ));
     }
-    let floor: Vec<_> = runs.iter().filter(|(_, l)| l.below_floor_s > 5.).cloned().collect();
+    let floor: Vec<_> =
+        runs.iter().filter(|(_, l)| l.below_floor_s > 5.).cloned().collect();
     if floor.len() >= 2 {
         out.push(ins(
             "ll_floor",
@@ -788,7 +857,9 @@ fn low_level(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
             missed.entry(g.gate.as_str()).or_default().push(r.id.clone());
         }
     }
-    if let Some((gate, ev)) = missed.into_iter().filter(|(_, v)| v.len() >= 2).max_by_key(|(_, v)| v.len()) {
+    if let Some((gate, ev)) =
+        missed.into_iter().filter(|(_, v)| v.len() >= 2).max_by_key(|(_, v)| v.len())
+    {
         out.push(ins(
             "ll_missed_gate",
             "low_level",
@@ -831,7 +902,11 @@ fn field_landing(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
         return;
     }
     let n = all.len();
-    let under: Vec<_> = all.iter().filter(|(_, f)| f.outcome == FieldLandingOutcome::Undershoot).cloned().collect();
+    let under: Vec<_> = all
+        .iter()
+        .filter(|(_, f)| f.outcome == FieldLandingOutcome::Undershoot)
+        .cloned()
+        .collect();
     if !under.is_empty() {
         out.push(ins(
             "fl_undershoot",
@@ -844,7 +919,11 @@ fn field_landing(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
             ids(&under),
         ));
     }
-    let on: Vec<_> = all.iter().filter(|(_, f)| f.outcome != FieldLandingOutcome::Undershoot).cloned().collect();
+    let on: Vec<_> = all
+        .iter()
+        .filter(|(_, f)| f.outcome != FieldLandingOutcome::Undershoot)
+        .cloned()
+        .collect();
     if on.len() >= 4 {
         let (aim, _) = mean(on.iter().map(|(_, f)| f.aim_error_m)).unwrap();
         if aim.abs() > 100. {
@@ -880,7 +959,8 @@ fn field_landing(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
         }
     }
     let (fpm, _) = mean(all.iter().map(|(_, f)| f.touchdown_fpm)).unwrap();
-    let hard: Vec<_> = all.iter().filter(|(_, f)| f.touchdown_fpm > 600.).cloned().collect();
+    let hard: Vec<_> =
+        all.iter().filter(|(_, f)| f.touchdown_fpm > 600.).cloned().collect();
     if fpm > 600. || hard.len() * 3 >= n {
         out.push(ins(
             "fl_firm",
@@ -896,14 +976,23 @@ fn field_landing(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
     let unstable: Vec<_> = all.iter().filter(|(_, f)| !f.stable).cloned().collect();
     if unstable.len() * 10 >= n * 4 {
         // what makes them unstable: glideslope or lineup at half a mile
-        let gs: Vec<f64> = all.iter().filter_map(|(_, f)| f.gs_error_half_nm_deg).collect();
+        let gs: Vec<f64> =
+            all.iter().filter_map(|(_, f)| f.gs_error_half_nm_deg).collect();
         let lu: Vec<f64> = all.iter().filter_map(|(_, f)| f.lineup_half_nm_deg).collect();
         let gsm = mean(gs.iter().cloned()).map(|x| x.0).unwrap_or(0.);
         let lum = mean(lu.iter().cloned()).map(|x| x.0).unwrap_or(0.);
         let why = if gsm.abs() >= 0.5 && gsm.abs() >= lum.abs() {
-            format!("You are {:.1}° {} the glideslope at half a mile on average.", gsm.abs(), if gsm > 0. { "above" } else { "below" })
+            format!(
+                "You are {:.1}° {} the glideslope at half a mile on average.",
+                gsm.abs(),
+                if gsm > 0. { "above" } else { "below" }
+            )
         } else if lum.abs() >= 0.5 {
-            format!("You are {:.1}° {} of the centreline at half a mile on average.", lum.abs(), if lum > 0. { "right" } else { "left" })
+            format!(
+                "You are {:.1}° {} of the centreline at half a mile on average.",
+                lum.abs(),
+                if lum > 0. { "right" } else { "left" }
+            )
         } else {
             "Your glideslope and lineup wander more than they are off on average: make smaller, earlier corrections.".into()
         };
@@ -965,7 +1054,9 @@ fn landing(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
     let deck: Vec<_> = all.iter().filter(|(_, l)| l.drill == "ship").cloned().collect();
     if deck.len() >= 3 {
         let (d, n) = mean(deck.iter().map(|(_, l)| l.distance_m)).unwrap();
-        if deck.iter().filter(|(_, l)| l.quality <= PrecisionQuality::Fair).count() * 2 >= deck.len() {
+        if deck.iter().filter(|(_, l)| l.quality <= PrecisionQuality::Fair).count() * 2
+            >= deck.len()
+        {
             out.push(ins(
                 "deck_landing_off",
                 "landing",
@@ -995,7 +1086,8 @@ fn csar(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
     if all.len() < 2 {
         return;
     }
-    let dropped: Vec<_> = all.iter().filter(|(_, c)| c.outcome == CsarOutcome::PickedUp).cloned().collect();
+    let dropped: Vec<_> =
+        all.iter().filter(|(_, c)| c.outcome == CsarOutcome::PickedUp).cloned().collect();
     if dropped.len() >= 2 {
         out.push(ins(
             "csar_not_delivered",
@@ -1008,7 +1100,8 @@ fn csar(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
             ids(&dropped),
         ));
     }
-    let failed: Vec<_> = all.iter().filter(|(_, c)| c.outcome == CsarOutcome::Failed).cloned().collect();
+    let failed: Vec<_> =
+        all.iter().filter(|(_, c)| c.outcome == CsarOutcome::Failed).cloned().collect();
     if failed.len() >= 2 {
         out.push(ins(
             "csar_failed",
@@ -1021,7 +1114,10 @@ fn csar(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
             ids(&failed),
         ));
     }
-    let pick: Vec<(f64, String)> = all.iter().filter_map(|(r, c)| c.time_to_pickup_s.map(|t| (t, r.id.clone()))).collect();
+    let pick: Vec<(f64, String)> = all
+        .iter()
+        .filter_map(|(r, c)| c.time_to_pickup_s.map(|t| (t, r.id.clone())))
+        .collect();
     if pick.len() >= 3 {
         if let Some(m) = median(&pick.iter().map(|x| x.0).collect::<Vec<_>>()) {
             if m > 20. * 60. {
@@ -1044,7 +1140,9 @@ fn csar(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
         .filter(|(_, c)| c.hostile && c.pickup_method == "hover")
         .cloned()
         .collect();
-    if hostile_hover.len() >= 2 && hostile_hover.len() * 2 >= all.iter().filter(|(_, c)| c.hostile).count() {
+    if hostile_hover.len() >= 2
+        && hostile_hover.len() * 2 >= all.iter().filter(|(_, c)| c.hostile).count()
+    {
         out.push(ins(
             "csar_hostile_hover",
             "csar",
@@ -1056,7 +1154,8 @@ fn csar(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
             ids(&hostile_hover),
         ));
     }
-    let rescued: Vec<_> = all.iter().filter(|(_, c)| c.outcome == CsarOutcome::Rescued).collect();
+    let rescued: Vec<_> =
+        all.iter().filter(|(_, c)| c.outcome == CsarOutcome::Rescued).collect();
     if rescued.len() >= 3 && rescued.len() == all.len() {
         out.push(ins(
             "csar_good",

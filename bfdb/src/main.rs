@@ -5,7 +5,9 @@
 use anyhow::Result;
 use bfprotocols::cfg::UnitTag;
 use clap::Parser;
-use db::{IntelCapture, IntelMarkup, SessionData, SessionEnd, StatsDb, WikiImage, WikiPage};
+use db::{
+    IntelCapture, IntelMarkup, SessionData, SessionEnd, StatsDb, WikiImage, WikiPage,
+};
 use futures::{SinkExt, StreamExt};
 use netidx::path::Path as NetidxPath;
 
@@ -50,42 +52,42 @@ struct Assets;
 #[folder = "../bfsite/dist/"]
 struct SiteAssets;
 
-mod geo;
-mod news;
-mod news_llm;
-mod hq_strategist;
-mod command;
-mod groundfeed;
-mod news_image;
-mod db;
-mod progression;
-mod squadrons;
-mod flightplans;
-mod pilot_card;
-mod db_id;
+mod admin;
 mod atc;
-mod milatc;
+mod botlink;
+mod command;
+mod db;
+mod db_id;
+mod engine;
+mod flightplans;
 mod gci;
-mod voice;
-mod intel;
+mod geo;
+mod groundfeed;
+mod hq_strategist;
+mod http;
 mod instance;
+mod intel;
+mod logs;
+mod maint;
+mod milatc;
 mod netidx_client;
+mod news;
+mod news_image;
+mod news_llm;
+mod pilot_card;
+mod progression;
 mod range;
 mod replay;
-mod websec;
-mod maint;
-mod storage;
-mod admin;
-mod botlink;
-mod engine;
-mod http;
-mod logs;
-mod routes;
-mod serve;
-mod tasks;
-mod worker;
 #[cfg(test)]
 mod route_tests;
+mod routes;
+mod serve;
+mod squadrons;
+mod storage;
+mod tasks;
+mod voice;
+mod websec;
+mod worker;
 
 // The handlers live in their own modules; main.rs keeps startup, the
 // command line and the route assembly in `build_routes`. Everything is
@@ -95,19 +97,24 @@ use botlink::*;
 use engine::*;
 use http::*;
 use logs::*;
-use routes::{admin::*, auth::*, campaign::*, cockpit::*, command::*, intel::*, live::*, ops::*, pilots::*, static_files::*, wiki::*};
+use routes::{
+    admin::*, auth::*, campaign::*, cockpit::*, command::*, intel::*, live::*, ops::*,
+    pilots::*, static_files::*, wiki::*,
+};
 use tasks::*;
 
 #[cfg(test)]
 mod cfg_backup_tests {
     #[test]
     fn keeps_only_the_newest_config_backups() {
-        let dir = std::env::temp_dir().join(format!("bfdb-cfgbak-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("bfdb-cfgbak-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let cfg = dir.join("ODF_CFG");
         std::fs::write(&cfg, "{}").unwrap();
         for i in 0..5 {
-            std::fs::write(dir.join(format!("ODF_CFG.bak.2026010100000{i}")), "").unwrap();
+            std::fs::write(dir.join(format!("ODF_CFG.bak.2026010100000{i}")), "")
+                .unwrap();
         }
         std::fs::write(dir.join("ODF_CFG.bak.notes"), "").unwrap();
         super::prune_cfg_backups(&cfg, 2);
@@ -116,7 +123,15 @@ mod cfg_backup_tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         left.sort();
-        assert_eq!(left, ["ODF_CFG", "ODF_CFG.bak.20260101000003", "ODF_CFG.bak.20260101000004", "ODF_CFG.bak.notes"]);
+        assert_eq!(
+            left,
+            [
+                "ODF_CFG",
+                "ODF_CFG.bak.20260101000003",
+                "ODF_CFG.bak.20260101000004",
+                "ODF_CFG.bak.notes"
+            ]
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
@@ -617,7 +632,11 @@ struct Args {
 /// A secret from, in order: its command-line flag, its `--...-file` flag, or
 /// its environment variable. Keeping secrets off the command line matters on
 /// Windows, where any local process can read another's arguments.
-fn secret_from(flag: Option<String>, file: Option<&std::path::Path>, env: &str) -> Result<Option<String>> {
+fn secret_from(
+    flag: Option<String>,
+    file: Option<&std::path::Path>,
+    env: &str,
+) -> Result<Option<String>> {
     if let Some(v) = flag.filter(|v| !v.is_empty()) {
         return Ok(Some(v));
     }
@@ -641,10 +660,17 @@ fn beside_db(db: &std::path::Path, suffix: &str) -> PathBuf {
 }
 
 /// What `--backup-files` copies, named as it appears under a backup's `files/`.
-fn backup_file_list(args: &Args, db: &StatsDb, intel_dir: &std::path::Path) -> Vec<(String, PathBuf)> {
+fn backup_file_list(
+    args: &Args,
+    db: &StatsDb,
+    intel_dir: &std::path::Path,
+) -> Vec<(String, PathBuf)> {
     let mut v = vec![
         ("intel".to_string(), intel_dir.to_path_buf()),
-        ("replays".to_string(), args.replay_dir.clone().unwrap_or_else(|| beside_db(&args.db, ".replays"))),
+        (
+            "replays".to_string(),
+            args.replay_dir.clone().unwrap_or_else(|| beside_db(&args.db, ".replays")),
+        ),
         ("range-clips".to_string(), beside_db(&args.db, ".range-clips")),
     ];
     for cfg in db.instances().all() {
@@ -686,11 +712,18 @@ impl HqFlags {
     }
 }
 
-fn hq_writer_cfg(args: &HqFlags, news_writer: &Option<news_llm::WriterCfg>) -> Option<news_llm::WriterCfg> {
+fn hq_writer_cfg(
+    args: &HqFlags,
+    news_writer: &Option<news_llm::WriterCfg>,
+) -> Option<news_llm::WriterCfg> {
     if args.minutes == 0 {
         None
     } else if args.url.is_some() || args.key.is_some() {
-        news_llm::WriterCfg::resolve(args.url.clone(), args.key.clone(), args.model.clone())
+        news_llm::WriterCfg::resolve(
+            args.url.clone(),
+            args.key.clone(),
+            args.model.clone(),
+        )
     } else {
         news_writer.clone().map(|mut w| {
             if let Some(m) = args.model.clone() {
@@ -836,10 +869,8 @@ fn open_db_offline(args: &Args, db_path: PathBuf) -> Result<StatsDb> {
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let mut args = Args::parse();
-    let backup_dir = args
-        .backup_dir
-        .clone()
-        .unwrap_or_else(|| maint::default_backup_dir(&args.db));
+    let backup_dir =
+        args.backup_dir.clone().unwrap_or_else(|| maint::default_backup_dir(&args.db));
 
     // sled unless --storage / $BFDB_STORAGE say redb; --migrate-storage
     // converts the database and exits.
@@ -854,7 +885,9 @@ async fn main() -> Result<()> {
     // Before anything opens the database -- the maintenance modes included.
     if args.restore_latest_backup {
         match maint::restore_latest(&args.db, &backup_dir) {
-            Ok(from) => eprintln!("restored {} from backup {}", args.db.display(), from.display()),
+            Ok(from) => {
+                eprintln!("restored {} from backup {}", args.db.display(), from.display())
+            }
             Err(e) => {
                 eprintln!("--restore-latest-backup failed: {e:#}");
                 std::process::exit(1);
@@ -871,7 +904,8 @@ async fn main() -> Result<()> {
     ));
 
     websec::set_spa_csp(args.csp_enforce, &args.csp_extra_src);
-    if let Some(v) = args.cockpit_plugin_version.clone().filter(|v| !v.trim().is_empty()) {
+    if let Some(v) = args.cockpit_plugin_version.clone().filter(|v| !v.trim().is_empty())
+    {
         let _ = COCKPIT_VERSION_OVERRIDE.set(v.trim().to_string());
     }
 
@@ -900,7 +934,11 @@ async fn main() -> Result<()> {
         args.news_llm_key_file.as_deref(),
         "BFDB_NEWS_LLM_KEY",
     )?;
-    args.hq_llm_key = secret_from(args.hq_llm_key.take(), args.hq_llm_key_file.as_deref(), "BFDB_HQ_LLM_KEY")?;
+    args.hq_llm_key = secret_from(
+        args.hq_llm_key.take(),
+        args.hq_llm_key_file.as_deref(),
+        "BFDB_HQ_LLM_KEY",
+    )?;
     args.metrics_token = secret_from(
         args.metrics_token.take(),
         args.metrics_token_file.as_deref(),
@@ -926,9 +964,11 @@ async fn main() -> Result<()> {
         args.log_read_token_file.as_deref(),
         "BFDB_LOG_READ_TOKEN",
     )?;
-    args.shutdown_token = secret_from(args.shutdown_token.take(), None, "BFDB_SHUTDOWN_TOKEN")?;
+    args.shutdown_token =
+        secret_from(args.shutdown_token.take(), None, "BFDB_SHUTDOWN_TOKEN")?;
     args.ops_api_key = secret_from(args.ops_api_key.take(), None, "BFDB_OPS_API_KEY")?;
-    args.export_secret = secret_from(args.export_secret.take(), None, "BFDB_EXPORT_SECRET")?;
+    args.export_secret =
+        secret_from(args.export_secret.take(), None, "BFDB_EXPORT_SECRET")?;
     args.news_image_key = secret_from(
         args.news_image_key.take(),
         args.news_image_key_file.as_deref(),
@@ -943,7 +983,10 @@ async fn main() -> Result<()> {
     }
 
     if args.rebuild_stats {
-        if args.instances.is_none() && args.stats_dir.is_none() && args.stats_jsonl.is_none() {
+        if args.instances.is_none()
+            && args.stats_dir.is_none()
+            && args.stats_jsonl.is_none()
+        {
             eprintln!("--rebuild-stats needs --stats-dir (or --stats-jsonl), or --instances, present so the next start can re-ingest the archive");
             std::process::exit(1);
         }
@@ -998,8 +1041,8 @@ async fn main() -> Result<()> {
         let env_log = builder.build();
         let max_level = env_log.filter();
         let logger = BroadcastLogger {
-            inner:   env_log,
-            tx:      log_tx.clone(),
+            inner: env_log,
+            tx: log_tx.clone(),
             history: log_history.clone(),
         };
         log::set_boxed_logger(Box::new(logger)).expect("logger already set");
@@ -1042,7 +1085,8 @@ async fn main() -> Result<()> {
         // one, plus one for each instance that reaches its engine through a
         // resolver of its own (a DCS server on another PC).
         let netidx_tls = netidx_client::load_tls_file(args.netidx_tls.as_deref())?;
-        let subscribers = netidx_client::subscribers(registry.all(), netidx_tls.as_ref())?;
+        let subscribers =
+            netidx_client::subscribers(registry.all(), netidx_tls.as_ref())?;
         if !has_engine {
             log::info!("Running in offline mode (no instance has a netidx base, Netidx disabled)");
         }
@@ -1095,9 +1139,15 @@ async fn main() -> Result<()> {
             db.clone(),
             maint::BackupCfg {
                 dir: backup_dir.clone(),
-                every: std::time::Duration::from_secs(args.backup_interval_hours.saturating_mul(3600)),
+                every: std::time::Duration::from_secs(
+                    args.backup_interval_hours.saturating_mul(3600),
+                ),
                 keep: args.backup_keep,
-                files: if args.backup_files { backup_file_list(&args, &db, &intel_dir) } else { Vec::new() },
+                files: if args.backup_files {
+                    backup_file_list(&args, &db, &intel_dir)
+                } else {
+                    Vec::new()
+                },
             },
         );
     } else {
@@ -1110,36 +1160,38 @@ async fn main() -> Result<()> {
     // retries next tick. Only runs when there's a live engine (--base).
     if has_engine {
         for cfg in db.instances().all() {
-        // Recon markup is a campaign thing; a training range has none.
-        if cfg.base.is_none() || cfg.is_range() {
-            continue;
-        }
-        let intel_db = db.clone();
-        let intel_inst = db.state(&Arc::from(cfg.id.as_str()));
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(15));
-            loop {
-                tick.tick().await;
-                let payload = match task::block_in_place(|| intel_db.intel_marks_payload(&intel_inst.id)) {
-                    Ok(Some(p)) => p,
-                    Ok(None) => continue,
-                    Err(e) => {
-                        log::warn!("intel-marks: building payload failed: {e:?}");
-                        continue;
-                    }
-                };
-                let _ = tokio::time::timeout(
-                    std::time::Duration::from_secs(3),
-                    call_engine_rpc_str(
-                        &intel_db,
-                        &intel_inst,
-                        "intel-marks",
-                        vec![("data", netidx::publisher::Value::from(payload))],
-                    ),
-                )
-                .await;
+            // Recon markup is a campaign thing; a training range has none.
+            if cfg.base.is_none() || cfg.is_range() {
+                continue;
             }
-        });
+            let intel_db = db.clone();
+            let intel_inst = db.state(&Arc::from(cfg.id.as_str()));
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(15));
+                loop {
+                    tick.tick().await;
+                    let payload = match task::block_in_place(|| {
+                        intel_db.intel_marks_payload(&intel_inst.id)
+                    }) {
+                        Ok(Some(p)) => p,
+                        Ok(None) => continue,
+                        Err(e) => {
+                            log::warn!("intel-marks: building payload failed: {e:?}");
+                            continue;
+                        }
+                    };
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(3),
+                        call_engine_rpc_str(
+                            &intel_db,
+                            &intel_inst,
+                            "intel-marks",
+                            vec![("data", netidx::publisher::Value::from(payload))],
+                        ),
+                    )
+                    .await;
+                }
+            });
         }
     }
 
@@ -1153,12 +1205,12 @@ async fn main() -> Result<()> {
         (Some(id), Some(secret), Some(uri), Some(guild), Some(role)) => {
             log::info!("Discord OAuth enabled (guild={guild}, admin_role={role})");
             Some(AuthConfig {
-                client_id:     id,
+                client_id: id,
                 client_secret: secret,
-                redirect_uri:  uri,
-                guild_id:      guild,
+                redirect_uri: uri,
+                guild_id: guild,
                 admin_role_id: role,
-                roles:         admin::DiscordRoles {
+                roles: admin::DiscordRoles {
                     ops: args.discord_ops_role_id.clone(),
                     content: args.discord_content_role_id.clone(),
                     moderation: args.discord_moderation_role_id.clone(),
@@ -1171,7 +1223,10 @@ async fn main() -> Result<()> {
         }
     };
 
-    let local_admin_cfg: Option<LocalAdminConfig> = match (args.admin_username, args.admin_password) {
+    let local_admin_cfg: Option<LocalAdminConfig> = match (
+        args.admin_username,
+        args.admin_password,
+    ) {
         (Some(u), Some(p)) => {
             log::info!("Local admin login enabled (username={u})");
             Some(LocalAdminConfig { username: u, password: p })
@@ -1182,22 +1237,26 @@ async fn main() -> Result<()> {
         }
     };
 
-    let bot_link_cfg: Arc<Option<BotLinkConfig>> = Arc::new(match (args.dcsserverbot_url, args.dcsserverbot_api_key) {
-        (Some(base_url), Some(api_key)) => {
-            // Tolerate a trailing slash on --dcsserverbot-url -- otherwise
-            // e.g. "http://host:9876/stats/" + "/servers" produces a
-            // double-slash path that most web frameworks 404 on, silently
-            // breaking the integration rather than erroring loudly.
-            let base_url = base_url.trim_end_matches('/').to_string();
-            log::info!("Discord account linking via DCSServerBot enabled ({base_url})");
-            let ops_key = args.ops_api_key.clone().unwrap_or_else(|| api_key.clone());
-            Some(BotLinkConfig { base_url, api_key, ops_key })
-        }
-        _ => {
-            log::info!("Discord account linking disabled (pass --dcsserverbot-url and --dcsserverbot-api-key to enable)");
-            None
-        }
-    });
+    let bot_link_cfg: Arc<Option<BotLinkConfig>> = Arc::new(
+        match (args.dcsserverbot_url, args.dcsserverbot_api_key) {
+            (Some(base_url), Some(api_key)) => {
+                // Tolerate a trailing slash on --dcsserverbot-url -- otherwise
+                // e.g. "http://host:9876/stats/" + "/servers" produces a
+                // double-slash path that most web frameworks 404 on, silently
+                // breaking the integration rather than erroring loudly.
+                let base_url = base_url.trim_end_matches('/').to_string();
+                log::info!(
+                    "Discord account linking via DCSServerBot enabled ({base_url})"
+                );
+                let ops_key = args.ops_api_key.clone().unwrap_or_else(|| api_key.clone());
+                Some(BotLinkConfig { base_url, api_key, ops_key })
+            }
+            _ => {
+                log::info!("Discord account linking disabled (pass --dcsserverbot-url and --dcsserverbot-api-key to enable)");
+                None
+            }
+        },
+    );
 
     // ── Training range (kind: "range" instances) ─────────────────────────
     // Ingests each range instance's range.jsonl and serves /api/range/*. The
@@ -1223,19 +1282,28 @@ async fn main() -> Result<()> {
         p.push(".replays");
         PathBuf::from(p)
     });
-    let replay_ctx = replay::ReplayCtx::new(db.clone(), replay_dir, args.replay_days.max(1))?;
+    let replay_ctx =
+        replay::ReplayCtx::new(db.clone(), replay_dir, args.replay_days.max(1))?;
     replay::spawn_tasks(&replay_ctx);
     let _ = range_ctx.replay.set(replay_ctx.clone());
     let replay_routes = replay::api::routes(replay_ctx);
 
     // ── Load campaign config JSON (served at /api/config) ────────────────
-    let (campaign_json, srs_url_from_cfg, gci_cfg): (Arc<String>, Option<String>, Option<gci::GciConfig>) = match &args.config {
+    let (campaign_json, srs_url_from_cfg, gci_cfg): (
+        Arc<String>,
+        Option<String>,
+        Option<gci::GciConfig>,
+    ) = match &args.config {
         Some(path) => {
             match std::fs::read_to_string(path) {
                 Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
                     Ok(v) => {
                         log::info!("Campaign config loaded from {:?}", path);
-                        let srs = v.get("srsUrl").and_then(|u| u.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
+                        let srs = v
+                            .get("srsUrl")
+                            .and_then(|u| u.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string());
                         let gci = gci::from_campaign_json(&v);
                         // Served publicly, so only the branding keys.
                         (Arc::new(public_campaign_config(&raw)), srs, gci)
@@ -1264,17 +1332,18 @@ async fn main() -> Result<()> {
     // CLI --srs-url takes precedence over campaign.json srsUrl
     let effective_srs_url = args.srs_url.clone().or(srs_url_from_cfg);
     if let Some(ref u) = effective_srs_url {
-        let kind = if u.starts_with("http://") || u.starts_with("https://") { "proxying" } else { "reading" };
+        let kind = if u.starts_with("http://") || u.starts_with("https://") {
+            "proxying"
+        } else {
+            "reading"
+        };
         log::info!("SRS client list enabled, {kind} {u}");
     }
 
     // A dedicated --gci-config file wins over a `gci` key in --config, same
     // precedence rule as --srs-url vs campaign.json srsUrl above.
-    let gci_cfg: Option<gci::GciConfig> = args
-        .gci_config
-        .as_ref()
-        .and_then(|p| gci::from_file(p))
-        .or(gci_cfg);
+    let gci_cfg: Option<gci::GciConfig> =
+        args.gci_config.as_ref().and_then(|p| gci::from_file(p)).or(gci_cfg);
 
     for cfg in db.instances().all() {
         match &cfg.engine_config {
@@ -1344,7 +1413,12 @@ async fn main() -> Result<()> {
     }
     // Public snapshot for the front ends to fall back on while this box is
     // down. Off unless --snapshot-endpoint or --snapshot-dir (snapshot.rs).
-    snapshot::spawn(&args.snapshot, db.clone(), bot_link_cfg.clone(), news_images.clone());
+    snapshot::spawn(
+        &args.snapshot,
+        db.clone(),
+        bot_link_cfg.clone(),
+        news_images.clone(),
+    );
 
     let export_listen = ExportListenCfg {
         bind: args.export_bind,
@@ -1355,7 +1429,8 @@ async fn main() -> Result<()> {
         for cfg in db.instances().all() {
             let id: InstanceId = Arc::from(cfg.id.as_str());
             let inst = db.state(&id);
-            let live: LiveState = Arc::new(tokio::sync::RwLock::new((0.0, Vec::new(), Vec::new())));
+            let live: LiveState =
+                Arc::new(tokio::sync::RwLock::new((0.0, Vec::new(), Vec::new())));
             let (live_tx, _) = broadcast::channel::<String>(64);
             let tac: TacState = Arc::new(tokio::sync::RwLock::new(TacCache::default()));
             let ground: groundfeed::GroundState = Default::default();
@@ -1381,7 +1456,11 @@ async fn main() -> Result<()> {
             // about. Its live state is polled on demand by `range::api`.
             if cfg.base.is_some() && !cfg.is_range() {
                 tokio::spawn(tacmap_poller(db.clone(), inst.clone(), tac.clone()));
-                tokio::spawn(groundfeed::poller(db.clone(), inst.clone(), ground.clone()));
+                tokio::spawn(groundfeed::poller(
+                    db.clone(),
+                    inst.clone(),
+                    ground.clone(),
+                ));
                 tokio::spawn(command::pusher(db.clone(), inst.clone()));
                 tokio::spawn(unitdb_refresher(db.clone(), inst.clone()));
                 let diary = if external {
@@ -1389,12 +1468,19 @@ async fn main() -> Result<()> {
                 } else {
                     worker::DiarySource::Local(news_writer.clone())
                 };
-                tokio::spawn(news_generator(db.clone(), inst.clone(), diary, news_images.clone()));
+                tokio::spawn(news_generator(
+                    db.clone(),
+                    inst.clone(),
+                    diary,
+                    news_images.clone(),
+                ));
                 if let Some(w) = hq_writer.clone() {
                     tokio::spawn(hq_strategist::run(
                         worker::host::EngineHost::local(&db, inst.clone()),
                         w,
-                        std::time::Duration::from_secs(args.hq_strategist_minutes.max(1) * 60),
+                        std::time::Duration::from_secs(
+                            args.hq_strategist_minutes.max(1) * 60,
+                        ),
                     ));
                 }
             }
@@ -1408,8 +1494,10 @@ async fn main() -> Result<()> {
     // (/ws/gci) and the last-N snapshot (/api/gci/transcript). Each instance
     // runs its own GCI (its own SRS server, frequencies and callsigns) and so
     // gets its own transcript channel.
-    let mut gci_map: std::collections::HashMap<InstanceId, (broadcast::Sender<String>, LogHistory)> =
-        std::collections::HashMap::new();
+    let mut gci_map: std::collections::HashMap<
+        InstanceId,
+        (broadcast::Sender<String>, LogHistory),
+    > = std::collections::HashMap::new();
     for cfg in db.instances().all() {
         let id: InstanceId = Arc::from(cfg.id.as_str());
         let inst = db.state(&id);
@@ -1418,19 +1506,26 @@ async fn main() -> Result<()> {
         // A dedicated per-instance gci_config wins; otherwise the single-server
         // --gci-config / campaign.json `gci` block applies to the default
         // instance only (there is only one of it).
-        let cfg_for_inst = worker::gci_config_for(cfg, id == *db.instances().default_id(), &gci_cfg);
+        let cfg_for_inst =
+            worker::gci_config_for(cfg, id == *db.instances().default_id(), &gci_cfg);
         if external {
             if cfg_for_inst.is_some() {
                 log::info!("[{}] voice runs in the worker", cfg.id);
             }
         } else {
-            worker::spawn_voice(worker::host::EngineHost::local(&db, inst), cfg_for_inst, tx.clone(), hist.clone());
+            worker::spawn_voice(
+                worker::host::EngineHost::local(&db, inst),
+                cfg_for_inst,
+                tx.clone(),
+                hist.clone(),
+            );
         }
         gci_map.insert(id, (tx, hist));
     }
     let gci_map = Arc::new(gci_map);
     if external {
-        let secret = worker::secret(&args.worker, &args.db, true)?.expect("bfdb makes a secret when there is none");
+        let secret = worker::secret(&args.worker, &args.db, true)?
+            .expect("bfdb makes a secret when there is none");
         worker::hub::start(args.worker.listen, secret, db.clone(), gci_map.clone())?;
     }
 
@@ -1456,17 +1551,18 @@ async fn main() -> Result<()> {
         log_read_token: args.log_read_token.clone(),
         metrics_token: args.metrics_token.clone(),
         shutdown_token: args.shutdown_token.clone(),
-        get_limits: websec::GetLimits { per_min: args.public_get_rate, heavy_per_min: args.heavy_get_rate },
+        get_limits: websec::GetLimits {
+            per_min: args.public_get_rate,
+            heavy_per_min: args.heavy_get_rate,
+        },
     });
 
     log::info!("API server listening on http://{}", args.listen_address);
 
     // Optional separate site server
     if let Some(site_addr) = args.site_address {
-        let site_cors = warp::cors()
-            .allow_any_origin()
-            .allow_methods(&[Method::GET])
-            .build();
+        let site_cors =
+            warp::cors().allow_any_origin().allow_methods(&[Method::GET]).build();
         let site_only = warp::get()
             .and(warp::path::tail())
             .map(|tail: warp::path::Tail| serve_site_asset(tail.as_str()))
@@ -1537,7 +1633,8 @@ struct RouteCtx {
 }
 
 /// Per-instance GCI transcript channel and backlog.
-type GciMap = Arc<std::collections::HashMap<InstanceId, (broadcast::Sender<String>, LogHistory)>>;
+type GciMap =
+    Arc<std::collections::HashMap<InstanceId, (broadcast::Sender<String>, LogHistory)>>;
 
 /// The whole route chain, in the order it is matched.
 fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
@@ -1567,7 +1664,8 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     } = rc;
 
     let cross_origin = !cors_origins.is_empty();
-    let allowed_login_origins: Arc<Vec<std::string::String>> = Arc::new(cors_origins.clone());
+    let allowed_login_origins: Arc<Vec<std::string::String>> =
+        Arc::new(cors_origins.clone());
     let cors = warp::cors()
         .allow_methods(&[Method::GET, Method::POST, Method::OPTIONS])
         // x-intel-filename: sent by the recon-intel photo upload, which is a
@@ -1598,9 +1696,12 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         // credentials let any site a signed-in user visited read the API as
         // them.
         let port = listen_port;
-        let local = [format!("http://localhost:{port}"), format!("http://127.0.0.1:{port}")];
+        let local =
+            [format!("http://localhost:{port}"), format!("http://127.0.0.1:{port}")];
         let own = websec::origin_of(&public_api_url);
-        cors.allow_origins(local.iter().map(|s| s.as_str()).chain(own.as_deref()).collect::<Vec<_>>())
+        cors.allow_origins(
+            local.iter().map(|s| s.as_str()).chain(own.as_deref()).collect::<Vec<_>>(),
+        )
     };
     if cross_origin {
         log::info!("Cross-origin mode enabled for: {:?} (cookies use SameSite=None; Secure — bfdb must be served over TLS)", cors_origins);
@@ -1611,12 +1712,16 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let instances_route = warp::path!("api" / "instances")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .then(api_instances);
 
     let rounds = warp::path!("api" / "rounds")
         .and(with_db(db.clone()))
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(with_instance(db.clone()))
         .then(api_rounds);
 
@@ -1633,7 +1738,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let leaderboard = warp::path!("api" / "leaderboard")
         .and(with_db(db.clone()))
         .and(with_instance(db.clone()))
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .then(api_leaderboard);
 
     let all_pilots = warp::path!("api" / "pilots")
@@ -1722,9 +1829,8 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
             api_capture_events(db, round_id, limit, offset, inst)
         });
 
-    let pilot = warp::path!("api" / "pilot" / String)
-        .and(with_db(db.clone()))
-        .then(api_pilot);
+    let pilot =
+        warp::path!("api" / "pilot" / String).and(with_db(db.clone())).then(api_pilot);
 
     let pilot_sorties = warp::path!("api" / "pilot" / String / "sorties")
         .and(with_db(db.clone()))
@@ -1781,7 +1887,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .then(api_pilot_card);
     let gci_transmit = warp::path!("api" / "gci" / "transmit")
         .and(warp::post())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(extract_session_cookie())
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json::<GciTransmitBody>())
@@ -1834,20 +1942,18 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
 
     // This bfdb binary's own build identity (git rev + build time), compiled
     // in by build.rs. Public -- it's just build metadata.
-    let version = warp::path!("api" / "version")
-        .map(|| warp::reply::json(&build_info_json()));
+    let version =
+        warp::path!("api" / "version").map(|| warp::reply::json(&build_info_json()));
 
     let unitdb = warp::path!("api" / "unitdb")
         .and(with_db(db.clone()))
         .and(with_instance(db.clone()))
         .then(api_unitdb);
 
-
     let unitdb_stale = warp::path!("api" / "unitdb" / "stale-overrides")
         .and(with_db(db.clone()))
         .and(with_instance(db.clone()))
         .then(api_unitdb_stale);
-
 
     let stats = warp::path!("api" / "stats")
         .and(with_db(db.clone()))
@@ -1895,7 +2001,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let ws_groundwar_route = warp::path!("ws" / "groundwar")
         .and(websec::ws_limited())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -1908,20 +2016,20 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let ws_tacmap_route = warp::path!("ws" / "tacmap")
         .and(websec::ws_limited())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
         .and(with_live(live_map.clone()))
-        .then(
-            |ws, ip, sid, q, db, bot, inst: Inst, map: LiveMap| async move {
-                let l = live_for(&map, &inst);
-                ws_tacmap_handler(ws, ip, sid, q, db, bot, inst, l.tac, l.live).await
-            },
-        );
+        .then(|ws, ip, sid, q, db, bot, inst: Inst, map: LiveMap| async move {
+            let l = live_for(&map, &inst);
+            ws_tacmap_handler(ws, ip, sid, q, db, bot, inst, l.tac, l.live).await
+        });
 
     // ── Log WebSocket (/ws/logs) — admin only ────────────────────────
-    let log_tx_ws  = log_tx.clone();
+    let log_tx_ws = log_tx.clone();
     let log_hist_ws = log_history.clone();
     let ws_logs_route = warp::path!("ws" / "logs")
         .and(websec::ws_limited())
@@ -1939,41 +2047,64 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(with_db(db.clone()))
         .and(with_instance(db.clone()))
         .and(warp::any().map(move || gci_map_ws.clone()))
-        .then(|ws, ip, sid, db, inst: Inst, map: Arc<std::collections::HashMap<InstanceId, (broadcast::Sender<String>, LogHistory)>>| async move {
-            let (tx, hist) = map.get(&inst.id).expect("gci channel per instance").clone();
-            ws_logs_handler(ws, ip, sid, db, tx, hist).await
-        });
+        .then(
+            |ws,
+             ip,
+             sid,
+             db,
+             inst: Inst,
+             map: Arc<
+                std::collections::HashMap<
+                    InstanceId,
+                    (broadcast::Sender<String>, LogHistory),
+                >,
+            >| async move {
+                let (tx, hist) =
+                    map.get(&inst.id).expect("gci channel per instance").clone();
+                ws_logs_handler(ws, ip, sid, db, tx, hist).await
+            },
+        );
     let gci_map_api = gci_map.clone();
     let gci_transcript_route = warp::path!("api" / "gci" / "transcript")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
         .and(with_instance(db.clone()))
         .and(warp::any().map(move || gci_map_api.clone()))
-        .then(|sid: Option<Uuid>, db: StatsDb, inst: Inst, map: Arc<std::collections::HashMap<InstanceId, (broadcast::Sender<String>, LogHistory)>>| async move {
-            let hist = map.get(&inst.id).expect("gci channel per instance").1.clone();
-            let authed = match sid {
-                Some(id) => task::block_in_place(|| db.get_session(id))
-                    .ok()
-                    .flatten()
-                    .map(|s| s.is_admin)
-                    .unwrap_or(false),
-                None => false,
-            };
-            if !authed {
-                return warp::reply::with_status(
-                    warp::reply::json(&serde_json::json!({"error": "admin only"})),
-                    warp::http::StatusCode::FORBIDDEN,
-                )
-                .into_response();
-            }
-            let lines: Vec<serde_json::Value> = hist
-                .lock()
-                .unwrap()
-                .iter()
-                .filter_map(|s| serde_json::from_str(s).ok())
-                .collect();
-            warp::reply::json(&lines).into_response()
-        });
+        .then(
+            |sid: Option<Uuid>,
+             db: StatsDb,
+             inst: Inst,
+             map: Arc<
+                std::collections::HashMap<
+                    InstanceId,
+                    (broadcast::Sender<String>, LogHistory),
+                >,
+            >| async move {
+                let hist = map.get(&inst.id).expect("gci channel per instance").1.clone();
+                let authed = match sid {
+                    Some(id) => task::block_in_place(|| db.get_session(id))
+                        .ok()
+                        .flatten()
+                        .map(|s| s.is_admin)
+                        .unwrap_or(false),
+                    None => false,
+                };
+                if !authed {
+                    return warp::reply::with_status(
+                        warp::reply::json(&serde_json::json!({"error": "admin only"})),
+                        warp::http::StatusCode::FORBIDDEN,
+                    )
+                    .into_response();
+                }
+                let lines: Vec<serde_json::Value> = hist
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|s| serde_json::from_str(s).ok())
+                    .collect();
+                warp::reply::json(&lines).into_response()
+            },
+        );
 
     // ── Engine log WebSocket (/ws/engine-logs) — live bflib logs, admin only ──
     let ws_engine_logs_route = warp::path!("ws" / "engine-logs")
@@ -2017,7 +2148,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let local_login_from = Arc::new(local_login_from.clone());
     if local_admin_cfg.is_some() {
         if local_login_from.is_empty() {
-            log::info!("local admin login accepted from loopback only (see --local-login-from)");
+            log::info!(
+                "local admin login accepted from loopback only (see --local-login-from)"
+            );
         } else {
             log::info!("local admin login accepted from {:?}", local_login_from);
         }
@@ -2033,10 +2166,11 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(warp::any().map(move || local_login_from.clone()))
         .then(api_auth_local_login);
 
-
     let admin_audit = warp::path!("api" / "admin" / "audit")
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(with_db(db.clone()))
         .then(api_admin_audit);
 
@@ -2113,29 +2247,32 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(with_instance(db.clone()))
         .then(api_admin_bot_restart);
 
-    let admin_bot_mission_restart = warp::path!("api" / "admin" / "bot" / "mission" / "restart")
-        .and(warp::post())
-        .and(extract_session_cookie())
-        .and(with_db(db.clone()))
-        .and(with_bot_link_cfg(bot_link_cfg.clone()))
-        .and(with_instance(db.clone()))
-        .then(api_admin_bot_mission_restart);
+    let admin_bot_mission_restart =
+        warp::path!("api" / "admin" / "bot" / "mission" / "restart")
+            .and(warp::post())
+            .and(extract_session_cookie())
+            .and(with_db(db.clone()))
+            .and(with_bot_link_cfg(bot_link_cfg.clone()))
+            .and(with_instance(db.clone()))
+            .then(api_admin_bot_mission_restart);
 
-    let admin_bot_mission_pause = warp::path!("api" / "admin" / "bot" / "mission" / "pause")
-        .and(warp::post())
-        .and(extract_session_cookie())
-        .and(with_db(db.clone()))
-        .and(with_bot_link_cfg(bot_link_cfg.clone()))
-        .and(with_instance(db.clone()))
-        .then(api_admin_bot_mission_pause);
+    let admin_bot_mission_pause =
+        warp::path!("api" / "admin" / "bot" / "mission" / "pause")
+            .and(warp::post())
+            .and(extract_session_cookie())
+            .and(with_db(db.clone()))
+            .and(with_bot_link_cfg(bot_link_cfg.clone()))
+            .and(with_instance(db.clone()))
+            .then(api_admin_bot_mission_pause);
 
-    let admin_bot_mission_unpause = warp::path!("api" / "admin" / "bot" / "mission" / "unpause")
-        .and(warp::post())
-        .and(extract_session_cookie())
-        .and(with_db(db.clone()))
-        .and(with_bot_link_cfg(bot_link_cfg.clone()))
-        .and(with_instance(db.clone()))
-        .then(api_admin_bot_mission_unpause);
+    let admin_bot_mission_unpause =
+        warp::path!("api" / "admin" / "bot" / "mission" / "unpause")
+            .and(warp::post())
+            .and(extract_session_cookie())
+            .and(with_db(db.clone()))
+            .and(with_bot_link_cfg(bot_link_cfg.clone()))
+            .and(with_instance(db.clone()))
+            .then(api_admin_bot_mission_unpause);
 
     // GET and POST, outside the warp::get() group below so the SPA catch-all
     // can't answer it and a POST still routes.
@@ -2144,11 +2281,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(warp::path("ops"))
         .and(warp::method())
         .and(warp::path::tail())
-        .and(
-            warp::query::raw()
-                .or(warp::any().map(String::new))
-                .unify(),
-        )
+        .and(warp::query::raw().or(warp::any().map(String::new)).unify())
         .and(extract_session_cookie())
         // A GET has no body to read. warp's content_length_limit also
         // *requires* a Content-Length header, which browsers never send on a
@@ -2158,17 +2291,24 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(
             warp::get()
                 .map(bytes::Bytes::new)
-                .or(warp::body::content_length_limit(4 * 1024 * 1024).and(warp::body::bytes()))
+                .or(warp::body::content_length_limit(4 * 1024 * 1024)
+                    .and(warp::body::bytes()))
                 .unify(),
         )
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
-        .and_then(|method: warp::http::Method, tail, query, session, body, db, bot| async move {
-            if method != warp::http::Method::GET && method != warp::http::Method::POST {
-                return Err(warp::reject::not_found());
-            }
-            Ok::<_, warp::Rejection>(api_admin_ops_proxy(method, tail, query, session, body, db, bot).await)
-        })
+        .and_then(
+            |method: warp::http::Method, tail, query, session, body, db, bot| async move {
+                if method != warp::http::Method::GET && method != warp::http::Method::POST
+                {
+                    return Err(warp::reject::not_found());
+                }
+                Ok::<_, warp::Rejection>(
+                    api_admin_ops_proxy(method, tail, query, session, body, db, bot)
+                        .await,
+                )
+            },
+        )
         .boxed();
 
     let admin_perf = warp::path!("api" / "admin" / "perf")
@@ -2205,7 +2345,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let logs_hist_api = log_history.clone();
     let logs_route = warp::path!("api" / "logs" / String)
         .and(warp::get())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(warp::header::optional::<std::string::String>("authorization"))
         .and(warp::any().map(move || logs_token.clone()))
         .and(with_db(db.clone()))
@@ -2298,14 +2440,15 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(websec::with_client_ip())
         .then(api_cockpit_carp_solve);
 
-    let cockpit_carp_solve_latlon_route = warp::path!("api" / "cockpit" / "carp" / "solve-latlon")
-        .and(extract_session_cookie())
-        .and(cockpit_query())
-        .and(with_db(db.clone()))
-        .and(with_bot_link_cfg(bot_link_cfg.clone()))
-        .and(with_instance(db.clone()))
-        .and(websec::with_client_ip())
-        .then(api_cockpit_carp_solve_latlon);
+    let cockpit_carp_solve_latlon_route =
+        warp::path!("api" / "cockpit" / "carp" / "solve-latlon")
+            .and(extract_session_cookie())
+            .and(cockpit_query())
+            .and(with_db(db.clone()))
+            .and(with_bot_link_cfg(bot_link_cfg.clone()))
+            .and(with_instance(db.clone()))
+            .and(websec::with_client_ip())
+            .then(api_cockpit_carp_solve_latlon);
 
     let cockpit_cargo_spawn_route = warp::path!("api" / "cockpit" / "cargo" / "spawn")
         .and(warp::post())
@@ -2319,18 +2462,23 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(websec::with_client_ip())
         .then(api_cockpit_cargo_spawn);
 
-    let cockpit_plugin_version_route = warp::path!("api" / "cockpit" / "plugin" / "version")
-        .and(warp::get())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
-        .then(api_cockpit_plugin_version);
+    let cockpit_plugin_version_route =
+        warp::path!("api" / "cockpit" / "plugin" / "version")
+            .and(warp::get())
+            .and(warp::query::<
+                std::collections::HashMap<std::string::String, std::string::String>,
+            >())
+            .then(api_cockpit_plugin_version);
 
-    let cockpit_plugin_download_route = warp::path!("api" / "cockpit" / "plugin" / "download")
-        .and(warp::get())
-        .then(api_cockpit_plugin_download);
+    let cockpit_plugin_download_route =
+        warp::path!("api" / "cockpit" / "plugin" / "download")
+            .and(warp::get())
+            .then(api_cockpit_plugin_download);
 
-    let cockpit_plugin_installer_route = warp::path!("api" / "cockpit" / "plugin" / "installer")
-        .and(warp::get())
-        .then(api_cockpit_plugin_installer);
+    let cockpit_plugin_installer_route =
+        warp::path!("api" / "cockpit" / "plugin" / "installer")
+            .and(warp::get())
+            .then(api_cockpit_plugin_installer);
 
     let cockpit_context_route = warp::path!("api" / "cockpit" / "context")
         .and(extract_session_cookie())
@@ -2491,14 +2639,17 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(with_instance(db.clone()))
         .then(api_news_image);
 
-    let admin_news_regenerate_image = warp::path!("api" / "admin" / "news" / "regenerate-image")
-        .and(warp::post())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
-        .and(extract_session_cookie())
-        .and(with_db(db.clone()))
-        .and(with_instance(db.clone()))
-        .and(with_news_images(news_images.clone()))
-        .then(api_admin_news_regenerate_image);
+    let admin_news_regenerate_image =
+        warp::path!("api" / "admin" / "news" / "regenerate-image")
+            .and(warp::post())
+            .and(warp::query::<
+                std::collections::HashMap<std::string::String, std::string::String>,
+            >())
+            .and(extract_session_cookie())
+            .and(with_db(db.clone()))
+            .and(with_instance(db.clone()))
+            .and(with_news_images(news_images.clone()))
+            .then(api_admin_news_regenerate_image);
 
     let wiki_facts_route = warp::path!("api" / "wiki" / "facts")
         .and(with_db(db.clone()))
@@ -2512,7 +2663,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     // ── Recon intel (TARPS) ──────────────────────────────────────────────
     let intel_list_route = warp::path!("api" / "intel" / "captures")
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -2520,7 +2673,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
 
     let intel_get_image_route = warp::path!("api" / "intel" / "images" / Uuid)
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -2529,7 +2684,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let intel_upload_route = warp::path!("api" / "intel" / "upload")
         .and(warp::post())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(warp::header::optional::<std::string::String>("x-intel-filename"))
         .and(warp::header::<std::string::String>("content-type"))
         .and(warp::body::content_length_limit(MAX_INTEL_IMAGE_BYTES))
@@ -2542,7 +2699,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let intel_adjust_route = warp::path!("api" / "intel" / "adjust")
         .and(warp::post())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json::<IntelAdjustBody>())
         .and(with_db(db.clone()))
@@ -2553,7 +2712,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let intel_delete_route = warp::path!("api" / "intel" / "delete")
         .and(warp::post())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json::<IntelDeleteBody>())
         .and(with_db(db.clone()))
@@ -2570,7 +2731,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
 
     let intel_markup_list_route = warp::path!("api" / "intel" / "markup")
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -2579,7 +2742,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let intel_markup_add_route = warp::path!("api" / "intel" / "markup")
         .and(warp::post())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(warp::body::content_length_limit(512 * 1024))
         .and(warp::body::json::<IntelMarkupBody>())
         .and(with_db(db.clone()))
@@ -2590,7 +2755,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let groundwar_command_route = warp::path!("api" / "groundwar" / "command")
         .and(warp::post())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json::<bfprotocols::groundwar::GroundCommand>())
         .and(with_db(db.clone()))
@@ -2601,7 +2768,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let command_picture_route = warp::path!("api" / "command")
         .and(warp::get())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -2610,7 +2779,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let command_order_route = warp::path!("api" / "command" / "order")
         .and(warp::post())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json::<bfprotocols::command::CommandOrder>())
         .and(with_db(db.clone()))
@@ -2621,7 +2792,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let command_log_route = warp::path!("api" / "command" / "log")
         .and(warp::get())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -2630,7 +2803,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let command_me_route = warp::path!("api" / "command" / "me")
         .and(warp::get())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -2655,7 +2830,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let hq_command_route = warp::path!("api" / "hq" / "command")
         .and(warp::post())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json::<bfprotocols::hq::HqCommand>())
         .and(with_db(db.clone()))
@@ -2665,7 +2842,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
 
     let plans_list_route = warp::path!("api" / "plans")
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -2674,7 +2853,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let plans_save_route = warp::path!("api" / "plans")
         .and(warp::post())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         // A full plan: 99 waypoints plus up to 48 KB of avionics settings.
         .and(warp::body::content_length_limit(128 * 1024))
         .and(warp::body::json::<PlanSaveBody>())
@@ -2686,7 +2867,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let plans_delete_route = warp::path!("api" / "plans" / "delete")
         .and(warp::post())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json::<IntelDeleteBody>())
         .and(with_db(db.clone()))
@@ -2697,7 +2880,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let intel_markup_delete_route = warp::path!("api" / "intel" / "markup" / "delete")
         .and(warp::post())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json::<IntelDeleteBody>())
         .and(with_db(db.clone()))
@@ -2722,9 +2907,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .or(round_report)
         .or(health)
         .or(version)
-
         .or(unitdb_stale)
-
         .or(unitdb)
         .or(leaderboard)
         .or(objectives)
@@ -2780,7 +2963,6 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let auth_routes = auth_login
         .or(auth_callback)
         .or(auth_me)
-
         .or(admin_sessions)
         .or(admin_audit)
         .or(admin_health)
@@ -2828,7 +3010,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let metrics_tokens = Arc::new((metrics_token.clone(), log_read_token.clone()));
     let metrics_route = warp::path!("api" / "metrics")
         .and(warp::get())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(warp::header::optional::<std::string::String>("authorization"))
         .and(warp::any().map(move || metrics_tokens.clone()))
         .and(with_db(db.clone()))
@@ -2860,7 +3044,10 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
                 if !site.is_empty() && SiteAssets::get(site).is_some() {
                     return Ok::<Response, warp::Rejection>(serve_site_asset(site));
                 }
-            } else if !path.is_empty() && path != "index.html" && Assets::get(path).is_some() {
+            } else if !path.is_empty()
+                && path != "index.html"
+                && Assets::get(path).is_some()
+            {
                 return Ok(serve_asset(path));
             }
             Err(warp::reject::not_found())
@@ -2893,8 +3080,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         // Each route checks its own method.
         .or(squadron_routes)
         .or(admin_ops_proxy)
-        .or(warp::get()
-        .and(
+        .or(warp::get().and(
             api_routes
                 .or(auth_routes)
                 .or(ws_units_route)
@@ -2920,7 +3106,11 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .or(admin_cfg_post_route)
         .or(commander_spawn_route)
         .or(admin_priority_route)
-        .or(cockpit_ewr_toggle_route.or(cockpit_ewr_units_route).or(cockpit_cargo_spawn_route).or(cockpit_menu_invoke_route).boxed())
+        .or(cockpit_ewr_toggle_route
+            .or(cockpit_ewr_units_route)
+            .or(cockpit_cargo_spawn_route)
+            .or(cockpit_menu_invoke_route)
+            .boxed())
         .boxed()
         .or(wiki_save_route.or(wiki_delete_route).or(wiki_upload_image_route).boxed())
         .or(intel_upload_route
@@ -2949,7 +3139,12 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .or(cors_routes)
         .map(|r| warp::Reply::into_response(r))
         .with(warp::log::custom(|info| {
-            websec::record_request(info.method(), info.path(), info.status(), info.elapsed())
+            websec::record_request(
+                info.method(),
+                info.path(),
+                info.status(),
+                info.elapsed(),
+            )
         }))
         .map(|r| warp::Reply::into_response(r))
         .boxed()

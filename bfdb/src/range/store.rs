@@ -152,7 +152,9 @@ impl RangeStore {
             .get("ts")
             .cloned()
             .ok_or_else(|| anyhow!("record {id} has no ts"))
-            .and_then(|v| serde_json::from_value(v).map_err(|e| anyhow!("record {id}: bad ts: {e}")))?;
+            .and_then(|v| {
+                serde_json::from_value(v).map_err(|e| anyhow!("record {id}: bad ts: {e}"))
+            })?;
         if self.by_id.contains_key(id.as_bytes())? {
             return Ok(Insert::Duplicate);
         }
@@ -164,7 +166,10 @@ impl RangeStore {
             let js = serde_json::to_vec(&t)?;
             self.tracks.insert(id.as_bytes(), zstd::encode_all(&js[..], 3)?)?;
         }
-        let ucid = line.pointer("/pilot/ucid").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+        let ucid = line
+            .pointer("/pilot/ucid")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty());
         if let Some(ucid) = ucid {
             self.by_pilot.insert(primary_key(ucid, ts_ms, &id), instance.as_bytes())?;
             let name = line.pointer("/pilot/name").and_then(|v| v.as_str()).unwrap_or("");
@@ -344,7 +349,11 @@ impl RangeStore {
     }
 
     /// Every record of `instances` at or after `since_ms`, oldest first.
-    pub(crate) fn window(&self, instances: &[String], since_ms: u64) -> Result<Vec<Stored>> {
+    pub(crate) fn window(
+        &self,
+        instances: &[String],
+        since_ms: u64,
+    ) -> Result<Vec<Stored>> {
         let mut out = Vec::new();
         self.walk_newest(instances, since_ms, None, |s| {
             out.push(s);
@@ -398,7 +407,10 @@ impl RangeStore {
 
     /// Every pilot seen on `instances`: (ucid, latest name, last unix ms).
     /// With several instances the newest name wins.
-    pub(crate) fn pilots(&self, instances: &[String]) -> Result<Vec<(String, String, u64)>> {
+    pub(crate) fn pilots(
+        &self,
+        instances: &[String],
+    ) -> Result<Vec<(String, String, u64)>> {
         let mut by: std::collections::HashMap<String, (String, u64)> = Default::default();
         for inst in instances {
             let (lo, hi) = prefix_bounds(inst);
@@ -411,7 +423,8 @@ impl RangeStore {
                 let Ok(v) = serde_json::from_slice::<Value>(&v) else {
                     continue;
                 };
-                let name = v.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                let name =
+                    v.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
                 let last = v.get("last_ts").and_then(|t| t.as_u64()).unwrap_or(0);
                 match by.get(&ucid) {
                     Some((_, l)) if *l >= last => (),
@@ -433,7 +446,8 @@ impl RangeStore {
             k.extend_from_slice(ucid.as_bytes());
             if let Ok(Some(v)) = self.pilots.get(k) {
                 if let Ok(v) = serde_json::from_slice::<Value>(&v) {
-                    let name = v.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                    let name =
+                        v.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
                     let last = v.get("last_ts").and_then(|t| t.as_u64()).unwrap_or(0);
                     if best.as_ref().map_or(true, |(_, l)| last > *l) {
                         best = Some((name, last));
@@ -467,8 +481,14 @@ mod tests {
     fn insert_dedupe_and_walk() {
         let (s, _db) = tmp_store();
         let insts = vec!["r1".to_string()];
-        assert_eq!(s.insert("r1", rec("a", "2026-09-01T10:00:00Z", "u1")).unwrap(), Insert::Inserted);
-        assert_eq!(s.insert("r1", rec("a", "2026-09-01T10:00:00Z", "u1")).unwrap(), Insert::Duplicate);
+        assert_eq!(
+            s.insert("r1", rec("a", "2026-09-01T10:00:00Z", "u1")).unwrap(),
+            Insert::Inserted
+        );
+        assert_eq!(
+            s.insert("r1", rec("a", "2026-09-01T10:00:00Z", "u1")).unwrap(),
+            Insert::Duplicate
+        );
         s.insert("r1", rec("b", "2026-09-02T10:00:00Z", "u1")).unwrap();
         s.insert("r1", rec("c", "2026-09-03T10:00:00Z", "u2")).unwrap();
         s.insert("r2", rec("d", "2026-09-04T10:00:00Z", "u2")).unwrap();
@@ -481,7 +501,10 @@ mod tests {
         assert_eq!(ids, vec!["c", "b", "a"]);
         let both = vec!["r1".to_string(), "r2".to_string()];
         let w = s.window(&both, 0).unwrap();
-        assert_eq!(w.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), vec!["a", "b", "c", "d"]);
+        assert_eq!(
+            w.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            vec!["a", "b", "c", "d"]
+        );
         // stored raw, unknown kind kept, track split off
         let a = s.get("a").unwrap().unwrap();
         assert!(a.raw.get("track").is_none());
@@ -499,7 +522,9 @@ mod tests {
         assert_eq!(p, vec!["d", "c"]);
         assert_eq!(s.pilot_name("u2", &both).as_deref(), Some("pilot-u2"));
         // before bound is exclusive
-        let before = DateTime::parse_from_rfc3339("2026-09-02T10:00:00Z").unwrap().timestamp_millis();
+        let before = DateTime::parse_from_rfc3339("2026-09-02T10:00:00Z")
+            .unwrap()
+            .timestamp_millis();
         let mut ids = vec![];
         s.walk_newest(&insts, 0, Some((before as u64, "")), |r| {
             ids.push(r.id.clone());
@@ -508,7 +533,9 @@ mod tests {
         .unwrap();
         assert_eq!(ids, vec!["a"]);
         // pruning drops tracks, keeps records
-        let cut = DateTime::parse_from_rfc3339("2026-09-02T12:00:00Z").unwrap().timestamp_millis();
+        let cut = DateTime::parse_from_rfc3339("2026-09-02T12:00:00Z")
+            .unwrap()
+            .timestamp_millis();
         assert_eq!(s.prune_tracks("r1", cut as u64).unwrap(), 2);
         assert!(!s.has_track("a"));
         assert!(s.get("a").unwrap().is_some());
@@ -547,7 +574,11 @@ mod tests {
     fn rejects_malformed() {
         let (s, _db) = tmp_store();
         assert!(s.insert("r1", serde_json::json!([1, 2])).is_err());
-        assert!(s.insert("r1", serde_json::json!({"ts": "2026-09-01T10:00:00Z"})).is_err());
-        assert!(s.insert("r1", serde_json::json!({"id": "x", "ts": "yesterday"})).is_err());
+        assert!(s
+            .insert("r1", serde_json::json!({"ts": "2026-09-01T10:00:00Z"}))
+            .is_err());
+        assert!(s
+            .insert("r1", serde_json::json!({"id": "x", "ts": "yesterday"}))
+            .is_err());
     }
 }

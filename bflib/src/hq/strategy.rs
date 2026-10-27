@@ -21,13 +21,13 @@ for more details.
 //! whichever fields *it* sets on top of that -- so either can be as terse as
 //! "main effort: Gori" and the rest still gets decided.
 
-use super::{picture::Picture, posture_weights, Override};
+use super::{Override, picture::Picture, posture_weights};
 use bfprotocols::{
     cfg::HqCfg,
     db::objective::ObjectiveId,
     hq::{Directive, Line, OpKind, Posture},
 };
-use compact_str::{format_compact, CompactString};
+use compact_str::{CompactString, format_compact};
 use std::collections::BTreeMap;
 
 /// A new target must beat the standing main effort by this much to replace
@@ -113,8 +113,18 @@ fn rules(cfg: &HqCfg, pic: &Picture, prev: Option<&Plan>) -> Plan {
     let pressure = (being_captured * 3 + threatened + capturable_own * 2) as f64;
     let opportunities = enemy
         .iter()
-        .filter(|o| pic.gap(o.pos) <= cfg.max_ground_range_m && !o.sam_site() && !o.at_sea())
-        .map(|o| if o.capturable { 2. } else if o.health < 50 { 1. } else { 0. })
+        .filter(|o| {
+            pic.gap(o.pos) <= cfg.max_ground_range_m && !o.sam_site() && !o.at_sea()
+        })
+        .map(|o| {
+            if o.capturable {
+                2.
+            } else if o.health < 50 {
+                1.
+            } else {
+                0.
+            }
+        })
         .sum::<f64>();
     let mut reasons: Vec<CompactString> = vec![format_compact!(
         "holding {} of {} objectives ({:.0}%)",
@@ -128,7 +138,9 @@ fn rules(cfg: &HqCfg, pic: &Picture, prev: Option<&Plan>) -> Plan {
         ));
     }
     if opportunities > 0. {
-        reasons.push(format_compact!("{opportunities:.0} point(s) of opportunity within reach"));
+        reasons.push(format_compact!(
+            "{opportunities:.0} point(s) of opportunity within reach"
+        ));
     }
     // Pressure scales with the size of the side: two threatened bases out of
     // forty is a quiet night, two out of five is a crisis.
@@ -159,7 +171,9 @@ fn rules(cfg: &HqCfg, pic: &Picture, prev: Option<&Plan>) -> Plan {
         .and_then(|p| p.main_effort)
         .and_then(|id| effort_score(pic, cfg, &id).map(|s| (id, s)));
     let main_effort = match (standing, best) {
-        (Some((sid, ss)), Some((bid, bs))) if bid != sid && bs > ss * STICKINESS => Some(bid),
+        (Some((sid, ss)), Some((bid, bs))) if bid != sid && bs > ss * STICKINESS => {
+            Some(bid)
+        }
         (Some((sid, _)), _) => Some(sid),
         (None, b) => b.map(|(id, _)| id),
     };
@@ -172,12 +186,21 @@ fn rules(cfg: &HqCfg, pic: &Picture, prev: Option<&Plan>) -> Plan {
         .iter()
         .filter(|o| o.being_captured || o.threatened || o.capturable)
         .map(|o| {
-            let rank = if o.being_captured { 0 } else if o.threatened { 1 } else { 2 };
+            let rank = if o.being_captured {
+                0
+            } else if o.threatened {
+                1
+            } else {
+                2
+            };
             (rank, o.front_m, o.id)
         })
         .collect();
-    defend.sort_by(|a, b| (a.0, a.1).partial_cmp(&(b.0, b.1)).unwrap_or(std::cmp::Ordering::Equal));
-    let defend: Vec<ObjectiveId> = defend.into_iter().take(4).map(|(_, _, id)| id).collect();
+    defend.sort_by(|a, b| {
+        (a.0, a.1).partial_cmp(&(b.0, b.1)).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let defend: Vec<ObjectiveId> =
+        defend.into_iter().take(4).map(|(_, _, id)| id).collect();
 
     // Resupply: the emptiest first, weighted toward the front and anything
     // we are holding or staging from.
@@ -193,7 +216,8 @@ fn rules(cfg: &HqCfg, pic: &Picture, prev: Option<&Plan>) -> Plan {
         .map(|o| {
             let need = (100 - o.stores().min(100)) as f64;
             let front = 1. + 1. / (1. + o.front_m / 30_000.);
-            let key = if defend.contains(&o.id) || Some(o.id) == staging { 1.5 } else { 1. };
+            let key =
+                if defend.contains(&o.id) || Some(o.id) == staging { 1.5 } else { 1. };
             (need * front * key, o.id)
         })
         .collect();
@@ -227,13 +251,16 @@ fn apply(plan: &mut Plan, pic: &Picture, d: &Directive, source: Source) {
         plan.posture = p;
         touched = true;
     }
-    if let Some(me) = d.main_effort.map(oid).filter(|id| pic.get(id).map_or(false, |o| !o.own)) {
+    if let Some(me) =
+        d.main_effort.map(oid).filter(|id| pic.get(id).map_or(false, |o| !o.own))
+    {
         plan.main_effort = Some(me);
         touched = true;
     }
     let ours = |id: &ObjectiveId| pic.get(id).map_or(false, |o| o.own);
     if !d.defend.is_empty() {
-        let mut v: Vec<ObjectiveId> = d.defend.iter().copied().map(oid).filter(|i| ours(i)).collect();
+        let mut v: Vec<ObjectiveId> =
+            d.defend.iter().copied().map(oid).filter(|i| ours(i)).collect();
         // Anything actually being captured stays on the list whatever the
         // directive says.
         for id in plan.defend.iter().copied() {
@@ -277,7 +304,8 @@ fn apply(plan: &mut Plan, pic: &Picture, d: &Directive, source: Source) {
 }
 
 fn names(pic: &Picture, ids: &[ObjectiveId]) -> CompactString {
-    let v: Vec<&str> = ids.iter().filter_map(|id| pic.get(id)).map(|o| o.name.as_str()).collect();
+    let v: Vec<&str> =
+        ids.iter().filter_map(|id| pic.get(id)).map(|o| o.name.as_str()).collect();
     CompactString::from(v.join(", "))
 }
 
@@ -285,21 +313,30 @@ fn names(pic: &Picture, ids: &[ObjectiveId]) -> CompactString {
 fn write_intent(pic: &Picture, plan: &Plan) -> CompactString {
     let mut s = CompactString::new("");
     match (plan.posture, plan.main_effort.and_then(|id| pic.get(&id))) {
-        (Posture::Defensive, Some(me)) => {
-            s.push_str(&format_compact!("Hold the line; strike back at {} when it is cheap.", me.name))
-        }
+        (Posture::Defensive, Some(me)) => s.push_str(&format_compact!(
+            "Hold the line; strike back at {} when it is cheap.",
+            me.name
+        )),
         (Posture::Defensive, None) => s.push_str("Hold the line."),
-        (Posture::Offensive, Some(me)) => s.push_str(&format_compact!("Take {}.", me.name)),
+        (Posture::Offensive, Some(me)) => {
+            s.push_str(&format_compact!("Take {}.", me.name))
+        }
         (Posture::Balanced, Some(me)) => {
             s.push_str(&format_compact!("Hold what we have; press {}.", me.name))
         }
         (_, None) => s.push_str("Hold what we have and keep it supplied."),
     }
     if !plan.defend.is_empty() {
-        s.push_str(&format_compact!(" Defend {}.", names(pic, &plan.defend[..plan.defend.len().min(3)])));
+        s.push_str(&format_compact!(
+            " Defend {}.",
+            names(pic, &plan.defend[..plan.defend.len().min(3)])
+        ));
     }
     if !plan.supply.is_empty() {
-        s.push_str(&format_compact!(" Resupply {} first.", names(pic, &plan.supply[..plan.supply.len().min(3)])));
+        s.push_str(&format_compact!(
+            " Resupply {} first.",
+            names(pic, &plan.supply[..plan.supply.len().min(3)])
+        ));
     }
     s
 }
@@ -433,12 +470,18 @@ mod tests {
         assert_eq!(a.source, Source::Strategist);
         // A directive naming our own base as the main effort is ignored.
         let bad = Directive { main_effort: Some(1), ..Default::default() };
-        assert_eq!(plan(&cfg, &p, None, Some(&bad), None).main_effort, Some(ObjectiveId::from(3)));
+        assert_eq!(
+            plan(&cfg, &p, None, Some(&bad), None).main_effort,
+            Some(ObjectiveId::from(3))
+        );
         let h = Override {
             by: "cdr".into(),
             set: chrono::Utc::now(),
             expires: chrono::Utc::now(),
-            directive: Directive { posture: Some(Posture::Defensive), ..Default::default() },
+            directive: Directive {
+                posture: Some(Posture::Defensive),
+                ..Default::default()
+            },
             disabled_ops: vec![OpKind::MissileStrike],
             paused: false,
         };

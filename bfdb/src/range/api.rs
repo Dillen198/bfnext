@@ -14,7 +14,9 @@
 //! noted; the spawn routes need a bot-linked Discord session and fill the ucid
 //! from that session, never from the request.
 
-use super::{ballistics, boards, cards, clip, discord, parse_ts, store::Stored, RangeCtx, Scope};
+use super::{
+    ballistics, boards, cards, clip, discord, parse_ts, store::Stored, RangeCtx, Scope,
+};
 use bfprotocols::range::{SpawnRequest, WeaponDb};
 use netidx::publisher::Value as NValue;
 use serde::Deserialize;
@@ -92,7 +94,9 @@ fn nonempty<'a>(q: &'a Q, k: &str) -> Option<&'a str> {
 
 fn since_days(days: Option<i64>) -> u64 {
     match days {
-        Some(d) if d > 0 => (chrono::Utc::now() - chrono::Duration::days(d)).timestamp_millis().max(0) as u64,
+        Some(d) if d > 0 => (chrono::Utc::now() - chrono::Duration::days(d))
+            .timestamp_millis()
+            .max(0) as u64,
         _ => 0,
     }
 }
@@ -105,13 +109,18 @@ fn decode_seg(s: &str) -> String {
 // ── identity ───────────────────────────────────────────────────────────
 
 /// A logged-in, bot-linked player: (is dashboard admin, ucid).
-async fn linked_player(ctx: &RangeCtx, sid: Option<Uuid>) -> Result<(bool, String), Response> {
+async fn linked_player(
+    ctx: &RangeCtx,
+    sid: Option<Uuid>,
+) -> Result<(bool, String), Response> {
     let Some(sid) = sid else {
         return Err(fail(StatusCode::UNAUTHORIZED, "not logged in"));
     };
     let s = match block_in_place(|| ctx.db.get_session(sid)) {
         Ok(Some(s)) => s,
-        Ok(None) => return Err(fail(StatusCode::UNAUTHORIZED, "session expired -- log in again")),
+        Ok(None) => {
+            return Err(fail(StatusCode::UNAUTHORIZED, "session expired -- log in again"))
+        }
         Err(e) => return Err(internal(e)),
     };
     match ctx.session_ucid(sid, &s.discord_id).await {
@@ -124,7 +133,6 @@ async fn linked_player(ctx: &RangeCtx, sid: Option<Uuid>) -> Result<(bool, Strin
 }
 
 // ── handlers: listing ──────────────────────────────────────────────────
-
 
 async fn h_live(ctx: Arc<RangeCtx>, q: Q) -> Response {
     let sc = scope_or_400!(ctx, q);
@@ -152,7 +160,9 @@ async fn h_feed(ctx: Arc<RangeCtx>, q: Q) -> Response {
     let by_id = match nonempty(&q, "before_id") {
         Some(id) => match block_in_place(|| ctx.store.position(id)) {
             Ok(Some(p)) => Some(p),
-            Ok(None) => return err(StatusCode::BAD_REQUEST, format!("no range result {id:?}")),
+            Ok(None) => {
+                return err(StatusCode::BAD_REQUEST, format!("no range result {id:?}"))
+            }
             Err(e) => return internal(e),
         },
         None => None,
@@ -337,7 +347,9 @@ async fn h_me(ctx: Arc<RangeCtx>, sid: Option<Uuid>, q: Q) -> Response {
 async fn h_pilot(ctx: Arc<RangeCtx>, ucid: String, q: Q) -> Response {
     let sc = scope_or_400!(ctx, q);
     let ucid = decode_seg(&ucid);
-    match block_in_place(|| boards::pilot_profile(&ctx.store, &sc.ids(), &ucid, chrono::Utc::now())) {
+    match block_in_place(|| {
+        boards::pilot_profile(&ctx.store, &sc.ids(), &ucid, chrono::Utc::now())
+    }) {
         Ok(Some(v)) => ok(&v),
         Ok(None) => err(StatusCode::NOT_FOUND, "no range results for that pilot"),
         Err(e) => internal(e),
@@ -486,7 +498,8 @@ struct StationBody {
 }
 
 fn parse_body<T: serde::de::DeserializeOwned>(b: &[u8]) -> Result<T, Response> {
-    serde_json::from_slice(b).map_err(|e| fail(StatusCode::BAD_REQUEST, format!("bad request body: {e}")))
+    serde_json::from_slice(b)
+        .map_err(|e| fail(StatusCode::BAD_REQUEST, format!("bad request body: {e}")))
 }
 
 /// An engine reply to a mutating RPC: 200 with the engine's own JSON, or 502
@@ -500,7 +513,12 @@ fn engine_reply(r: Result<Value, String>) -> Response {
 
 const SPAWN_EVERY: Duration = Duration::from_secs(3);
 
-async fn h_spawn(ctx: Arc<RangeCtx>, q: Q, sid: Option<Uuid>, body: bytes::Bytes) -> Response {
+async fn h_spawn(
+    ctx: Arc<RangeCtx>,
+    q: Q,
+    sid: Option<Uuid>,
+    body: bytes::Bytes,
+) -> Response {
     let sc = scope_or_400!(ctx, q);
     let (admin, ucid) = match linked_player(&ctx, sid).await {
         Ok(p) => p,
@@ -514,7 +532,10 @@ async fn h_spawn(ctx: Arc<RangeCtx>, q: Q, sid: Option<Uuid>, body: bytes::Bytes
         return fail(StatusCode::BAD_REQUEST, "no item");
     }
     if let Err(wait) = ctx.rate_limit(&ucid, SPAWN_EVERY) {
-        return fail(StatusCode::TOO_MANY_REQUESTS, format!("slow down -- try again in {wait:.1} s"));
+        return fail(
+            StatusCode::TOO_MANY_REQUESTS,
+            format!("slow down -- try again in {wait:.1} s"),
+        );
     }
     let params: BTreeMap<String, String> = b
         .params
@@ -536,12 +557,22 @@ async fn h_spawn(ctx: Arc<RangeCtx>, q: Q, sid: Option<Uuid>, body: bytes::Bytes
         Err(e) => return internal(e.into()),
     };
     engine_reply(
-        ctx.rpc_json(sc.primary(), "range-spawn", vec![("req", NValue::from(js))], Duration::from_secs(10))
-            .await,
+        ctx.rpc_json(
+            sc.primary(),
+            "range-spawn",
+            vec![("req", NValue::from(js))],
+            Duration::from_secs(10),
+        )
+        .await,
     )
 }
 
-async fn h_despawn(ctx: Arc<RangeCtx>, q: Q, sid: Option<Uuid>, body: bytes::Bytes) -> Response {
+async fn h_despawn(
+    ctx: Arc<RangeCtx>,
+    q: Q,
+    sid: Option<Uuid>,
+    body: bytes::Bytes,
+) -> Response {
     let sc = scope_or_400!(ctx, q);
     let (admin, ucid) = match linked_player(&ctx, sid).await {
         Ok(p) => p,
@@ -552,7 +583,10 @@ async fn h_despawn(ctx: Arc<RangeCtx>, q: Q, sid: Option<Uuid>, body: bytes::Byt
         Err(r) => return r,
     };
     if let Err(wait) = ctx.rate_limit(&ucid, SPAWN_EVERY) {
-        return fail(StatusCode::TOO_MANY_REQUESTS, format!("slow down -- try again in {wait:.1} s"));
+        return fail(
+            StatusCode::TOO_MANY_REQUESTS,
+            format!("slow down -- try again in {wait:.1} s"),
+        );
     }
     engine_reply(
         ctx.rpc_json(
@@ -569,14 +603,21 @@ async fn h_despawn(ctx: Arc<RangeCtx>, q: Q, sid: Option<Uuid>, body: bytes::Byt
     )
 }
 
-async fn h_reset_station(ctx: Arc<RangeCtx>, q: Q, sid: Option<Uuid>, body: bytes::Bytes) -> Response {
+async fn h_reset_station(
+    ctx: Arc<RangeCtx>,
+    q: Q,
+    sid: Option<Uuid>,
+    body: bytes::Bytes,
+) -> Response {
     let sc = scope_or_400!(ctx, q);
     let Some(sid) = sid else {
         return fail(StatusCode::UNAUTHORIZED, "not logged in");
     };
     let s = match block_in_place(|| ctx.db.get_session(sid)) {
         Ok(Some(s)) => s,
-        Ok(None) => return fail(StatusCode::UNAUTHORIZED, "session expired -- log in again"),
+        Ok(None) => {
+            return fail(StatusCode::UNAUTHORIZED, "session expired -- log in again")
+        }
         Err(e) => return internal(e),
     };
     if !s.is_admin {
@@ -588,7 +629,12 @@ async fn h_reset_station(ctx: Arc<RangeCtx>, q: Q, sid: Option<Uuid>, body: byte
     };
     // An admin may be a local (non-Discord) login with no linked ucid.
     let ucid = ctx.session_ucid(sid, &s.discord_id).await.unwrap_or_default();
-    log::info!("[{}] range: {} reset station {:?}", sc.primary().id, s.username, b.station);
+    log::info!(
+        "[{}] range: {} reset station {:?}",
+        sc.primary().id,
+        s.username,
+        b.station
+    );
     engine_reply(
         ctx.rpc_json(
             sc.primary(),
@@ -633,7 +679,11 @@ async fn h_weapons(ctx: Arc<RangeCtx>, q: Q) -> Response {
             .flatten()
             .and_then(|b| serde_json::from_slice(&b).ok()),
     };
-    let key = format!("calibration|{}|{}", sc.key(), wdb.as_ref().map(|w| w.dcs_version.as_str()).unwrap_or(""));
+    let key = format!(
+        "calibration|{}|{}",
+        sc.key(),
+        wdb.as_ref().map(|w| w.dcs_version.as_str()).unwrap_or("")
+    );
     let cal = match ctx.agg_get(&key, Duration::from_secs(600)) {
         Some(v) => v,
         None => {
@@ -652,7 +702,9 @@ async fn h_weapons(ctx: Arc<RangeCtx>, q: Q) -> Response {
                     v
                 }
                 Ok(Err(e)) => return internal(e),
-                Err(e) => return internal(anyhow::anyhow!("calibration task failed: {e}")),
+                Err(e) => {
+                    return internal(anyhow::anyhow!("calibration task failed: {e}"))
+                }
             }
         }
     };
@@ -690,7 +742,8 @@ fn pick_acmi(dir: &std::path::Path, ts: SystemTime) -> Option<std::path::PathBuf
         .filter(|(_, c, _)| c.map_or(false, |c| c <= ts + slack))
         .max_by_key(|(_, c, _)| *c)
         .map(|(p, _, _)| p.clone());
-    containing.or_else(|| cands.iter().min_by_key(|(_, _, m)| *m).map(|(p, _, _)| p.clone()))
+    containing
+        .or_else(|| cands.iter().min_by_key(|(_, _, m)| *m).map(|(p, _, _)| p.clone()))
 }
 
 /// Whole-recording downloads streaming at once, across every client: each
@@ -703,7 +756,9 @@ const CLIP_BUILDS: usize = 2;
 
 async fn h_tacview(ctx: Arc<RangeCtx>, id: String) -> Response {
     static STREAMS: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> =
-        std::sync::LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(TACVIEW_STREAMS)));
+        std::sync::LazyLock::new(|| {
+            Arc::new(tokio::sync::Semaphore::new(TACVIEW_STREAMS))
+        });
     use tokio::io::AsyncReadExt;
     let id = decode_seg(&id);
     let s = match block_in_place(|| ctx.store.get(&id)) {
@@ -711,19 +766,29 @@ async fn h_tacview(ctx: Arc<RangeCtx>, id: String) -> Response {
         Ok(None) => return err(StatusCode::NOT_FOUND, format!("no range result {id:?}")),
         Err(e) => return internal(e),
     };
-    let Some(dir) = ctx.db.instances().get(&s.instance).and_then(|c| c.tacview_dir.clone()) else {
-        return err(StatusCode::NOT_FOUND, "no Tacview recordings are published for this range");
+    let Some(dir) =
+        ctx.db.instances().get(&s.instance).and_then(|c| c.tacview_dir.clone())
+    else {
+        return err(
+            StatusCode::NOT_FOUND,
+            "no Tacview recordings are published for this range",
+        );
     };
     let ts = SystemTime::UNIX_EPOCH + Duration::from_millis(s.ts_ms);
     let Some(path) = block_in_place(|| pick_acmi(&dir, ts)) else {
         return err(StatusCode::NOT_FOUND, "no Tacview recording covers this result");
     };
     let Ok(permit) = STREAMS.clone().try_acquire_owned() else {
-        return err(StatusCode::SERVICE_UNAVAILABLE, "too many recordings are downloading right now -- try again in a minute");
+        return err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "too many recordings are downloading right now -- try again in a minute",
+        );
     };
     let file = match tokio::fs::File::open(&path).await {
         Ok(f) => f,
-        Err(e) => return err(StatusCode::NOT_FOUND, format!("cannot open the recording: {e}")),
+        Err(e) => {
+            return err(StatusCode::NOT_FOUND, format!("cannot open the recording: {e}"))
+        }
     };
     let len = file.metadata().await.map(|m| m.len()).ok();
     // the permit rides along with the file and is released with it
@@ -734,12 +799,19 @@ async fn h_tacview(ctx: Arc<RangeCtx>, id: String) -> Response {
             Ok(0) => None,
             Ok(n) => {
                 buf.truncate(n);
-                Some((Ok::<_, std::io::Error>(bytes::Bytes::from(buf)), Some((f, permit))))
+                Some((
+                    Ok::<_, std::io::Error>(bytes::Bytes::from(buf)),
+                    Some((f, permit)),
+                ))
             }
             Err(e) => Some((Err(e), None)),
         }
     });
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("range.acmi").replace('"', "");
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("range.acmi")
+        .replace('"', "");
     let mut r = warp::reply::stream(stream).into_response();
     let h = r.headers_mut();
     h.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
@@ -776,7 +848,10 @@ fn track_span_s(v: &Value) -> Option<f64> {
 }
 
 fn clip_cache_path(ctx: &RangeCtx, id: &str) -> std::path::PathBuf {
-    let safe: String = id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+    let safe: String = id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
     ctx.clip_dir.join(format!("{safe}.json.gz"))
 }
 
@@ -813,20 +888,38 @@ async fn h_clip(ctx: Arc<RangeCtx>, id: String, as_acmi: bool) -> Response {
     let (gz, c) = match block_in_place(|| cached_clip(&cache)) {
         Some(hit) => hit,
         None => {
-            let Some(dir) = ctx.db.instances().get(&s.instance).and_then(|c| c.tacview_dir.clone()) else {
-                return err(StatusCode::NOT_FOUND, "no Tacview recordings are published for this range");
+            let Some(dir) =
+                ctx.db.instances().get(&s.instance).and_then(|c| c.tacview_dir.clone())
+            else {
+                return err(
+                    StatusCode::NOT_FOUND,
+                    "no Tacview recordings are published for this range",
+                );
             };
             let ts = SystemTime::UNIX_EPOCH + Duration::from_millis(s.ts_ms);
             let Some(path) = block_in_place(|| pick_acmi(&dir, ts)) else {
-                return err(StatusCode::NOT_FOUND, "no Tacview recording covers this result");
+                return err(
+                    StatusCode::NOT_FOUND,
+                    "no Tacview recording covers this result",
+                );
             };
             let span = s.raw.get("track").and_then(track_span_s).unwrap_or(60.0);
             let req = clip::ClipReq {
                 pilot: s.pilot_name().to_string(),
                 unit_type: s.unit_type().to_string(),
                 ts_ms: s.ts_ms as i64,
-                mission_date: s.raw.get("mission_date").and_then(Value::as_str).unwrap_or("").to_string(),
-                mission_time: s.raw.get("mission_time").and_then(Value::as_str).unwrap_or("").to_string(),
+                mission_date: s
+                    .raw
+                    .get("mission_date")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                mission_time: s
+                    .raw
+                    .get("mission_time")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
                 lead_s: (span + 25.0).clamp(40.0, 900.0),
                 tail_s: 15.0,
             };
@@ -834,11 +927,18 @@ async fn h_clip(ctx: Arc<RangeCtx>, id: String, as_acmi: bool) -> Response {
                 std::sync::LazyLock::new(|| tokio::sync::Semaphore::new(CLIP_BUILDS));
             // Wait a while for a slot rather than refusing at once: a debrief
             // page asks once and shows a spinner.
-            let permit = match tokio::time::timeout(Duration::from_secs(30), BUILDS.acquire()).await {
-                Ok(Ok(p)) => p,
-                _ => return err(StatusCode::SERVICE_UNAVAILABLE, "the server is busy cutting other clips -- try again in a minute"),
-            };
-            let built = tokio::task::spawn_blocking(move || clip::build(&path, &req)).await;
+            let permit =
+                match tokio::time::timeout(Duration::from_secs(30), BUILDS.acquire())
+                    .await
+                {
+                    Ok(Ok(p)) => p,
+                    _ => return err(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "the server is busy cutting other clips -- try again in a minute",
+                    ),
+                };
+            let built =
+                tokio::task::spawn_blocking(move || clip::build(&path, &req)).await;
             drop(permit);
             let c = match built {
                 Ok(Ok(c)) => c,
@@ -850,12 +950,18 @@ async fn h_clip(ctx: Arc<RangeCtx>, id: String, as_acmi: bool) -> Response {
                 }
                 Err(e) => return internal(anyhow::anyhow!("clip task failed: {e}")),
             };
-            let gz = match serde_json::to_vec(&c).map_err(anyhow::Error::from).and_then(|j| gzip(&j)) {
+            let gz = match serde_json::to_vec(&c)
+                .map_err(anyhow::Error::from)
+                .and_then(|j| gzip(&j))
+            {
                 Ok(g) => g,
                 Err(e) => return internal(e),
             };
             if c.complete {
-                let (dir, tmp) = (ctx.clip_dir.clone(), cache.with_extension(format!("tmp{}", std::process::id())));
+                let (dir, tmp) = (
+                    ctx.clip_dir.clone(),
+                    cache.with_extension(format!("tmp{}", std::process::id())),
+                );
                 let written = block_in_place(|| {
                     std::fs::create_dir_all(&dir)?;
                     std::fs::write(&tmp, &gz)?;
@@ -870,16 +976,27 @@ async fn h_clip(ctx: Arc<RangeCtx>, id: String, as_acmi: bool) -> Response {
     };
     let max_age = if c.complete { "public, max-age=86400" } else { "no-store" };
     let mut r = if as_acmi {
-        let title = format!("{} · {} · {}", s.pilot_name(), s.kind(), s.raw.get("mission_time").and_then(Value::as_str).unwrap_or(""));
+        let title = format!(
+            "{} · {} · {}",
+            s.pilot_name(),
+            s.kind(),
+            s.raw.get("mission_time").and_then(Value::as_str).unwrap_or("")
+        );
         let text = clip::to_acmi(&c, &title);
         let mut r = Response::new(text.into());
-        let name: String = format!("{}-{}-{}", s.pilot_name(), s.kind(), s.ts().format("%Y%m%d-%H%M%S"))
-            .chars()
-            .map(|ch| if ch.is_ascii_alphanumeric() || ch == '-' { ch } else { '_' })
-            .collect();
+        let name: String =
+            format!("{}-{}-{}", s.pilot_name(), s.kind(), s.ts().format("%Y%m%d-%H%M%S"))
+                .chars()
+                .map(|ch| if ch.is_ascii_alphanumeric() || ch == '-' { ch } else { '_' })
+                .collect();
         let h = r.headers_mut();
-        h.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
-        if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{name}.txt.acmi\"")) {
+        h.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/octet-stream"),
+        );
+        if let Ok(v) =
+            HeaderValue::from_str(&format!("attachment; filename=\"{name}.txt.acmi\""))
+        {
             h.insert(header::CONTENT_DISPOSITION, v);
         }
         r
@@ -920,8 +1037,15 @@ async fn h_replay_link(ctx: Arc<RangeCtx>, id: String) -> Response {
     let slack = 60_000;
     let best = flights
         .iter()
-        .filter(|f| f.instance == s.instance && f.start_ms - slack <= ts && ts <= f.end_ms + slack)
-        .min_by_key(|f| (!f.aircraft.eq_ignore_ascii_case(s.unit_type()), (f.end_ms - f.start_ms).abs()));
+        .filter(|f| {
+            f.instance == s.instance && f.start_ms - slack <= ts && ts <= f.end_ms + slack
+        })
+        .min_by_key(|f| {
+            (
+                !f.aircraft.eq_ignore_ascii_case(s.unit_type()),
+                (f.end_ms - f.start_ms).abs(),
+            )
+        });
     let Some(f) = best else {
         return err(StatusCode::NOT_FOUND, "the replay has not read the recording with this result yet: it does once the server stops writing it");
     };
@@ -948,7 +1072,8 @@ async fn h_replay_results(ctx: Arc<RangeCtx>, rec: String) -> Response {
         Ok(None) => return err(StatusCode::NOT_FOUND, format!("no recording {rec:?}")),
         Err(e) => return internal(e),
     };
-    let (from, to) = (sum.start_ms.max(0) as u64, (sum.start_ms + sum.duration_ms).max(0) as u64);
+    let (from, to) =
+        (sum.start_ms.max(0) as u64, (sum.start_ms + sum.duration_ms).max(0) as u64);
     let mut items = vec![];
     let r = block_in_place(|| {
         ctx.store.walk_newest(&[sum.instance.clone()], from, Some((to + 1, "")), |s| {
@@ -984,17 +1109,28 @@ async fn h_atc(ctx: Arc<RangeCtx>, q: Q) -> Response {
 /// The live ATC feed (LiveATC style): every transmission on `?station=`
 /// (a station id, several comma-separated, or `all`) as it is said, over a
 /// WebSocket.
-async fn h_atc_live(ws: warp::ws::Ws, ip: std::net::IpAddr, ctx: Arc<RangeCtx>, q: Q) -> Response {
+async fn h_atc_live(
+    ws: warp::ws::Ws,
+    ip: std::net::IpAddr,
+    ctx: Arc<RangeCtx>,
+    q: Q,
+) -> Response {
     let sc = scope_or_400!(ctx, q);
     let inst = sc.primary().id.clone();
     let station = nonempty(&q, "station").unwrap_or("all").to_string();
     // Counted against the caller's per-IP WebSocket allowance as well as the
     // feed's own listener cap, so one address cannot take every listener.
     let Some(ip_slot) = crate::websec::ws_slot(ip) else {
-        return crate::websec::ws_refused(StatusCode::TOO_MANY_REQUESTS, "too many open connections");
+        return crate::websec::ws_refused(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many open connections",
+        );
     };
     let Some(slot) = crate::milatc::live::Slot::take() else {
-        return crate::websec::ws_refused(StatusCode::SERVICE_UNAVAILABLE, "too many listeners on the ATC feed");
+        return crate::websec::ws_refused(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "too many listeners on the ATC feed",
+        );
     };
     ws.on_upgrade(move |socket| async move {
         let _slot = slot;
@@ -1007,7 +1143,13 @@ async fn h_atc_live(ws: warp::ws::Ws, ip: std::net::IpAddr, ctx: Arc<RangeCtx>, 
 async fn atc_live(ws: warp::ws::WebSocket, inst: String, station: String) {
     use crate::milatc::live::{self, Wire};
     let tuned: Option<std::collections::HashSet<String>> =
-        (station != "all").then(|| station.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect());
+        (station != "all").then(|| {
+            station
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        });
     use futures::{SinkExt, StreamExt};
     use warp::ws::Message;
     let (mut sink, mut stream) = ws.split();
@@ -1051,7 +1193,10 @@ async fn h_atc_audio(ctx: Arc<RangeCtx>, q: Q, id: u64) -> Response {
     let sc = scope_or_400!(ctx, q);
     match crate::worker::hub::atc_audio(&sc.primary().id, id).await {
         Some(w) => bytes_reply((*w).clone(), "audio/wav", 86_400),
-        None => err(StatusCode::NOT_FOUND, "that transmission's audio is no longer kept".to_string()),
+        None => err(
+            StatusCode::NOT_FOUND,
+            "that transmission's audio is no longer kept".to_string(),
+        ),
     }
 }
 
@@ -1064,57 +1209,85 @@ pub(crate) fn routes(ctx: Arc<RangeCtx>) -> BoxedFilter<(Response,)> {
     let sid = crate::extract_session_cookie();
     let body = warp::body::content_length_limit(16 * 1024).and(warp::body::bytes());
 
-    let live = warp::path!("api" / "range" / "live").and(c.clone()).and(q.clone()).then(h_live);
-    let feed = warp::path!("api" / "range" / "feed").and(c.clone()).and(q.clone()).then(h_feed);
-    let results = warp::path!("api" / "range" / "results").and(c.clone()).and(q.clone()).then(h_results);
-    let result = warp::path!("api" / "range" / "result" / String).and(c.clone()).then(
-        |id: String, ctx: Arc<RangeCtx>| h_result(ctx, id),
-    );
-    let card_svg = warp::path!("api" / "range" / "result" / String / "card.svg").and(c.clone()).then(
-        |id: String, ctx: Arc<RangeCtx>| h_card(ctx, id, false),
-    );
-    let card_png = warp::path!("api" / "range" / "result" / String / "card.png").and(c.clone()).then(
-        |id: String, ctx: Arc<RangeCtx>| h_card(ctx, id, true),
-    );
-    let embed = warp::path!("api" / "range" / "result" / String / "discord").and(c.clone()).then(
-        |id: String, ctx: Arc<RangeCtx>| h_discord(ctx, id),
-    );
-    let me = warp::path!("api" / "range" / "me").and(c.clone()).and(sid.clone()).and(q.clone()).then(h_me);
-    let pilot = warp::path!("api" / "range" / "pilot" / String).and(c.clone()).and(q.clone()).then(
-        |u: String, ctx: Arc<RangeCtx>, q: Q| h_pilot(ctx, u, q),
-    );
-    let pilots = warp::path!("api" / "range" / "pilots").and(c.clone()).and(q.clone()).then(h_pilots);
-    let greenie = warp::path!("api" / "range" / "greenie").and(c.clone()).and(q.clone()).then(h_greenie);
-    let boards_r = warp::path!("api" / "range" / "leaderboards").and(c.clone()).and(q.clone()).then(h_leaderboards);
-    let impacts = warp::path!("api" / "range" / "stations" / String / "impacts").and(c.clone()).and(q.clone()).then(
-        |st: String, ctx: Arc<RangeCtx>, q: Q| h_impacts(ctx, st, q),
-    );
-    let catalog = warp::path!("api" / "range" / "catalog").and(c.clone()).and(q.clone()).then(h_catalog);
-    let atc = warp::path!("api" / "range" / "atc").and(c.clone()).and(q.clone()).then(h_atc);
+    let live =
+        warp::path!("api" / "range" / "live").and(c.clone()).and(q.clone()).then(h_live);
+    let feed =
+        warp::path!("api" / "range" / "feed").and(c.clone()).and(q.clone()).then(h_feed);
+    let results = warp::path!("api" / "range" / "results")
+        .and(c.clone())
+        .and(q.clone())
+        .then(h_results);
+    let result = warp::path!("api" / "range" / "result" / String)
+        .and(c.clone())
+        .then(|id: String, ctx: Arc<RangeCtx>| h_result(ctx, id));
+    let card_svg = warp::path!("api" / "range" / "result" / String / "card.svg")
+        .and(c.clone())
+        .then(|id: String, ctx: Arc<RangeCtx>| h_card(ctx, id, false));
+    let card_png = warp::path!("api" / "range" / "result" / String / "card.png")
+        .and(c.clone())
+        .then(|id: String, ctx: Arc<RangeCtx>| h_card(ctx, id, true));
+    let embed = warp::path!("api" / "range" / "result" / String / "discord")
+        .and(c.clone())
+        .then(|id: String, ctx: Arc<RangeCtx>| h_discord(ctx, id));
+    let me = warp::path!("api" / "range" / "me")
+        .and(c.clone())
+        .and(sid.clone())
+        .and(q.clone())
+        .then(h_me);
+    let pilot = warp::path!("api" / "range" / "pilot" / String)
+        .and(c.clone())
+        .and(q.clone())
+        .then(|u: String, ctx: Arc<RangeCtx>, q: Q| h_pilot(ctx, u, q));
+    let pilots = warp::path!("api" / "range" / "pilots")
+        .and(c.clone())
+        .and(q.clone())
+        .then(h_pilots);
+    let greenie = warp::path!("api" / "range" / "greenie")
+        .and(c.clone())
+        .and(q.clone())
+        .then(h_greenie);
+    let boards_r = warp::path!("api" / "range" / "leaderboards")
+        .and(c.clone())
+        .and(q.clone())
+        .then(h_leaderboards);
+    let impacts = warp::path!("api" / "range" / "stations" / String / "impacts")
+        .and(c.clone())
+        .and(q.clone())
+        .then(|st: String, ctx: Arc<RangeCtx>, q: Q| h_impacts(ctx, st, q));
+    let catalog = warp::path!("api" / "range" / "catalog")
+        .and(c.clone())
+        .and(q.clone())
+        .then(h_catalog);
+    let atc =
+        warp::path!("api" / "range" / "atc").and(c.clone()).and(q.clone()).then(h_atc);
     let atc_live = warp::path!("api" / "range" / "atc" / "live")
         .and(crate::websec::ws_limited())
         .and(c.clone())
         .and(q.clone())
         .then(|ws, ip, ctx: Arc<RangeCtx>, q: Q| h_atc_live(ws, ip, ctx, q));
-    let atc_audio = warp::path!("api" / "range" / "atc" / "audio" / u64).and(c.clone()).and(q.clone()).then(
-        |id: u64, ctx: Arc<RangeCtx>, q: Q| h_atc_audio(ctx, q, id),
-    );
-    let weapons = warp::path!("api" / "range" / "weapons").and(c.clone()).and(q.clone()).then(h_weapons);
-    let tacview = warp::path!("api" / "range" / "tacview" / String).and(c.clone()).then(
-        |id: String, ctx: Arc<RangeCtx>| h_tacview(ctx, id),
-    );
-    let clip_json = warp::path!("api" / "range" / "result" / String / "clip").and(c.clone()).then(
-        |id: String, ctx: Arc<RangeCtx>| h_clip(ctx, id, false),
-    );
-    let clip_acmi = warp::path!("api" / "range" / "result" / String / "clip.acmi").and(c.clone()).then(
-        |id: String, ctx: Arc<RangeCtx>| h_clip(ctx, id, true),
-    );
-    let replay_link = warp::path!("api" / "range" / "result" / String / "replay").and(c.clone()).then(
-        |id: String, ctx: Arc<RangeCtx>| h_replay_link(ctx, id),
-    );
-    let replay_results = warp::path!("api" / "range" / "replay" / String / "results").and(c.clone()).then(
-        |rec: String, ctx: Arc<RangeCtx>| h_replay_results(ctx, rec),
-    );
+    let atc_audio = warp::path!("api" / "range" / "atc" / "audio" / u64)
+        .and(c.clone())
+        .and(q.clone())
+        .then(|id: u64, ctx: Arc<RangeCtx>, q: Q| h_atc_audio(ctx, q, id));
+    let weapons = warp::path!("api" / "range" / "weapons")
+        .and(c.clone())
+        .and(q.clone())
+        .then(h_weapons);
+    let tacview = warp::path!("api" / "range" / "tacview" / String)
+        .and(c.clone())
+        .then(|id: String, ctx: Arc<RangeCtx>| h_tacview(ctx, id));
+    let clip_json = warp::path!("api" / "range" / "result" / String / "clip")
+        .and(c.clone())
+        .then(|id: String, ctx: Arc<RangeCtx>| h_clip(ctx, id, false));
+    let clip_acmi = warp::path!("api" / "range" / "result" / String / "clip.acmi")
+        .and(c.clone())
+        .then(|id: String, ctx: Arc<RangeCtx>| h_clip(ctx, id, true));
+    let replay_link = warp::path!("api" / "range" / "result" / String / "replay")
+        .and(c.clone())
+        .then(|id: String, ctx: Arc<RangeCtx>| h_replay_link(ctx, id));
+    let replay_results = warp::path!("api" / "range" / "replay" / String / "results")
+        .and(c.clone())
+        .then(|rec: String, ctx: Arc<RangeCtx>| h_replay_results(ctx, rec));
 
     let spawn = warp::path!("api" / "range" / "spawn")
         .and(warp::post())
@@ -1165,14 +1338,35 @@ pub(crate) fn routes(ctx: Arc<RangeCtx>) -> BoxedFilter<(Response,)> {
         .or(impacts)
         .unify()
         .boxed();
-    let reads_c = catalog.or(atc).unify().or(atc_live).unify().or(atc_audio).unify().or(weapons).unify().or(tacview).unify().or(clip_json).unify().or(clip_acmi).unify().or(replay_link).unify().or(replay_results).unify().boxed();
+    let reads_c = catalog
+        .or(atc)
+        .unify()
+        .or(atc_live)
+        .unify()
+        .or(atc_audio)
+        .unify()
+        .or(weapons)
+        .unify()
+        .or(tacview)
+        .unify()
+        .or(clip_json)
+        .unify()
+        .or(clip_acmi)
+        .unify()
+        .or(replay_link)
+        .unify()
+        .or(replay_results)
+        .unify()
+        .boxed();
     let reads = warp::get().and(reads_a.or(reads_b).unify().or(reads_c).unify()).boxed();
     let writes = spawn.or(despawn).unify().or(reset).unify().boxed();
     // Anything else under /api/range/ is a JSON 404 rather than falling
     // through to the SPA catch-all's index.html.
-    let unknown = warp::path!("api" / "range" / ..)
-        .and(warp::path::tail())
-        .map(|t: warp::path::Tail| err(StatusCode::NOT_FOUND, format!("unknown range route /{}", t.as_str())));
+    let unknown = warp::path!("api" / "range" / ..).and(warp::path::tail()).map(
+        |t: warp::path::Tail| {
+            err(StatusCode::NOT_FOUND, format!("unknown range route /{}", t.as_str()))
+        },
+    );
     reads.or(writes).unify().or(unknown).unify().boxed()
 }
 
@@ -1183,7 +1377,8 @@ mod tests {
 
     #[test]
     fn acmi_pick_prefers_the_recording_in_progress() {
-        let dir = std::env::temp_dir().join(format!("bfdb-range-acmi-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("bfdb-range-acmi-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.zip.acmi"), b"x").unwrap();
         std::fs::write(dir.join("notes.txt"), b"x").unwrap();

@@ -59,7 +59,8 @@ fn visible(ctx: &ReplayCtx, cfg: &InstanceCfg, sid: Option<Uuid>) -> bool {
 /// Whether `sum` is past its instance's `replay_delay_secs` (always, for an
 /// admin or with no delay set).
 fn released(ctx: &ReplayCtx, sid: Option<Uuid>, sum: &super::RecSummary) -> bool {
-    let delay = ctx.db.instances().get(&sum.instance).map(|c| c.replay_delay_secs).unwrap_or(0);
+    let delay =
+        ctx.db.instances().get(&sum.instance).map(|c| c.replay_delay_secs).unwrap_or(0);
     if delay == 0 || crate::session_is_admin(&ctx.db, sid) {
         return true;
     }
@@ -91,7 +92,10 @@ async fn h_status(ctx: Arc<ReplayCtx>, sid: Option<Uuid>) -> Response {
         Ok(out)
     });
     match r {
-        Ok(v) => reply_json(StatusCode::OK, &json!({ "instances": v, "retention_days": ctx.days })),
+        Ok(v) => reply_json(
+            StatusCode::OK,
+            &json!({ "instances": v, "retention_days": ctx.days }),
+        ),
         Err(e) => internal(e),
     }
 }
@@ -105,7 +109,8 @@ async fn h_recordings(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, q: Q) -> Response 
         return err(StatusCode::NOT_FOUND, "no such server");
     }
     let before = q.get("before").and_then(|s| s.parse().ok());
-    let limit = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50usize).clamp(1, 500);
+    let limit =
+        q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50usize).clamp(1, 500);
     match block_in_place(|| ctx.recordings(&cfg.id, before, limit)) {
         Ok(mut v) => {
             v.retain(|s| released(&ctx, sid, s));
@@ -116,13 +121,24 @@ async fn h_recordings(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, q: Q) -> Response 
 }
 
 /// Serve one of a recording's stored files.
-async fn serve(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, id: String, file: String, ctype: &'static str) -> Response {
+async fn serve(
+    ctx: Arc<ReplayCtx>,
+    sid: Option<Uuid>,
+    id: String,
+    file: String,
+    ctype: &'static str,
+) -> Response {
     let sum = match block_in_place(|| ctx.summary(&id)) {
         Ok(Some(s)) => s,
         Ok(None) => return err(StatusCode::NOT_FOUND, format!("no recording {id:?}")),
         Err(e) => return internal(e),
     };
-    let ok = ctx.db.instances().get(&sum.instance).map(|c| visible(&ctx, c, sid)).unwrap_or(false);
+    let ok = ctx
+        .db
+        .instances()
+        .get(&sum.instance)
+        .map(|c| visible(&ctx, c, sid))
+        .unwrap_or(false);
     if !ok || !released(&ctx, sid, &sum) {
         return err(StatusCode::NOT_FOUND, format!("no recording {id:?}"));
     }
@@ -153,7 +169,12 @@ async fn h_humans(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, id: String) -> Respons
         Ok(None) => return err(StatusCode::NOT_FOUND, format!("no recording {id:?}")),
         Err(e) => return internal(e),
     };
-    if !ctx.db.instances().get(&sum.instance).map(|c| visible(&ctx, c, sid)).unwrap_or(false)
+    if !ctx
+        .db
+        .instances()
+        .get(&sum.instance)
+        .map(|c| visible(&ctx, c, sid))
+        .unwrap_or(false)
         || !released(&ctx, sid, &sum)
     {
         return err(StatusCode::NOT_FOUND, format!("no recording {id:?}"));
@@ -179,7 +200,10 @@ async fn h_acmi(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, id: String) -> Response 
         return err(StatusCode::NOT_FOUND, format!("no recording {id:?}"));
     }
     let Some(dir) = cfg.tacview_dir.clone() else {
-        return err(StatusCode::NOT_FOUND, "this server no longer publishes its Tacview folder");
+        return err(
+            StatusCode::NOT_FOUND,
+            "this server no longer publishes its Tacview folder",
+        );
     };
     // The name comes from our own index, but never let it leave the folder.
     if sum.file.contains(['/', '\\']) || sum.file.contains("..") {
@@ -188,7 +212,12 @@ async fn h_acmi(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, id: String) -> Response 
     let path = dir.join(&sum.file);
     let file = match tokio::fs::File::open(&path).await {
         Ok(f) => f,
-        Err(_) => return err(StatusCode::NOT_FOUND, "the original recording has been deleted from the server"),
+        Err(_) => {
+            return err(
+                StatusCode::NOT_FOUND,
+                "the original recording has been deleted from the server",
+            )
+        }
     };
     let len = file.metadata().await.map(|m| m.len()).ok();
     let stream = futures::stream::unfold(Some(file), |f| async move {
@@ -217,7 +246,13 @@ async fn h_acmi(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, id: String) -> Response 
 }
 
 /// Stitch (once) and serve one object's whole track.
-async fn h_object(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, id: String, idx: u32, q: Q) -> Response {
+async fn h_object(
+    ctx: Arc<ReplayCtx>,
+    sid: Option<Uuid>,
+    id: String,
+    idx: u32,
+    q: Q,
+) -> Response {
     let sum = match block_in_place(|| ctx.summary(&id)) {
         Ok(Some(s)) => s,
         Ok(None) => return err(StatusCode::NOT_FOUND, format!("no recording {id:?}")),
@@ -232,10 +267,15 @@ async fn h_object(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, id: String, idx: u32, 
     };
     let (first, last) = (chunk_of("t0"), chunk_of("t1"));
     if q.get("t1").is_none() || first > last {
-        return err(StatusCode::BAD_REQUEST, "t0 and t1 (the object's lifetime, ms) are required");
+        return err(
+            StatusCode::BAD_REQUEST,
+            "t0 and t1 (the object's lifetime, ms) are required",
+        );
     }
     if let Some(dir) = ctx.rec_dir(&id) {
-        if let Err(e) = block_in_place(|| super::ingest::object_track(&dir, idx, first, last)) {
+        if let Err(e) =
+            block_in_place(|| super::ingest::object_track(&dir, idx, first, last))
+        {
             return internal(e);
         }
     }
@@ -246,7 +286,8 @@ async fn h_pilot(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, ucid: String, q: Q) -> 
     let Ok(u) = ucid.parse::<dcso3::net::Ucid>() else {
         return err(StatusCode::BAD_REQUEST, "not a valid ucid");
     };
-    let limit = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(100usize).clamp(1, 1000);
+    let limit =
+        q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(100usize).clamp(1, 1000);
     let r = block_in_place(|| {
         let names = ctx.db.pilot_names(&u);
         ctx.flights_for(&names, limit)
@@ -257,8 +298,15 @@ async fn h_pilot(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, ucid: String, q: Q) -> 
             v.retain(|f| {
                 // A same-named pilot is not this one.
                 f.ucid.as_deref().map(|x| x == ucid).unwrap_or(true)
-                    && reg.get(&f.instance).map(|c| visible(&ctx, c, sid)).unwrap_or(false)
-                    && ctx.summary(&f.rec).ok().flatten().map_or(true, |s| released(&ctx, sid, &s))
+                    && reg
+                        .get(&f.instance)
+                        .map(|c| visible(&ctx, c, sid))
+                        .unwrap_or(false)
+                    && ctx
+                        .summary(&f.rec)
+                        .ok()
+                        .flatten()
+                        .map_or(true, |s| released(&ctx, sid, &s))
             });
             reply_json(StatusCode::OK, &v)
         }
@@ -272,41 +320,69 @@ pub(crate) fn routes(ctx: Arc<ReplayCtx>) -> BoxedFilter<(Response,)> {
     let q = warp::query::<Q>();
     let sid = crate::extract_session_cookie();
 
-    let status = warp::path!("api" / "replay" / "status").and(c.clone()).and(sid.clone()).then(h_status);
+    let status = warp::path!("api" / "replay" / "status")
+        .and(c.clone())
+        .and(sid.clone())
+        .then(h_status);
     let recs = warp::path!("api" / "replay" / "recordings")
         .and(c.clone())
         .and(sid.clone())
         .and(q.clone())
         .then(h_recordings);
-    let meta = warp::path!("api" / "replay" / "rec" / String).and(c.clone()).and(sid.clone()).then(
-        |id: String, ctx: Arc<ReplayCtx>, sid: Option<Uuid>| serve(ctx, sid, id, "meta.json.gz".into(), "application/json"),
-    );
-    let chunk = warp::path!("api" / "replay" / "rec" / String / "chunk" / u32).and(c.clone()).and(sid.clone()).then(
-        |id: String, n: u32, ctx: Arc<ReplayCtx>, sid: Option<Uuid>| {
+    let meta = warp::path!("api" / "replay" / "rec" / String)
+        .and(c.clone())
+        .and(sid.clone())
+        .then(|id: String, ctx: Arc<ReplayCtx>, sid: Option<Uuid>| {
+            serve(ctx, sid, id, "meta.json.gz".into(), "application/json")
+        });
+    let chunk = warp::path!("api" / "replay" / "rec" / String / "chunk" / u32)
+        .and(c.clone())
+        .and(sid.clone())
+        .then(|id: String, n: u32, ctx: Arc<ReplayCtx>, sid: Option<Uuid>| {
             serve(ctx, sid, id, format!("c{n}.bin.gz"), "application/octet-stream")
-        },
-    );
+        });
     let object = warp::path!("api" / "replay" / "rec" / String / "object" / u32)
         .and(c.clone())
         .and(sid.clone())
         .and(q.clone())
-        .then(|id: String, idx: u32, ctx: Arc<ReplayCtx>, sid: Option<Uuid>, q: Q| h_object(ctx, sid, id, idx, q));
+        .then(|id: String, idx: u32, ctx: Arc<ReplayCtx>, sid: Option<Uuid>, q: Q| {
+            h_object(ctx, sid, id, idx, q)
+        });
     let humans = warp::path!("api" / "replay" / "rec" / String / "humans")
         .and(c.clone())
         .and(sid.clone())
-        .then(|id: String, ctx: Arc<ReplayCtx>, sid: Option<Uuid>| h_humans(ctx, sid, id));
+        .then(|id: String, ctx: Arc<ReplayCtx>, sid: Option<Uuid>| {
+            h_humans(ctx, sid, id)
+        });
     let acmi = warp::path!("api" / "replay" / "rec" / String / "acmi")
         .and(c.clone())
         .and(sid.clone())
         .then(|id: String, ctx: Arc<ReplayCtx>, sid: Option<Uuid>| h_acmi(ctx, sid, id));
-    let pilot = warp::path!("api" / "replay" / "pilot" / String).and(c.clone()).and(sid.clone()).and(q.clone()).then(
-        |u: String, ctx: Arc<ReplayCtx>, sid: Option<Uuid>, q: Q| h_pilot(ctx, sid, u, q),
-    );
-    let reads = status.or(recs).unify().or(meta).unify().or(chunk).unify().or(object).unify().or(humans).unify().boxed();
+    let pilot = warp::path!("api" / "replay" / "pilot" / String)
+        .and(c.clone())
+        .and(sid.clone())
+        .and(q.clone())
+        .then(|u: String, ctx: Arc<ReplayCtx>, sid: Option<Uuid>, q: Q| {
+            h_pilot(ctx, sid, u, q)
+        });
+    let reads = status
+        .or(recs)
+        .unify()
+        .or(meta)
+        .unify()
+        .or(chunk)
+        .unify()
+        .or(object)
+        .unify()
+        .or(humans)
+        .unify()
+        .boxed();
     let reads = reads.or(acmi).unify().or(pilot).unify().boxed();
     // Anything else under /api/replay/ is a JSON 404 rather than the SPA.
-    let unknown = warp::path!("api" / "replay" / ..)
-        .and(warp::path::tail())
-        .map(|t: warp::path::Tail| err(StatusCode::NOT_FOUND, format!("unknown replay route /{}", t.as_str())));
+    let unknown = warp::path!("api" / "replay" / ..).and(warp::path::tail()).map(
+        |t: warp::path::Tail| {
+            err(StatusCode::NOT_FOUND, format!("unknown replay route /{}", t.as_str()))
+        },
+    );
     warp::get().and(reads.or(unknown).unify()).boxed()
 }

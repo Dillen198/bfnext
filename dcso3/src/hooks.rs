@@ -144,10 +144,9 @@ impl UserHooks {
     where
         F: Fn(HooksLua) -> Result<()> + 'static,
     {
-        self.on_mission_load_begin =
-            Some(self.lua.create_function(move |lua, ()| {
-                wrap_f("on_mission_load_begin", HooksLua(lua), &f)
-            })?);
+        self.on_mission_load_begin = Some(self.lua.create_function(move |lua, ()| {
+            wrap_f("on_mission_load_begin", HooksLua(lua), &f)
+        })?);
         Ok(self)
     }
 
@@ -170,10 +169,9 @@ impl UserHooks {
     where
         F: Fn(HooksLua) -> Result<()> + 'static,
     {
-        self.on_mission_load_end =
-            Some(self.lua.create_function(move |lua, ()| {
-                wrap_f("on_mission_load_end", HooksLua(lua), &f)
-            })?);
+        self.on_mission_load_end = Some(self.lua.create_function(move |lua, ()| {
+            wrap_f("on_mission_load_end", HooksLua(lua), &f)
+        })?);
         Ok(self)
     }
 
@@ -181,10 +179,9 @@ impl UserHooks {
     where
         F: Fn(HooksLua) -> Result<()> + 'static,
     {
-        self.on_simulation_start =
-            Some(self.lua.create_function(move |lua, ()| {
-                wrap_f("on_simulation_start", HooksLua(lua), &f)
-            })?);
+        self.on_simulation_start = Some(self.lua.create_function(move |lua, ()| {
+            wrap_f("on_simulation_start", HooksLua(lua), &f)
+        })?);
         Ok(self)
     }
 
@@ -192,10 +189,9 @@ impl UserHooks {
     where
         F: Fn(HooksLua) -> Result<()> + 'static,
     {
-        self.on_simulation_stop = Some(
-            self.lua
-                .create_function(move |lua, ()| wrap_f("on_simulation_stop", HooksLua(lua), &f))?,
-        );
+        self.on_simulation_stop = Some(self.lua.create_function(move |lua, ()| {
+            wrap_f("on_simulation_stop", HooksLua(lua), &f)
+        })?);
         Ok(self)
     }
 
@@ -203,10 +199,9 @@ impl UserHooks {
     where
         F: Fn(HooksLua) -> Result<()> + 'static,
     {
-        self.on_simulation_frame =
-            Some(self.lua.create_function(move |lua, ()| {
-                wrap_f("on_simulation_frame", HooksLua(lua), &f)
-            })?);
+        self.on_simulation_frame = Some(self.lua.create_function(move |lua, ()| {
+            wrap_f("on_simulation_frame", HooksLua(lua), &f)
+        })?);
         Ok(self)
     }
 
@@ -214,10 +209,9 @@ impl UserHooks {
     where
         F: Fn(HooksLua) -> Result<()> + 'static,
     {
-        self.on_simulation_pause =
-            Some(self.lua.create_function(move |lua, ()| {
-                wrap_f("on_simulation_pause", HooksLua(lua), &f)
-            })?);
+        self.on_simulation_pause = Some(self.lua.create_function(move |lua, ()| {
+            wrap_f("on_simulation_pause", HooksLua(lua), &f)
+        })?);
         Ok(self)
     }
 
@@ -225,10 +219,9 @@ impl UserHooks {
     where
         F: Fn(HooksLua) -> Result<()> + 'static,
     {
-        self.on_simulation_resume =
-            Some(self.lua.create_function(move |lua, ()| {
-                wrap_f("on_simulation_resume", HooksLua(lua), &f)
-            })?);
+        self.on_simulation_resume = Some(self.lua.create_function(move |lua, ()| {
+            wrap_f("on_simulation_resume", HooksLua(lua), &f)
+        })?);
         Ok(self)
     }
 
@@ -286,13 +279,14 @@ impl UserHooks {
     /// return `Some("reason for rejection")` to reject the player.
     pub fn on_player_try_connect<F>(&mut self, f: F) -> Result<&mut Self>
     where
-        F: Fn(HooksLua, String, String, Ucid, PlayerId) -> Result<Option<String>> + 'static,
+        F: Fn(HooksLua, String, String, Ucid, PlayerId) -> Result<Option<String>>
+            + 'static,
     {
         // Arguments are decoded inside the deny wrapper rather than by
         // create_function: a malformed argument (e.g. a bad ucid) would
         // otherwise raise a Lua error, which DCS treats as "no objection".
-        self.on_player_try_connect = Some(self.lua.create_function(
-            move |lua, args: LuaMultiValue| {
+        self.on_player_try_connect =
+            Some(self.lua.create_function(move |lua, args: LuaMultiValue| {
                 let deny = || {
                     let mut rval = LuaMultiValue::new();
                     rval.push_front(LOGIN_SERVER_ERROR.into_lua(lua)?);
@@ -313,8 +307,7 @@ impl UserHooks {
                     }
                     Ok(rval)
                 })
-            },
-        )?);
+            })?);
         Ok(self)
     }
 
@@ -340,8 +333,8 @@ impl UserHooks {
     {
         // fails closed like on_player_try_connect: an error, a panic, or
         // an undecodable side/slot answers false (deny) instead of nil
-        self.on_player_try_change_slot = Some(self.lua.create_function(
-            move |lua, args: LuaMultiValue| {
+        self.on_player_try_change_slot =
+            Some(self.lua.create_function(move |lua, args: LuaMultiValue| {
                 wrap_f_deny(
                     "on_player_try_change_slot",
                     HooksLua(lua),
@@ -352,8 +345,7 @@ impl UserHooks {
                         f(lua, id, side, slot)
                     },
                 )
-            },
-        )?);
+            })?);
         Ok(self)
     }
 }

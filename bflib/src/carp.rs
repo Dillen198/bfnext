@@ -26,8 +26,8 @@ section, "Computed Air Release Point (CARP) Overview" onward.
 */
 
 use crate::atis::{temp_pressure_at, wind_at};
-use anyhow::{anyhow, Result};
-use dcso3::{coord::Coord, land::Land, world::World, LuaVec2, MizLua, Vector2};
+use anyhow::{Result, anyhow};
+use dcso3::{LuaVec2, MizLua, Vector2, coord::Coord, land::Land, world::World};
 use serde_derive::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,8 +97,10 @@ fn sample_elevations(lua: MizLua, x: f64, z: f64, pi_elev_m: f64) -> Result<(f64
     for deg in (0..360).step_by(45) {
         let rad = (deg as f64).to_radians();
         let (dx, dz) = (rad.cos(), rad.sin());
-        let near = land.get_height(LuaVec2(Vector2::new(x + dx * NEAR_M, z + dz * NEAR_M)))?;
-        let far = land.get_height(LuaVec2(Vector2::new(x + dx * FAR_M, z + dz * FAR_M)))?;
+        let near =
+            land.get_height(LuaVec2(Vector2::new(x + dx * NEAR_M, z + dz * NEAR_M)))?;
+        let far =
+            land.get_height(LuaVec2(Vector2::new(x + dx * FAR_M, z + dz * FAR_M)))?;
         if near > dz_elev {
             dz_elev = near;
         }
@@ -191,6 +193,10 @@ pub(crate) fn build_carp_solution_from_latlon(
     drop_altitude_agl_ft: f64,
 ) -> Result<CarpSolution> {
     let coord = Coord::singleton(lua)?;
-    let world_pos = coord.ll_to_lo(dcso3::coord::LLPos { latitude: lat, longitude: lon, altitude: 0.0 })?;
+    let world_pos = coord.ll_to_lo(dcso3::coord::LLPos {
+        latitude: lat,
+        longitude: lon,
+        altitude: 0.0,
+    })?;
     solve_at_world_pos(lua, world_pos.0.x, world_pos.0.z, drop_altitude_agl_ft)
 }

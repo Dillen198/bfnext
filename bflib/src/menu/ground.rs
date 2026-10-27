@@ -24,18 +24,18 @@ for more details.
 
 use super::{ArgQuad, ArgTriple, ArgTuple, Pager};
 use crate::{
-    db::formation::{Order, Posture},
-    groundwar::{at_sea, Cmd, CmdKind},
     Context,
+    db::formation::{Order, Posture},
+    groundwar::{Cmd, CmdKind, at_sea},
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use bfprotocols::db::objective::ObjectiveId;
 use compact_str::format_compact;
 use dcso3::{
+    MizLua, String, Vector2,
     env::miz::GroupId,
     mission_commands::{GroupCommandItem, GroupSubMenu, MissionCommands},
     net::Ucid,
-    MizLua, String, Vector2,
 };
 
 const ROOT: &str = "Ground Forces";
@@ -98,10 +98,20 @@ fn release(_: MizLua, a: ArgTriple<Ucid, GroupId, u32>) -> Result<()> {
 }
 
 /// Put the closed `Ground Forces>>` entry on a slot's F10 root.
-pub(super) fn init_ground_menu_for_slot(mc: &MissionCommands, group: GroupId, ucid: Ucid) -> Result<()> {
+pub(super) fn init_ground_menu_for_slot(
+    mc: &MissionCommands,
+    group: GroupId,
+    ucid: Ucid,
+) -> Result<()> {
     mc.remove_command_for_group(group, GroupCommandItem::from(vec![ROOT_CMD.into()]))?;
     mc.remove_submenu_for_group(group, GroupSubMenu::from(vec![ROOT.into()]))?;
-    mc.add_command_for_group(group, ROOT_CMD.into(), None, open, ArgTuple { fst: ucid, snd: group })?;
+    mc.add_command_for_group(
+        group,
+        ROOT_CMD.into(),
+        None,
+        open,
+        ArgTuple { fst: ucid, snd: group },
+    )?;
     Ok(())
 }
 
@@ -121,13 +131,27 @@ fn build(lua: MizLua, ucid: Ucid, group: GroupId) -> Result<()> {
         .map(|(_, _, i)| Vector2::new(i.position.p.x, i.position.p.z));
     let mut p = Pager::new(group, root);
     p.command(&mc, "Status report".into(), status, ArgTuple { fst: ucid, snd: group })?;
-    p.command(&mc, "Refresh this menu".into(), refresh, ArgTuple { fst: ucid, snd: group })?;
+    p.command(
+        &mc,
+        "Refresh this menu".into(),
+        refresh,
+        ArgTuple { fst: ucid, snd: group },
+    )?;
     // (id, name, pos, posture, strength %, home)
     let mut forms: Vec<_> = ctx
         .db
         .formations()
         .filter(|f| f.side == side)
-        .map(|f| (f.id, f.name.clone(), f.pos, f.posture, ctx.db.formation_strength_pct(f), f.home))
+        .map(|f| {
+            (
+                f.id,
+                f.name.clone(),
+                f.pos,
+                f.posture,
+                ctx.db.formation_strength_pct(f),
+                f.home,
+            )
+        })
         .collect();
     forms.sort_by_key(|f| f.0);
     // (id, name, pos, ours)
@@ -162,7 +186,11 @@ fn build(lua: MizLua, ucid: Ucid, group: GroupId) -> Result<()> {
                 ArgQuad { fst: ucid, snd: group, trd: *id, fth: *oid },
             )?;
         }
-        let def = mc.add_submenu_for_group(group, "Defend / move to".into(), Some(sub.clone()))?;
+        let def = mc.add_submenu_for_group(
+            group,
+            "Defend / move to".into(),
+            Some(sub.clone()),
+        )?;
         let mut pd = Pager::new(group, def);
         for (oid, oname, opos, _) in nearest(*pos, true) {
             let km = dist(*opos, *pos) / 1000.;
@@ -209,7 +237,11 @@ fn build(lua: MizLua, ucid: Ucid, group: GroupId) -> Result<()> {
         let at = me.or_else(|| forms.first().map(|f| f.2)).unwrap_or_default();
         let mut offers = vec![];
         for (oid, oname, opos, _) in nearest(at, true).into_iter().take(CHOICES * 2) {
-            let n = ctx.db.formation_candidates(&cfg, oid, side).map(|g| g.len()).unwrap_or(0);
+            let n = ctx
+                .db
+                .formation_candidates(&cfg, oid, side)
+                .map(|g| g.len())
+                .unwrap_or(0);
             if n > 0 {
                 offers.push((*oid, oname.clone(), dist(*opos, at) / 1000., n));
             }

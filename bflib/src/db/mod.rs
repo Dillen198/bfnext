@@ -44,13 +44,13 @@ use tokio::sync::mpsc::UnboundedSender;
 pub mod actions;
 pub mod balance;
 pub mod battle;
-pub mod combat;
 pub mod cargo;
+pub mod combat;
 pub mod economy;
 pub mod emergency_repair;
-pub mod fat_cow;
 pub mod ephemeral;
 pub mod events;
+pub mod fat_cow;
 pub mod formation;
 pub mod garrison;
 pub mod ghosts;
@@ -92,26 +92,21 @@ pub struct JtDesc {
 #[macro_export]
 macro_rules! maybe {
     ($t:expr, $id:expr, $name:expr) => {
-        $t.get(&$id)
-            .ok_or_else(|| anyhow!("no such {} {:?}", $name, $id))
+        $t.get(&$id).ok_or_else(|| anyhow!("no such {} {:?}", $name, $id))
     };
 }
 
 #[macro_export]
 macro_rules! maybe_mut {
     ($t:expr, $id:expr, $name:expr) => {
-        $t.get_mut_cow(&$id)
-            .ok_or_else(|| anyhow!("no such {} {:?}", $name, $id))
+        $t.get_mut_cow(&$id).ok_or_else(|| anyhow!("no such {} {:?}", $name, $id))
     };
 }
 
 #[macro_export]
 macro_rules! unit {
     ($t:expr, $id:expr) => {
-        $t.persisted
-            .units
-            .get(&$id)
-            .ok_or_else(|| anyhow!("no such unit {:?}", $id))
+        $t.persisted.units.get(&$id).ok_or_else(|| anyhow!("no such unit {:?}", $id))
     };
 }
 
@@ -139,10 +134,7 @@ macro_rules! unit_by_name {
 #[macro_export]
 macro_rules! group {
     ($t:expr, $id:expr) => {
-        $t.persisted
-            .groups
-            .get(&$id)
-            .ok_or_else(|| anyhow!("no such group {:?}", $id))
+        $t.persisted.groups.get(&$id).ok_or_else(|| anyhow!("no such group {:?}", $id))
     };
 }
 
@@ -339,9 +331,8 @@ impl Db {
                 .file_name()
                 .and_then(|n| n.to_str())
                 .ok_or_else(|| anyhow!("save file with no name"))?;
-            let dir = path
-                .parent()
-                .ok_or_else(|| anyhow!("save file has no parent dir"))?;
+            let dir =
+                path.parent().ok_or_else(|| anyhow!("save file has no parent dir"))?;
             let mut candidates = vec![];
             for file in fs::read_dir(dir)? {
                 let file = file?;
@@ -392,23 +383,36 @@ impl Db {
                 for candidate in Self::save_file_candidates(path) {
                     match Self::load_persisted(&candidate) {
                         Ok(persisted) => {
-                            log::error!("resuming the campaign from backup save file {candidate:?}");
+                            log::error!(
+                                "resuming the campaign from backup save file {candidate:?}"
+                            );
                             recovered = Some(persisted);
                             break;
                         }
-                        Err(e) => log::warn!("backup save file is also unreadable, {e:?}"),
+                        Err(e) => {
+                            log::warn!("backup save file is also unreadable, {e:?}")
+                        }
                     }
                 }
                 match recovered {
                     Some(persisted) => persisted,
-                    None => return Err(e.context("and no backup save file could be read either")),
+                    None => {
+                        return Err(
+                            e.context("and no backup save file could be read either")
+                        );
+                    }
                 }
             }
         };
         if let Some(w) = persisted.schema_warning() {
             log::error!("!!! {w}");
-            crate::bg::fallback_log(format!("bflib: {w}
-").as_bytes());
+            crate::bg::fallback_log(
+                format!(
+                    "bflib: {w}
+"
+                )
+                .as_bytes(),
+            );
         } else if persisted.schema_version < persisted::SAVE_SCHEMA_VERSION {
             log::info!(
                 "save file is schema {}, it will be written back as schema {}",
@@ -416,10 +420,7 @@ impl Db {
                 persisted::SAVE_SCHEMA_VERSION
             );
         }
-        let mut db = Db {
-            persisted,
-            ephemeral: Ephemeral::default(),
-        };
+        let mut db = Db { persisted, ephemeral: Ephemeral::default() };
         ObjectiveId::setseq(max(db.persisted.oid, ObjectiveId::seq()));
         GroupId::setseq(max(db.persisted.gid, GroupId::seq()));
         UnitId::setseq(max(db.persisted.uid, UnitId::seq()));
@@ -472,11 +473,7 @@ impl Db {
 
     /// A copy of the campaign to save, if anything changed since the last one.
     pub fn maybe_snapshot(&mut self) -> Option<Persisted> {
-        if self.ephemeral.take_dirty() {
-            Some(self.snapshot())
-        } else {
-            None
-        }
+        if self.ephemeral.take_dirty() { Some(self.snapshot()) } else { None }
     }
 
     /// A copy of the campaign to save, unconditionally. Every save must go
@@ -519,8 +516,13 @@ impl Db {
     }
 
     /// Get convoy origin/destination if a group ID belongs to an active supply convoy
-    pub fn convoy_info_for_group(&self, gid: &GroupId) -> Option<(ObjectiveId, ObjectiveId)> {
-        self.ephemeral.active_convoys.values()
+    pub fn convoy_info_for_group(
+        &self,
+        gid: &GroupId,
+    ) -> Option<(ObjectiveId, ObjectiveId)> {
+        self.ephemeral
+            .active_convoys
+            .values()
             .find(|c| c.group_id == *gid)
             .map(|c| (c.origin, c.destination))
     }
@@ -535,10 +537,7 @@ impl Db {
         &self,
         side: dcso3::coalition::Side,
     ) -> impl Iterator<Item = &crate::db::logistics::SupplyConvoy> {
-        self.ephemeral
-            .active_convoys
-            .values()
-            .filter(move |c| c.side == side)
+        self.ephemeral.active_convoys.values().filter(move |c| c.side == side)
     }
 
     /// True if a capture timer is currently running against this objective.
@@ -547,7 +546,10 @@ impl Db {
     }
 
     /// Objectives of `side` that enemy troops are actively attempting to capture.
-    pub fn objectives_being_captured_by(&self, side: dcso3::coalition::Side) -> Vec<ObjectiveId> {
+    pub fn objectives_being_captured_by(
+        &self,
+        side: dcso3::coalition::Side,
+    ) -> Vec<ObjectiveId> {
         self.ephemeral
             .capture_progress
             .iter()
@@ -555,11 +557,7 @@ impl Db {
                 if *capturing_side != side {
                     // capturing_side is the ENEMY — oid is a friendly objective being taken
                     let obj = self.persisted.objectives.get(oid)?;
-                    if obj.owner() == side {
-                        Some(*oid)
-                    } else {
-                        None
-                    }
+                    if obj.owner() == side { Some(*oid) } else { None }
                 } else {
                     None
                 }
@@ -577,16 +575,11 @@ impl Db {
             let group = self.persisted.groups.get(gid)?;
             let (ewr, side) = match &group.origin {
                 DeployKind::Action {
-                    spec:
-                        Action {
-                            kind: ActionKind::Awacs(AwacsCfg { ewr, .. }),
-                            ..
-                        },
+                    spec: Action { kind: ActionKind::Awacs(AwacsCfg { ewr, .. }), .. },
                     ..
                 }
                 | DeployKind::Deployed {
-                    spec: Deployable { ewr: Some(ewr), .. },
-                    ..
+                    spec: Deployable { ewr: Some(ewr), .. }, ..
                 } => (ewr, group.side),
                 _ => return None,
             };
@@ -616,17 +609,10 @@ impl Db {
             })
         });
         // AI ground / naval units listed in ground_radar_ewrs
-        let ai_ground = self
-            .persisted
-            .units
-            .into_iter()
-            .filter(|(_, u)| !u.dead)
-            .filter_map(|(_, u)| {
-                self.ephemeral
-                    .cfg
-                    .ground_radar_ewrs
-                    .get(&u.typ)
-                    .map(|ewr_cfg| {
+        let ai_ground =
+            self.persisted.units.into_iter().filter(|(_, u)| !u.dead).filter_map(
+                |(_, u)| {
+                    self.ephemeral.cfg.ground_radar_ewrs.get(&u.typ).map(|ewr_cfg| {
                         // Explicit override wins -- the aspect_half_angle
                         // guess below is wrong for any ground SAM search
                         // radar correctly configured omnidirectional (which
@@ -634,10 +620,12 @@ impl Db {
                         // radars), so relying on it alone silently drops
                         // those units out of every SAM-specific IADN
                         // mechanic. See AirborneEwr::sensor_type_override.
-                        let sensor_type = ewr_cfg.sensor_type_override.unwrap_or(match ewr_cfg.aspect_half_angle {
-                            Some(_) => bfprotocols::cfg::SensorType::SamSearchRadar,
-                            None => bfprotocols::cfg::SensorType::NavalRadar,
-                        });
+                        let sensor_type = ewr_cfg.sensor_type_override.unwrap_or(
+                            match ewr_cfg.aspect_half_angle {
+                                Some(_) => bfprotocols::cfg::SensorType::SamSearchRadar,
+                                None => bfprotocols::cfg::SensorType::NavalRadar,
+                            },
+                        );
                         RadarDonor {
                             pos: u.position,
                             side: u.side,
@@ -653,36 +641,33 @@ impl Db {
                             frequency_band: ewr_cfg.frequency_band,
                         }
                     })
-            });
+                },
+            );
         // Player aircraft listed in airborne_ewrs
         let airborne = self
             .instanced_players()
             .filter(|(_, _, inst)| inst.in_air)
             .filter_map(|(_, player, inst)| {
-                self.ephemeral
-                    .cfg
-                    .airborne_ewrs
-                    .get(&inst.typ)
-                    .map(|ewr_cfg| {
-                        let sensor_type = match ewr_cfg.aspect_half_angle {
-                            Some(_) => bfprotocols::cfg::SensorType::AirborneFighter,
-                            None => bfprotocols::cfg::SensorType::Awacs,
-                        };
-                        RadarDonor {
-                            pos: inst.position,
-                            side: player.side,
-                            range: ewr_cfg.range,
-                            aspect_half_angle: ewr_cfg.aspect_half_angle,
-                            airborne: true,
-                            sensor_type,
-                            pulse_doppler: ewr_cfg.pulse_doppler,
-                            look_down_capable: ewr_cfg.look_down_capable,
-                            gid: None,
-                            ecm_susceptibility: ewr_cfg.ecm_susceptibility,
-                            scan_interval_secs: ewr_cfg.scan_interval_secs,
-                            frequency_band: ewr_cfg.frequency_band,
-                        }
-                    })
+                self.ephemeral.cfg.airborne_ewrs.get(&inst.typ).map(|ewr_cfg| {
+                    let sensor_type = match ewr_cfg.aspect_half_angle {
+                        Some(_) => bfprotocols::cfg::SensorType::AirborneFighter,
+                        None => bfprotocols::cfg::SensorType::Awacs,
+                    };
+                    RadarDonor {
+                        pos: inst.position,
+                        side: player.side,
+                        range: ewr_cfg.range,
+                        aspect_half_angle: ewr_cfg.aspect_half_angle,
+                        airborne: true,
+                        sensor_type,
+                        pulse_doppler: ewr_cfg.pulse_doppler,
+                        look_down_capable: ewr_cfg.look_down_capable,
+                        gid: None,
+                        ecm_susceptibility: ewr_cfg.ecm_susceptibility,
+                        scan_interval_secs: ewr_cfg.scan_interval_secs,
+                        frequency_band: ewr_cfg.frequency_band,
+                    }
+                })
             });
         deployed.chain(ai_ground).chain(airborne)
     }
@@ -693,18 +678,13 @@ impl Db {
             .into_iter()
             .filter_map(|gid| {
                 let group = self.persisted.groups.get(gid)?;
-                let pos = centroid3d(
-                    group
-                        .units
-                        .into_iter()
-                        .filter_map(|u| self.persisted.units.get(u).map(|u| u.position.p.0)),
-                );
+                let pos =
+                    centroid3d(group.units.into_iter().filter_map(|u| {
+                        self.persisted.units.get(u).map(|u| u.position.p.0)
+                    }));
                 match &group.origin {
                     DeployKind::Troop {
-                        spec:
-                            Troop {
-                                jtac: Some(jtac), ..
-                            },
+                        spec: Troop { jtac: Some(jtac), .. },
                         jtac: jtac_state,
                         ..
                     } => Some(JtDesc {
@@ -716,10 +696,7 @@ impl Db {
                         air: false,
                     }),
                     DeployKind::Deployed {
-                        spec:
-                            Deployable {
-                                jtac: Some(jtac), ..
-                            },
+                        spec: Deployable { jtac: Some(jtac), .. },
                         jtac: jtac_state,
                         ..
                     } => Some(JtDesc {
@@ -732,10 +709,7 @@ impl Db {
                     }),
                     DeployKind::Action {
                         spec:
-                            Action {
-                                kind: ActionKind::Drone(DroneCfg { jtac, .. }),
-                                ..
-                            },
+                            Action { kind: ActionKind::Drone(DroneCfg { jtac, .. }), .. },
                         jtac: jtac_state,
                         ..
                     } => Some(JtDesc {

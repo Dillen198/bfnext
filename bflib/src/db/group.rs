@@ -15,20 +15,23 @@ for more details.
 */
 
 use super::{
+    Db, SetS,
     cargo::C130CargoState,
     ephemeral::{LaunchRequest, QueuedDrive, SlotInfo},
     objective::ObjGroupClass,
     player::SlotAuth,
-    Db, SetS,
 };
 use crate::{
-    group, group_health, group_mut,
+    Connected, group, group_health, group_mut,
     spawnctx::{Despawn, SpawnCtx, SpawnLoc},
-    unit, unit_mut, Connected,
+    unit, unit_mut,
 };
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use bfprotocols::{
-    cfg::{Action, ActionKind, Crate, Deployable, LifeType, SpecialSamUnitCfg, Troop, UnitTag, UnitTags, Vehicle},
+    cfg::{
+        Action, ActionKind, Crate, Deployable, LifeType, SpecialSamUnitCfg, Troop,
+        UnitTag, UnitTags, Vehicle,
+    },
     db::objective::{ObjectiveId, ObjectiveKind},
     stats::{self, EnId},
 };
@@ -37,9 +40,10 @@ use bfprotocols::{
     stats::Stat,
 };
 use chrono::prelude::*;
-use compact_str::{format_compact, CompactString};
+use compact_str::{CompactString, format_compact};
 use dcso3::{
-    azumith3d, centroid2d, change_heading,
+    LuaVec2, LuaVec3, MizLua, Position3, String, Vector2, Vector3, azumith3d, centroid2d,
+    change_heading,
     coalition::{Side, Static},
     coord::Coord,
     country::Country,
@@ -53,13 +57,12 @@ use dcso3::{
     static_object::{ClassStatic, StaticObject},
     trigger::MarkId,
     unit::{ClassUnit, Unit},
-    LuaVec2, LuaVec3, MizLua, Position3, String, Vector2, Vector3,
 };
 use enumflags2::BitFlags;
 use fxhash::{FxHashMap, FxHashSet};
 use log::{error, info, warn};
 use serde_derive::{Deserialize, Serialize};
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use std::collections::VecDeque;
 
 /// How far a deployed group has to travel before its F10 pin is redrawn, in
@@ -82,9 +85,16 @@ pub(crate) struct LaunchField {
 /// Helicopters fly from airbases, FARPs and FOBs; fixed wing only from
 /// airbases, plus the fields the config lists in `extra_fixed_wing_objectives`.
 /// Carrier decks are left out for both: the deck airbase moves with the ship.
-pub(crate) fn is_launch_kind(kind: &ObjectiveKind, rotary: bool, extra_fixed_wing: bool) -> bool {
+pub(crate) fn is_launch_kind(
+    kind: &ObjectiveKind,
+    rotary: bool,
+    extra_fixed_wing: bool,
+) -> bool {
     if rotary {
-        matches!(kind, ObjectiveKind::Airbase | ObjectiveKind::Farp { .. } | ObjectiveKind::Fob)
+        matches!(
+            kind,
+            ObjectiveKind::Airbase | ObjectiveKind::Farp { .. } | ObjectiveKind::Fob
+        )
     } else {
         matches!(kind, ObjectiveKind::Airbase) || extra_fixed_wing
     }
@@ -130,7 +140,11 @@ fn drive_length(points: &[(Vector2, bool)]) -> f64 {
 /// them), or `None` if the road doesn't serve both ends. On road the whole
 /// way, then off road for the last stretch: "On Road" stops at the road
 /// point nearest the destination, which can be well short of it.
-pub(crate) fn plan_road_drive(from: Vector2, to: Vector2, road: &[Vector2]) -> Option<DrivePlan> {
+pub(crate) fn plan_road_drive(
+    from: Vector2,
+    to: Vector2,
+    road: &[Vector2],
+) -> Option<DrivePlan> {
     let (first, last) = (road.first()?, road.last()?);
     if (first - from).norm() > ROAD_ACCESS_M || (last - to).norm() > ROAD_ACCESS_M {
         return None;
@@ -139,9 +153,8 @@ pub(crate) fn plan_road_drive(from: Vector2, to: Vector2, road: &[Vector2]) -> O
     let mut kept = 0;
     let mut last_kept: Option<Vector2> = None;
     for (i, p) in road.iter().enumerate() {
-        let far_enough = last_kept
-            .map(|l| (p - l).norm() >= DRIVE_WAYPOINT_SPACING_M)
-            .unwrap_or(true);
+        let far_enough =
+            last_kept.map(|l| (p - l).norm() >= DRIVE_WAYPOINT_SPACING_M).unwrap_or(true);
         if (far_enough || i + 1 == road.len()) && kept < MAX_DRIVE_WAYPOINTS {
             points.push((*p, true));
             last_kept = Some(*p);
@@ -358,7 +371,11 @@ impl Db {
     /// and leave the F10 map's labels, rings and supply arrows permanently
     /// stale. A pin that is up to `min_move` metres behind the group is worth
     /// far more than one that is up to date and starves the rest of the map.
-    pub(super) fn mark_group_if_moved(&mut self, gid: &GroupId, min_move: f64) -> Result<()> {
+    pub(super) fn mark_group_if_moved(
+        &mut self,
+        gid: &GroupId,
+        min_move: f64,
+    ) -> Result<()> {
         if min_move > 0.
             && let Some((_, at)) = self.ephemeral.group_marks.get(gid)
         {
@@ -397,10 +414,7 @@ impl Db {
         };
         let group = group_mut!(self, gid)?;
         let group_center = centroid2d(
-            group
-                .units
-                .into_iter()
-                .filter_map(|uid| units.get(uid).map(|u| u.pos)),
+            group.units.into_iter().filter_map(|uid| units.get(uid).map(|u| u.pos)),
         );
         let id = match &mut group.origin {
             DeployKind::ObjectiveDeprecated => None,
@@ -412,10 +426,8 @@ impl Db {
             DeployKind::Objective { .. } => None,
             DeployKind::Deployed { .. } if in_formation => None,
             DeployKind::Action { name, spec: _, destination, player, marks, .. } => {
-                let pname = player
-                    .as_ref()
-                    .map(|p| pname(p))
-                    .unwrap_or(String::from("Server"));
+                let pname =
+                    player.as_ref().map(|p| pname(p)).unwrap_or(String::from("Server"));
                 let pos_msg = format_compact!("{name} {gid} deployed by {pname}");
                 let pos_mark = self.ephemeral.msgs.mark_to_side(
                     group.side,
@@ -477,7 +489,14 @@ impl Db {
                     msg,
                 ))
             }
-            DeployKind::Troop { player, spec, moved_by, origin: _, cost_fraction: _, .. } => {
+            DeployKind::Troop {
+                player,
+                spec,
+                moved_by,
+                origin: _,
+                cost_fraction: _,
+                ..
+            } => {
                 let name = pname(player);
                 let resp = moved_by
                     .as_ref()
@@ -539,7 +558,11 @@ impl Db {
             };
             let airborne = dcs
                 .get_units()
-                .map(|us| us.into_iter().filter_map(|u| u.ok()).any(|u| u.in_air().unwrap_or(false)))
+                .map(|us| {
+                    us.into_iter()
+                        .filter_map(|u| u.ok())
+                        .any(|u| u.in_air().unwrap_or(false))
+                })
                 .unwrap_or(false);
             if airborne {
                 self.ephemeral.ramp_watch.remove(&gid);
@@ -668,10 +691,8 @@ impl Db {
                 self.persisted.dismount_spawned.remove_cow(gid);
             }
         }
-        if matches!(
-            group.origin,
-            DeployKind::Troop { .. } | DeployKind::Dismount { .. }
-        ) {
+        if matches!(group.origin, DeployKind::Troop { .. } | DeployKind::Dismount { .. })
+        {
             self.scrub_capture_hold(gid, killed);
         }
         if let Some((id, _)) = self.ephemeral.group_marks.remove(gid) {
@@ -696,12 +717,10 @@ impl Db {
                 // C-130 crates whose DCS name may differ from the bflib name after
                 // cargo load/drop renames). Fall back to name-based lookup.
                 if let Some(oid) = self.ephemeral.object_id_by_gid.get(gid) {
-                    self.ephemeral
-                        .push_despawn(*gid, Despawn::StaticObject(oid.clone()));
+                    self.ephemeral.push_despawn(*gid, Despawn::StaticObject(oid.clone()));
                 } else {
                     for unit in &units {
-                        self.ephemeral
-                            .push_despawn(*gid, Despawn::Static(unit.clone()))
+                        self.ephemeral.push_despawn(*gid, Despawn::Static(unit.clone()))
                     }
                 }
             }
@@ -713,7 +732,8 @@ impl Db {
                     // Object ID not yet tracked (e.g. group spawned moments ago and no DCS
                     // event has fired yet). Fall back to destroying by name so the DCS unit
                     // is actually removed from the world rather than silently left alive.
-                    self.ephemeral.push_despawn(*gid, Despawn::GroupByName(group.name.to_string()));
+                    self.ephemeral
+                        .push_despawn(*gid, Despawn::GroupByName(group.name.to_string()));
                 }
             }
         }
@@ -727,7 +747,9 @@ impl Db {
         self.persisted
             .dismounts
             .into_iter()
-            .filter(|gid| self.persisted.groups.get(gid).map(|g| g.side == side).unwrap_or(false))
+            .filter(|gid| {
+                self.persisted.groups.get(gid).map(|g| g.side == side).unwrap_or(false)
+            })
             .count()
     }
 
@@ -747,7 +769,7 @@ impl Db {
             DeployKind::Deployed { player, .. } | DeployKind::Troop { player, .. }
                 if *player == Ucid::default() => {}
             DeployKind::Deployed { .. } | DeployKind::Troop { .. } => {
-                return Err("a player owns that -- only they can remove it")
+                return Err("a player owns that -- only they can remove it");
             }
             _ => return Err("only unowned ground units and dismounts can be disbanded"),
         }
@@ -809,7 +831,11 @@ impl Db {
         if expired.is_empty() {
             return;
         }
-        info!("expiring {} dismount squad(s) past their {}s lifetime", expired.len(), ttl.num_seconds());
+        info!(
+            "expiring {} dismount squad(s) past their {}s lifetime",
+            expired.len(),
+            ttl.num_seconds()
+        );
         for gid in expired {
             if let Err(e) = self.delete_group(&gid) {
                 warn!("could not expire dismount squad {gid}: {e:?}");
@@ -1134,7 +1160,9 @@ impl Db {
                 None => gpos.positions.pop_front(),
                 Some(positions) => positions.pop_front(),
             }
-            .ok_or_else(|| anyhow!("{group_name}: no spawn position left for unit {typ}"))?;
+            .ok_or_else(|| {
+                anyhow!("{group_name}: no spawn position left for unit {typ}")
+            })?;
             let position = {
                 let mut p = Position3::default();
                 p.p.x = pos.position.x;
@@ -1381,8 +1409,7 @@ impl Db {
             group.tags.0.insert(UnitTag::EventSpawn);
         }
         let spawned = group!(self, gid).and_then(|group| {
-            self.ephemeral
-                .spawn_group(perf, &self.persisted, idx, spctx, group, vec![])
+            self.ephemeral.spawn_group(perf, &self.persisted, idx, spctx, group, vec![])
         });
         if let Err(e) = spawned {
             if let Err(de) = self.delete_group(&gid) {
@@ -1429,13 +1456,11 @@ impl Db {
             DeployKind::Objective { origin },
             UnitTag::EventSpawn | UnitTag::HotStart,
         )?;
-        self.ephemeral.launch_requests.insert(
-            gid,
-            LaunchRequest { field: origin, cold: false, open_ground },
-        );
+        self.ephemeral
+            .launch_requests
+            .insert(gid, LaunchRequest { field: origin, cold: false, open_ground });
         let spawned = group!(self, gid).and_then(|group| {
-            self.ephemeral
-                .spawn_group(perf, &self.persisted, idx, spctx, group, mission)
+            self.ephemeral.spawn_group(perf, &self.persisted, idx, spctx, group, mission)
         });
         if let Err(e) = spawned {
             self.ephemeral.launch_requests.remove(&gid);
@@ -1461,10 +1486,40 @@ impl Db {
     /// transports and airliners only fit a large open stand (`OPEN_BIG`).
     pub(crate) fn needs_big_spot(typ: &str) -> bool {
         const HEAVY: &[&str] = &[
-            "B-1B", "B-52H", "Tu-22M3", "Tu-95MS", "Tu-142", "Tu-160", "E-3A", "E-2C", "A-50", "KJ-2000",
-            "KC-135", "KC135MPRS", "KC130", "KC130J", "IL-78M", "IL-76MD", "C-130", "C-130J-30", "C-17A",
-            "An-26B", "An-30M", "Yak-40", "A_320", "A_330", "A_380", "B_727", "B_737", "B_747", "B_757",
-            "Boeing_C-17A", "Hercules", "P-3C", "S-3B", "S-3B Tanker",
+            "B-1B",
+            "B-52H",
+            "Tu-22M3",
+            "Tu-95MS",
+            "Tu-142",
+            "Tu-160",
+            "E-3A",
+            "E-2C",
+            "A-50",
+            "KJ-2000",
+            "KC-135",
+            "KC135MPRS",
+            "KC130",
+            "KC130J",
+            "IL-78M",
+            "IL-76MD",
+            "C-130",
+            "C-130J-30",
+            "C-17A",
+            "An-26B",
+            "An-30M",
+            "Yak-40",
+            "A_320",
+            "A_330",
+            "A_380",
+            "B_727",
+            "B_737",
+            "B_747",
+            "B_757",
+            "Boeing_C-17A",
+            "Hercules",
+            "P-3C",
+            "S-3B",
+            "S-3B Tanker",
         ];
         HEAVY.contains(&typ)
     }
@@ -1477,13 +1532,22 @@ impl Db {
         TOO_BIG.contains(&typ)
     }
 
-    pub(crate) fn launch_spot(&self, lua: MizLua, oid: &ObjectiveId, rotary: bool, heavy: bool) -> Option<Vector2> {
+    pub(crate) fn launch_spot(
+        &self,
+        lua: MizLua,
+        oid: &ObjectiveId,
+        rotary: bool,
+        heavy: bool,
+    ) -> Option<Vector2> {
         let obj = self.persisted.objectives.get(oid)?;
         if rotary {
             return Some(self.clear_helo_spot(obj.zone.pos()));
         }
         if self.ephemeral.ramp_blocked(oid) {
-            info!("[LAUNCH] {} had a flight stuck on its ramp, not launching fixed wing there", obj.name);
+            info!(
+                "[LAUNCH] {} had a flight stuck on its ramp, not launching fixed wing there",
+                obj.name
+            );
             return None;
         }
         match self.ephemeral.usable_parking(lua, &self.persisted, oid, false, heavy) {
@@ -1585,7 +1649,16 @@ impl Db {
         speed_mps: f64,
         tags: BitFlags<UnitTag>,
     ) -> Result<GroupId> {
-        self.queue_drive(spctx, idx, side, DeployKind::Objective { origin }, template, plan, speed_mps, tags)
+        self.queue_drive(
+            spctx,
+            idx,
+            side,
+            DeployKind::Objective { origin },
+            template,
+            plan,
+            speed_mps,
+            tags,
+        )
     }
 
     /// `queue_drive_from_objective` for a group of any origin: a commander's
@@ -1601,11 +1674,8 @@ impl Db {
         speed_mps: f64,
         tags: BitFlags<UnitTag>,
     ) -> Result<GroupId> {
-        let from = plan
-            .points
-            .first()
-            .map(|(p, _)| *p)
-            .ok_or_else(|| anyhow!("empty drive"))?;
+        let from =
+            plan.points.first().map(|(p, _)| *p).ok_or_else(|| anyhow!("empty drive"))?;
         let dir = plan
             .points
             .get(1)
@@ -1626,10 +1696,9 @@ impl Db {
             origin,
             tags,
         )?;
-        self.ephemeral.queued_drives.insert(
-            gid,
-            QueuedDrive { points: plan.points.clone(), speed_mps },
-        );
+        self.ephemeral
+            .queued_drives
+            .insert(gid, QueuedDrive { points: plan.points.clone(), speed_mps });
         self.ephemeral.push_spawn(gid);
         Ok(gid)
     }
@@ -1665,10 +1734,12 @@ impl Db {
         // First try direct name lookup, then try template_name lookup for activated carrier units
         // Carrier groups use Group.activate() which keeps the original DCS unit names (e.g., "BCARRIER-1")
         // but bflib stores units with names like "{group_name}-{uid}"
-        let uid_lookup = self.persisted.units_by_name.get(name.as_str()).copied()
-            .or_else(|| {
+        let uid_lookup =
+            self.persisted.units_by_name.get(name.as_str()).copied().or_else(|| {
                 // Try finding by template_name for activated carriers
-                self.persisted.units.into_iter()
+                self.persisted
+                    .units
+                    .into_iter()
                     .find(|(_, u)| u.template_name == name)
                     .map(|(uid, _)| *uid)
             });
@@ -1736,7 +1807,9 @@ impl Db {
                 // An empty seat DCS spawned with the group, or a player who
                 // left as the unit came in, read very differently: say which.
                 match &name {
-                    None => error!("slot {slot} born with no player in it (DCS gives no player name)"),
+                    None => error!(
+                        "slot {slot} born with no player in it (DCS gives no player name)"
+                    ),
                     Some(n) => error!(
                         "slot {slot} born with no player in it ({n:?} is not a connected player)"
                     ),
@@ -1803,9 +1876,15 @@ impl Db {
             // This handles cases where DCS cargo system renames the crate
             for tracked_name in self.ephemeral.c130_crates.keys() {
                 // Check if either name is a prefix of the other
-                if name.starts_with(tracked_name.as_str()) || tracked_name.starts_with(name.as_str()) {
-                    matched_crate_key = Some(std::string::String::from(tracked_name.as_str()));
-                    info!("[C130_CARGO] static_born: Found prefix match - static '{}' matches tracked '{}'", name, tracked_name);
+                if name.starts_with(tracked_name.as_str())
+                    || tracked_name.starts_with(name.as_str())
+                {
+                    matched_crate_key =
+                        Some(std::string::String::from(tracked_name.as_str()));
+                    info!(
+                        "[C130_CARGO] static_born: Found prefix match - static '{}' matches tracked '{}'",
+                        name, tracked_name
+                    );
                     break;
                 }
             }
@@ -1819,24 +1898,32 @@ impl Db {
 
                         // Extract base template name (everything before underscore or hyphen)
                         // E.g., "RCRATE_C130" -> "RCRATE", "BCRATE_C130" -> "BCRATE"
-                        let base_template = template.split('_').next().unwrap_or(template.as_str());
+                        let base_template =
+                            template.split('_').next().unwrap_or(template.as_str());
 
                         // Check if both names start with the base template
-                        if name.starts_with(base_template) && tracked_name.starts_with(base_template) {
+                        if name.starts_with(base_template)
+                            && tracked_name.starts_with(base_template)
+                        {
                             // Additional check: extract group ID from both names
                             // Names follow pattern: "RCRATE_C130-2289-8325" or "RCRATE-2289-8325"
                             // Extract the first number after hyphen
                             let name_parts: Vec<&str> = name.split('-').collect();
-                            let tracked_parts: Vec<&str> = tracked_name.split('-').collect();
+                            let tracked_parts: Vec<&str> =
+                                tracked_name.split('-').collect();
 
                             if name_parts.len() >= 2 && tracked_parts.len() >= 2 {
                                 let name_gid = name_parts[1];
                                 let tracked_gid = tracked_parts[1];
 
                                 if name_gid == tracked_gid {
-                                    matched_crate_key = Some(std::string::String::from(tracked_name.as_str()));
-                                    info!("[C130_CARGO] static_born: Found template match - static '{}' and tracked '{}' both use base template '{}' with gid {}",
-                                        name, tracked_name, base_template, name_gid);
+                                    matched_crate_key = Some(std::string::String::from(
+                                        tracked_name.as_str(),
+                                    ));
+                                    info!(
+                                        "[C130_CARGO] static_born: Found template match - static '{}' and tracked '{}' both use base template '{}' with gid {}",
+                                        name, tracked_name, base_template, name_gid
+                                    );
                                     break;
                                 }
                             }
@@ -1847,7 +1934,8 @@ impl Db {
         }
 
         if let Some(crate_key) = matched_crate_key {
-            let crate_data = self.ephemeral.c130_crates.get_mut(crate_key.as_str()).unwrap();
+            let crate_data =
+                self.ephemeral.c130_crates.get_mut(crate_key.as_str()).unwrap();
             let gid = crate_data.group_id;
 
             // For static objects, use the static's own object_id directly
@@ -1864,13 +1952,16 @@ impl Db {
                     // re-tracked even though it's physically still there.
                     // Compare the actual object_id instead so a drop always
                     // repoints the mapping to the live object.
-                    let already_current = self.ephemeral.object_id_by_gid.get(&gid) == Some(&static_oid);
+                    let already_current =
+                        self.ephemeral.object_id_by_gid.get(&gid) == Some(&static_oid);
                     if !already_current {
                         if let Some(old_oid) = self.ephemeral.object_id_by_gid.get(&gid) {
                             self.ephemeral.gid_by_object_id.remove(old_oid);
                         }
-                        info!("[C130_CARGO] static_born: Updating object_id mapping for crate '{}' (tracked as '{}') group {:?} -> {:?}",
-                            name, crate_key, gid, static_oid);
+                        info!(
+                            "[C130_CARGO] static_born: Updating object_id mapping for crate '{}' (tracked as '{}') group {:?} -> {:?}",
+                            name, crate_key, gid, static_oid
+                        );
                         self.ephemeral.object_id_by_gid.insert(gid, static_oid.clone());
                         self.ephemeral.gid_by_object_id.insert(static_oid, gid);
 
@@ -1878,7 +1969,10 @@ impl Db {
                         // The update_c130_crates function will detect when the crate is actually airborne
                         // based on in_air and speed checks
                     } else {
-                        info!("[C130_CARGO] static_born: Mapping already up to date for {:?}, skipping", gid);
+                        info!(
+                            "[C130_CARGO] static_born: Mapping already up to date for {:?}, skipping",
+                            gid
+                        );
                     }
                 } else {
                     info!("[C130_CARGO] static_born: Failed to get static object_id");
@@ -1916,7 +2010,8 @@ impl Db {
                                     c.state,
                                     C130CargoState::Spawned | C130CargoState::Loaded
                                 )
-                                && na::distance(&c.last_pos.into(), &c.spawn_pos.into()) > 50.0
+                                && na::distance(&c.last_pos.into(), &c.spawn_pos.into())
+                                    > 50.0
                         })
                         .map(|(name, _)| name.clone())
                         .collect();
@@ -2243,7 +2338,9 @@ impl Db {
             let spunit = unit_mut!(self, uid)?;
             if (spunit.position.p.0 - pos.p.0).magnitude_squared() > 1.0 {
                 // A flight's map pin would be redrawn on nearly every read.
-                if !spunit.tags.contains(UnitTag::Aircraft) && !spunit.tags.contains(UnitTag::Helicopter) {
+                if !spunit.tags.contains(UnitTag::Aircraft)
+                    && !spunit.tags.contains(UnitTag::Helicopter)
+                {
                     moved.push(spunit.group);
                 }
                 spunit.moved = Some(now);
@@ -2273,7 +2370,10 @@ impl Db {
             self.ephemeral.units_able_to_move.swap_remove(uid);
         }
         if !unknown.is_empty() {
-            log::debug!("update_unit_positions: {} unit(s) not in DCS dropped from tracking", unknown.len());
+            log::debug!(
+                "update_unit_positions: {} unit(s) not in DCS dropped from tracking",
+                unknown.len()
+            );
         }
         // `moved` carries one entry per unit that shifted, so an eight-truck
         // squad used to re-pin itself eight times in a single pass. Collapse it
@@ -2301,7 +2401,9 @@ impl Db {
         self.ephemeral.object_id_by_uid.iter().filter_map(|(uid, oid)| {
             let su = self.persisted.units.get(uid)?;
             // Fixed-wing or rotary-wing only.
-            if !su.tags.contains(UnitTag::Aircraft) && !su.tags.contains(UnitTag::Helicopter) {
+            if !su.tags.contains(UnitTag::Aircraft)
+                && !su.tags.contains(UnitTag::Helicopter)
+            {
                 return None;
             }
             // Exclude units that belong to a player slot (already tracked via instanced_players).
@@ -2352,7 +2454,8 @@ mod tests {
     fn road_drive_ends_off_road_at_the_destination() {
         let from = Vector2::new(0., 0.);
         let to = Vector2::new(20_000., 500.);
-        let road: Vec<Vector2> = (0..=200).map(|i| Vector2::new(i as f64 * 100., 0.)).collect();
+        let road: Vec<Vector2> =
+            (0..=200).map(|i| Vector2::new(i as f64 * 100., 0.)).collect();
         let plan = plan_road_drive(from, to, &road).expect("road serves both ends");
         assert!(plan.by_road);
         assert_eq!(plan.points.first(), Some(&(from, true)));
@@ -2365,8 +2468,16 @@ mod tests {
     #[test]
     fn a_road_that_misses_either_end_is_no_drive() {
         let road = [Vector2::new(0., 0.), Vector2::new(10_000., 0.)];
-        assert!(plan_road_drive(Vector2::new(0., 5_000.), Vector2::new(10_000., 0.), &road).is_none());
-        assert!(plan_road_drive(Vector2::new(0., 0.), Vector2::new(10_000., 9_000.), &road).is_none());
-        assert!(plan_road_drive(Vector2::new(0., 0.), Vector2::new(1., 1.), &[]).is_none());
+        assert!(
+            plan_road_drive(Vector2::new(0., 5_000.), Vector2::new(10_000., 0.), &road)
+                .is_none()
+        );
+        assert!(
+            plan_road_drive(Vector2::new(0., 0.), Vector2::new(10_000., 9_000.), &road)
+                .is_none()
+        );
+        assert!(
+            plan_road_drive(Vector2::new(0., 0.), Vector2::new(1., 1.), &[]).is_none()
+        );
     }
 }

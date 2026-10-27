@@ -84,9 +84,7 @@ impl FromLua for ShootingEnd {
 /// before `String::from_lua` is ever reached. An empty name is no more useful
 /// than a missing one, so it collapses to None too.
 fn opt_weapon_name(tbl: &mlua::Table) -> LuaResult<Option<String>> {
-    Ok(tbl
-        .raw_get::<Option<String>>("weapon_name")?
-        .filter(|s| !s.as_str().is_empty()))
+    Ok(tbl.raw_get::<Option<String>>("weapon_name")?.filter(|s| !s.as_str().is_empty()))
 }
 
 /// DCS sometimes hands an event an `initiator`/`target` that is a bare table
@@ -94,11 +92,7 @@ fn opt_weapon_name(tbl: &mlua::Table) -> LuaResult<Option<String>> {
 /// a unit that has since died. Those can't be turned into a usable `Object`
 /// (any method call would fail anyway), so degrade them to `None` instead of
 /// failing the whole event and spamming the log.
-fn opt_object(
-    tbl: &LuaTable,
-    key: &str,
-    lua: &Lua,
-) -> LuaResult<Option<Object>> {
+fn opt_object(tbl: &LuaTable, key: &str, lua: &Lua) -> LuaResult<Option<Object>> {
     match tbl.raw_get::<Value>(key)? {
         Value::Table(t) if t.metatable().is_some() => {
             Ok(Some(Object::from_lua(Value::Table(t), lua)?))
@@ -172,7 +166,10 @@ pub struct Refueling {
 impl FromLua for Refueling {
     fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("Refueling", None, value).map_err(lua_err)?;
-        Ok(Self { time: tbl.raw_get("time")?, initiator: opt_object(&tbl, "initiator", lua)? })
+        Ok(Self {
+            time: tbl.raw_get("time")?,
+            initiator: opt_object(&tbl, "initiator", lua)?,
+        })
     }
 }
 
@@ -254,7 +251,10 @@ pub struct UnitEvent {
 impl FromLua for UnitEvent {
     fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("UnitEvent", None, value).map_err(lua_err)?;
-        Ok(Self { time: tbl.raw_get("time")?, initiator: opt_object(&tbl, "initiator", lua)? })
+        Ok(Self {
+            time: tbl.raw_get("time")?,
+            initiator: opt_object(&tbl, "initiator", lua)?,
+        })
     }
 }
 
@@ -410,11 +410,7 @@ pub enum Event {
     Max,
 }
 
-fn translate(
-    lua: &Lua,
-    id: i64,
-    value: Value,
-) -> Result<Event> {
+fn translate(lua: &Lua, id: i64, value: Value) -> Result<Event> {
     Ok(match id {
         0 => Event::Invalid,
         1 => Event::Shot(Shot::from_lua(value, lua)?),
@@ -554,8 +550,11 @@ mod tests {
         // 54/55 are RUNWAY_TAKEOFF/RUNWAY_TOUCH on DCS 2.9.29; an older
         // table had these shifted by one
         let lua = lua();
-        match event(&lua, "{ id = 55, time = 12.5, initiator = obj(Unit, 7), subPlace = 3 }")
-            .unwrap()
+        match event(
+            &lua,
+            "{ id = 55, time = 12.5, initiator = obj(Unit, 7), subPlace = 3 }",
+        )
+        .unwrap()
         {
             Event::RunwayTouch(e) => {
                 assert_eq!(e.time, Time(12.5));
@@ -587,7 +586,9 @@ mod tests {
             e => panic!("expected Hit, got {e:?}"),
         }
         match event(&lua, r#"{ id = 28, time = 3, weapon_name = "AIM-120C" }"#).unwrap() {
-            Event::Kill(k) => assert_eq!(k.weapon_name.as_deref().map(|s| s.as_str()), Some("AIM-120C")),
+            Event::Kill(k) => {
+                assert_eq!(k.weapon_name.as_deref().map(|s| s.as_str()), Some("AIM-120C"))
+            }
             e => panic!("expected Kill, got {e:?}"),
         };
     }

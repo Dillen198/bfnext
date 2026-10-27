@@ -28,24 +28,31 @@ details.
 
 use super::{afford, from_ll, pay, to_ll};
 use crate::{
+    Context,
     db::{
         actions::{ActionArgs, ActionCmd, WithFromTo, WithJtac, WithObj, WithPos},
         group::DeployKind,
         markup::objective_visible_to,
     },
     spawnctx::SpawnCtx,
-    Context,
 };
 use bfprotocols::{
-    cfg::{Action, ActionKind, Deployable, DeployableKind, GroundWarCfg, PurchasedFormationCfg, UnitTag},
-    command::{Asset, AssetKind, AssetUnit, FormationPurchase, LatLon, OrderOption, OrderTarget, Verb},
+    cfg::{
+        Action, ActionKind, Deployable, DeployableKind, GroundWarCfg,
+        PurchasedFormationCfg, UnitTag,
+    },
+    command::{
+        Asset, AssetKind, AssetUnit, FormationPurchase, LatLon, OrderOption, OrderTarget,
+        Verb,
+    },
     db::{group::GroupId, objective::ObjectiveId},
     hq::OpKind,
     perf::PerfInner,
 };
 use chrono::{DateTime, Duration, Utc};
-use compact_str::{format_compact, CompactString};
+use compact_str::{CompactString, format_compact};
 use dcso3::{
+    LuaEnv, LuaVec2, MizLua, Vector2,
     coalition::{Coalition, Side},
     controller::{AiOption, GroundRoe, MissionPoint, NavalOption, PointType, Task},
     coord::Coord,
@@ -54,7 +61,6 @@ use dcso3::{
     group::{Group, GroupCategory},
     land::{Land, SurfaceType},
     net::Ucid,
-    LuaEnv, LuaVec2, MizLua, Vector2,
 };
 use enumflags2::BitFlags;
 use log::{info, warn};
@@ -84,29 +90,63 @@ fn err(e: impl std::fmt::Display) -> CompactString {
 fn meta(kind: &ActionKind) -> Option<(&'static str, OrderTarget, &'static str)> {
     use OrderTarget::*;
     Some(match kind {
-        ActionKind::Tanker(_) => ("Air", Point, "a tanker flies out and holds over the point"),
-        ActionKind::Awacs(_) => ("Air", Point, "an AWACS flies out and orbits over the point"),
-        ActionKind::Fighters(_) => ("Air", Point, "fighters take off and patrol over the point"),
-        ActionKind::Attackers(_) => ("Air", Point, "an attack flight takes off and works the area"),
-        ActionKind::Sead(_) => ("Air", Point, "a SEAD flight takes off and hunts air defences there"),
-        ActionKind::Bomber(_) => ("Air", Point, "heavy bombers on the JTAC target nearest the point"),
-        ActionKind::Drone(_) => ("Intel", Point, "a JTAC drone flies out and lases targets there"),
+        ActionKind::Tanker(_) => {
+            ("Air", Point, "a tanker flies out and holds over the point")
+        }
+        ActionKind::Awacs(_) => {
+            ("Air", Point, "an AWACS flies out and orbits over the point")
+        }
+        ActionKind::Fighters(_) => {
+            ("Air", Point, "fighters take off and patrol over the point")
+        }
+        ActionKind::Attackers(_) => {
+            ("Air", Point, "an attack flight takes off and works the area")
+        }
+        ActionKind::Sead(_) => {
+            ("Air", Point, "a SEAD flight takes off and hunts air defences there")
+        }
+        ActionKind::Bomber(_) => {
+            ("Air", Point, "heavy bombers on the JTAC target nearest the point")
+        }
+        ActionKind::Drone(_) => {
+            ("Intel", Point, "a JTAC drone flies out and lases targets there")
+        }
         ActionKind::Recon(_) => ("Intel", Point, "a recon flight photographs the area"),
-        ActionKind::CruiseMissileSpawn(_) => ("Fires", Point, "a bomber launches cruise missiles at the point"),
+        ActionKind::CruiseMissileSpawn(_) => {
+            ("Fires", Point, "a bomber launches cruise missiles at the point")
+        }
         ActionKind::Nuke(_) => ("Fires", Point, "a nuclear strike on the point"),
-        ActionKind::Artillery(_) => ("Fires", Point, "every battery of ours in range fires on the point"),
-        ActionKind::Paratrooper(_) => ("Ground", Land, "a transport drops paratroopers at the point"),
+        ActionKind::Artillery(_) => {
+            ("Fires", Point, "every battery of ours in range fires on the point")
+        }
+        ActionKind::Paratrooper(_) => {
+            ("Ground", Land, "a transport drops paratroopers at the point")
+        }
         ActionKind::Deployable(_) => ("Ground", Land, "units delivered to the point"),
-        ActionKind::Reinforce(_) => ("Ground", OwnBase, "a transporter convoy rebuilds the base's lost units"),
-        ActionKind::LogisticsRepair(_) => ("Logistics", OwnBase, "a transport flies repair supplies to the base"),
-        ActionKind::LogisticsTransfer(_) => ("Logistics", Transfer, "a transport flies supplies from one base to another"),
-        ActionKind::CarrierRepair => ("Naval", OwnBase, "repairs a damaged carrier group"),
-        ActionKind::CarrierRespawn => ("Naval", OwnBase, "a sunk carrier group sails again from its naval base"),
-        ActionKind::NavalCruiseMissileStrike(_) => ("Naval", EnemyBase, "our ships launch cruise missiles at the base"),
+        ActionKind::Reinforce(_) => {
+            ("Ground", OwnBase, "a transporter convoy rebuilds the base's lost units")
+        }
+        ActionKind::LogisticsRepair(_) => {
+            ("Logistics", OwnBase, "a transport flies repair supplies to the base")
+        }
+        ActionKind::LogisticsTransfer(_) => {
+            ("Logistics", Transfer, "a transport flies supplies from one base to another")
+        }
+        ActionKind::CarrierRepair => {
+            ("Naval", OwnBase, "repairs a damaged carrier group")
+        }
+        ActionKind::CarrierRespawn => {
+            ("Naval", OwnBase, "a sunk carrier group sails again from its naval base")
+        }
+        ActionKind::NavalCruiseMissileStrike(_) => {
+            ("Naval", EnemyBase, "our ships launch cruise missiles at the base")
+        }
         ActionKind::Strike(s) if s.mission.targets_objective() => {
             ("Air", EnemyBase, "a strike flight hits the base with its own weapons")
         }
-        ActionKind::Strike(_) => ("Air", Point, "a strike flight attacks what is at the point"),
+        ActionKind::Strike(_) => {
+            ("Air", Point, "a strike flight attacks what is at the point")
+        }
         _ => return None,
     })
 }
@@ -163,7 +203,9 @@ pub(super) fn catalog(ctx: &Context, side: Side) -> Vec<OrderOption> {
             });
         }
     }
-    if let (Some(gw), Some(deps)) = (purchase_cfg(ctx), ctx.db.ephemeral.cfg.deployables.get(&side)) {
+    if let (Some(gw), Some(deps)) =
+        (purchase_cfg(ctx), ctx.db.ephemeral.cfg.deployables.get(&side))
+    {
         let p = &gw.purchase;
         let in_field = ctx.db.formations().filter(|f| f.side == side).count();
         for d in deps.iter().filter(|d| purchasable(p, d)) {
@@ -171,7 +213,10 @@ pub(super) fn catalog(ctx: &Context, side: Side) -> Vec<OrderOption> {
             let cost = copy_cost(ctx, p, d);
             let mut why = why_not_cost(ctx, side, cost * p.min_count.max(1) as i64);
             if in_field >= gw.max_formations_per_side as usize && why.is_empty() {
-                why = format!("{in_field} of {} formations already in the field", gw.max_formations_per_side);
+                why = format!(
+                    "{in_field} of {} formations already in the field",
+                    gw.max_formations_per_side
+                );
             }
             out.push(OrderOption {
                 key: format!("formation:{name}"),
@@ -213,7 +258,8 @@ pub(super) fn catalog(ctx: &Context, side: Side) -> Vec<OrderOption> {
                 category: "Fires".into(),
                 target: OrderTarget::Point,
                 cost,
-                detail: "our deployed missile launchers in range fire on the point".into(),
+                detail: "our deployed missile launchers in range fire on the point"
+                    .into(),
                 why_not: why,
             });
         }
@@ -283,7 +329,11 @@ pub(super) fn formation_purchase(ctx: &Context, side: Side) -> Option<FormationP
 
 /// Our nearest base within `deploy_range_m` of `pos` that ground forces can
 /// set out from: not under threat, not at sea, not a special SAM site.
-fn deploy_base(ctx: &Context, side: Side, pos: Vector2) -> Result<(ObjectiveId, Vector2), CompactString> {
+fn deploy_base(
+    ctx: &Context,
+    side: Side,
+    pos: Vector2,
+) -> Result<(ObjectiveId, Vector2), CompactString> {
     let reach = ctx.db.ephemeral.cfg.command.deploy_range_m;
     ctx.db
         .objectives()
@@ -298,7 +348,12 @@ fn deploy_base(ctx: &Context, side: Side, pos: Vector2) -> Result<(ObjectiveId, 
         .filter(|(_, _, d)| *d <= reach)
         .min_by(|a, b| a.2.total_cmp(&b.2))
         .map(|(id, p, _)| (id, p))
-        .ok_or_else(|| format_compact!("none of our bases is within {:.0} km of that point", reach / 1000.))
+        .ok_or_else(|| {
+            format_compact!(
+                "none of our bases is within {:.0} km of that point",
+                reach / 1000.
+            )
+        })
 }
 
 fn deployed_count(ctx: &Context, side: Side, path: &[dcso3::String]) -> usize {
@@ -319,9 +374,9 @@ fn missile_groups(ctx: &Context, side: Side) -> SmallVec<[(GroupId, Vector2); 4]
 }
 
 fn has_harbour(ctx: &Context, side: Side) -> bool {
-    ctx.db
-        .objectives()
-        .any(|(_, o)| o.owner() == side && (o.kind().is_naval_base() || o.kind().is_carrier_group()))
+    ctx.db.objectives().any(|(_, o)| {
+        o.owner() == side && (o.kind().is_naval_base() || o.kind().is_carrier_group())
+    })
 }
 
 fn wet(lua: MizLua, p: Vector2) -> Result<bool, CompactString> {
@@ -340,16 +395,20 @@ fn in_enemy_base(ctx: &Context, side: Side, p: Vector2) -> Option<String> {
 }
 
 fn near_airfield(ctx: &Context, side: Side, p: Vector2) -> bool {
-    ctx.db
-        .objectives()
-        .any(|(_, o)| o.owner() == side && o.is_airbase() && dist(o.pos(), p) <= AIR_REACH_M)
+    ctx.db.objectives().any(|(_, o)| {
+        o.owner() == side && o.is_airbase() && dist(o.pos(), p) <= AIR_REACH_M
+    })
 }
 
 fn objective_name(ctx: &Context, oid: &ObjectiveId) -> String {
     ctx.db.persisted.objectives.get(oid).map(|o| o.name.to_string()).unwrap_or_default()
 }
 
-fn own_base(ctx: &Context, side: Side, id: Option<i64>) -> Result<ObjectiveId, CompactString> {
+fn own_base(
+    ctx: &Context,
+    side: Side,
+    id: Option<i64>,
+) -> Result<ObjectiveId, CompactString> {
     let id = id.ok_or_else(|| CompactString::from("pick one of our bases"))?;
     let oid = ObjectiveId::from(id);
     match ctx.db.persisted.objectives.get(&oid) {
@@ -359,12 +418,22 @@ fn own_base(ctx: &Context, side: Side, id: Option<i64>) -> Result<ObjectiveId, C
     }
 }
 
-fn enemy_base(ctx: &Context, side: Side, id: Option<i64>) -> Result<ObjectiveId, CompactString> {
+fn enemy_base(
+    ctx: &Context,
+    side: Side,
+    id: Option<i64>,
+) -> Result<ObjectiveId, CompactString> {
     let id = id.ok_or_else(|| CompactString::from("pick an enemy base"))?;
     let oid = ObjectiveId::from(id);
     match ctx.db.persisted.objectives.get(&oid) {
         // Fog of war: a base the enemy keeps off our map can't be aimed at.
-        Some(o) if o.owner() != side && o.owner() != Side::Neutral && objective_visible_to(o, side) => Ok(oid),
+        Some(o)
+            if o.owner() != side
+                && o.owner() != Side::Neutral
+                && objective_visible_to(o, side) =>
+        {
+            Ok(oid)
+        }
         Some(o) if o.owner() == side => Err(format_compact!("{} is ours", o.name)),
         _ => Err("no enemy base we know of there".into()),
     }
@@ -386,7 +455,9 @@ fn start(
 ) -> Result<(), CompactString> {
     let spctx = SpawnCtx::new(lua).map_err(err)?;
     let cmd = ActionCmd { name: name.into(), action, args };
-    ctx.db.start_treasury_action(lua, perf, &spctx, &ctx.idx, &ctx.jtac, side, owner, cmd).map_err(err)
+    ctx.db
+        .start_treasury_action(lua, perf, &spctx, &ctx.idx, &ctx.jtac, side, owner, cmd)
+        .map_err(err)
 }
 
 /// Carry out a catalogue order. Returns what to announce; the caller has
@@ -408,7 +479,8 @@ pub(super) fn order(
         Some(ll) => Some(from_ll(lua, ll)?),
         None => None,
     };
-    let need_point = || point.ok_or_else(|| CompactString::from("pick a point on the map"));
+    let need_point =
+        || point.ok_or_else(|| CompactString::from("pick a point on the map"));
     if let Some(name) = key.strip_prefix("action:") {
         let action = ctx
             .db
@@ -454,19 +526,45 @@ pub(super) fn order(
                     }
                 }
                 let args = match &action.kind {
-                    ActionKind::Tanker(c) => ActionArgs::Tanker(WithPos { cfg: c.clone(), pos }),
-                    ActionKind::Awacs(c) => ActionArgs::Awacs(WithPos { cfg: c.clone(), pos }),
-                    ActionKind::Fighters(c) => ActionArgs::Fighters(WithPos { cfg: c.clone(), pos }),
-                    ActionKind::Attackers(c) => ActionArgs::Attackers(WithPos { cfg: c.clone(), pos }),
-                    ActionKind::Sead(c) => ActionArgs::Sead(WithPos { cfg: c.clone(), pos }),
-                    ActionKind::Drone(c) => ActionArgs::Drone(WithPos { cfg: c.clone(), pos }),
-                    ActionKind::Recon(c) => ActionArgs::Recon(WithPos { cfg: c.clone(), pos }),
-                    ActionKind::CruiseMissileSpawn(c) => ActionArgs::CruiseMissileSpawn(WithPos { cfg: c.clone(), pos }),
-                    ActionKind::Nuke(c) => ActionArgs::Nuke(WithPos { cfg: c.clone(), pos }),
-                    ActionKind::Artillery(c) => ActionArgs::Artillery(WithPos { cfg: c.clone(), pos }),
-                    ActionKind::Paratrooper(c) => ActionArgs::Paratrooper(WithPos { cfg: c.clone(), pos }),
-                    ActionKind::Deployable(c) => ActionArgs::Deployable(WithPos { cfg: c.clone(), pos }),
-                    ActionKind::Strike(c) => ActionArgs::Strike(WithPos { cfg: c.clone(), pos }),
+                    ActionKind::Tanker(c) => {
+                        ActionArgs::Tanker(WithPos { cfg: c.clone(), pos })
+                    }
+                    ActionKind::Awacs(c) => {
+                        ActionArgs::Awacs(WithPos { cfg: c.clone(), pos })
+                    }
+                    ActionKind::Fighters(c) => {
+                        ActionArgs::Fighters(WithPos { cfg: c.clone(), pos })
+                    }
+                    ActionKind::Attackers(c) => {
+                        ActionArgs::Attackers(WithPos { cfg: c.clone(), pos })
+                    }
+                    ActionKind::Sead(c) => {
+                        ActionArgs::Sead(WithPos { cfg: c.clone(), pos })
+                    }
+                    ActionKind::Drone(c) => {
+                        ActionArgs::Drone(WithPos { cfg: c.clone(), pos })
+                    }
+                    ActionKind::Recon(c) => {
+                        ActionArgs::Recon(WithPos { cfg: c.clone(), pos })
+                    }
+                    ActionKind::CruiseMissileSpawn(c) => {
+                        ActionArgs::CruiseMissileSpawn(WithPos { cfg: c.clone(), pos })
+                    }
+                    ActionKind::Nuke(c) => {
+                        ActionArgs::Nuke(WithPos { cfg: c.clone(), pos })
+                    }
+                    ActionKind::Artillery(c) => {
+                        ActionArgs::Artillery(WithPos { cfg: c.clone(), pos })
+                    }
+                    ActionKind::Paratrooper(c) => {
+                        ActionArgs::Paratrooper(WithPos { cfg: c.clone(), pos })
+                    }
+                    ActionKind::Deployable(c) => {
+                        ActionArgs::Deployable(WithPos { cfg: c.clone(), pos })
+                    }
+                    ActionKind::Strike(c) => {
+                        ActionArgs::Strike(WithPos { cfg: c.clone(), pos })
+                    }
                     ActionKind::Bomber(c) => {
                         let jtac = ctx
                             .jtac
@@ -491,17 +589,29 @@ pub(super) fn order(
             (kind, OrderTarget::OwnBase) => {
                 let oid = own_base(ctx, side, objective)?;
                 let args = match kind {
-                    ActionKind::Reinforce(c) => ActionArgs::Reinforce(WithObj { cfg: c.clone(), oid }),
-                    ActionKind::LogisticsRepair(c) => ActionArgs::LogisticsRepair(WithObj { cfg: c.clone(), oid }),
-                    ActionKind::CarrierRepair => ActionArgs::CarrierRepair(WithObj { cfg: (), oid }),
-                    ActionKind::CarrierRespawn => ActionArgs::CarrierRespawn(WithObj { cfg: (), oid }),
+                    ActionKind::Reinforce(c) => {
+                        ActionArgs::Reinforce(WithObj { cfg: c.clone(), oid })
+                    }
+                    ActionKind::LogisticsRepair(c) => {
+                        ActionArgs::LogisticsRepair(WithObj { cfg: c.clone(), oid })
+                    }
+                    ActionKind::CarrierRepair => {
+                        ActionArgs::CarrierRepair(WithObj { cfg: (), oid })
+                    }
+                    ActionKind::CarrierRespawn => {
+                        ActionArgs::CarrierRespawn(WithObj { cfg: (), oid })
+                    }
                     _ => return Err("that can't be aimed at a base".into()),
                 };
                 (args, format!("at {}", objective_name(ctx, &oid)))
             }
             (ActionKind::Strike(c), OrderTarget::EnemyBase) => {
                 let oid = enemy_base(ctx, side, objective)?;
-                let pos = ctx.db.objective(&oid).map(|o| o.pos()).map_err(|e| format_compact!("{e}"))?;
+                let pos = ctx
+                    .db
+                    .objective(&oid)
+                    .map(|o| o.pos())
+                    .map_err(|e| format_compact!("{e}"))?;
                 (
                     ActionArgs::Strike(WithPos { cfg: c.clone(), pos }),
                     format!("on {}", objective_name(ctx, &oid)),
@@ -521,8 +631,16 @@ pub(super) fn order(
                     return Err("pick two different bases".into());
                 }
                 (
-                    ActionArgs::LogisticsTransfer(WithFromTo { cfg: c.clone(), from, to }),
-                    format!("from {} to {}", objective_name(ctx, &from), objective_name(ctx, &to)),
+                    ActionArgs::LogisticsTransfer(WithFromTo {
+                        cfg: c.clone(),
+                        from,
+                        to,
+                    }),
+                    format!(
+                        "from {} to {}",
+                        objective_name(ctx, &from),
+                        objective_name(ctx, &to)
+                    ),
                 )
             }
             _ => return Err("that order needs a different target".into()),
@@ -537,7 +655,8 @@ pub(super) fn order(
     match key {
         "op:ambush" => {
             let pos = need_point()?;
-            let cost = crate::hq::cost_of(ctx, OpKind::Ambush).ok_or("this server has no theatre HQ to pay for that")?;
+            let cost = crate::hq::cost_of(ctx, OpKind::Ambush)
+                .ok_or("this server has no theatre HQ to pay for that")?;
             afford(ctx, side, cost)?;
             let ecfg = ctx
                 .db
@@ -548,15 +667,27 @@ pub(super) fn order(
                 .ok_or_else(|| CompactString::from("campaign events are off"))?;
             let cands = ctx.event_scheduler.build_candidates(&ctx.db);
             let (mut msgs, mut effects) = (vec![], vec![]);
-            let ok = ctx
-                .event_scheduler
-                .spawn_convoy_ambush(&ctx.db, &ecfg, now, side, &cands, &mut msgs, &mut effects, Some(pos));
+            let ok = ctx.event_scheduler.spawn_convoy_ambush(
+                &ctx.db,
+                &ecfg,
+                now,
+                side,
+                &cands,
+                &mut msgs,
+                &mut effects,
+                Some(pos),
+            );
             ctx.event_scheduler.pending_effects.extend(effects);
             if !ok {
-                return Err("no enemy convoy we can get ahead of within 20 km of that point".into());
+                return Err(
+                    "no enemy convoy we can get ahead of within 20 km of that point"
+                        .into(),
+                );
             }
             pay(ctx, side, cost);
-            Ok(format_compact!("ambush force on its way to the convoy ({cost} from the treasury)"))
+            Ok(format_compact!(
+                "ambush force on its way to the convoy ({cost} from the treasury)"
+            ))
         }
         "op:missile" => {
             let pos = need_point()?;
@@ -577,7 +708,10 @@ pub(super) fn order(
                 .map(|(g, _)| g)
                 .collect();
             if shooters.is_empty() {
-                return Err(format_compact!("no launcher of ours within {:.0} km of the point", range / 1000.));
+                return Err(format_compact!(
+                    "no launcher of ours within {:.0} km of the point",
+                    range / 1000.
+                ));
             }
             let n = shooters.len();
             let mut msgs = vec![];
@@ -654,11 +788,24 @@ fn deploy(
         jtac: None,
     };
     ctx.db
-        .queue_drive(&spctx, &ctx.idx, side, origin, &template, &plan, DEPLOY_MPS, BitFlags::empty())
+        .queue_drive(
+            &spctx,
+            &ctx.idx,
+            side,
+            origin,
+            &template,
+            &plan,
+            DEPLOY_MPS,
+            BitFlags::empty(),
+        )
         .map_err(err)?;
     pay(ctx, side, cost);
     let from_name = objective_name(ctx, &from);
-    info!("command: {side:?} deploying {name} from {from_name}, {:.1} km by {}", plan.route_m / 1000., if plan.by_road { "road" } else { "cross country" });
+    info!(
+        "command: {side:?} deploying {name} from {from_name}, {:.1} km by {}",
+        plan.route_m / 1000.,
+        if plan.by_road { "road" } else { "cross country" }
+    );
     Ok(format_compact!(
         "{} leaving {from_name}, {:.0} km {} ({cost} from the treasury)",
         spec.path.last().map(|s| s.as_str()).unwrap_or(name),
@@ -682,9 +829,12 @@ pub(super) fn buy_formation(
     via: &[LatLon],
     now: DateTime<Utc>,
 ) -> Result<CompactString, CompactString> {
-    let gw = purchase_cfg(ctx).ok_or_else(|| CompactString::from("this server doesn't sell formations"))?;
+    let gw = purchase_cfg(ctx)
+        .ok_or_else(|| CompactString::from("this server doesn't sell formations"))?;
     let p = gw.purchase.clone();
-    let name = key.strip_prefix("formation:").ok_or_else(|| format_compact!("no such formation: {key}"))?;
+    let name = key
+        .strip_prefix("formation:")
+        .ok_or_else(|| format_compact!("no such formation: {key}"))?;
     let spec = ctx
         .db
         .ephemeral
@@ -713,7 +863,20 @@ pub(super) fn buy_formation(
     let (from, _) = deploy_base(ctx, side, first)?;
     let (_, what) = ctx
         .db
-        .buy_formation(&mut ctx.groundwar.rt, lua, &ctx.idx, side, from, &spec, template, count, to, &wps, ucid, now)
+        .buy_formation(
+            &mut ctx.groundwar.rt,
+            lua,
+            &ctx.idx,
+            side,
+            from,
+            &spec,
+            template,
+            count,
+            to,
+            &wps,
+            ucid,
+            now,
+        )
         .map_err(err)?;
     pay(ctx, side, cost);
     if let Some(u) = ucid {
@@ -764,15 +927,32 @@ fn sea_point(p: Vector2, speed: f64) -> MissionPoint {
     }
 }
 
-fn sail(lua: MizLua, name: &str, from: Vector2, to: Vector2, speed: f64) -> anyhow::Result<()> {
+fn sail(
+    lua: MizLua,
+    name: &str,
+    from: Vector2,
+    to: Vector2,
+    speed: f64,
+) -> anyhow::Result<()> {
     let group = Group::get_by_name(lua, name)?;
     let con = group.get_controller()?;
     con.set_option(AiOption::Naval(NavalOption::Roe(GroundRoe::WeaponFree)))?;
-    con.set_task(Task::Mission { airborne: Some(false), route: vec![sea_point(from, speed), sea_point(to, speed)] })?;
+    con.set_task(Task::Mission {
+        airborne: Some(false),
+        route: vec![sea_point(from, speed), sea_point(to, speed)],
+    })?;
     Ok(())
 }
 
-fn spawn_hunter(lua: MizLua, side: Side, name: &str, types: &[String], at: Vector2, to: Vector2, speed: f64) -> anyhow::Result<()> {
+fn spawn_hunter(
+    lua: MizLua,
+    side: Side,
+    name: &str,
+    types: &[String],
+    at: Vector2,
+    to: Vector2,
+    speed: f64,
+) -> anyhow::Result<()> {
     let l = lua.inner();
     let pts = l.create_table()?;
     pts.raw_set(1, sea_point(at, speed))?;
@@ -808,7 +988,13 @@ fn spawn_hunter(lua: MizLua, side: Side, name: &str, types: &[String], at: Vecto
     Ok(())
 }
 
-fn hunt(lua: MizLua, ctx: &mut Context, side: Side, to: Vector2, now: DateTime<Utc>) -> Result<CompactString, CompactString> {
+fn hunt(
+    lua: MizLua,
+    ctx: &mut Context,
+    side: Side,
+    to: Vector2,
+    now: DateTime<Utc>,
+) -> Result<CompactString, CompactString> {
     let h = ctx.db.ephemeral.cfg.command.hunters.clone();
     let types = match side {
         Side::Red => h.red.clone(),
@@ -831,13 +1017,18 @@ fn hunt(lua: MizLua, ctx: &mut Context, side: Side, to: Vector2, now: DateTime<U
     let mut homes: Vec<(String, Vector2, f64)> = ctx
         .db
         .objectives()
-        .filter(|(_, o)| o.owner() == side && (o.kind().is_naval_base() || o.kind().is_carrier_group()))
+        .filter(|(_, o)| {
+            o.owner() == side && (o.kind().is_naval_base() || o.kind().is_carrier_group())
+        })
         .map(|(_, o)| (o.name.to_string(), o.pos(), dist(o.pos(), to)))
         .filter(|(_, _, d)| *d <= h.range_m)
         .collect();
     homes.sort_by(|a, b| a.2.total_cmp(&b.2));
     let Some((home_name, home, _)) = homes.into_iter().next() else {
-        return Err(format_compact!("no naval base or carrier group of ours within {:.0} km", h.range_m / 1000.));
+        return Err(format_compact!(
+            "no naval base or carrier group of ours within {:.0} km",
+            h.range_m / 1000.
+        ));
     };
     let start = crate::modern_war::water_near(&land, home, 15_000.)
         .ok_or_else(|| format_compact!("no open water near {home_name} to sail from"))?;
@@ -846,7 +1037,11 @@ fn hunt(lua: MizLua, ctx: &mut Context, side: Side, to: Vector2, now: DateTime<U
     let name = format!("HUNTER {side:?} {id}");
     let speed = h.speed_kts.max(5.) * KTS;
     spawn_hunter(lua, side, &name, &types, start, to, speed).map_err(err)?;
-    let label = if side == Side::Red { format!("Submarine group {id}") } else { format!("Surface action group {id}") };
+    let label = if side == Side::Red {
+        format!("Submarine group {id}")
+    } else {
+        format!("Surface action group {id}")
+    };
     ctx.hunters.list.push(Hunter {
         id,
         side,
@@ -884,8 +1079,20 @@ pub(crate) fn tick_hunters(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
     for (i, h) in ctx.hunters.list.iter_mut().enumerate() {
         let Some(pos) = lead_pos(lua, &h.name) else {
             info!("command: {:?} {} lost", h.side, h.label);
-            ctx.groundwar.rt.event(h.side, "destroyed", format_compact!("{} has been lost", h.label), None, None, now);
-            ctx.db.ephemeral.msgs().panel_to_side(15, false, h.side, format_compact!("COMMAND: {} has been lost.", h.label));
+            ctx.groundwar.rt.event(
+                h.side,
+                "destroyed",
+                format_compact!("{} has been lost", h.label),
+                None,
+                None,
+                now,
+            );
+            ctx.db.ephemeral.msgs().panel_to_side(
+                15,
+                false,
+                h.side,
+                format_compact!("COMMAND: {} has been lost.", h.label),
+            );
             gone.push(i);
             continue;
         };
@@ -908,14 +1115,21 @@ pub(crate) fn tick_hunters(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
 }
 
 /// Send a hunter group somewhere else (the command map's Sail on one).
-pub(super) fn retask_hunter(lua: MizLua, ctx: &mut Context, side: Side, id: u32, to: Vector2) -> Result<CompactString, CompactString> {
+pub(super) fn retask_hunter(
+    lua: MizLua,
+    ctx: &mut Context,
+    side: Side,
+    id: u32,
+    to: Vector2,
+) -> Result<CompactString, CompactString> {
     let h = ctx
         .hunters
         .list
         .iter_mut()
         .find(|h| h.id == id && h.side == side)
         .ok_or_else(|| CompactString::from("no such hunter group"))?;
-    let pos = lead_pos(lua, &h.name).ok_or_else(|| CompactString::from("that group has been lost"))?;
+    let pos = lead_pos(lua, &h.name)
+        .ok_or_else(|| CompactString::from("that group has been lost"))?;
     sail(lua, &h.name, pos, to, h.speed).map_err(err)?;
     h.target = to;
     h.going_home = false;
@@ -924,7 +1138,12 @@ pub(super) fn retask_hunter(lua: MizLua, ctx: &mut Context, side: Side, id: u32,
 
 /// Hunter groups as command-map assets. Ids are negative: they aren't
 /// campaign groups.
-pub(super) fn hunter_assets(lua: MizLua, ctx: &Context, side: Side, coord: Option<&Coord>) -> Vec<Asset> {
+pub(super) fn hunter_assets(
+    lua: MizLua,
+    ctx: &Context,
+    side: Side,
+    coord: Option<&Coord>,
+) -> Vec<Asset> {
     ctx.hunters
         .list
         .iter()
@@ -937,11 +1156,20 @@ pub(super) fn hunter_assets(lua: MizLua, ctx: &Context, side: Side, coord: Optio
                 let Ok(p) = u.get_point() else { continue };
                 let pos = Vector2::new(p.x, p.z);
                 let typ = u.get_type_name().map(|t| t.to_string()).unwrap_or_default();
-                let v = u.get_velocity().map(|v| Vector2::new(v.0.x, v.0.z)).unwrap_or_default();
+                let v = u
+                    .get_velocity()
+                    .map(|v| Vector2::new(v.0.x, v.0.z))
+                    .unwrap_or_default();
                 let heading = (v.y.atan2(v.x).to_degrees() + 360.) % 360.;
                 let kts = v.norm() / KTS;
                 lead.get_or_insert((pos, typ.clone(), heading, kts));
-                units.push(AssetUnit { typ, pos: to_ll(coord, pos, 0.), heading, alt_m: 0., speed_kts: kts });
+                units.push(AssetUnit {
+                    typ,
+                    pos: to_ll(coord, pos, 0.),
+                    heading,
+                    alt_m: 0.,
+                    speed_kts: kts,
+                });
             }
             let (pos, typ, heading, kts) = lead?;
             let n = units.len() as u32;
@@ -958,8 +1186,16 @@ pub(super) fn hunter_assets(lua: MizLua, ctx: &Context, side: Side, coord: Optio
                 alive: n,
                 total: n,
                 live: true,
-                task: Some(if h.going_home { "returning to port".into() } else { "hunting enemy ships".into() }),
-                dest: Some(to_ll(coord, if h.going_home { h.home } else { h.target }, 0.)),
+                task: Some(if h.going_home {
+                    "returning to port".into()
+                } else {
+                    "hunting enemy ships".into()
+                }),
+                dest: Some(to_ll(
+                    coord,
+                    if h.going_home { h.home } else { h.target },
+                    0.,
+                )),
                 base: None,
                 range_m: None,
                 orders: vec![Verb::Sail],

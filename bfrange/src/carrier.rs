@@ -27,13 +27,13 @@ use crate::{
     util::{self, Frame, MissionClock, V3},
 };
 use bfprotocols::range::{
+    EngineGrade, GradeSource, GrooveSample, LiveCarrier, PassOutcome, PatternSummary,
+    PilotRef, RangeResult, RefuelMethod, TankerState, Track, TrapResult,
     cfg::{AoaBand, CarrierCfg, DeckGeometry, RangeCfg},
     grading,
     lso::{self, Magnitude},
-    EngineGrade, GradeSource, GrooveSample, LiveCarrier, PassOutcome, PatternSummary, PilotRef,
-    RangeResult, RefuelMethod, TankerState, Track, TrapResult,
 };
-use dcso3::{unit::Unit, MizLua};
+use dcso3::{MizLua, unit::Unit};
 use fxhash::FxHashMap;
 use log::{info, warn};
 use serde_json::json;
@@ -118,7 +118,9 @@ impl Carrier {
         let fb = (brc + self.deck.angle_deg).rem_euclid(360.);
         let ua = util::dir(fb);
         let ra = util::dir(fb + 90.);
-        let mut stern = f.p + util::dir(brc) * self.deck.stern_m + util::dir(brc + 90.) * self.deck.stern_offset_m;
+        let mut stern = f.p
+            + util::dir(brc) * self.deck.stern_m
+            + util::dir(brc + 90.) * self.deck.stern_offset_m;
         stern.y = f.p.y + self.deck.deck_height_m;
         let wire = if self.deck.wires_m[2] > 0. { self.deck.wires_m[2] } else { 60. };
         let l = stern + ua * wire;
@@ -138,7 +140,8 @@ fn estimate_wire(wires_m: &[f64; 4], stop_fwd_of_stern: f64, typ: &str) -> Optio
     }
     // an arrested aircraft rolls out well past its wire: MOOSE's
     // correction is 100 m for the Hornet and Tomcat, 56 m otherwise
-    let corr = if typ.starts_with("FA-18") || typ.starts_with("F-14") { 100. } else { 56. };
+    let corr =
+        if typ.starts_with("FA-18") || typ.starts_with("F-14") { 100. } else { 56. };
     let d = stop_fwd_of_stern - corr;
     let mut best = (1u8, f64::MAX);
     for (i, x) in wires_m.iter().enumerate() {
@@ -167,8 +170,14 @@ impl Carriers {
             let op_center = match crate::ag::resolve(lua, &c.op_center) {
                 Ok(p) => p,
                 Err(e) => {
-                    warn!("carrier {}: op_center {e:?}; using its current position", c.id);
-                    Unit::get_by_name(lua, &c.unit_name).and_then(|u| u.get_point()).map(|p| p.0).unwrap_or_default()
+                    warn!(
+                        "carrier {}: op_center {e:?}; using its current position",
+                        c.id
+                    );
+                    Unit::get_by_name(lua, &c.unit_name)
+                        .and_then(|u| u.get_point())
+                        .map(|p| p.0)
+                        .unwrap_or_default()
                 }
             };
             let group = carrier_group(lua, &c.unit_name).map(|g| g.0);
@@ -211,7 +220,13 @@ impl Carriers {
     }
 
     /// Steer, light navaids, launch the recovery tanker. Every 30 s is plenty.
-    pub fn slow_tick(&mut self, lua: MizLua, spawns: &mut Spawns, aar: &mut Aar, now: f64) {
+    pub fn slow_tick(
+        &mut self,
+        lua: MizLua,
+        spawns: &mut Spawns,
+        aar: &mut Aar,
+        now: f64,
+    ) {
         for c in self.carriers.iter_mut() {
             let Some(group) = c.group.clone() else { continue };
             let Ok(u) = Unit::get_by_name(lua, &c.cfg.unit_name) else { continue };
@@ -222,24 +237,34 @@ impl Carriers {
             // ship's own motion plus the true wind must come straight down
             // the angled deck (grading::recovery_course).
             let deck = c.deck_now(lua);
-            let anemometer = deck.as_ref().map(|d| d.l).unwrap_or(V3::new(p.x, p.y + 20., p.z));
+            let anemometer =
+                deck.as_ref().map(|d| d.l).unwrap_or(V3::new(p.x, p.y + 20., p.z));
             let (wind_from, wind_kts, _) = util::wind_at(lua, anemometer);
-            let rc = grading::recovery_course(wind_from, wind_kts, c.deck.angle_deg, c.cfg.wind_over_deck_kts, 5., 30.);
+            let rc = grading::recovery_course(
+                wind_from,
+                wind_kts,
+                c.deck.angle_deg,
+                c.cfg.wind_over_deck_kts,
+                5.,
+                30.,
+            );
             let (brc_want, speed_want) = (rc.brc_deg, rc.speed_kts);
             // the ship's real heading, for anything placed relative to it
             let heading_now = deck.as_ref().map(|d| d.brc).unwrap_or(c.brc);
             let from_center = util::dist2(p, c.op_center);
-            let (brc, speed, repositioning) = if from_center > c.cfg.op_radius_nm * util::NM {
-                (util::bearing(p, c.op_center), 20., true)
-            } else if open {
-                (brc_want, speed_want, false)
-            } else {
-                // between windows: loiter back toward the centre slowly
-                (util::bearing(p, c.op_center), 10., false)
-            };
+            let (brc, speed, repositioning) =
+                if from_center > c.cfg.op_radius_nm * util::NM {
+                    (util::bearing(p, c.op_center), 20., true)
+                } else if open {
+                    (brc_want, speed_want, false)
+                } else {
+                    // between windows: loiter back toward the centre slowly
+                    (util::bearing(p, c.op_center), 10., false)
+                };
             c.recovery_open = open && !repositioning;
             c.repositioning = repositioning;
-            let changed = util::angdiff(brc, c.brc).abs() > 5. || (speed - c.speed_kts).abs() > 2.;
+            let changed =
+                util::angdiff(brc, c.brc).abs() > 5. || (speed - c.speed_kts).abs() > 2.;
             if changed || now - c.last_route > 600. {
                 let ahead = util::offset(p, brc, 40. * util::NM, 0.);
                 let sp = speed / util::MS_TO_KTS;
@@ -247,7 +272,8 @@ impl Carriers {
                     spawn::waypoint(p, 0., sp, vec![]),
                     spawn::waypoint(ahead, 0., sp, vec![]),
                 ] } } });
-                spawns.defer(now, spawn::Pending::GroupTask { group: group.clone(), task });
+                spawns
+                    .defer(now, spawn::Pending::GroupTask { group: group.clone(), task });
                 c.brc = brc;
                 c.speed_kts = speed;
                 c.last_route = now;
@@ -267,7 +293,13 @@ impl Carriers {
                 c.last_navaids = now;
                 if let Some(uid) = u.id().ok().map(|i| i.inner()) {
                     if let Some(t) = &c.cfg.tacan {
-                        spawns.defer(now + 1., spawn::Pending::UnitCommand { unit: c.cfg.unit_name.clone(), cmd: spawn::tacan_cmd(uid, t, false) });
+                        spawns.defer(
+                            now + 1.,
+                            spawn::Pending::UnitCommand {
+                                unit: c.cfg.unit_name.clone(),
+                                cmd: spawn::tacan_cmd(uid, t, false),
+                            },
+                        );
                     }
                     if let Some(ch) = c.cfg.icls_channel {
                         spawns.defer(now + 1., spawn::Pending::UnitCommand {
@@ -293,10 +325,17 @@ impl Carriers {
                 c.tanker_spawned = true;
                 if let Some(t) = &c.cfg.recovery_tanker {
                     let gid = carrier_group(lua, &c.cfg.unit_name).map(|g| g.1);
-                    let start = util::offset(V3::new(p.x, t.alt_ft / util::M_TO_FT, p.z), heading_now, -3. * util::NM, 0.);
+                    let start = util::offset(
+                        V3::new(p.x, t.alt_ft / util::M_TO_FT, p.z),
+                        heading_now,
+                        -3. * util::NM,
+                        0.,
+                    );
                     match aar::spawn_tanker(lua, t, start, spawns, gid, now) {
                         Ok(g) => {
-                            let method = bfprotocols::range::cfg::tanker_type(&t.typ).map(|tt| tt.method).unwrap_or(RefuelMethod::Drogue);
+                            let method = bfprotocols::range::cfg::tanker_type(&t.typ)
+                                .map(|tt| tt.method)
+                                .unwrap_or(RefuelMethod::Drogue);
                             aar.add_recovery_tanker(Tanker {
                                 cfg: t.clone(),
                                 method,
@@ -307,18 +346,29 @@ impl Carriers {
                                 recovery_for: Some(c.cfg.id.clone()),
                                 spawn_id: None,
                             });
-                            info!("carrier {}: recovery tanker {} ({}) up", c.cfg.id, t.callsign, t.typ);
+                            info!(
+                                "carrier {}: recovery tanker {} ({}) up",
+                                c.cfg.id, t.callsign, t.typ
+                            );
                         }
-                        Err(e) => warn!("carrier {}: recovery tanker failed: {e:?}", c.cfg.id),
+                        Err(e) => {
+                            warn!("carrier {}: recovery tanker failed: {e:?}", c.cfg.id)
+                        }
                     }
                 }
             }
             if !c.guard_spawned {
                 c.guard_spawned = true;
-                if let (Some(typ), Some((_, gid))) = (&c.cfg.plane_guard, carrier_group(lua, &c.cfg.unit_name)) {
+                if let (Some(typ), Some((_, gid))) =
+                    (&c.cfg.plane_guard, carrier_group(lua, &c.cfg.unit_name))
+                {
                     let name = format!("RNG-GUARD-{}", c.cfg.id);
-                    let start = util::offset(V3::new(p.x, 70., p.z), heading_now, 0., 1000.);
-                    let follow = spawn::task_entry(1, json!({ "id": "Follow", "params": { "groupId": gid, "pos": { "x": -200, "y": 70, "z": 1000 }, "lastWptIndexFlag": false } }));
+                    let start =
+                        util::offset(V3::new(p.x, 70., p.z), heading_now, 0., 1000.);
+                    let follow = spawn::task_entry(
+                        1,
+                        json!({ "id": "Follow", "params": { "groupId": gid, "pos": { "x": -200, "y": 70, "z": 1000 }, "lastWptIndexFlag": false } }),
+                    );
                     let spec = spawn::AirSpec {
                         name: name.clone(),
                         typ: typ.clone(),
@@ -338,11 +388,28 @@ impl Carriers {
                         side: dcso3::coalition::Side::Blue,
                     };
                     if let Ok(country) = spawn::country_id("CJTF_BLUE") {
-                        if let Err(e) = spawn::add_group(lua, country, spawn::HELICOPTER, &spawn::air_group(&spec)) {
+                        if let Err(e) = spawn::add_group(
+                            lua,
+                            country,
+                            spawn::HELICOPTER,
+                            &spawn::air_group(&spec),
+                        ) {
                             warn!("carrier {}: plane guard failed: {e:?}", c.cfg.id)
                         } else {
-                            spawns.defer(now + 2., spawn::Pending::GroupCommand { group: name.clone(), cmd: spawn::bool_cmd("SetImmortal", true) });
-                            spawns.defer(now + 2., spawn::Pending::GroupCommand { group: name, cmd: spawn::bool_cmd("SetUnlimitedFuel", true) });
+                            spawns.defer(
+                                now + 2.,
+                                spawn::Pending::GroupCommand {
+                                    group: name.clone(),
+                                    cmd: spawn::bool_cmd("SetImmortal", true),
+                                },
+                            );
+                            spawns.defer(
+                                now + 2.,
+                                spawn::Pending::GroupCommand {
+                                    group: name,
+                                    cmd: spawn::bool_cmd("SetUnlimitedFuel", true),
+                                },
+                            );
                         }
                     }
                 }
@@ -387,7 +454,9 @@ impl Carriers {
                     continue;
                 }
                 let Ok(u) = Unit::get_by_name(lua, &un) else { continue };
-                let (Ok(pos3), Ok(v)) = (u.get_position(), u.get_velocity()) else { continue };
+                let (Ok(pos3), Ok(v)) = (u.get_position(), u.get_velocity()) else {
+                    continue;
+                };
                 let pos = pos3.p.0;
                 let v = v.0;
                 let d = pos - deck.l;
@@ -399,15 +468,26 @@ impl Carriers {
                 if p.state == PassState::Pattern {
                     let rel = util::angdiff(util::bearing(deck.l, pos), deck.brc);
                     let opposite = util::angdiff(track, deck.brc + 180.).abs() < 25.;
-                    if opposite && (rel + 90.).abs() < 15. && p.pattern.abeam_distance_nm.is_none() {
+                    if opposite
+                        && (rel + 90.).abs() < 15.
+                        && p.pattern.abeam_distance_nm.is_none()
+                    {
                         p.pattern.abeam_distance_nm = Some(y.abs() / util::NM);
                         p.pattern.abeam_alt_ft = Some(h * util::M_TO_FT);
                     }
-                    if util::angdiff(track, deck.brc - 90.).abs() < 20. && x > 0. && p.pattern.ninety_alt_ft.is_none() && p.pattern.abeam_distance_nm.is_some() {
+                    if util::angdiff(track, deck.brc - 90.).abs() < 20.
+                        && x > 0.
+                        && p.pattern.ninety_alt_ft.is_none()
+                        && p.pattern.abeam_distance_nm.is_some()
+                    {
                         p.pattern.ninety_alt_ft = Some(h * util::M_TO_FT);
                     }
                     if let Some(ly) = p.last_y {
-                        if ly.signum() != y.signum() && x > 0. && x < 1.5 * util::NM && p.pattern.wake_alt_ft.is_none() {
+                        if ly.signum() != y.signum()
+                            && x > 0.
+                            && x < 1.5 * util::NM
+                            && p.pattern.wake_alt_ft.is_none()
+                        {
                             p.pattern.wake_alt_ft = Some(h * util::M_TO_FT);
                         }
                     }
@@ -439,9 +519,8 @@ impl Carriers {
                     let gse = h.atan2(xa).to_degrees() - c.deck.glideslope_deg;
                     let lue = y.atan2(xa).to_degrees();
                     let (_, _, wv) = util::wind_at(lua, pos);
-                    let aoa = band_tbl
-                        .get(&p.typ)
-                        .map(|_| Frame::from_pos(&pos3).aoa(v - wv));
+                    let aoa =
+                        band_tbl.get(&p.typ).map(|_| Frame::from_pos(&pos3).aoa(v - wv));
                     let g = util::geo(lua, pos);
                     p.samples.push(GrooveSample {
                         t: now - p.t0,
@@ -479,7 +558,11 @@ impl Carriers {
                         p.end_t = Some(now);
                     } else if now - p.touch_t.unwrap_or(now) > 12. {
                         p.state = PassState::Done;
-                        p.outcome = Some(if u.in_air().unwrap_or(false) { PassOutcome::Bolter } else { PassOutcome::TouchAndGo });
+                        p.outcome = Some(if u.in_air().unwrap_or(false) {
+                            PassOutcome::Bolter
+                        } else {
+                            PassOutcome::TouchAndGo
+                        });
                         p.end_t = Some(now);
                     }
                 }
@@ -498,7 +581,10 @@ impl Carriers {
             let done: Vec<String> = c
                 .passes
                 .iter()
-                .filter(|(_, p)| p.state == PassState::Done && p.end_t.map(|e| now - e > 8.).unwrap_or(false))
+                .filter(|(_, p)| {
+                    p.state == PassState::Done
+                        && p.end_t.map(|e| now - e > 8.).unwrap_or(false)
+                })
                 .map(|(k, _)| k.clone())
                 .collect();
             for k in done {
@@ -514,7 +600,14 @@ impl Carriers {
     }
 
     /// RUNWAY_TOUCH / LAND on a carrier deck.
-    pub fn touch(&mut self, lua: MizLua, unit: &str, place: &str, landed: bool, now: f64) {
+    pub fn touch(
+        &mut self,
+        lua: MizLua,
+        unit: &str,
+        place: &str,
+        landed: bool,
+        now: f64,
+    ) {
         for c in self.carriers.iter_mut() {
             if c.cfg.unit_name != place {
                 continue;
@@ -598,7 +691,14 @@ impl Carriers {
         }
     }
 
-    pub fn live(&self, lua: MizLua, clock: &MissionClock, abs: f64, aar: &Aar, now: f64) -> Vec<LiveCarrier> {
+    pub fn live(
+        &self,
+        lua: MizLua,
+        clock: &MissionClock,
+        abs: f64,
+        aar: &Aar,
+        now: f64,
+    ) -> Vec<LiveCarrier> {
         self.carriers
             .iter()
             .filter_map(|c| {
@@ -621,7 +721,11 @@ impl Carriers {
                     wind_over_deck_kts: wod,
                     wind_over_deck_angle_deg: wod_angle,
                     recovery_open: open && !c.repositioning,
-                    next_window: if c.repositioning { Some("repositioning".into()) } else { next },
+                    next_window: if c.repositioning {
+                        Some("repositioning".into())
+                    } else {
+                        next
+                    },
                     tacan: c.cfg.tacan.as_ref().map(|t| t.describe()),
                     icls: c.cfg.icls_channel,
                     link4_mhz: c.cfg.link4_mhz,
@@ -630,7 +734,12 @@ impl Carriers {
                         .tankers
                         .iter()
                         .find(|t| t.recovery_for.as_deref() == Some(c.cfg.id.as_str()))
-                        .map(|t| format!("{}{} ({})", t.cfg.callsign, t.cfg.callsign_number, t.cfg.typ)),
+                        .map(|t| {
+                            format!(
+                                "{}{} ({})",
+                                t.cfg.callsign, t.cfg.callsign_number, t.cfg.typ
+                            )
+                        }),
                     pattern: c.passes.values().map(|p| p.pilot.name.clone()).collect(),
                     case: if night { 3 } else { case },
                     true_wind_from_deg: true_from,
@@ -655,7 +764,11 @@ impl Carriers {
                     d.fb,
                     wod,
                     if c.recovery_open { "deck OPEN" } else { "deck closed" },
-                    c.cfg.tacan.as_ref().map(|t| format!(", TACAN {}", t.describe())).unwrap_or_default(),
+                    c.cfg
+                        .tacan
+                        .as_ref()
+                        .map(|t| format!(", TACAN {}", t.describe()))
+                        .unwrap_or_default(),
                     c.cfg.icls_channel.map(|i| format!(", ICLS {i}")).unwrap_or_default(),
                 ))
             })
@@ -696,13 +809,15 @@ fn new_pass(f: &Flying, now: f64) -> Pass {
 }
 
 /// Average of `f` over the groove samples in `[lo, hi)` metres aft.
-fn window_avg(s: &[GrooveSample], lo: f64, hi: f64, f: impl Fn(&GrooveSample) -> Option<f64>) -> Option<f64> {
-    let v: Vec<f64> = s.iter().filter(|x| x.x_m >= lo && x.x_m < hi).filter_map(&f).collect();
-    if v.is_empty() {
-        None
-    } else {
-        Some(v.iter().sum::<f64>() / v.len() as f64)
-    }
+fn window_avg(
+    s: &[GrooveSample],
+    lo: f64,
+    hi: f64,
+    f: impl Fn(&GrooveSample) -> Option<f64>,
+) -> Option<f64> {
+    let v: Vec<f64> =
+        s.iter().filter(|x| x.x_m >= lo && x.x_m < hi).filter_map(&f).collect();
+    if v.is_empty() { None } else { Some(v.iter().sum::<f64>() / v.len() as f64) }
 }
 
 fn token(err: &str, pos: &str, m: Magnitude) -> String {
@@ -724,7 +839,12 @@ fn engine_grade(
     let mut calls: Vec<String> = vec![];
     let mut worst = 0; // 0 none, 1 little, 2 normal, 3 lot
     let mut waveoff_limits = false;
-    for (pos, lo, hi) in [("X", IM_START, X_START), ("IM", IC_START, IM_START), ("IC", AR_START, IC_START), ("AR", 0., AR_START)] {
+    for (pos, lo, hi) in [
+        ("X", IM_START, X_START),
+        ("IM", IC_START, IM_START),
+        ("IC", AR_START, IC_START),
+        ("AR", 0., AR_START),
+    ] {
         let gse = window_avg(s, lo, hi, |x| Some(x.gse_deg));
         let lue = window_avg(s, lo, hi, |x| Some(x.lue_deg));
         let aoa = window_avg(s, lo, hi, |x| x.aoa_deg);
@@ -763,7 +883,11 @@ fn engine_grade(
     let grade = match outcome {
         PassOutcome::Bolter => "B".to_string(),
         PassOutcome::Waveoff => {
-            if waveoff_limits { "WO".into() } else { "OWO".into() }
+            if waveoff_limits {
+                "WO".into()
+            } else {
+                "OWO".into()
+            }
         }
         PassOutcome::OwnWaveoff => "OWO".into(),
         PassOutcome::Crash => "C".into(),
@@ -802,7 +926,8 @@ fn finish_pass(
     };
     // keep the groove part of the track (plus a little of the approach turn
     // for the top view)
-    let samples: Vec<GrooveSample> = p.samples.iter().filter(|s| s.x_m < 1.5 * util::NM).cloned().collect();
+    let samples: Vec<GrooveSample> =
+        p.samples.iter().filter(|s| s.x_m < 1.5 * util::NM).cloned().collect();
     let est_wire = if outcome == PassOutcome::Trap {
         p.stop_x.and_then(|x| {
             let wire3 = if c.deck.wires_m[2] > 0. { c.deck.wires_m[2] } else { 60. };
@@ -823,11 +948,16 @@ fn finish_pass(
             d.wire.is_some(),
             GradeSource::Dcs,
         ),
-        None => (eg.grade.clone(), eg.comment.clone(), est_wire, false, GradeSource::Engine),
+        None => {
+            (eg.grade.clone(), eg.comment.clone(), est_wire, false, GradeSource::Engine)
+        }
     };
     let points = lso::grade_points(&grade);
     let g0 = samples.last().map(|s| (s.lat, s.lon)).unwrap_or((0., 0.));
-    let abs = dcso3::timer::Timer::singleton(lua).and_then(|t| t.get_abs_time()).map(|t| t.0).unwrap_or(0.);
+    let abs = dcso3::timer::Timer::singleton(lua)
+        .and_then(|t| t.get_abs_time())
+        .map(|t| t.0)
+        .unwrap_or(0.);
     let night = clock.is_night(g0.0, g0.1, abs);
     let case = if night { 3 } else { Carriers::window(&c.cfg, _now / 60.).1 };
     let description = lso::describe(&details);
@@ -898,7 +1028,15 @@ mod tests {
         let mut t = 0.;
         while x > 0. {
             let (gse_deg, lue_deg, aoa_deg) = f(x);
-            v.push(GrooveSample { t, x_m: x, gse_deg, lue_deg, aoa_deg, closure_kts: 135., ..Default::default() });
+            v.push(GrooveSample {
+                t,
+                x_m: x,
+                gse_deg,
+                lue_deg,
+                aoa_deg,
+                closure_kts: 135.,
+                ..Default::default()
+            });
             x -= 10.;
             t += 0.15;
         }
@@ -906,7 +1044,11 @@ mod tests {
     }
 
     fn hornet() -> AoaBand {
-        ScoringCfg::default().aoa.get("FA-18C_hornet").cloned().expect("a Hornet AoA band")
+        ScoringCfg::default()
+            .aoa
+            .get("FA-18C_hornet")
+            .cloned()
+            .expect("a Hornet AoA band")
     }
 
     #[test]
@@ -918,7 +1060,10 @@ mod tests {
         assert_eq!(g.comment, "");
         assert_eq!(g.points, Some(5.));
         // the same pass to the 2 wire, or a short groove, is a plain OK
-        assert_eq!(engine_grade(&s, Some(&b), PassOutcome::Trap, Some(17.), Some(2)).grade, "OK");
+        assert_eq!(
+            engine_grade(&s, Some(&b), PassOutcome::Trap, Some(17.), Some(2)).grade,
+            "OK"
+        );
         let g = engine_grade(&s, Some(&b), PassOutcome::Trap, Some(11.), Some(3));
         assert_eq!((g.grade.as_str(), g.comment.as_str()), ("OK", "NESA"));
         let g = engine_grade(&s, Some(&b), PassOutcome::Trap, Some(22.), Some(3));
@@ -930,7 +1075,13 @@ mod tests {
         let b = hornet();
         // a little high at the start, very low at the ramp, lined up left in close
         let s = groove(|x| {
-            let gse = if x >= IM_START { 0.6 } else if x < AR_START { -1.0 } else { 0. };
+            let gse = if x >= IM_START {
+                0.6
+            } else if x < AR_START {
+                -1.0
+            } else {
+                0.
+            };
             let lue = if (AR_START..IC_START).contains(&x) { -1.5 } else { 0. };
             (gse, lue, Some(b.on_speed))
         });
@@ -940,7 +1091,9 @@ mod tests {
         assert_eq!(g.grade, "--");
         assert_eq!(g.points, Some(2.));
         // normal-sized calls at worst: (OK)
-        let s = groove(|x| (if x < IM_START && x >= IC_START { 1.0 } else { 0. }, 0., Some(b.on_speed)));
+        let s = groove(|x| {
+            (if x < IM_START && x >= IC_START { 1.0 } else { 0. }, 0., Some(b.on_speed))
+        });
         let g = engine_grade(&s, Some(&b), PassOutcome::Trap, Some(16.), Some(3));
         assert_eq!((g.grade.as_str(), g.comment.as_str()), ("(OK)", "HIM"));
     }
@@ -961,14 +1114,24 @@ mod tests {
         let b = hornet();
         let clean = groove(|_| (0., 0., Some(b.on_speed)));
         // waved off without being outside the limits: an own-waveoff grade
-        assert_eq!(engine_grade(&clean, Some(&b), PassOutcome::Waveoff, None, None).grade, "OWO");
+        assert_eq!(
+            engine_grade(&clean, Some(&b), PassOutcome::Waveoff, None, None).grade,
+            "OWO"
+        );
         // outside the lineup limit in close: a real waveoff
-        let wild = groove(|x| (0., if x < IC_START { 4.0 } else { 0. }, Some(b.on_speed)));
+        let wild =
+            groove(|x| (0., if x < IC_START { 4.0 } else { 0. }, Some(b.on_speed)));
         let g = engine_grade(&wild, Some(&b), PassOutcome::Waveoff, None, None);
         assert_eq!(g.grade, "WO");
         assert_eq!(g.points, Some(1.));
-        assert_eq!(engine_grade(&clean, Some(&b), PassOutcome::Bolter, Some(17.), None).grade, "B");
-        assert_eq!(engine_grade(&clean, Some(&b), PassOutcome::OwnWaveoff, None, None).grade, "OWO");
+        assert_eq!(
+            engine_grade(&clean, Some(&b), PassOutcome::Bolter, Some(17.), None).grade,
+            "B"
+        );
+        assert_eq!(
+            engine_grade(&clean, Some(&b), PassOutcome::OwnWaveoff, None, None).grade,
+            "OWO"
+        );
         let g = engine_grade(&clean, Some(&b), PassOutcome::Crash, None, None);
         assert_eq!((g.grade.as_str(), g.points), ("C", Some(0.)));
     }
@@ -985,6 +1148,9 @@ mod tests {
         // way short is still the 1 wire, never 0
         assert_eq!(estimate_wire(&w, 0., "T-45"), Some(1));
         // a deck without wires
-        assert_eq!(estimate_wire(&CarrierKind::Tarawa.deck().wires_m, 150., "AV8BNA"), None);
+        assert_eq!(
+            estimate_wire(&CarrierKind::Tarawa.deck().wires_m, 150., "AV8BNA"),
+            None
+        );
     }
 }

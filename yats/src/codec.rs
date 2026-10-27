@@ -99,7 +99,11 @@ mod tests {
         let v2: V2 = crate::deserialize(&row).unwrap();
         assert_eq!(v2, V2 { name: "x".into(), a: 7, added: None, count: 0 });
         // and back: the extra fields are ignored by the old type
-        let row = encode_value(&V2 { added: Some(Kind::Deployed { by: "me".into() }), ..v2 }, Codec::MsgPack).unwrap();
+        let row = encode_value(
+            &V2 { added: Some(Kind::Deployed { by: "me".into() }), ..v2 },
+            Codec::MsgPack,
+        )
+        .unwrap();
         let v1: V1 = crate::deserialize(&row).unwrap();
         assert_eq!(v1, V1 { a: 7, name: "x".into() });
         // the same change on bincode rows fails, which is the point
@@ -120,8 +124,13 @@ mod tests {
         assert!(back.0.is_nan() && back.1.to_bits() == (-0.0f64).to_bits());
         assert_eq!((back.2, back.3), (f.2, f.3));
         // maps with non-string keys, which JSON cannot hold
-        let m: std::collections::BTreeMap<(u32, u8), Vec<u64>> = [((1, 2), vec![3, 400, 5_000_000_000])].into();
+        let m: std::collections::BTreeMap<(u32, u8), Vec<u64>> =
+            [((1, 2), vec![3, 400, 5_000_000_000])].into();
         let row = encode_value(&m, Codec::MsgPack).unwrap();
-        assert_eq!(crate::deserialize::<std::collections::BTreeMap<(u32, u8), Vec<u64>>>(&row).unwrap(), m);
+        assert_eq!(
+            crate::deserialize::<std::collections::BTreeMap<(u32, u8), Vec<u64>>>(&row)
+                .unwrap(),
+            m
+        );
     }
 }

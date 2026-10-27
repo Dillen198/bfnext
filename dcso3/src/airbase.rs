@@ -11,15 +11,17 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
+use super::{
+    as_tbl, coalition::Side, object::Object, warehouse::Warehouse, LuaVec3, String,
+};
 use crate::object::DcsOidExt;
-use super::{as_tbl, coalition::Side, object::Object, warehouse::Warehouse, LuaVec3, String};
 use crate::{
     object::{DcsObject, DcsOid},
-    wrapped_table, LuaEnv, MizLua, Sequence, wrapped_prim,
+    wrapped_prim, wrapped_table, LuaEnv, MizLua, Sequence,
 };
 use anyhow::{bail, Result};
 use mlua::{prelude::*, Value};
-use serde_derive::{Serialize, Deserialize};
+use serde_derive::{Deserialize, Serialize};
 use std::{marker::PhantomData, ops::Deref};
 
 wrapped_prim!(RunwayId, i64, Hash, Copy);
@@ -75,9 +77,7 @@ impl FromLua for AirbaseCategory {
             0 => Ok(Self::Airdrome),
             1 => Ok(Self::Helipad),
             2 => Ok(Self::Ship),
-            n => Err(crate::lua_err(&anyhow::anyhow!(
-                "unknown airbase category {n}"
-            ))),
+            n => Err(crate::lua_err(&anyhow::anyhow!("unknown airbase category {n}"))),
         }
     }
 }
@@ -218,7 +218,7 @@ impl Airbase {
         let desc = self.get_desc()?;
         Ok(desc.raw_get("category")?)
     }
-    
+
     pub fn get_point(&self) -> Result<LuaVec3> {
         Ok(self.t.call_method("getPoint", ())?)
     }
@@ -305,10 +305,7 @@ impl DcsObject for Airbase {
         let t = lua.inner().create_table()?;
         t.set_metatable(Some(lua.inner().globals().raw_get(&**id.class)?));
         t.raw_set("id_", id.id)?;
-        let t = Airbase {
-            t,
-            lua: lua.inner().clone(),
-        };
+        let t = Airbase { t, lua: lua.inner().clone() };
         if !t.is_exist()? {
             bail!("{} is an invalid airbase", id.id)
         }
@@ -317,11 +314,7 @@ impl DcsObject for Airbase {
 
     fn get_instance_dyn<T>(lua: MizLua, id: &DcsOid<T>) -> Result<Self> {
         id.check_implements(lua, "Airbase")?;
-        let id = DcsOid {
-            id: id.id,
-            class: id.class.clone(),
-            t: PhantomData,
-        };
+        let id = DcsOid { id: id.id, class: id.class.clone(), t: PhantomData };
         Self::get_instance(lua, &id)
     }
 

@@ -48,7 +48,7 @@ use bfprotocols::{
     perf::PerfInner,
 };
 use chrono::prelude::*;
-use dcso3::{coalition::Side, land::Land, timer::Timer, LuaVec2, MizLua, Vector2};
+use dcso3::{LuaVec2, MizLua, Vector2, coalition::Side, land::Land, timer::Timer};
 
 #[derive(Debug, Default)]
 pub(crate) struct ModernWar {
@@ -77,11 +77,7 @@ pub(crate) fn mission_hour(lua: MizLua) -> Option<u32> {
 
 /// True if `hour` is inside [start, end), wrapping past midnight.
 pub(crate) fn in_hours(hour: u32, (start, end): (u32, u32)) -> bool {
-    if start <= end {
-        hour >= start && hour < end
-    } else {
-        hour >= start || hour < end
-    }
+    if start <= end { hour >= start && hour < end } else { hour >= start || hour < end }
 }
 
 /// Positions of `side`'s enemies in the air: whatever `side`'s radar
@@ -103,7 +99,10 @@ pub(crate) fn enemy_air(ctx: &Context, side: Side, now: DateTime<Utc>) -> Vec<Ve
 pub(crate) fn land_near(land: &Land, center: Vector2, max_r: f64) -> Option<Vector2> {
     use dcso3::land::SurfaceType;
     let ok = |p: Vector2| {
-        matches!(land.get_surface_type(LuaVec2(p)), Ok(SurfaceType::Land | SurfaceType::Road))
+        matches!(
+            land.get_surface_type(LuaVec2(p)),
+            Ok(SurfaceType::Land | SurfaceType::Road)
+        )
     };
     if ok(center) {
         return Some(center);
@@ -151,7 +150,8 @@ pub(crate) fn home_objective(ctx: &Context, gid: &GroupId) -> Option<ObjectiveId
         .objectives()
         .filter(|(_, o)| o.owner() == group.side)
         .min_by(|(_, a), (_, b)| {
-            crate::airlife::dist(a.pos(), pos).total_cmp(&crate::airlife::dist(b.pos(), pos))
+            crate::airlife::dist(a.pos(), pos)
+                .total_cmp(&crate::airlife::dist(b.pos(), pos))
         })
         .map(|(id, _)| *id)
 }
@@ -179,7 +179,12 @@ pub(crate) fn is_unmanaged(name: &str) -> bool {
 }
 
 /// The slow-tick entry point.
-pub(crate) fn tick(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, now: DateTime<Utc>) {
+pub(crate) fn tick(
+    lua: MizLua,
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    now: DateTime<Utc>,
+) {
     let Some(cfg) = cfg(ctx) else { return };
     if let Some(c) = cfg.tempo.as_ref().filter(|c| c.enabled) {
         tempo::tick(ctx, c, now);

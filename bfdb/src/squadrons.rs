@@ -7,7 +7,7 @@
 //! owner who leaves hands the squadron to its longest-serving member, and
 //! the last one out disbands it.
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use chrono::{DateTime, Utc};
 use dcso3::net::Ucid;
 use serde::{Deserialize, Serialize};
@@ -47,7 +47,9 @@ pub(crate) struct Squadrons {
 /// for, so a "№15" squadron is NO15 rather than an error.
 pub(crate) fn norm_tag(tag: &str) -> Result<String> {
     let t = tag.trim().replace('№', "NO").to_uppercase();
-    if !(2..=5).contains(&t.chars().count()) || !t.chars().all(|c| c.is_ascii_alphanumeric()) {
+    if !(2..=5).contains(&t.chars().count())
+        || !t.chars().all(|c| c.is_ascii_alphanumeric())
+    {
         bail!("a squadron tag is 2 to 5 letters (A-Z) or digits, no spaces or symbols")
     }
     Ok(t)
@@ -172,7 +174,9 @@ impl Squadrons {
         let Some(tag) = self.of_pilot.get(ucid)? else { return Ok(()) };
         self.by_tag.fetch_and_update(&tag, |s| {
             let mut s = s?;
-            if let Some(m) = s.members.iter_mut().find(|m| m.ucid == *ucid && m.joined <= ts) {
+            if let Some(m) =
+                s.members.iter_mut().find(|m| m.ucid == *ucid && m.joined <= ts)
+            {
                 m.xp = m.xp.saturating_add(xp);
                 s.xp = s.xp.saturating_add(xp);
             }
@@ -184,7 +188,8 @@ impl Squadrons {
     /// Zero every squadron's XP, keeping the rosters, for a stats rebuild:
     /// the replay credits it again.
     pub(crate) fn reset_xp(&self) -> Result<()> {
-        let tags: Vec<String> = self.by_tag.iter().map(|r| r.map(|(t, _)| t)).collect::<Result<_>>()?;
+        let tags: Vec<String> =
+            self.by_tag.iter().map(|r| r.map(|(t, _)| t)).collect::<Result<_>>()?;
         for tag in tags {
             self.by_tag.fetch_and_update(&tag, |s| {
                 let mut s = s?;

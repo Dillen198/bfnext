@@ -17,10 +17,11 @@ use crate::{
     util::{self, V3},
 };
 use bfprotocols::range::{
+    GateTime, LowLevelResult, PilotRef, RangeResult, Track, TrackPt,
     cfg::{LowLevelRouteCfg, RangeCfg},
-    grading, GateTime, LowLevelResult, PilotRef, RangeResult, Track, TrackPt,
+    grading,
 };
-use dcso3::{coalition::Side, env::miz::GroupId, MizLua};
+use dcso3::{MizLua, coalition::Side, env::miz::GroupId};
 use fxhash::FxHashMap;
 use log::{info, warn};
 use std::collections::BTreeMap;
@@ -99,7 +100,15 @@ impl LowLevel {
                 t += util::dist2(w[0].1, w[1].1) / v;
                 planned.push(t);
             }
-            info!("low-level route {} ({}): {} gates, {:.0} nm, planned {}", r.id, r.name, gates.len(), gates.windows(2).map(|w| util::dist2(w[0].1, w[1].1)).sum::<f64>() / util::NM, mmss(t));
+            info!(
+                "low-level route {} ({}): {} gates, {:.0} nm, planned {}",
+                r.id,
+                r.name,
+                gates.len(),
+                gates.windows(2).map(|w| util::dist2(w[0].1, w[1].1)).sum::<f64>()
+                    / util::NM,
+                mmss(t)
+            );
             self.routes.push(Route { cfg: r.clone(), gates, planned });
         }
     }
@@ -121,7 +130,14 @@ impl LowLevel {
             ));
             for (i, (name, p, _)) in r.gates.iter().enumerate().skip(1) {
                 let prev = r.gates[i - 1].1;
-                out.push(format!("  {i:>2}->{} {}: {:03.0} for {:.1} nm, {}", i + 1, name, util::bearing(prev, *p), util::dist2(prev, *p) / util::NM, mmss(r.planned[i])));
+                out.push(format!(
+                    "  {i:>2}->{} {}: {:03.0} for {:.1} nm, {}",
+                    i + 1,
+                    name,
+                    util::bearing(prev, *p),
+                    util::dist2(prev, *p) / util::NM,
+                    mmss(r.planned[i])
+                ));
             }
         }
         if out.is_empty() {
@@ -132,7 +148,14 @@ impl LowLevel {
 
     /// Start, sample and finish runs; once a second from the slow tick
     /// (player positions are refreshed there).
-    pub fn tick(&mut self, lua: MizLua, cfg: &RangeCfg, players: &Players, rec: &mut Recorder, now: f64) {
+    pub fn tick(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        players: &Players,
+        rec: &mut Recorder,
+        now: f64,
+    ) {
         if self.routes.is_empty() {
             return;
         }
@@ -157,21 +180,42 @@ impl LowLevel {
                     if agl_ft < r.cfg.min_agl_ft {
                         run.below_floor_s += dt;
                     }
-                    if run.path.last().map(|p| now - run.started - p.t >= 2.).unwrap_or(true) {
+                    if run
+                        .path
+                        .last()
+                        .map(|p| now - run.started - p.t >= 2.)
+                        .unwrap_or(true)
+                    {
                         let g = util::geo(lua, f.pos);
-                        run.path.push(TrackPt { t: now - run.started, lat: g.lat, lon: g.lon, alt_m: f.pos.y, speed_kts: f.vel.norm() * util::MS_TO_KTS });
+                        run.path.push(TrackPt {
+                            t: now - run.started,
+                            lat: g.lat,
+                            lon: g.lon,
+                            alt_m: f.pos.y,
+                            speed_kts: f.vel.norm() * util::MS_TO_KTS,
+                        });
                     }
                     // gates: through the next one, or past it
                     let mut msgs = vec![];
                     while run.next < r.gates.len() {
                         let (name, gp, gr) = &r.gates[run.next];
                         let d = util::dist2(f.pos, *gp);
-                        let later = r.gates.get(run.next + 1).map(|(_, p, rr)| util::dist2(f.pos, *p) <= *rr).unwrap_or(false);
+                        let later = r
+                            .gates
+                            .get(run.next + 1)
+                            .map(|(_, p, rr)| util::dist2(f.pos, *p) <= *rr)
+                            .unwrap_or(false);
                         if d <= *gr {
                             let t = now - run.started;
                             run.gate_t[run.next] = Some((t, agl_ft));
                             let dt_plan = t - r.planned[run.next];
-                            msgs.push(format!("GATE {} {}: {:+.0} s, {:.0} ft", run.next + 1, name, dt_plan, agl_ft));
+                            msgs.push(format!(
+                                "GATE {} {}: {:+.0} s, {:.0} ft",
+                                run.next + 1,
+                                name,
+                                dt_plan,
+                                agl_ft
+                            ));
                             run.next += 1;
                             run.best_d = f64::MAX;
                         } else if later || (d > run.best_d + 3000. && run.best_d > *gr) {
@@ -200,7 +244,11 @@ impl LowLevel {
                     }
                     // gave up: far too long, or far off the route
                     let limit = r.planned.last().copied().unwrap_or(0.) * 2. + 600.;
-                    let off = r.gates.iter().map(|(_, p, _)| util::dist2(f.pos, *p)).fold(f64::MAX, f64::min);
+                    let off = r
+                        .gates
+                        .iter()
+                        .map(|(_, p, _)| util::dist2(f.pos, *p))
+                        .fold(f64::MAX, f64::min);
                     if now - run.started > limit || off > 40_000. {
                         done.push(f.unit_name.clone());
                     }
@@ -223,9 +271,22 @@ impl LowLevel {
             }
             let agl_ft = f.alt_agl * util::M_TO_FT;
             if agl_ft > r.cfg.max_agl_ft * 3. {
-                if self.last_hint.get(&f.unit_name).map(|t| now - t > 120.).unwrap_or(true) {
+                if self
+                    .last_hint
+                    .get(&f.unit_name)
+                    .map(|t| now - t > 120.)
+                    .unwrap_or(true)
+                {
                     self.last_hint.insert(f.unit_name.clone(), now);
-                    records::to_group(lua, f.group_id, &format!("{}: through gate 1 {name} below {:.0} ft AGL to start the clock", r.cfg.name, r.cfg.max_agl_ft), 8);
+                    records::to_group(
+                        lua,
+                        f.group_id,
+                        &format!(
+                            "{}: through gate 1 {name} below {:.0} ft AGL to start the clock",
+                            r.cfg.name, r.cfg.max_agl_ft
+                        ),
+                        8,
+                    );
                 }
                 continue;
             }
@@ -276,7 +337,13 @@ impl LowLevel {
     }
 
     /// Finish a run (at the last gate, or given up / aircraft gone).
-    pub fn finish(&mut self, lua: MizLua, cfg: &RangeCfg, rec: &mut Recorder, unit: &str) {
+    pub fn finish(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        rec: &mut Recorder,
+        unit: &str,
+    ) {
         let Some(run) = self.runs.remove(unit) else { return };
         let r = &self.routes[run.route];
         let hit = run.gate_t.iter().filter(|g| g.is_some()).count() as u32;
@@ -284,26 +351,45 @@ impl LowLevel {
             return;
         }
         let total = r.gates.len() as u32;
-        let last_hit = run.gate_t.iter().enumerate().rev().find_map(|(i, g)| g.map(|(t, _)| (i, t)));
+        let last_hit =
+            run.gate_t.iter().enumerate().rev().find_map(|(i, g)| g.map(|(t, _)| (i, t)));
         let (tot_err, time_s) = match last_hit {
             Some((i, t)) => (t - r.planned[i], t),
             None => (0., run.total_s),
         };
-        let pct = if run.total_s > 0. { run.below_ceiling_s / run.total_s * 100. } else { 0. };
+        let pct =
+            if run.total_s > 0. { run.below_ceiling_s / run.total_s * 100. } else { 0. };
         let missed = total - hit;
-        let quality = grading::low_level_quality(missed, pct, tot_err, r.cfg.tot_tolerance_s, run.below_floor_s);
+        let quality = grading::low_level_quality(
+            missed,
+            pct,
+            tot_err,
+            r.cfg.tot_tolerance_s,
+            run.below_floor_s,
+        );
         let mut calls = vec![];
         if missed > 0 {
             calls.push(format!("{missed} gate(s) missed"));
         }
         if pct < 95. {
-            calls.push(format!("{:.0}% of the route above {:.0} ft", 100. - pct, r.cfg.max_agl_ft));
+            calls.push(format!(
+                "{:.0}% of the route above {:.0} ft",
+                100. - pct,
+                r.cfg.max_agl_ft
+            ));
         }
         if run.below_floor_s > 5. {
-            calls.push(format!("{:.0} s below the {:.0} ft floor", run.below_floor_s, r.cfg.min_agl_ft));
+            calls.push(format!(
+                "{:.0} s below the {:.0} ft floor",
+                run.below_floor_s, r.cfg.min_agl_ft
+            ));
         }
         if tot_err.abs() > r.cfg.tot_tolerance_s {
-            calls.push(format!("{:.0} s {} at the last gate", tot_err.abs(), if tot_err > 0. { "late" } else { "early" }));
+            calls.push(format!(
+                "{:.0} s {} at the last gate",
+                tot_err.abs(),
+                if tot_err > 0. { "late" } else { "early" }
+            ));
         }
         let res = LowLevelResult {
             route: r.cfg.name.clone(),
@@ -331,7 +417,11 @@ impl LowLevel {
             min_allowed_agl_ft: r.cfg.min_agl_ft,
             pct_below_ceiling: pct,
             below_floor_s: run.below_floor_s,
-            avg_speed_kts: if run.total_s > 0. { run.dist_m / run.total_s * util::MS_TO_KTS } else { 0. },
+            avg_speed_kts: if run.total_s > 0. {
+                run.dist_m / run.total_s * util::MS_TO_KTS
+            } else {
+                0.
+            },
             quality,
             calls: calls.clone(),
         };
@@ -347,17 +437,36 @@ impl LowLevel {
                     res.avg_agl_ft,
                     tot_err,
                     quality.label(),
-                    if calls.is_empty() { String::new() } else { format!("\n{}", calls.join("; ")) }
+                    if calls.is_empty() {
+                        String::new()
+                    } else {
+                        format!("\n{}", calls.join("; "))
+                    }
                 ),
                 cfg.message_s,
             );
         }
         let mut paths = BTreeMap::new();
         paths.insert(run.pilot.name.clone(), run.path);
-        rec.emit(lua, run.pilot, &run.typ, run.side, &run.callsign, Some(quality.score()), RangeResult::LowLevel(res), Some(Track::Path { paths }));
+        rec.emit(
+            lua,
+            run.pilot,
+            &run.typ,
+            run.side,
+            &run.callsign,
+            Some(quality.score()),
+            RangeResult::LowLevel(res),
+            Some(Track::Path { paths }),
+        );
     }
 
-    pub fn player_out(&mut self, lua: MizLua, cfg: &RangeCfg, rec: &mut Recorder, unit: &str) {
+    pub fn player_out(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        rec: &mut Recorder,
+        unit: &str,
+    ) {
         self.finish(lua, cfg, rec, unit);
         self.last_hint.remove(unit);
     }

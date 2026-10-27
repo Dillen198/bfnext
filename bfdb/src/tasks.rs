@@ -45,8 +45,10 @@ pub(crate) async fn news_generator(
     // day whose call failed backs off on its own, doubling per failure, so one
     // day the model cannot write does not take the slot every tick while the
     // rest of the backlog waits behind it.
-    let mut day_backoff: std::collections::HashMap<std::string::String, (u32, std::time::Instant)> =
-        std::collections::HashMap::new();
+    let mut day_backoff: std::collections::HashMap<
+        std::string::String,
+        (u32, std::time::Instant),
+    > = std::collections::HashMap::new();
     // Let the stats reader catch up before judging what was newsworthy.
     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(10 * 60));
@@ -58,7 +60,10 @@ pub(crate) async fn news_generator(
         if !writer.ready() {
             if !waiting_noted {
                 waiting_noted = true;
-                log::info!("[{}] news: waiting for the worker to connect before the first pass", inst.id);
+                log::info!(
+                    "[{}] news: waiting for the worker to connect before the first pass",
+                    inst.id
+                );
             }
             continue;
         }
@@ -140,8 +145,8 @@ pub(crate) async fn news_generator(
                     //
                     // The exception is the last rebuild of a day, as it is
                     // frozen: that one always gets the full day's copy.
-                    let becoming_final =
-                        digest.final_ && existing.as_ref().map(|p| !p.final_).unwrap_or(false);
+                    let becoming_final = digest.final_
+                        && existing.as_ref().map(|p| !p.final_).unwrap_or(false);
                     let settled = existing.as_ref().filter(|p| {
                         !p.body.is_empty()
                             && !becoming_final
@@ -156,55 +161,70 @@ pub(crate) async fn news_generator(
                         digest.generated = prev.generated;
                     } else if let Some(w) = &writer {
                         let now = std::time::Instant::now();
-                        let resting = day_backoff.get(&key).map(|(_, t)| now < *t).unwrap_or(false);
+                        let resting =
+                            day_backoff.get(&key).map(|(_, t)| now < *t).unwrap_or(false);
                         if resting || !news_llm::acquire(&inst.id) {
                             // No call for this day this tick. A day that has
                             // prose keeps it untouched (and, if it is due to be
                             // frozen, stays open so the final copy still gets
                             // written); a day with only template text is stored
                             // with fresh facts, as it has nothing to lose.
-                            if existing.as_ref().map(|p| !p.body.is_empty()).unwrap_or(false)
+                            if existing
+                                .as_ref()
+                                .map(|p| !p.body.is_empty())
+                                .unwrap_or(false)
                                 || becoming_final
                             {
                                 day += ChronoDuration::days(1);
                                 continue;
                             }
                         } else {
-                        match w.write(&digest, &hist) {
-                            Ok(out) => {
-                                day_backoff.remove(&key);
-                                digest.headline = out.headline;
-                                digest.body = out.body;
-                                digest.written_by = w.model().to_string();
-                            }
-                            Err(e) => {
-                                if e.downcast_ref::<news_llm::RateLimited>().is_some() {
-                                    // The quota, not the day: the gate is
-                                    // already pushed back for every instance.
-                                    log::info!("[{}] news: writer for {key}: {e}", inst.id);
-                                } else {
-                                    let fails = day_backoff.get(&key).map(|(n, _)| *n).unwrap_or(0) + 1;
-                                    let wait = std::time::Duration::from_secs(
-                                        (20 * 60u64 << (fails - 1).min(5)).min(12 * 3600),
-                                    );
-                                    day_backoff.insert(key.clone(), (fails, now + wait));
-                                    log::warn!(
+                            match w.write(&digest, &hist) {
+                                Ok(out) => {
+                                    day_backoff.remove(&key);
+                                    digest.headline = out.headline;
+                                    digest.body = out.body;
+                                    digest.written_by = w.model().to_string();
+                                }
+                                Err(e) => {
+                                    if e.downcast_ref::<news_llm::RateLimited>().is_some()
+                                    {
+                                        // The quota, not the day: the gate is
+                                        // already pushed back for every instance.
+                                        log::info!(
+                                            "[{}] news: writer for {key}: {e}",
+                                            inst.id
+                                        );
+                                    } else {
+                                        let fails = day_backoff
+                                            .get(&key)
+                                            .map(|(n, _)| *n)
+                                            .unwrap_or(0)
+                                            + 1;
+                                        let wait = std::time::Duration::from_secs(
+                                            (20 * 60u64 << (fails - 1).min(5))
+                                                .min(12 * 3600),
+                                        );
+                                        day_backoff
+                                            .insert(key.clone(), (fails, now + wait));
+                                        log::warn!(
                                         "[{}] news: writer failed for {key} (attempt {fails}, next try in {}m): {e}",
                                         inst.id,
                                         wait.as_secs() / 60
                                     );
-                                }
-                                // Better yesterday's dispatch than a downgrade
-                                // to templates on a day that already had one.
-                                if let Some(prev) = existing.as_ref().filter(|p| !p.body.is_empty())
-                                {
-                                    digest.headline = prev.headline.clone();
-                                    digest.body = prev.body.clone();
-                                    digest.written_by = prev.written_by.clone();
-                                    digest.generated = prev.generated;
+                                    }
+                                    // Better yesterday's dispatch than a downgrade
+                                    // to templates on a day that already had one.
+                                    if let Some(prev) =
+                                        existing.as_ref().filter(|p| !p.body.is_empty())
+                                    {
+                                        digest.headline = prev.headline.clone();
+                                        digest.body = prev.body.clone();
+                                        digest.written_by = prev.written_by.clone();
+                                        digest.generated = prev.generated;
+                                    }
                                 }
                             }
-                        }
                         }
                     }
                     db.news_put(rid, &digest)?;
@@ -216,7 +236,9 @@ pub(crate) async fn news_generator(
             // logged) inside; only a DB error lands here, and it must not
             // cost the text pass its result.
             if let Some(ic) = &images {
-                if let Err(e) = news_image::tick(&db, &inst.cfg, rid, ic, writer.is_some()) {
+                if let Err(e) =
+                    news_image::tick(&db, &inst.cfg, rid, ic, writer.is_some())
+                {
                     log::warn!("[{}] news image: {e}", inst.id);
                 }
             }
@@ -311,7 +333,10 @@ pub(crate) async fn unitdb_refresher(db: StatsDb, inst: Inst) {
         let (prev, prev_snap) = match stored {
             Ok(v) => v,
             Err(e) => {
-                log::warn!("[{}] unitdb_refresher: could not store snapshot: {e:?}", inst.id);
+                log::warn!(
+                    "[{}] unitdb_refresher: could not store snapshot: {e:?}",
+                    inst.id
+                );
                 continue;
             }
         };
@@ -340,10 +365,19 @@ pub(crate) async fn unitdb_refresher(db: StatsDb, inst: Inst) {
             for c in changes.iter().take(40) {
                 match c {
                     db::UnitDbChange::RangeChanged { typ, field, from, to, .. } => {
-                        log::info!("[{}]   {typ} {field}: {:?} -> {:?}", inst.id, from, to)
+                        log::info!(
+                            "[{}]   {typ} {field}: {:?} -> {:?}",
+                            inst.id,
+                            from,
+                            to
+                        )
                     }
                     db::UnitDbChange::Added { typ, threat_range_m, .. } => {
-                        log::info!("[{}]   + {typ} (threat range {:?})", inst.id, threat_range_m)
+                        log::info!(
+                            "[{}]   + {typ} (threat range {:?})",
+                            inst.id,
+                            threat_range_m
+                        )
                     }
                     db::UnitDbChange::Removed { typ, .. } => {
                         log::info!("[{}]   - {typ}", inst.id)

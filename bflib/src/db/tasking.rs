@@ -90,7 +90,12 @@ impl Db {
     }
 
     /// Whether `pos` is inside `ucid`'s current task zone.
-    pub(crate) fn in_task_zone(&self, ucid: &Ucid, pos: Vector2, now: DateTime<Utc>) -> bool {
+    pub(crate) fn in_task_zone(
+        &self,
+        ucid: &Ucid,
+        pos: Vector2,
+        now: DateTime<Utc>,
+    ) -> bool {
         self.ephemeral
             .tasked
             .get(ucid)

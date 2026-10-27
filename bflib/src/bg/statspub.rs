@@ -1,8 +1,8 @@
 use anyhow::{Context, Result, anyhow};
 use arcstr::ArcStr;
 use bfprotocols::stats::{PATH, Stat};
-use dcso3::String as LuaString;
 use chrono::prelude::*;
+use dcso3::String as LuaString;
 use netidx::{
     chars::Chars,
     config::Config,
@@ -75,9 +75,8 @@ impl Statspub {
         if log.len()? > 4096 {
             let now = Utc::now();
             log.rotate_and_compress(now, None).await?;
-            let reader = log
-                .current_reader()
-                .context("get current reader after rotate")?;
+            let reader =
+                log.current_reader().context("get current reader after rotate")?;
             recorder
                 .shards
                 .notify_rotated(shard_id, now, reader)
@@ -93,13 +92,7 @@ impl Statspub {
             }
         };
         let now = Utc::now();
-        let mut t = Self {
-            id,
-            log,
-            _recorder: recorder,
-            last_rotate: now,
-            sortie,
-        };
+        let mut t = Self { id, log, _recorder: recorder, last_rotate: now, sortie };
         // Only announce a genuinely new round here -- bflib already decided
         // this in lib.rs (no saved state to resume) and callers pass that
         // through as `fresh`. Writing this unconditionally made bfdb close

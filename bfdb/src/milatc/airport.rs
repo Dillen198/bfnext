@@ -364,7 +364,8 @@ impl Airport {
         let lon0 = f.runways[0].thr_lon;
         let k_lat = 111_132.;
         let k_lon = 111_320. * lat0.to_radians().cos();
-        let loc = |lat: f64, lon: f64| P2::new((lat - lat0) * k_lat, (lon - lon0) * k_lon);
+        let loc =
+            |lat: f64, lon: f64| P2::new((lat - lat0) * k_lat, (lon - lon0) * k_lon);
         let nodes: Vec<P2> = f.nodes.iter().map(|[la, lo]| loc(*la, *lo)).collect();
         let mut edges = vec![];
         let mut adj = vec![vec![]; nodes.len()];
@@ -410,7 +411,11 @@ impl Airport {
                     taxiway: h.taxiway.clone(),
                 })
                 .collect(),
-            ramps: f.ramps.iter().map(|r| Ramp { name: r.name.clone(), p: loc(r.lat, r.lon) }).collect(),
+            ramps: f
+                .ramps
+                .iter()
+                .map(|r| Ramp { name: r.name.clone(), p: loc(r.lat, r.lon) })
+                .collect(),
             nodes,
             edges,
             adj,
@@ -436,7 +441,10 @@ impl Airport {
     pub(crate) fn is_named(&self, dcs: &str) -> bool {
         let a = self.dcs_name.to_lowercase();
         let b = dcs.to_lowercase();
-        a == b || a.contains(&b) || b.contains(&a) || b.contains(&self.callsign.to_lowercase())
+        a == b
+            || a.contains(&b)
+            || b.contains(&a)
+            || b.contains(&self.callsign.to_lowercase())
     }
 
     /// Shift the file's geometry onto DCS's. `dcs` is each runway end DCS
@@ -478,7 +486,9 @@ impl Airport {
                 self.runways
                     .iter()
                     .enumerate()
-                    .filter(|(_, r)| r.direction() == dir || r.name.eq_ignore_ascii_case(name))
+                    .filter(|(_, r)| {
+                        r.direction() == dir || r.name.eq_ignore_ascii_case(name)
+                    })
                     .min_by(|a, b| a.1.thr.dist(*p).total_cmp(&b.1.thr.dist(*p)))
                     .map(|(i, _)| (i, *p))
             })
@@ -494,10 +504,16 @@ impl Airport {
         let median = |mut v: Vec<f64>| {
             v.sort_by(|a, b| a.total_cmp(b));
             let m = v.len() / 2;
-            if v.len() % 2 == 0 { (v[m - 1] + v[m]) / 2. } else { v[m] }
+            if v.len() % 2 == 0 {
+                (v[m - 1] + v[m]) / 2.
+            } else {
+                v[m]
+            }
         };
-        let dn = median(pairs.iter().map(|(i, p)| p.n - self.runways[*i].thr.n).collect());
-        let de = median(pairs.iter().map(|(i, p)| p.e - self.runways[*i].thr.e).collect());
+        let dn =
+            median(pairs.iter().map(|(i, p)| p.n - self.runways[*i].thr.n).collect());
+        let de =
+            median(pairs.iter().map(|(i, p)| p.e - self.runways[*i].thr.e).collect());
         Some(P2::new(dn, de))
     }
 
@@ -512,7 +528,12 @@ impl Airport {
 
     /// Runway ends whose direction is closest to the wind, i.e. the ends in
     /// use. Calm or near-calm keeps `prefer` (the last direction used).
-    pub(crate) fn direction_for_wind(&self, wind_from: f64, wind_kts: f64, prefer: Option<&str>) -> String {
+    pub(crate) fn direction_for_wind(
+        &self,
+        wind_from: f64,
+        wind_kts: f64,
+        prefer: Option<&str>,
+    ) -> String {
         let mut dirs: Vec<(&str, f64)> = vec![];
         for r in &self.runways {
             let head = wind_kts * angdiff(wind_from, r.hdg).to_radians().cos();
@@ -548,7 +569,9 @@ impl Airport {
     pub(crate) fn on_runway(&self, p: P2, margin: f64) -> Option<&RwyEnd> {
         self.runways.iter().find(|r| {
             let (along, cross) = r.frame(p);
-            cross.abs() <= r.width / 2. + margin && (-margin..=r.len + margin).contains(&along) && along <= r.len / 2.
+            cross.abs() <= r.width / 2. + margin
+                && (-margin..=r.len + margin).contains(&along)
+                && along <= r.len / 2.
         })
     }
 
@@ -558,7 +581,8 @@ impl Airport {
             .iter()
             .find(|r| {
                 let (along, cross) = r.frame(p);
-                cross.abs() <= r.width / 2. + margin && (-margin..=r.len + margin).contains(&along)
+                cross.abs() <= r.width / 2. + margin
+                    && (-margin..=r.len + margin).contains(&along)
             })
             .map(|r| r.pair.as_str())
     }
@@ -594,7 +618,12 @@ impl Airport {
     /// give them.
     /// Edges passing within `avoid`'s radius of its points are left out (a
     /// stopped aircraft on the taxiway), except where the route starts.
-    fn shortest(&self, from: P2, goals: &[usize], avoid: &[(P2, f64)]) -> Option<(Vec<usize>, f64)> {
+    fn shortest(
+        &self,
+        from: P2,
+        goals: &[usize],
+        avoid: &[(P2, f64)],
+    ) -> Option<(Vec<usize>, f64)> {
         let (start, d0) = self.nearest_node(from)?;
         if d0 > 1000. {
             return None; // not on this airfield's taxi network
@@ -634,7 +663,11 @@ impl Airport {
             for &ei in &self.adj[u] {
                 let e = &self.edges[ei];
                 let v = if e.a == u { e.b } else { e.a };
-                if u != start && avoid.iter().any(|(p, r)| seg_dist(*p, self.nodes[e.a], self.nodes[e.b]) < *r) {
+                if u != start
+                    && avoid
+                        .iter()
+                        .any(|(p, r)| seg_dist(*p, self.nodes[e.a], self.nodes[e.b]) < *r)
+                {
                     continue;
                 }
                 let mut w = e.len;
@@ -688,13 +721,20 @@ impl Airport {
     }
 
     /// [`Self::route_to_runway`], around stopped traffic.
-    pub(crate) fn route_to_runway_avoiding(&self, from: P2, runway: &str, avoid: &[(P2, f64)]) -> Option<TaxiRoute> {
+    pub(crate) fn route_to_runway_avoiding(
+        &self,
+        from: P2,
+        runway: &str,
+        avoid: &[(P2, f64)],
+    ) -> Option<TaxiRoute> {
         let rwy = self.runway(runway)?;
         let mut cands: Vec<usize> = self
             .holds
             .iter()
             .enumerate()
-            .filter(|(_, h)| h.pair == rwy.pair && h.near_end == rwy.name && h.from_thr < 700.)
+            .filter(|(_, h)| {
+                h.pair == rwy.pair && h.near_end == rwy.name && h.from_thr < 700.
+            })
             .map(|(i, _)| i)
             .collect();
         if cands.is_empty() {
@@ -724,7 +764,12 @@ impl Airport {
     }
 
     /// A route to wherever `to` is on the network, around stopped traffic.
-    pub(crate) fn route_to_point_avoiding(&self, from: P2, to: P2, avoid: &[(P2, f64)]) -> Option<TaxiRoute> {
+    pub(crate) fn route_to_point_avoiding(
+        &self,
+        from: P2,
+        to: P2,
+        avoid: &[(P2, f64)],
+    ) -> Option<TaxiRoute> {
         let (goal, _) = self.nearest_node(to)?;
         let (path, _) = self.shortest(from, &[goal], avoid)?;
         Some(self.describe(path, None))
@@ -751,7 +796,11 @@ impl Airport {
             let (a, b) = (self.nodes[w[0]], self.nodes[w[1]]);
             let len = a.dist(b);
             let (dn, de) = (b.n - a.n, b.e - a.e);
-            let t = if len < 1e-6 { 0. } else { (((q.n - a.n) * dn + (q.e - a.e) * de) / (len * len)).clamp(0., 1.) };
+            let t = if len < 1e-6 {
+                0.
+            } else {
+                (((q.n - a.n) * dn + (q.e - a.e) * de) / (len * len)).clamp(0., 1.)
+            };
             segs.push((run + t * len, seg_dist(q, a, b)));
             run += len;
         }
@@ -790,7 +839,13 @@ impl Airport {
 
     /// Does the part of `route` still ahead of an aircraft at `at` pass
     /// within `within` metres of `p`?
-    pub(crate) fn route_ahead_passes(&self, route: &TaxiRoute, at: P2, p: P2, within: f64) -> bool {
+    pub(crate) fn route_ahead_passes(
+        &self,
+        route: &TaxiRoute,
+        at: P2,
+        p: P2,
+        within: f64,
+    ) -> bool {
         match (self.along(route, at), self.along(route, p)) {
             // not on the network yet (still on its stand): all of it is ahead
             (Some((me, off)), Some((it, d))) => d < within && (off > 40. || it > me - 5.),
@@ -802,7 +857,9 @@ impl Airport {
     /// nearest where it is.
     pub(crate) fn ramp_for(&self, p: P2, named: Option<&str>) -> Option<&Ramp> {
         if let Some(n) = named.map(|s| s.to_lowercase()).filter(|s| !s.is_empty()) {
-            if let Some(r) = self.ramps.iter().find(|r| r.name.to_lowercase().contains(&n) || n.contains(&r.name.to_lowercase())) {
+            if let Some(r) = self.ramps.iter().find(|r| {
+                r.name.to_lowercase().contains(&n) || n.contains(&r.name.to_lowercase())
+            }) {
                 return Some(r);
             }
         }
@@ -823,13 +880,18 @@ impl Airport {
     /// The hold-short point for `pair` on the route, as a node index: where
     /// an aircraft taxiing the route stops before crossing.
     pub(crate) fn crossing_hold(&self, route: &TaxiRoute, pair: &str) -> Option<usize> {
-        route.nodes.iter().find_map(|&n| self.holds.iter().position(|h| h.node == n && h.pair == pair))
+        route
+            .nodes
+            .iter()
+            .find_map(|&n| self.holds.iter().position(|h| h.node == n && h.pair == pair))
     }
 
     /// The name a controller uses for a strip: "06R/24L" → "06R" if that end
     /// is the one in use, else the pair spoken as the first end.
     pub(crate) fn strip_name<'a>(&self, pair: &'a str, direction: &str) -> &'a str {
-        pair.split('/').find(|e| direction_of(e) == direction).unwrap_or_else(|| pair.split('/').next().unwrap_or(pair))
+        pair.split('/')
+            .find(|e| direction_of(e) == direction)
+            .unwrap_or_else(|| pair.split('/').next().unwrap_or(pair))
     }
 }
 
@@ -895,10 +957,18 @@ mod tests {
         let a = andersen();
         for ramp in &a.ramps {
             for rwy in ["06R", "24L"] {
-                let r = a.route_to_runway(ramp.p, rwy).unwrap_or_else(|| panic!("no route from {} to {rwy}", ramp.name));
-                let h = r.hold.unwrap_or_else(|| panic!("{} to {rwy}: no holding point", ramp.name));
+                let r = a
+                    .route_to_runway(ramp.p, rwy)
+                    .unwrap_or_else(|| panic!("no route from {} to {rwy}", ramp.name));
+                let h = r.hold.unwrap_or_else(|| {
+                    panic!("{} to {rwy}: no holding point", ramp.name)
+                });
                 // named taxiways, or a named holding point right by the ramp
-                assert!(!r.via.is_empty() || !a.holds[h].taxiway.is_empty(), "{} to {rwy}: nothing named", ramp.name);
+                assert!(
+                    !r.via.is_empty() || !a.holds[h].taxiway.is_empty(),
+                    "{} to {rwy}: nothing named",
+                    ramp.name
+                );
             }
         }
     }
@@ -939,16 +1009,22 @@ mod tests {
     fn alignment_shifts_the_network() {
         let mut a = andersen();
         let before = a.node(0);
-        let dcs: Vec<(String, P2)> =
-            a.runways.iter().map(|r| (r.name.clone(), P2::new(r.thr.n + 30., r.thr.e - 20.))).collect();
+        let dcs: Vec<(String, P2)> = a
+            .runways
+            .iter()
+            .map(|r| (r.name.clone(), P2::new(r.thr.n + 30., r.thr.e - 20.)))
+            .collect();
         let mag = a.align(&dcs).unwrap();
         assert!((mag - 36.06).abs() < 0.1);
         let after = a.node(0);
         assert!((after.n - before.n - 30.).abs() < 1e-6);
         // a wildly different "Andersen" is refused
         let mut b = andersen();
-        let far: Vec<(String, P2)> =
-            b.runways.iter().map(|r| (r.name.clone(), P2::new(r.thr.n + 5000., r.thr.e))).collect();
+        let far: Vec<(String, P2)> = b
+            .runways
+            .iter()
+            .map(|r| (r.name.clone(), P2::new(r.thr.n + 5000., r.thr.e)))
+            .collect();
         assert!(b.align(&far).is_none());
     }
 

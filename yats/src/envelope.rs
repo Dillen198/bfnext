@@ -169,10 +169,8 @@ pub(crate) fn self_describing<R>(f: impl FnOnce() -> R) -> R {
             ROW.with(|r| r.set(self.1));
         }
     }
-    let _restore = Restore(
-        SELF_DESCRIBING.with(|s| s.replace(true)),
-        ROW.with(|r| r.replace(None)),
-    );
+    let _restore =
+        Restore(SELF_DESCRIBING.with(|s| s.replace(true)), ROW.with(|r| r.replace(None)));
     f()
 }
 
@@ -292,10 +290,8 @@ mod tests {
         let t = Tree::<u32, Envelope<Group>>::open(&db, "t").unwrap();
         let g = Group { owner: 1, units: vec![], kind: None };
         t.insert(&1, &Envelope(g.clone())).unwrap();
-        let got: Option<Envelope<Group>> = t
-            .transaction(|tx| tx.get(&1))
-            .map_err(|e| anyhow::anyhow!("{e:?}"))
-            .unwrap();
+        let got: Option<Envelope<Group>> =
+            t.transaction(|tx| tx.get(&1)).map_err(|e| anyhow::anyhow!("{e:?}")).unwrap();
         assert_eq!(got.map(|e| e.0), Some(g));
     }
 
@@ -307,7 +303,10 @@ mod tests {
         // the payload is self-describing, so the v2 type reads a v1 row by
         // field names
         let t2 = Tree::<u32, Envelope<Group>>::open(&db, "groups").unwrap();
-        assert_eq!(t2.get(&1).unwrap().unwrap().0, Group { owner: 1, units: vec![5], kind: None });
+        assert_eq!(
+            t2.get(&1).unwrap().unwrap().0,
+            Group { owner: 1, units: vec![5], kind: None }
+        );
         let c = Group { owner: 3, units: vec![], kind: Some("x".into()) };
         t2.insert(&2, &Envelope(c.clone())).unwrap();
         assert_eq!(t2.get(&2).unwrap().unwrap().0, c);
@@ -319,7 +318,8 @@ mod tests {
     fn envelope_is_only_decodable_by_yats() {
         use bincode::Options;
         let row = serialize(&Envelope(GroupV1 { owner: 1, units: vec![] })).unwrap();
-        let opts = bincode::DefaultOptions::new().with_big_endian().with_fixint_encoding();
+        let opts =
+            bincode::DefaultOptions::new().with_big_endian().with_fixint_encoding();
         // a plain bincode decode, without yats providing the row
         assert!(opts.deserialize::<Envelope<GroupV1>>(&row).is_err());
         // and yats itself is fine with it

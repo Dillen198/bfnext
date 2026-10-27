@@ -183,14 +183,23 @@ mod tests {
         // saved 2 h into a session that was paused for 30 min: campaign time
         // is 30 min behind the wall clock at the save
         let wall_at_save = t0() + Duration::hours(2);
-        let saved = SavedClock { campaign: wall_at_save - Duration::minutes(30), wall: wall_at_save };
+        let saved = SavedClock {
+            campaign: wall_at_save - Duration::minutes(30),
+            wall: wall_at_save,
+        };
         // back up after 15 minutes
         let wall_now = wall_at_save + Duration::minutes(15);
-        assert_eq!(SavedClock::resume(Some(saved), wall_now), saved.campaign + Duration::minutes(15));
+        assert_eq!(
+            SavedClock::resume(Some(saved), wall_now),
+            saved.campaign + Duration::minutes(15)
+        );
         // an old save has no clock: its timestamps are wall clock
         assert_eq!(SavedClock::resume(None, wall_now), wall_now);
         // the wall clock was set back: no negative downtime
-        assert_eq!(SavedClock::resume(Some(saved), wall_at_save - Duration::hours(1)), saved.campaign);
+        assert_eq!(
+            SavedClock::resume(Some(saved), wall_at_save - Duration::hours(1)),
+            saved.campaign
+        );
     }
 
     #[test]

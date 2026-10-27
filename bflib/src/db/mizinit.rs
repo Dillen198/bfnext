@@ -42,15 +42,20 @@ use bfprotocols::{
 };
 use chrono::prelude::*;
 use compact_str::{CompactString, format_compact};
+use dcso3::land::SurfaceType;
 use dcso3::{
-    centroid2d, coalition::Side, controller::PointType, coord::Coord,
+    LuaVec2, LuaVec3, MizLua, String, Vector2, Vector3, centroid2d,
+    coalition::Side,
+    controller::PointType,
+    coord::Coord,
     country::Country,
     env::miz::{Group, GroupKind, Miz, MizIndex, Skill, TriggerZone, TriggerZoneTyp},
-    land::Land, net::Net, trigger::Trigger, LuaVec2, LuaVec3, MizLua, String, Vector2, Vector3
+    land::Land,
+    net::Net,
+    trigger::Trigger,
 };
 use enumflags2::BitFlags;
 use fxhash::{FxHashMap, FxHashSet};
-use dcso3::land::SurfaceType;
 use log::{debug, error, info, warn};
 use smallvec::SmallVec;
 use tokio::sync::mpsc::UnboundedSender;
@@ -82,7 +87,12 @@ impl Db {
     /// - N: Neutral
     ///
     /// So e.g. Tblisi would be OABBTBLISI -> Objective, Airbase, Default to Blue, named Tblisi
-    fn init_objective(&mut self, lua: MizLua, zone: TriggerZone, name: &str) -> Result<()> {
+    fn init_objective(
+        &mut self,
+        lua: MizLua,
+        zone: TriggerZone,
+        name: &str,
+    ) -> Result<()> {
         fn side_and_name(s: &str) -> Result<(Side, String)> {
             if let Some(name) = s.strip_prefix("R") {
                 Ok((Side::Red, String::from(name)))
@@ -107,30 +117,43 @@ impl Db {
             let (side, name) = side_and_name(name)?;
             (ObjectiveKind::NavalBase, side, name)
         } else if let Some(name) = name.strip_prefix("CG") {
-            info!("[CARRIER_OBJ_INIT] Parsing carrier group objective, remaining name: {}", name);
+            info!(
+                "[CARRIER_OBJ_INIT] Parsing carrier group objective, remaining name: {}",
+                name
+            );
             let (side, name) = side_and_name(name)?;
             info!("[CARRIER_OBJ_INIT] Side: {:?}, Name: {}", side, name);
-            (ObjectiveKind::CarrierGroup {
-                carrier_template: String::default(),
-                waypoint: None,
-                parent_naval_base: None,
-                repair_start_time: None,
-            }, side, name)
+            (
+                ObjectiveKind::CarrierGroup {
+                    carrier_template: String::default(),
+                    waypoint: None,
+                    parent_naval_base: None,
+                    repair_start_time: None,
+                },
+                side,
+                name,
+            )
         } else if let Some(name) = name.strip_prefix("FAC") {
             let (side, name) = side_and_name(name)?;
-            let production_rate = self.ephemeral.cfg.factory
+            let production_rate = self
+                .ephemeral
+                .cfg
+                .factory
                 .as_ref()
                 .map(|f| f.production_rate)
                 .unwrap_or(100);
-            (ObjectiveKind::Factory {
-                production_rate,
-                last_production_ts: None,
-            }, side, name)
+            (
+                ObjectiveKind::Factory { production_rate, last_production_ts: None },
+                side,
+                name,
+            )
         } else if let Some(name) = name.strip_prefix("CC") {
             let (side, name) = side_and_name(name)?;
             (ObjectiveKind::CommandCenter, side, name)
         } else {
-            bail!("invalid objective type for {name}, expected AB, FO, LO, NB, CG, FAC, or CC")
+            bail!(
+                "invalid objective type for {name}, expected AB, FO, LO, NB, CG, FAC, or CC"
+            )
         };
         let id = ObjectiveId::new();
         let mut logistics_detached = false;
@@ -174,10 +197,9 @@ impl Db {
                 pos: centroid2d([points.p0.0, points.p1.0, points.p2.0, points.p3.0]),
                 points,
             },
-            TriggerZoneTyp::Circle { radius } => Zone::Circle {
-                pos: zone.pos()?,
-                radius,
-            },
+            TriggerZoneTyp::Circle { radius } => {
+                Zone::Circle { pos: zone.pos()?, radius }
+            }
         };
         let obj = Objective {
             id,
@@ -221,7 +243,10 @@ impl Db {
                 self.persisted.naval_bases.insert_cow(id);
             }
             ObjectiveKind::CarrierGroup { .. } => {
-                info!("[CARRIER_OBJ] Created carrier group objective: {} (id: {:?}, owner: {:?})", name, id, owner);
+                info!(
+                    "[CARRIER_OBJ] Created carrier group objective: {} (id: {:?}, owner: {:?})",
+                    name, id, owner
+                );
                 self.persisted.carrier_groups.insert_cow(id);
             }
             ObjectiveKind::Factory { .. } => {
@@ -233,7 +258,8 @@ impl Db {
             _ => {}
         }
         let pos = zone.pos();
-        let llpos = Coord::singleton(lua)?.lo_to_ll(LuaVec3(Vector3::new(pos.x, 0., pos.y)))?;
+        let llpos =
+            Coord::singleton(lua)?.lo_to_ll(LuaVec3(Vector3::new(pos.x, 0., pos.y)))?;
         self.ephemeral.stat(Stat::Objective {
             name: name.clone(),
             id,
@@ -435,17 +461,10 @@ impl Db {
             {
                 continue;
             }
-            let units = obj
-                .groups()
-                .get(&obj.owner)
-                .map(|g| g.into_iter().count())
-                .unwrap_or(0);
-            let buildings = self
-                .ephemeral
-                .scenery_total_by_objective
-                .get(oid)
-                .copied()
-                .unwrap_or(0);
+            let units =
+                obj.groups().get(&obj.owner).map(|g| g.into_iter().count()).unwrap_or(0);
+            let buildings =
+                self.ephemeral.scenery_total_by_objective.get(oid).copied().unwrap_or(0);
             if units == 0 && buildings == 0 {
                 orphans.push(CompactString::from(obj.name.as_str()));
             }
@@ -461,7 +480,11 @@ impl Db {
         }
     }
 
-    pub fn ensure_default_logi_coverage(&mut self, spctx: &SpawnCtx, idx: &MizIndex) -> Result<()> {
+    pub fn ensure_default_logi_coverage(
+        &mut self,
+        spctx: &SpawnCtx,
+        idx: &MizIndex,
+    ) -> Result<()> {
         // logi_from_scenery replaces spawned logi groups with the map-building
         // mechanic -- there is deliberately nothing to fall back to here.
         if self.ephemeral.cfg.logi_from_scenery.is_some() {
@@ -514,14 +537,18 @@ impl Db {
                 }
             };
             let Some(land_pos) = land_pos else {
-                warn!("[LOGI_FALLBACK] objective {:?} has no dry ground near its zone centre -- skipping default logi coverage", oid);
+                warn!(
+                    "[LOGI_FALLBACK] objective {:?} has no dry ground near its zone centre -- skipping default logi coverage",
+                    oid
+                );
                 continue;
             };
             for side in [Side::Red, Side::Blue] {
                 let obj = objective!(self, oid)?;
                 let has_logi = obj.groups.get(&side).is_some_and(|gids| {
-                    gids.into_iter()
-                        .any(|gid| group!(self, *gid).map(|g| g.class.is_logi()).unwrap_or(false))
+                    gids.into_iter().any(|gid| {
+                        group!(self, *gid).map(|g| g.class.is_logi()).unwrap_or(false)
+                    })
                 });
                 if has_logi {
                     continue;
@@ -552,8 +579,10 @@ impl Db {
                 ) {
                     Ok(gid) => gid,
                     Err(e) => {
-                        warn!("[LOGI_FALLBACK] objective {:?} side {:?}: could not place {}: {:?}",
-                              oid, side, template_name, e);
+                        warn!(
+                            "[LOGI_FALLBACK] objective {:?} side {:?}: could not place {}: {:?}",
+                            oid, side, template_name, e
+                        );
                         continue;
                     }
                 };
@@ -603,10 +632,16 @@ impl Db {
                         // Exact match: RCARRIER and RCARRIER2 are distinct
                         // task forces -- a `starts_with` here would make one
                         // suppress creation of the other.
-                        let already_exists = self.persisted.groups.into_iter()
+                        let already_exists = self
+                            .persisted
+                            .groups
+                            .into_iter()
                             .any(|(_, g)| g.template_name.as_str() == name.as_str());
                         if already_exists {
-                            info!("[CARRIER_TEMPLATE] Skipping {} - already exists in database", name);
+                            info!(
+                                "[CARRIER_TEMPLATE] Skipping {} - already exists in database",
+                                name
+                            );
                             continue;
                         }
 
@@ -615,13 +650,16 @@ impl Db {
                         let first_unit = match first_unit {
                             Some(Ok(unit)) => unit,
                             Some(Err(e)) => {
-                                error!("[CARRIER_TEMPLATE] Failed to get first unit: {}", e);
+                                error!(
+                                    "[CARRIER_TEMPLATE] Failed to get first unit: {}",
+                                    e
+                                );
                                 continue;
-                            },
+                            }
                             None => {
                                 error!("[CARRIER_TEMPLATE] Ship group has no units");
                                 continue;
-                            },
+                            }
                         };
                         let pos = first_unit.pos()?;
 
@@ -629,26 +667,34 @@ impl Db {
                         // But first check if one already exists for this side (from trigger zone parsing)
                         let obj_id = if create_objectives {
                             // Check if a carrier group objective already exists for this side
-                            let existing_cg = self.persisted.carrier_groups.into_iter()
+                            let existing_cg = self
+                                .persisted
+                                .carrier_groups
+                                .into_iter()
                                 .find(|cg_id| {
-                                    self.persisted.objectives.get(cg_id)
+                                    self.persisted
+                                        .objectives
+                                        .get(cg_id)
                                         .map(|obj| obj.owner == side)
                                         .unwrap_or(false)
                                 })
                                 .cloned();
 
                             if let Some(existing_id) = existing_cg {
-                                info!("[CARRIER_TEMPLATE] Using existing carrier group objective for {:?} side", side);
+                                info!(
+                                    "[CARRIER_TEMPLATE] Using existing carrier group objective for {:?} side",
+                                    side
+                                );
                                 Some(existing_id)
                             } else {
                                 let obj_id = ObjectiveId::new();
-                                let obj_name = format!("{} Strike Group", if side == Side::Red { "Red" } else { "Blue" });
+                                let obj_name = format!(
+                                    "{} Strike Group",
+                                    if side == Side::Red { "Red" } else { "Blue" }
+                                );
 
                                 // Create a circular zone around the carrier's position (5000m radius)
-                                let zone = Zone::Circle {
-                                    pos,
-                                    radius: 5000.0,
-                                };
+                                let zone = Zone::Circle { pos, radius: 5000.0 };
 
                                 let obj = Objective {
                                     id: obj_id,
@@ -689,12 +735,16 @@ impl Db {
                                     threat_pos3: Vector3::default(),
                                 };
 
-                                info!("[CARRIER_OBJ] Created carrier group objective: {}", obj_name);
+                                info!(
+                                    "[CARRIER_OBJ] Created carrier group objective: {}",
+                                    obj_name
+                                );
 
                                 // Register the objective
                                 self.persisted.carrier_groups.insert_cow(obj_id);
 
-                                let llpos = Coord::singleton(lua)?.lo_to_ll(LuaVec3(Vector3::new(pos.x, 0., pos.y)))?;
+                                let llpos = Coord::singleton(lua)?
+                                    .lo_to_ll(LuaVec3(Vector3::new(pos.x, 0., pos.y)))?;
                                 self.ephemeral.stat(Stat::Objective {
                                     name: obj_name.clone().into(),
                                     id: obj_id,
@@ -704,7 +754,9 @@ impl Db {
                                 });
 
                                 self.persisted.objectives.insert_cow(obj_id, obj);
-                                self.persisted.objectives_by_name.insert_cow(obj_name.into(), obj_id);
+                                self.persisted
+                                    .objectives_by_name
+                                    .insert_cow(obj_name.into(), obj_id);
 
                                 Some(obj_id)
                             }
@@ -713,7 +765,10 @@ impl Db {
                         };
 
                         // Add the ship group to the database
-                        info!("[CARRIER_TEMPLATE] About to add ship group {} to database", name);
+                        info!(
+                            "[CARRIER_TEMPLATE] About to add ship group {} to database",
+                            name
+                        );
                         let gid = match self.add_group(
                             spctx,
                             idx,
@@ -733,19 +788,28 @@ impl Db {
                         ) {
                             Ok(gid) => gid,
                             Err(e) => {
-                                error!("[CARRIER_TEMPLATE] Failed to add group {}: {}", name, e);
+                                error!(
+                                    "[CARRIER_TEMPLATE] Failed to add group {}: {}",
+                                    name, e
+                                );
                                 continue;
                             }
                         };
 
-                        info!("[CARRIER_TEMPLATE] Added ship group {} with GroupId {:?}", name, gid);
+                        info!(
+                            "[CARRIER_TEMPLATE] Added ship group {} with GroupId {:?}",
+                            name, gid
+                        );
 
                         // If we created an objective, link the group to it immediately
                         if let Some(oid) = obj_id {
                             let obj = objective_mut!(self, &oid)?;
                             obj.groups.get_or_default_cow(side).insert_cow(gid);
                             self.persisted.objectives_by_group.insert_cow(gid, oid);
-                            info!("[CARRIER_TEMPLATE] Linked group {:?} to objective {:?}", gid, oid);
+                            info!(
+                                "[CARRIER_TEMPLATE] Linked group {:?} to objective {:?}",
+                                gid, oid
+                            );
                         }
                     }
                 }
@@ -806,9 +870,14 @@ impl Db {
             })
             .collect();
 
-        let carrier_ids: Vec<ObjectiveId> = self.persisted.carrier_groups.into_iter().copied().collect();
-        info!("[CARRIER_INIT] {} carrier task-force group(s), {} carrier objective(s): {:?}",
-              cgs.len(), carrier_ids.len(), carrier_ids);
+        let carrier_ids: Vec<ObjectiveId> =
+            self.persisted.carrier_groups.into_iter().copied().collect();
+        info!(
+            "[CARRIER_INIT] {} carrier task-force group(s), {} carrier objective(s): {:?}",
+            cgs.len(),
+            carrier_ids.len(),
+            carrier_ids
+        );
 
         // Home side per carrier objective, from its NAME ("Red Strike Group"
         // / "Blue Strike Group") -- drift-immune, unlike the zone position.
@@ -855,8 +924,12 @@ impl Db {
                 .map(|(g, _, t, _)| (*g, t.clone()))
                 .collect();
             for (gid, tmpl) in doomed {
-                let gname = group!(self, &gid).map(|g| g.name.to_string()).unwrap_or_default();
-                info!("[CARRIER_INIT] deleting stale carrier group {:?} ({} / tmpl {})", gid, gname, tmpl);
+                let gname =
+                    group!(self, &gid).map(|g| g.name.to_string()).unwrap_or_default();
+                info!(
+                    "[CARRIER_INIT] deleting stale carrier group {:?} ({} / tmpl {})",
+                    gid, gname, tmpl
+                );
                 // Despawn by name ONLY for a mangled/unknown template name --
                 // that name is unique so it can't hit a live carrier. A
                 // duplicate of a VALID template (e.g. a second "RCARRIER")
@@ -865,14 +938,18 @@ impl Db {
                 // (nothing is spawned yet at init time anyway) and let the
                 // real group spawn.
                 if !valid_names.contains(&tmpl) {
-                    self.ephemeral.push_despawn(gid, Despawn::GroupByName(tmpl.to_string()));
+                    self.ephemeral
+                        .push_despawn(gid, Despawn::GroupByName(tmpl.to_string()));
                     if !gname.is_empty() && gname != tmpl.as_str() {
                         self.ephemeral.push_despawn(gid, Despawn::GroupByName(gname));
                     }
                 }
                 self.persisted.objectives_by_group.remove_cow(&gid);
                 if let Err(e) = self.delete_group(&gid) {
-                    error!("[CARRIER_INIT] failed to delete stale carrier group {:?}: {:?}", gid, e);
+                    error!(
+                        "[CARRIER_INIT] failed to delete stale carrier group {:?}: {:?}",
+                        gid, e
+                    );
                 }
             }
             cgs.retain(|(g, _, t, _)| keep(g, t));
@@ -936,8 +1013,10 @@ impl Db {
                 .find(|oid| home_by_oid.get(oid).copied() == Some(want_home))
                 .or_else(|| {
                     carrier_ids.iter().copied().min_by(|a, b| {
-                        let pa = objective!(self, a).map(|o| o.zone.pos()).unwrap_or_default();
-                        let pb = objective!(self, b).map(|o| o.zone.pos()).unwrap_or_default();
+                        let pa =
+                            objective!(self, a).map(|o| o.zone.pos()).unwrap_or_default();
+                        let pb =
+                            objective!(self, b).map(|o| o.zone.pos()).unwrap_or_default();
                         na::distance_squared(&pa.into(), &g_pos.into())
                             .partial_cmp(&na::distance_squared(&pb.into(), &g_pos.into()))
                             .unwrap()
@@ -968,7 +1047,8 @@ impl Db {
             }
 
             if live {
-                if let Zone::Circle { pos, .. } = &mut objective_mut!(self, &cg_id)?.zone {
+                if let Zone::Circle { pos, .. } = &mut objective_mut!(self, &cg_id)?.zone
+                {
                     *pos = g_pos;
                 }
                 self.ephemeral.push_spawn(gid);
@@ -978,7 +1058,10 @@ impl Db {
                 {
                     *carrier_template = template_name.clone();
                 }
-                info!("[CARRIER_INIT] {} LIVE {} {:?} ({:?})", cg_name, tmpl, gid, g_side);
+                info!(
+                    "[CARRIER_INIT] {} LIVE {} {:?} ({:?})",
+                    cg_name, tmpl, gid, g_side
+                );
             } else {
                 // Reserve task force: keep it out of the DCS world. Push a
                 // despawn by template name too -- if the mission author
@@ -989,7 +1072,10 @@ impl Db {
                     gid,
                     Despawn::GroupByName(group!(self, &gid)?.template_name.to_string()),
                 );
-                info!("[CARRIER_INIT] {} RESERVE {} {:?} ({:?})", cg_name, tmpl, gid, g_side);
+                info!(
+                    "[CARRIER_INIT] {} RESERVE {} {:?} ({:?})",
+                    cg_name, tmpl, gid, g_side
+                );
             }
         }
 
@@ -1027,7 +1113,9 @@ impl Db {
                 let cg_name = objective!(self, cg_id)?.name.clone();
                 let nb_name = objective!(self, nb_id)?.name.clone();
                 let cg_obj = objective_mut!(self, cg_id)?;
-                if let ObjectiveKind::CarrierGroup { parent_naval_base, .. } = &mut cg_obj.kind {
+                if let ObjectiveKind::CarrierGroup { parent_naval_base, .. } =
+                    &mut cg_obj.kind
+                {
                     *parent_naval_base = Some(nb_id);
                     info!("linked carrier group {} to naval base {}", cg_name, nb_name);
                 }
@@ -1097,7 +1185,9 @@ impl Db {
                     if inline_units.is_empty() {
                         continue;
                     }
-                    if let Some(oid) = self.persisted.objectives_by_name.get(&cfg_site.name) {
+                    if let Some(oid) =
+                        self.persisted.objectives_by_name.get(&cfg_site.name)
+                    {
                         if let Some(obj) = self.persisted.objectives.get(oid) {
                             if let Some(groups) = obj.groups.get(side) {
                                 for gid in groups {
@@ -1159,8 +1249,11 @@ impl Db {
                 threat_pos3: Vector3::default(),
             };
             self.persisted.special_sam_sites.insert_cow(id);
-            let llpos = Coord::singleton(lua)?
-                .lo_to_ll(LuaVec3(Vector3::new(cfg_site.pos.x, 0., cfg_site.pos.y)))?;
+            let llpos = Coord::singleton(lua)?.lo_to_ll(LuaVec3(Vector3::new(
+                cfg_site.pos.x,
+                0.,
+                cfg_site.pos.y,
+            )))?;
             self.ephemeral.stat(Stat::Objective {
                 name: cfg_site.name.clone(),
                 id,
@@ -1176,8 +1269,18 @@ impl Db {
             // When the site is captured, cull_or_respawn_objectives finds the new owner's
             // group in obj.groups and spawns it — this is the standard capture flow.
             let sides: [(Side, Option<String>, &Vec<SpecialSamUnitCfg>, Country); 2] = [
-                (Side::Red, cfg_site.red_template.clone(), &cfg_site.red_units, cfg_site.red_country),
-                (Side::Blue, cfg_site.blue_template.clone(), &cfg_site.blue_units, cfg_site.blue_country),
+                (
+                    Side::Red,
+                    cfg_site.red_template.clone(),
+                    &cfg_site.red_units,
+                    cfg_site.red_country,
+                ),
+                (
+                    Side::Blue,
+                    cfg_site.blue_template.clone(),
+                    &cfg_site.blue_units,
+                    cfg_site.blue_country,
+                ),
             ];
             for (side, template, inline_units, country) in &sides {
                 let side = *side;
@@ -1197,10 +1300,7 @@ impl Db {
                         spctx,
                         idx,
                         side,
-                        SpawnLoc::AtPosWithCenter {
-                            pos: site_pos,
-                            center: site_pos,
-                        },
+                        SpawnLoc::AtPosWithCenter { pos: site_pos, center: site_pos },
                         tmpl,
                         DeployKind::Objective { origin: id },
                         BitFlags::empty(),
@@ -1234,12 +1334,8 @@ impl Db {
     /// StaticObject class has no controller and no setImmortal/setLife API.
     fn init_protected_statics(&mut self, miz: &Miz, lua: MizLua) -> Result<()> {
         use dcso3::{coalition::Static, object::DcsObject, static_object::StaticObject};
-        let zones: Vec<Zone> = self
-            .persisted
-            .objectives
-            .into_iter()
-            .map(|(_, o)| o.zone)
-            .collect();
+        let zones: Vec<Zone> =
+            self.persisted.objectives.into_iter().map(|(_, o)| o.zone).collect();
         if zones.is_empty() {
             return Ok(());
         }
@@ -1268,7 +1364,9 @@ impl Db {
                     }
                     Ok(Static::Airbase(_)) => (),
                     Err(e) => {
-                        debug!("protected static '{name}' not found live in the world: {e:?}")
+                        debug!(
+                            "protected static '{name}' not found live in the world: {e:?}"
+                        )
                     }
                 }
             }
@@ -1301,7 +1399,8 @@ impl Db {
         };
         use mlua::Value;
         use std::{cell::RefCell, rc::Rc};
-        const RELEVANT_KEYWORDS: &[&str] = &["WAREHOUSE", "INDUSTRIAL", "DEPOT", "FUEL", "STORAGE"];
+        const RELEVANT_KEYWORDS: &[&str] =
+            &["WAREHOUSE", "INDUSTRIAL", "DEPOT", "FUEL", "STORAGE"];
         // Only the few buildings closest to the objective count as its logistics
         // infrastructure -- a scan radius over a town otherwise pulls in dozens
         // of unrelated structures, so destroying any one barely moves the logi
@@ -1336,29 +1435,33 @@ impl Db {
             let point = LuaVec3(Vector3::new(center.x, alt, center.y));
             let vol = SearchVolume::Sphere { point, radius };
             let seen: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
-            let found: Rc<RefCell<SmallVec<[(CompactString, LuaVec3, DcsOid<ClassObject>); 8]>>> =
-                Rc::new(RefCell::new(SmallVec::new()));
+            let found: Rc<
+                RefCell<SmallVec<[(CompactString, LuaVec3, DcsOid<ClassObject>); 8]>>,
+            > = Rc::new(RefCell::new(SmallVec::new()));
             let seen_cb = Rc::clone(&seen);
             let found_cb = Rc::clone(&found);
-            world.search_objects(ObjectCategory::Scenery, vol, Value::Nil, move |_, o, _| {
-                *seen_cb.borrow_mut() += 1;
-                let typ = o.get_type_name().unwrap_or_else(|_| "?".into());
-                let typ_upper = typ.to_uppercase();
-                if !RELEVANT_KEYWORDS.iter().any(|kw| typ_upper.contains(kw)) {
-                    return Ok(true);
-                }
-                let id = match o.object_id() {
-                    Ok(id) => id,
-                    Err(_) => return Ok(true),
-                };
-                let oname = o.get_name().unwrap_or_else(|_| "?".into());
-                let label = CompactString::from(format!("{oname} ({typ})"));
-                let pos = o
-                    .get_point()
-                    .unwrap_or(LuaVec3(Vector3::new(0., 0., 0.)));
-                found_cb.borrow_mut().push((label, pos, id));
-                Ok(true)
-            })?;
+            world.search_objects(
+                ObjectCategory::Scenery,
+                vol,
+                Value::Nil,
+                move |_, o, _| {
+                    *seen_cb.borrow_mut() += 1;
+                    let typ = o.get_type_name().unwrap_or_else(|_| "?".into());
+                    let typ_upper = typ.to_uppercase();
+                    if !RELEVANT_KEYWORDS.iter().any(|kw| typ_upper.contains(kw)) {
+                        return Ok(true);
+                    }
+                    let id = match o.object_id() {
+                        Ok(id) => id,
+                        Err(_) => return Ok(true),
+                    };
+                    let oname = o.get_name().unwrap_or_else(|_| "?".into());
+                    let label = CompactString::from(format!("{oname} ({typ})"));
+                    let pos = o.get_point().unwrap_or(LuaVec3(Vector3::new(0., 0., 0.)));
+                    found_cb.borrow_mut().push((label, pos, id));
+                    Ok(true)
+                },
+            )?;
             let seen = *seen.borrow();
             let mut found = found.borrow().clone();
             // Keep only the closest BUILDINGS_PER_OBJECTIVE to the objective centre.
@@ -1382,9 +1485,7 @@ impl Db {
                         .collect::<Vec<_>>()
                         .join(", ")
                 );
-                self.ephemeral
-                    .scenery_total_by_objective
-                    .insert(oid, found.len() as u32);
+                self.ephemeral.scenery_total_by_objective.insert(oid, found.len() as u32);
                 // Buildings this objective had already lost before the restart.
                 // They come back standing in DCS, so skip registering that many
                 // (nearest first, the same deterministic order the scan
@@ -1447,7 +1548,9 @@ impl Db {
     /// spawn/cull transition and on capture.
     pub(super) fn sync_scenery_markers(&mut self, oid: ObjectiveId) {
         let (side, oname, want) = match self.persisted.objectives.get(&oid) {
-            Some(o) => (o.owner, o.name.clone(), o.spawned && !o.kind.is_special_sam_site()),
+            Some(o) => {
+                (o.owner, o.name.clone(), o.spawned && !o.kind.is_special_sam_site())
+            }
             None => return,
         };
         let ids: SmallVec<[_; 8]> = self
@@ -1458,10 +1561,11 @@ impl Db {
             .map(|(id, _)| id.clone())
             .collect();
         for id in ids {
-            let (label, pos, old, old_side) = match self.ephemeral.tracked_scenery.get(&id) {
-                Some(ts) => (ts.label.clone(), ts.pos, ts.marker, ts.marker_side),
-                None => continue,
-            };
+            let (label, pos, old, old_side) =
+                match self.ephemeral.tracked_scenery.get(&id) {
+                    Some(ts) => (ts.label.clone(), ts.pos, ts.marker, ts.marker_side),
+                    None => continue,
+                };
             let up_to_date = old.is_some() == want && (!want || old_side == Some(side));
             if up_to_date {
                 continue;
@@ -1493,7 +1597,11 @@ impl Db {
     /// Confirmed-destroyed buildings are removed from tracking and counted in
     /// `scenery_destroyed_by_objective`, then that objective's status is
     /// recomputed so the `logi` penalty in `compute_objective_status` applies.
-    pub fn check_scenery_buildings(&mut self, lua: MizLua, ts: DateTime<Utc>) -> Result<()> {
+    pub fn check_scenery_buildings(
+        &mut self,
+        lua: MizLua,
+        ts: DateTime<Utc>,
+    ) -> Result<()> {
         use dcso3::object::{DcsObject, Object};
         const BATCH_SIZE: usize = 25;
 
@@ -1529,11 +1637,8 @@ impl Db {
                 if let Some(mk) = marker {
                     self.ephemeral.msgs().delete_mark(mk);
                 }
-                let n = self
-                    .ephemeral
-                    .scenery_destroyed_by_objective
-                    .entry(oid)
-                    .or_insert(0);
+                let n =
+                    self.ephemeral.scenery_destroyed_by_objective.entry(oid).or_insert(0);
                 *n += 1;
                 let n = *n;
                 self.persisted.scenery_destroyed.insert_cow(oid, n);
@@ -1544,7 +1649,9 @@ impl Db {
         }
         for oid in affected {
             if let Err(e) = self.update_objective_status(&oid, ts) {
-                error!("failed to update objective status after scenery loss {oid:?} {e:?}");
+                error!(
+                    "failed to update objective status after scenery loss {oid:?} {e:?}"
+                );
             }
         }
         Ok(())
@@ -1587,9 +1694,7 @@ impl Db {
         for unit in slot.units()? {
             let unit = unit?;
             let vehicle = Vehicle::from(unit.typ()?);
-            self.ephemeral
-                .cfg
-                .check_vehicle_has_threat_distance(&vehicle)?;
+            self.ephemeral.cfg.check_vehicle_has_threat_distance(&vehicle)?;
             if unit.skill()? != Skill::Client {
                 continue;
             }
@@ -1606,22 +1711,35 @@ impl Db {
                 // to the same objective. init_carrier_groups has already run
                 // so the ship positions are known. Falls back to the first
                 // carrier objective owned by this side.
-                let found_obj = super::logistics::nearest_carrier_objective(&self.persisted, pos)
-                    .or_else(|| {
-                        self.persisted.objectives.into_iter().find_map(|(oid, obj)| {
-                            match &obj.kind {
-                                ObjectiveKind::CarrierGroup { .. } if obj.owner == side => Some(*oid),
-                                _ => None,
-                            }
-                        })
-                    });
+                let found_obj =
+                    super::logistics::nearest_carrier_objective(&self.persisted, pos)
+                        .or_else(|| {
+                            self.persisted.objectives.into_iter().find_map(
+                                |(oid, obj)| match &obj.kind {
+                                    ObjectiveKind::CarrierGroup { .. }
+                                        if obj.owner == side =>
+                                    {
+                                        Some(*oid)
+                                    }
+                                    _ => None,
+                                },
+                            )
+                        });
                 match found_obj {
                     Some(oid) => {
-                        info!("[CARRIER_SLOT] Slot {:?} linked to carrier objective {:?}", slot.name(), oid);
+                        info!(
+                            "[CARRIER_SLOT] Slot {:?} linked to carrier objective {:?}",
+                            slot.name(),
+                            oid
+                        );
                         oid
                     }
                     None => {
-                        info!("[CARRIER_SLOT] slot {:?} has link_unit but no matching carrier objective found for side {:?}", slot.name(), side);
+                        info!(
+                            "[CARRIER_SLOT] slot {:?} has link_unit but no matching carrier objective found for side {:?}",
+                            slot.name(),
+                            side
+                        );
                         return Ok(());
                     }
                 }
@@ -1736,12 +1854,21 @@ impl Db {
                         {
                             continue;
                         }
-                        t.init_objective_group(&spctx, idx, miz, zone, side, name.as_str())?
+                        t.init_objective_group(
+                            &spctx,
+                            idx,
+                            miz,
+                            zone,
+                            side,
+                            name.as_str(),
+                        )?
                     }
                 } else if name.starts_with("T") || name.starts_with("O") {
                     () // ignored
                 } else {
-                    bail!("invalid trigger zone type code {name}, expected O, G, or T prefix")
+                    bail!(
+                        "invalid trigger zone type code {name}, expected O, G, or T prefix"
+                    )
                 }
             }
         }
@@ -1755,15 +1882,12 @@ impl Db {
         t.init_carrier_template_groups(&spctx, idx, miz, lua, true)
             .context("init_carrier_template_groups failed")?;
         info!("[CARRIER_SETUP] About to init carrier groups");
-        t.init_carrier_groups(miz)
-            .context("init_carrier_groups failed")?;
+        t.init_carrier_groups(miz).context("init_carrier_groups failed")?;
         info!("[CARRIER_SETUP] Carrier initialization complete");
         t.init_special_sam_sites(&spctx, idx, lua)
             .context("init_special_sam_sites failed")?;
-        t.init_protected_statics(miz, lua)
-            .context("init_protected_statics failed")?;
-        t.scan_objective_scenery(lua)
-            .context("scan_objective_scenery failed")?;
+        t.init_protected_statics(miz, lua).context("init_protected_statics failed")?;
+        t.scan_objective_scenery(lua).context("scan_objective_scenery failed")?;
 
         // Now initialize slots - carrier objectives are available for slot association
         for side in Side::ALL {
@@ -1781,16 +1905,15 @@ impl Db {
             }
         }
         let now = t.ephemeral.now();
-        let ids = t
-            .persisted
-            .objectives
-            .into_iter()
-            .map(|(id, _)| *id)
-            .collect::<Vec<_>>();
+        let ids =
+            t.persisted.objectives.into_iter().map(|(id, _)| *id).collect::<Vec<_>>();
         for id in ids {
             // Skip carrier groups during initial status update - they'll be updated after spawning
             let obj = objective!(&t, id)?;
-            if matches!(obj.kind, ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::SpecialSamSite { .. }) {
+            if matches!(
+                obj.kind,
+                ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::SpecialSamSite { .. }
+            ) {
                 continue;
             }
             t.update_objective_status(&id, now)?
@@ -1862,7 +1985,8 @@ impl Db {
         // problem (a commander event's ambush force, for one: its despawn is
         // keyed by an event id the restart forgets). Tag such a group with a
         // tag listed in SESSION_SCOPED_TAGS and it is dropped here too.
-        let session_scoped: BitFlags<UnitTag> = SESSION_SCOPED_TAGS.iter().copied().collect();
+        let session_scoped: BitFlags<UnitTag> =
+            SESSION_SCOPED_TAGS.iter().copied().collect();
         let stale: SmallVec<[GroupId; 8]> = self
             .persisted
             .groups
@@ -1877,7 +2001,9 @@ impl Db {
             );
             for gid in stale {
                 if let Err(e) = self.delete_group(&gid) {
-                    error!("respawn_after_load: could not drop stale session-scoped group {gid:?}: {e:?}");
+                    error!(
+                        "respawn_after_load: could not drop stale session-scoped group {gid:?}: {e:?}"
+                    );
                 }
             }
         }
@@ -1909,30 +2035,33 @@ impl Db {
         info!("[CARRIER_LOAD] Re-indexing carrier template groups after load");
         self.init_carrier_template_groups(spctx, idx, miz, lua, false)
             .context("re-initializing carrier template groups")?;
-        self.init_carrier_groups(miz)
-            .context("re-initializing carrier groups")?;
+        self.init_carrier_groups(miz).context("re-initializing carrier groups")?;
         self.reconcile_carrier_task_forces(lua, idx)
             .context("reconciling carrier task forces")?;
         self.init_special_sam_sites(spctx, idx, lua)
             .context("re-init special sam sites")?;
-        self.init_protected_statics(miz, lua)
-            .context("re-init protected statics")?;
-        self.scan_objective_scenery(lua)
-            .context("scan_objective_scenery failed")?;
+        self.init_protected_statics(miz, lua).context("re-init protected statics")?;
+        self.scan_objective_scenery(lua).context("scan_objective_scenery failed")?;
         // Before anything is queued for spawn: convert a save that predates
         // logi_from_scenery, so its carried-over LOGI/DEPOT/FUEL groups don't
         // respawn (and don't drop invisible FARP pads on runways).
-        self.purge_logi_family_groups()
-            .context("purging carried-over logi groups")?;
+        self.purge_logi_family_groups().context("purging carried-over logi groups")?;
         // Same idea for crates: they are an in-flight delivery, not state
         // worth restoring, and their physical-crate tracking is ephemeral.
-        self.purge_carried_over_crates()
-            .context("purging carried-over crates")?;
+        self.purge_carried_over_crates().context("purging carried-over crates")?;
         info!("[CARRIER_LOAD] Spawning carrier groups before other entities");
         while self.ephemeral.spawnq_len() > 0 {
-            self.ephemeral.process_spawn_queue(perf, &self.persisted, self.ephemeral.now(), idx, spctx)?
+            self.ephemeral.process_spawn_queue(
+                perf,
+                &self.persisted,
+                self.ephemeral.now(),
+                idx,
+                spctx,
+            )?
         }
-        info!("[CARRIER_LOAD] Carrier groups spawned, now spawning deployed/logistics/crates");
+        info!(
+            "[CARRIER_LOAD] Carrier groups spawned, now spawning deployed/logistics/crates"
+        );
 
         let mut spawn_deployed_and_logistics = || -> Result<()> {
             debug!("queue respawn deployables");
@@ -1966,11 +2095,8 @@ impl Db {
                 let pos = obj.zone.pos();
                 let alt = land.get_height(LuaVec2(pos))? + 50.;
                 obj.threat_pos3 = Vector3::new(pos.x, alt, pos.y);
-                if let ObjectiveKind::Farp {
-                    spec: _,
-                    mobile: _,
-                    pad_template,
-                } = &obj.kind
+                if let ObjectiveKind::Farp { spec: _, mobile: _, pad_template } =
+                    &obj.kind
                 {
                     if let Some(uid) = self.persisted.units_by_name.get(pad_template)
                         && let Some(unit) = self.persisted.units.get(uid)
@@ -2006,10 +2132,15 @@ impl Db {
 
         // spawn everything before setting up warehouses, so that ship warehouses will also be set up correctly
         while self.ephemeral.spawnq_len() > 0 {
-            self.ephemeral.process_spawn_queue(perf, &self.persisted, self.ephemeral.now(), idx, spctx)?
+            self.ephemeral.process_spawn_queue(
+                perf,
+                &self.persisted,
+                self.ephemeral.now(),
+                idx,
+                spctx,
+            )?
         }
-        self.setup_warehouses_after_load(spctx.lua())
-            .context("setting up warehouses")?;
+        self.setup_warehouses_after_load(spctx.lua()).context("setting up warehouses")?;
         // Road troop insertions still under way when the last mission ended
         // lost their vehicle with it; refund them.
         self.reconcile_ground_insertions();
@@ -2038,9 +2169,7 @@ impl Db {
         let mut queue_check_close_enemies = || -> Result<()> {
             for (uid, unit) in &self.persisted.units {
                 if !unit.dead {
-                    self.ephemeral
-                        .units_potentially_close_to_enemies
-                        .insert(*uid);
+                    self.ephemeral.units_potentially_close_to_enemies.insert(*uid);
                 }
             }
             Ok(())
@@ -2077,14 +2206,16 @@ impl Db {
                 *lives += 1;
                 // A life type dropped from the config since the save has no
                 // cap to count up to -- treat the entry as full.
-                let full = self.ephemeral.cfg.default_lives.get(&lt).map_or(true, |(n, _)| *lives >= *n);
+                let full = self
+                    .ephemeral
+                    .cfg
+                    .default_lives
+                    .get(&lt)
+                    .map_or(true, |(n, _)| *lives >= *n);
                 if full {
                     player.lives.remove_cow(&lt);
                 }
-                self.ephemeral.stat(Stat::Life {
-                    id: ucid,
-                    lives: player.lives.clone(),
-                });
+                self.ephemeral.stat(Stat::Life { id: ucid, lives: player.lives.clone() });
                 self.ephemeral.dirty();
             }
         }

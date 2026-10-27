@@ -33,16 +33,21 @@ use regex::Regex;
 use smallvec::{SmallVec, smallvec};
 use std::{mem, sync::Arc, sync::OnceLock};
 
-pub(crate) fn register_success(ctx: &mut Context, id: PlayerId, name: String, side: Side) {
+pub(crate) fn register_success(
+    ctx: &mut Context,
+    id: PlayerId,
+    name: String,
+    side: Side,
+) {
     let msg = String::from(format_compact!(
         "Welcome to the {:?} team. You may only occupy slots belonging to your team. Good luck!",
         side
     ));
     ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg);
-    ctx.db.ephemeral.msgs().send(
-        MsgTyp::Chat(None),
-        format_compact!("{} has joined {:?} team", name, side),
-    );
+    ctx.db
+        .ephemeral
+        .msgs()
+        .send(MsgTyp::Chat(None), format_compact!("{} has joined {:?} team", name, side));
 }
 
 pub(crate) fn sideswitch_success(ctx: &mut Context, name: String, side: Side) {
@@ -134,7 +139,10 @@ fn gci_command(ctx: &mut Context, id: PlayerId, arg: &str) {
             }
             reply(
                 ctx,
-                format_compact!("GCI voice calls {}", if want_on { "enabled" } else { "disabled" }),
+                format_compact!(
+                    "GCI voice calls {}",
+                    if want_on { "enabled" } else { "disabled" }
+                ),
             );
         }
         "metric" => {
@@ -160,7 +168,10 @@ fn gci_command(ctx: &mut Context, id: PlayerId, arg: &str) {
         "auto" | "default" => {
             ctx.ewr.gci_set_units(&ucid, None);
             ctx.ewr.gci_set_reference(&ucid, None);
-            reply(ctx, "GCI calls will use the server default units and reference".into());
+            reply(
+                ctx,
+                "GCI calls will use the server default units and reference".into(),
+            );
         }
         // Unprompted calls. Separate from on/off: with callouts off the
         // controller still answers when you key up, it just never speaks first.
@@ -177,7 +188,12 @@ fn gci_command(ctx: &mut Context, id: PlayerId, arg: &str) {
             );
         }
         other => {
-            reply(ctx, format_compact!("unknown -gci option '{other}' (try: on, off, metric, imperial, braa, bulls, clock, auto, callouts, quiet)"));
+            reply(
+                ctx,
+                format_compact!(
+                    "unknown -gci option '{other}' (try: on, off, metric, imperial, braa, bulls, clock, auto, callouts, quiet)"
+                ),
+            );
         }
     }
 }
@@ -195,7 +211,9 @@ static PENDING_CONFIRM: std::sync::Mutex<Vec<(Ucid, CompactString, DateTime<Utc>
 fn strip_confirm(cmd: &str) -> (&str, bool) {
     let t = cmd.trim();
     match t.rsplit_once(char::is_whitespace) {
-        Some((head, last)) if last.eq_ignore_ascii_case("confirm") => (head.trim_end(), true),
+        Some((head, last)) if last.eq_ignore_ascii_case("confirm") => {
+            (head.trim_end(), true)
+        }
         _ => (t, false),
     }
 }
@@ -212,16 +230,19 @@ fn admin_command(ctx: &mut Context, id: PlayerId, cmd: &str, now: DateTime<Utc>)
     // just part of the arguments.
     let (text, confirmed, parsed) = match strip_confirm(cmd) {
         (text, true) => match text.parse::<AdminCommand>() {
-            p @ Ok(AdminCommand::Reset { .. } | AdminCommand::Shutdown) => (text, true, p),
+            p @ Ok(AdminCommand::Reset { .. } | AdminCommand::Shutdown) => {
+                (text, true, p)
+            }
             _ => (cmd.trim(), false, cmd.parse::<AdminCommand>()),
         },
         (text, false) => (text, false, text.parse::<AdminCommand>()),
     };
     match parsed {
-        Err(e) => ctx.db.ephemeral.msgs().send(
-            MsgTyp::Chat(Some(id)),
-            format_compact!("parse error {:?}", e),
-        ),
+        Err(e) => ctx
+            .db
+            .ephemeral
+            .msgs()
+            .send(MsgTyp::Chat(Some(id)), format_compact!("parse error {:?}", e)),
         Ok(AdminCommand::Help) => {
             for cmd in AdminCommand::help() {
                 ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), *cmd);
@@ -233,10 +254,14 @@ fn admin_command(ctx: &mut Context, id: PlayerId, cmd: &str, now: DateTime<Utc>)
         Ok(cmd @ (AdminCommand::Reset { .. } | AdminCommand::Shutdown)) => {
             let ucid = ifo.ucid;
             let key = CompactString::from(
-                text.split_whitespace().collect::<Vec<_>>().join(" ").to_ascii_lowercase(),
+                text.split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_ascii_lowercase(),
             );
             let mut pending = PENDING_CONFIRM.lock().unwrap_or_else(|e| e.into_inner());
-            pending.retain(|(_, _, at)| now - *at <= Duration::seconds(CONFIRM_WINDOW_SECS));
+            pending
+                .retain(|(_, _, at)| now - *at <= Duration::seconds(CONFIRM_WINDOW_SECS));
             if confirmed {
                 match pending.iter().position(|(u, k, _)| u == &ucid && k == &key) {
                     Some(i) => {
@@ -301,14 +326,23 @@ fn time_command(ctx: &mut Context, id: PlayerId) {
 
 fn weather_command(ctx: &mut Context, _lua: HooksLua, id: PlayerId) {
     if let Some(bw) = ctx.bot_weather {
-        let cover = if bw.cloud_density > 0.0 { format!("{:.0}/10", bw.cloud_density) } else { "clear".to_string() };
+        let cover = if bw.cloud_density > 0.0 {
+            format!("{:.0}/10", bw.cloud_density)
+        } else {
+            "clear".to_string()
+        };
         let msg = format!(
             "SERVER WEATHER\nTemp: {:.0}\u{b0}C / {:.0}\u{b0}F\nSurface wind: {:03}\u{b0} at {:.0} kt\nVisibility: {:.0} km / {:.0} SM\nClouds: base {:.0} ft AGL, {}\nQNH: {:.0} hPa / {:.2} inHg",
-            bw.temp_c, bw.temp_c * 1.8 + 32.0,
-            bw.wind_from_deg as u32, bw.wind_speed_kts,
-            bw.visibility_m / 1000.0, bw.visibility_m / 1609.34,
-            bw.cloud_base_m * 3.281, cover,
-            bw.qnh_hpa, bw.qnh_hpa / 33.8639,
+            bw.temp_c,
+            bw.temp_c * 1.8 + 32.0,
+            bw.wind_from_deg as u32,
+            bw.wind_speed_kts,
+            bw.visibility_m / 1000.0,
+            bw.visibility_m / 1609.34,
+            bw.cloud_base_m * 3.281,
+            cover,
+            bw.qnh_hpa,
+            bw.qnh_hpa / 33.8639,
         );
         ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg);
         return;
@@ -363,9 +397,7 @@ fn status_command(ctx: &mut Context, id: PlayerId) {
     let _ = write!(
         msg,
         "=== CAMPAIGN STATUS ===\nSide: {:?} | Points: {} | Streak: {} | Career Kills: {}\nObjectives — Blue: {} | Red: {}\nActive {:?} Convoys: {}",
-        side, points, streak, total_kills,
-        blue_owned, red_owned,
-        side, convoy_count
+        side, points, streak, total_kills, blue_owned, red_owned, side, convoy_count
     );
     ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg);
 }
@@ -423,20 +455,14 @@ fn brief_reply(ctx: &mut Context, lua: MizLua, id: PlayerId) {
         .unwrap_or(3);
     let text = crate::situation::render_panel(&rep, panel_tasks, None);
     for line in text.lines() {
-        ctx.db
-            .ephemeral
-            .msgs()
-            .send(MsgTyp::Chat(Some(id)), format_compact!(" {line}"));
+        ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), format_compact!(" {line}"));
     }
 }
 
 fn transfer_command(ctx: &mut Context, id: PlayerId, s: &str) {
     macro_rules! reply {
         ($msg:tt) => {
-            ctx.db
-                .ephemeral
-                .msgs()
-                .send(MsgTyp::Chat(Some(id)), format_compact!($msg))
+            ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), format_compact!($msg))
         };
     }
     if let Some(ifo) = ctx.connected.get(&id) {
@@ -449,22 +475,30 @@ fn transfer_command(ctx: &mut Context, id: PlayerId, s: &str) {
             Some((amount, target)) => match amount.parse::<u32>() {
                 Err(e) => reply!("transfer expected a number {e:?}"),
                 Ok(amount) => match target.trim().strip_prefix("objective:") {
-                    Some(objective_name) => match admin::get_airbase(&ctx.db, objective_name) {
-                        Err(e) => reply!("could not transfer to {objective_name}, {e:?}"),
-                        // Points banked at an enemy objective fund the enemy.
-                        Ok(oid) if ctx.db.objective(&oid).ok().map(|o| o.owner) != Some(side) => {
-                            reply!("{objective_name} isn't held by your side")
-                        }
-                        Ok(oid) => {
-                            match ctx
-                                .db
-                                .transfer_points(&ifo.ucid, Either::Right(oid), amount)
+                    Some(objective_name) => {
+                        match admin::get_airbase(&ctx.db, objective_name) {
+                            Err(e) => {
+                                reply!("could not transfer to {objective_name}, {e:?}")
+                            }
+                            // Points banked at an enemy objective fund the enemy.
+                            Ok(oid)
+                                if ctx.db.objective(&oid).ok().map(|o| o.owner)
+                                    != Some(side) =>
                             {
-                                Err(e) => reply!("transfer failed {e:?}"),
-                                Ok(()) => reply!("transfer complete"),
+                                reply!("{objective_name} isn't held by your side")
+                            }
+                            Ok(oid) => {
+                                match ctx.db.transfer_points(
+                                    &ifo.ucid,
+                                    Either::Right(oid),
+                                    amount,
+                                ) {
+                                    Err(e) => reply!("transfer failed {e:?}"),
+                                    Ok(()) => reply!("transfer complete"),
+                                }
                             }
                         }
-                    },
+                    }
                     None => {
                         let target = target.trim();
                         // Players get plain name matching; the admin resolver
@@ -478,14 +512,17 @@ fn transfer_command(ctx: &mut Context, id: PlayerId, s: &str) {
                         };
                         match resolved {
                             Err(e) => reply!("could not transfer to {target}, {e}"),
-                            Ok(ucid) if ctx.db.player(&ucid).map(|p| p.side) != Some(side) => {
+                            Ok(ucid)
+                                if ctx.db.player(&ucid).map(|p| p.side) != Some(side) =>
+                            {
                                 reply!("{target} isn't on your side")
                             }
                             Ok(ucid) => {
-                                match ctx
-                                    .db
-                                    .transfer_points(&ifo.ucid, Either::Left(&ucid), amount)
-                                {
+                                match ctx.db.transfer_points(
+                                    &ifo.ucid,
+                                    Either::Left(&ucid),
+                                    amount,
+                                ) {
                                     Err(e) => reply!("transfer failed {e:?}"),
                                     Ok(()) => reply!("transfer complete"),
                                 }
@@ -501,10 +538,7 @@ fn transfer_command(ctx: &mut Context, id: PlayerId, s: &str) {
 fn delete_command(ctx: &mut Context, id: PlayerId, s: &str) {
     macro_rules! reply {
         ($msg:tt) => {
-            ctx.db
-                .ephemeral
-                .msgs()
-                .send(MsgTyp::Chat(Some(id)), format_compact!($msg))
+            ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), format_compact!($msg))
         };
     }
     if let Some(ifo) = ctx.connected.get(&id) {
@@ -570,7 +604,8 @@ fn delete_command(ctx: &mut Context, id: PlayerId, s: &str) {
                                 // the treasury bought has cost_fraction 0,
                                 // so the commander gets no points back for it.
                                 None => {
-                                    let points = (points as f32 * cost_fraction).ceil() as i32;
+                                    let points =
+                                        (points as f32 * cost_fraction).ceil() as i32;
                                     if points > 0 {
                                         ctx.db.adjust_points(
                                             &player,
@@ -597,7 +632,9 @@ fn delete_command(ctx: &mut Context, id: PlayerId, s: &str) {
                         reply!("can't delete a downed pilot this way")
                     }
                     DeployKind::Dismount { .. } => {
-                        reply!("can't delete that dismount group now -- it is holding a base it just captured")
+                        reply!(
+                            "can't delete that dismount group now -- it is holding a base it just captured"
+                        )
                     }
                     DeployKind::Troop {
                         player,
@@ -641,7 +678,11 @@ fn delete_command(ctx: &mut Context, id: PlayerId, s: &str) {
     }
 }
 
-fn action_help(ctx: &mut Context, actions: &IndexMap<String, Action, FxBuildHasher>, id: PlayerId) {
+fn action_help(
+    ctx: &mut Context,
+    actions: &IndexMap<String, Action, FxBuildHasher>,
+    id: PlayerId,
+) {
     // Printed as the literal command, because players copy these lines: the
     // old `JTAC Drone: <key>` form was typed back as `-action "JTAC Drone: 1"`.
     ctx.db.ephemeral.msgs().send(
@@ -763,11 +804,7 @@ fn action_help(ctx: &mut Context, actions: &IndexMap<String, Action, FxBuildHash
             )),
             ActionKind::AddTask(c) => Some(format_compact!(
                 "-action {name} <type> <key> | Post a task at key, a mark point. types: {}. cost {}",
-                c.types
-                    .iter()
-                    .map(|t| t.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", "),
+                c.types.iter().map(|t| t.name.as_str()).collect::<Vec<_>>().join(", "),
                 action.cost
             )),
             ActionKind::RemoveTask(_) => Some(format_compact!(
@@ -854,8 +891,10 @@ fn bind_command(ctx: &mut Context, id: PlayerId, s: &str) {
         ),
         Some(ifo) => {
             let rx = RX.get_or_init(|| {
-                Regex::new("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-                    .unwrap()
+                Regex::new(
+                    "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                )
+                .unwrap()
             });
             let s = s.trim();
             if !rx.is_match(s) {
@@ -877,10 +916,7 @@ fn bind_command(ctx: &mut Context, id: PlayerId, s: &str) {
                     MsgTyp::Chat(Some(id)),
                     "Bind request sent -- reload the dashboard to confirm your account is linked",
                 );
-                ctx.do_bg_task(Task::Stat(Stat::Bind {
-                    id: ifo.ucid,
-                    token: s.into(),
-                }))
+                ctx.do_bg_task(Task::Stat(Stat::Bind { id: ifo.ucid, token: s.into() }))
             }
         }
     }
@@ -909,11 +945,8 @@ const JTAC_HELP: &[&str] = &[
 ];
 
 fn jtac_list(ctx: &mut Context, id: PlayerId) {
-    let Some(side) = ctx
-        .connected
-        .get(&id)
-        .and_then(|ifo| ctx.db.player(&ifo.ucid))
-        .map(|p| p.side)
+    let Some(side) =
+        ctx.connected.get(&id).and_then(|ifo| ctx.db.player(&ifo.ucid)).map(|p| p.side)
     else {
         ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), "take a slot first");
         return;
@@ -963,10 +996,10 @@ fn jtac_command(ctx: &mut Context, id: PlayerId, s: &str) {
         if let Ok(jtid) = jtid.parse::<JtId>() {
             ctx.jtac_commands.push((id, jtid, cmd.trim().into()));
         } else {
-            ctx.db.ephemeral.msgs().send(
-                MsgTyp::Chat(Some(id)),
-                format_compact!("invalid jtac id {jtid}"),
-            );
+            ctx.db
+                .ephemeral
+                .msgs()
+                .send(MsgTyp::Chat(Some(id)), format_compact!("invalid jtac id {jtid}"));
         }
     } else {
         ctx.db.ephemeral.msgs().send(
@@ -993,11 +1026,7 @@ fn run_jtac_command(
             return Ok(());
         }};
     }
-    let ucid = ctx
-        .connected
-        .get(&id)
-        .ok_or_else(|| anyhow!("unknown player"))?
-        .ucid;
+    let ucid = ctx.connected.get(&id).ok_or_else(|| anyhow!("unknown player"))?.ucid;
     let side = match ctx.db.player(&ucid) {
         Some(player) => player.side,
         None => error!("no such player {ucid}"),
@@ -1017,28 +1046,26 @@ fn run_jtac_command(
         }
     };
     if let Some(_) = cmd.strip_prefix("autoshift") {
-        let arg = ArgTuple {
-            fst: ucid,
-            snd: jtid,
-        };
+        let arg = ArgTuple { fst: ucid, snd: jtid };
         menu::jtac::jtac_toggle_auto_shift_in(lua, ctx, arg)?;
     } else if let Some(_) = cmd.strip_prefix("shift") {
-        let arg = ArgTuple {
-            fst: ucid,
-            snd: jtid,
-        };
+        let arg = ArgTuple { fst: ucid, snd: jtid };
         menu::jtac::jtac_shift_in(lua, ctx, arg)?;
     } else if let Some(_) = cmd.strip_prefix("status") {
         // Always answered to the one who asked. A Combined Arms commander
         // (no aircraft) used to get it as a panel to their whole side.
-        let arg = ArgTuple {
-            fst: Some(ucid),
-            snd: jtid,
-        };
+        let arg = ArgTuple { fst: Some(ucid), snd: jtid };
         menu::jtac::jtac_status_in(lua, ctx, arg)?
     } else if let Some(_) = cmd.strip_prefix("building") {
-        menu::jtac::jtac_designate_building_in(lua, ctx, ArgTuple { fst: ucid, snd: jtid })?
-    } else if cmd.starts_with("9line") || cmd.starts_with("9-line") || cmd.starts_with("nineline") {
+        menu::jtac::jtac_designate_building_in(
+            lua,
+            ctx,
+            ArgTuple { fst: ucid, snd: jtid },
+        )?
+    } else if cmd.starts_with("9line")
+        || cmd.starts_with("9-line")
+        || cmd.starts_with("nineline")
+    {
         menu::jtac::jtac_nine_line_in(lua, ctx, ArgTuple { fst: ucid, snd: jtid })?
     } else if let Some(f) = cmd.strip_prefix("filter") {
         let f = f.trim();
@@ -1052,11 +1079,7 @@ fn run_jtac_command(
                 Some(tag) => menu::jtac::jtac_filter_in(
                     lua,
                     ctx,
-                    ArgTriple {
-                        fst: jtid,
-                        snd: BitFlags::from(tag).bits(),
-                        trd: ucid,
-                    },
+                    ArgTriple { fst: jtid, snd: BitFlags::from(tag).bits(), trd: ucid },
                 )?,
                 None => {
                     let all: Vec<CompactString> =
@@ -1074,11 +1097,14 @@ fn run_jtac_command(
             error!("move needs a map mark: -jtac {jtid} move <mark text>")
         }
         if jtac.move_hint(&ctx.db).is_none() {
-            error!("JTAC {jtid} can't be moved from here: only drone JTACs can, and your side needs a drone waypoint action")
+            error!(
+                "JTAC {jtid} can't be moved from here: only drone JTACs can, and your side needs a drone waypoint action"
+            )
         }
         let name = ctx.db.ephemeral.cfg.actions.get(&side).and_then(|acts| {
-            acts.iter()
-                .find_map(|(n, a)| matches!(a.kind, ActionKind::DroneWaypoint).then(|| n.clone()))
+            acts.iter().find_map(|(n, a)| {
+                matches!(a.kind, ActionKind::DroneWaypoint).then(|| n.clone())
+            })
         });
         match (name, jtid) {
             (Some(name), JtId::Group(gid)) => ctx
@@ -1087,16 +1113,10 @@ fn run_jtac_command(
             _ => error!("your side has no drone waypoint action"),
         }
     } else if let Some(_) = cmd.strip_prefix("smoke") {
-        let arg = ArgTuple {
-            fst: ucid,
-            snd: jtid,
-        };
+        let arg = ArgTuple { fst: ucid, snd: jtid };
         menu::jtac::jtac_smoke_target_in(lua, ctx, arg)?
     } else if let Some(_) = cmd.strip_prefix("pointer") {
-        let arg = ArgTuple {
-            fst: ucid,
-            snd: jtid,
-        };
+        let arg = ArgTuple { fst: ucid, snd: jtid };
         menu::jtac::jtac_toggle_ir_pointer_in(lua, ctx, arg)?
     } else if let Some(s) = cmd.strip_prefix("bomber") {
         let name = s.trim();
@@ -1114,11 +1134,7 @@ fn run_jtac_command(
         match name {
             None => error!("no bomber mission(s)"),
             Some(name) => {
-                let arg = ArgTriple {
-                    fst: jtid,
-                    snd: ucid,
-                    trd: name,
-                };
+                let arg = ArgTriple { fst: jtid, snd: ucid, trd: name };
                 menu::jtac::call_bomber_in(lua, ctx, arg)?
             }
         }
@@ -1131,7 +1147,9 @@ fn run_jtac_command(
         } else if key.is_empty() {
             match menu::jtac::latest_player_mark(ctx, lua, &ucid)? {
                 Some(p) => Some(p),
-                None => error!("place an F10 map mark first, or -jtac {jtid} focus <mark text>"),
+                None => error!(
+                    "place an F10 map mark first, or -jtac {jtid} focus <mark text>"
+                ),
             }
         } else {
             let mut found: SmallVec<[Vector2; 2]> = smallvec![];
@@ -1156,11 +1174,7 @@ fn run_jtac_command(
         };
         // A whole code (1688) or one digit at its place (600, 80, 8);
         // jtac_set_code validates it and answers the requester if it's bad.
-        let arg = ArgTriple {
-            fst: jtid,
-            snd: code,
-            trd: ucid,
-        };
+        let arg = ArgTriple { fst: jtid, snd: code, trd: ucid };
         menu::jtac::jtac_set_code_in(lua, ctx, arg)?
     } else if let Some(arty) = cmd.strip_prefix("arty ") {
         if let Some((aid, n)) = arty.trim().split_once(" ") {
@@ -1179,12 +1193,7 @@ fn run_jtac_command(
                 Err(_) => error!("expected a number of shots between 0 and 255"),
             };
             for aid in aids {
-                let arg = ArgQuad {
-                    fst: jtid,
-                    snd: aid,
-                    trd: n,
-                    fth: ucid,
-                };
+                let arg = ArgQuad { fst: jtid, snd: aid, trd: n, fth: ucid };
                 menu::jtac::jtac_artillery_mission_in(lua, ctx, arg)?
             }
         } else {
@@ -1277,7 +1286,8 @@ pub(super) fn process(
     id: PlayerId,
     msg: String,
 ) -> Result<String> {
-    if msg.eq_ignore_ascii_case("-switch blue") || msg.eq_ignore_ascii_case("-switch red") {
+    if msg.eq_ignore_ascii_case("-switch blue") || msg.eq_ignore_ascii_case("-switch red")
+    {
         sideswitch_player(ctx, lua, id, msg)
     } else if msg.eq_ignore_ascii_case("-lives") {
         if let Err(e) = lives_command(ctx, id) {

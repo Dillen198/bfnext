@@ -191,7 +191,10 @@ fn is_air(k: Option<Kind>) -> bool {
 }
 
 fn is_ground(k: Option<Kind>) -> bool {
-    matches!(k, Some(Kind::Sam | Kind::Armor | Kind::Vehicle | Kind::Infantry | Kind::Static))
+    matches!(
+        k,
+        Some(Kind::Sam | Kind::Armor | Kind::Vehicle | Kind::Infantry | Kind::Static)
+    )
 }
 
 /// Flat-earth distance in metres: fine over the tens of km a clip spans.
@@ -205,9 +208,18 @@ fn dist_m(a: (f64, f64), b: (f64, f64)) -> f64 {
 /// Recording seconds of the result: from the wall clock when the recording
 /// says when it started (as the replay index does), else from the mission
 /// clock against `ReferenceTime`.
-fn event_seconds(req: &ClipReq, first_frame: f64, reference: Option<&str>, recording: Option<&str>) -> Option<f64> {
+fn event_seconds(
+    req: &ClipReq,
+    first_frame: f64,
+    reference: Option<&str>,
+    recording: Option<&str>,
+) -> Option<f64> {
     if let Some(rec) = recording.and_then(|s| DateTime::parse_from_rfc3339(s).ok()) {
-        return Some(first_frame + (req.ts_ms - rec.with_timezone(&Utc).timestamp_millis()) as f64 / 1000.0);
+        return Some(
+            first_frame
+                + (req.ts_ms - rec.with_timezone(&Utc).timestamp_millis()) as f64
+                    / 1000.0,
+        );
     }
     let reference = DateTime::parse_from_rfc3339(reference?).ok()?.with_timezone(&Utc);
     let mut d = req.mission_date.split(['/', '-']).map(|p| p.trim().parse::<u32>().ok());
@@ -223,7 +235,11 @@ pub(crate) fn build(path: &Path, req: &ClipReq) -> Result<Clip> {
     acmi::open(path, |rd| cut(rd, path, req))
 }
 
-fn cut<R: std::io::BufRead>(rd: &mut acmi::Reader<R>, path: &Path, req: &ClipReq) -> Result<Clip> {
+fn cut<R: std::io::BufRead>(
+    rd: &mut acmi::Reader<R>,
+    path: &Path,
+    req: &ClipReq,
+) -> Result<Clip> {
     let mut objs: FxHashMap<u64, Obj> = FxHashMap::default();
     let mut dropped: FxHashSet<u64> = FxHashSet::default();
     let (mut ref_lon, mut ref_lat) = (0.0f64, 0.0f64);
@@ -290,7 +306,10 @@ fn cut<R: std::io::BufRead>(rd: &mut acmi::Reader<R>, path: &Path, req: &ClipReq
                         "Event" if started => {
                             let mut parts = v.split('|');
                             if parts.next() == Some("Destroyed") {
-                                if let Some(id) = parts.next().and_then(|s| u64::from_str_radix(s.trim(), 16).ok()) {
+                                if let Some(id) = parts
+                                    .next()
+                                    .and_then(|s| u64::from_str_radix(s.trim(), 16).ok())
+                                {
                                     if let Some(o) = objs.get_mut(&id) {
                                         o.destroyed = true;
                                     }
@@ -305,10 +324,18 @@ fn cut<R: std::io::BufRead>(rd: &mut acmi::Reader<R>, path: &Path, req: &ClipReq
                 if dropped.contains(&id) {
                     continue;
                 }
-                let o = objs.entry(id).or_insert_with(|| Obj { alive: true, last_sample: f64::NEG_INFINITY, ..Default::default() });
+                let o = objs.entry(id).or_insert_with(|| Obj {
+                    alive: true,
+                    last_sample: f64::NEG_INFINITY,
+                    ..Default::default()
+                });
                 if !o.alive {
                     // an id reused after a removal: start over
-                    *o = Obj { alive: true, last_sample: f64::NEG_INFINITY, ..Default::default() };
+                    *o = Obj {
+                        alive: true,
+                        last_sample: f64::NEG_INFINITY,
+                        ..Default::default()
+                    };
                 }
                 let mut moved = false;
                 for (k, v) in props {
@@ -360,7 +387,10 @@ fn cut<R: std::io::BufRead>(rd: &mut acmi::Reader<R>, path: &Path, req: &ClipReq
                     continue;
                 }
                 if started && moved {
-                    let is_self = is_air(o.kind) && o.pilot.as_deref().map_or(false, |p| p.trim().to_lowercase() == pilot);
+                    let is_self = is_air(o.kind)
+                        && o.pilot
+                            .as_deref()
+                            .map_or(false, |p| p.trim().to_lowercase() == pilot);
                     if now - o.last_sample >= o.interval(is_self) {
                         o.sample(now);
                     }
@@ -378,21 +408,32 @@ fn cut<R: std::io::BufRead>(rd: &mut acmi::Reader<R>, path: &Path, req: &ClipReq
     let candidates: Vec<(&u64, &Obj)> = objs
         .iter()
         .filter(|(_, o)| is_air(o.kind) && !o.samples.is_empty())
-        .filter(|(_, o)| o.pilot.as_deref().map_or(false, |p| p.trim().to_lowercase() == pilot))
+        .filter(|(_, o)| {
+            o.pilot.as_deref().map_or(false, |p| p.trim().to_lowercase() == pilot)
+        })
         .collect();
-    let near_event = |o: &Obj| o.samples.iter().map(|s| (s[0] - ev).abs()).fold(f64::INFINITY, f64::min);
+    let near_event = |o: &Obj| {
+        o.samples.iter().map(|s| (s[0] - ev).abs()).fold(f64::INFINITY, f64::min)
+    };
     let self_id = candidates
         .iter()
         .min_by(|a, b| {
-            let ta = a.1.name.as_deref().map_or(true, |n| !n.eq_ignore_ascii_case(&req.unit_type));
-            let tb = b.1.name.as_deref().map_or(true, |n| !n.eq_ignore_ascii_case(&req.unit_type));
+            let ta =
+                a.1.name
+                    .as_deref()
+                    .map_or(true, |n| !n.eq_ignore_ascii_case(&req.unit_type));
+            let tb =
+                b.1.name
+                    .as_deref()
+                    .map_or(true, |n| !n.eq_ignore_ascii_case(&req.unit_type));
             ta.cmp(&tb).then(near_event(a.1).total_cmp(&near_event(b.1)))
         })
         .map(|(id, _)| **id);
     let Some(me) = self_id else {
         bail!("{} is not in the recording around this result", req.pilot);
     };
-    let my_track: Vec<(f64, f64, f64)> = objs[&me].samples.iter().map(|s| (s[1], s[2], s[3])).collect();
+    let my_track: Vec<(f64, f64, f64)> =
+        objs[&me].samples.iter().map(|s| (s[1], s[2], s[3])).collect();
     let min_to_me = |o: &Obj| {
         let mut best = f64::INFINITY;
         // every few samples is plenty to find a closest approach of km
@@ -436,12 +477,21 @@ fn cut<R: std::io::BufRead>(rd: &mut acmi::Reader<R>, path: &Path, req: &ClipReq
     }
     // weapons the nearby aircraft fired (missile defence, BFM shots)
     for (id, o) in objs.iter() {
-        if !keep.contains_key(id) && is_weapon(o.kind) && o.parent.map_or(false, |p| air.contains(&p)) && !o.samples.is_empty() {
+        if !keep.contains_key(id)
+            && is_weapon(o.kind)
+            && o.parent.map_or(false, |p| air.contains(&p))
+            && !o.samples.is_empty()
+        {
             keep.insert(*id, "threat");
         }
     }
     // ground units: around the impacts, or under the pilot when low
-    let low: Vec<(f64, f64)> = my_track.iter().filter(|m| m.2 < 2_500.0).step_by(4).map(|m| (m.0, m.1)).collect();
+    let low: Vec<(f64, f64)> = my_track
+        .iter()
+        .filter(|m| m.2 < 2_500.0)
+        .step_by(4)
+        .map(|m| (m.0, m.1))
+        .collect();
     let mut ground: Vec<(f64, u64)> = vec![];
     for (id, o) in objs.iter() {
         if keep.contains_key(id) || !is_ground(o.kind) || o.samples.is_empty() {
@@ -481,16 +531,33 @@ fn cut<R: std::io::BufRead>(rd: &mut acmi::Reader<R>, path: &Path, req: &ClipReq
                 lat: o.samples.iter().map(|s| r6(s[1])).collect(),
                 lon: o.samples.iter().map(|s| r6(s[2])).collect(),
                 alt: o.samples.iter().map(|s| s[3] as f32).collect(),
-                roll: if att { o.samples.iter().map(|s| s[4] as f32).collect() } else { vec![] },
-                pitch: if att { o.samples.iter().map(|s| s[5] as f32).collect() } else { vec![] },
-                yaw: if att { o.samples.iter().map(|s| s[6] as f32).collect() } else { vec![] },
+                roll: if att {
+                    o.samples.iter().map(|s| s[4] as f32).collect()
+                } else {
+                    vec![]
+                },
+                pitch: if att {
+                    o.samples.iter().map(|s| s[5] as f32).collect()
+                } else {
+                    vec![]
+                },
+                yaw: if att {
+                    o.samples.iter().map(|s| s[6] as f32).collect()
+                } else {
+                    vec![]
+                },
                 gone: o.gone.map(|g| (g - ev) as f32),
                 destroyed: o.destroyed,
             }
         })
         .collect();
     // self first, then by role, for a stable file
-    let rank = |r: &str| ["self", "weapon", "boat", "air", "threat", "ground"].iter().position(|x| *x == r).unwrap_or(9);
+    let rank = |r: &str| {
+        ["self", "weapon", "boat", "air", "threat", "ground"]
+            .iter()
+            .position(|x| *x == r)
+            .unwrap_or(9)
+    };
     objects.sort_by(|a, b| rank(&a.role).cmp(&rank(&b.role)).then(a.id.cmp(&b.id)));
 
     Ok(Clip {
@@ -517,7 +584,10 @@ pub(crate) fn prune(dir: &Path, max_age: std::time::Duration) -> usize {
             .and_then(|m| m.modified())
             .map(|m| now.duration_since(m).unwrap_or_default() >= max_age)
             .unwrap_or(false);
-        if old && e.path().extension().map_or(false, |x| x == "gz") && std::fs::remove_file(e.path()).is_ok() {
+        if old
+            && e.path().extension().map_or(false, |x| x == "gz")
+            && std::fs::remove_file(e.path()).is_ok()
+        {
             n += 1;
         }
     }
@@ -543,7 +613,11 @@ pub(crate) fn to_acmi(c: &Clip, title: &str) -> String {
         .unwrap_or((0.0, 0.0));
     let mut out = String::with_capacity(1 << 20);
     out.push_str("FileType=text/acmi/tacview\nFileVersion=2.2\n");
-    let _ = writeln!(out, "0,ReferenceTime={}", c.reference_time.as_deref().unwrap_or("2000-01-01T00:00:00Z"));
+    let _ = writeln!(
+        out,
+        "0,ReferenceTime={}",
+        c.reference_time.as_deref().unwrap_or("2000-01-01T00:00:00Z")
+    );
     let _ = writeln!(out, "0,ReferenceLongitude={rlon}");
     let _ = writeln!(out, "0,ReferenceLatitude={rlat}");
     let _ = writeln!(out, "0,Title={}", esc(title));
@@ -580,7 +654,14 @@ pub(crate) fn to_acmi(c: &Clip, title: &str) -> String {
             frame = Some(t);
         }
         let o = &c.objects[oi];
-        let _ = write!(out, "{},T={:.6}|{:.6}|{:.1}", o.id, o.lon[si] - rlon, o.lat[si] - rlat, o.alt[si]);
+        let _ = write!(
+            out,
+            "{},T={:.6}|{:.6}|{:.1}",
+            o.id,
+            o.lon[si] - rlon,
+            o.lat[si] - rlat,
+            o.alt[si]
+        );
         if !o.roll.is_empty() {
             let _ = write!(out, "|{:.1}|{:.1}|{:.1}", o.roll[si], o.pitch[si], o.yaw[si]);
         }
@@ -602,7 +683,13 @@ pub(crate) fn to_acmi(c: &Clip, title: &str) -> String {
                 _ => "Ground+Vehicle",
             };
             let _ = write!(out, ",Type={ty}");
-            for (k, v) in [("Name", &o.name), ("Pilot", &o.pilot), ("Group", &o.group), ("Color", &o.color), ("Coalition", &o.coalition)] {
+            for (k, v) in [
+                ("Name", &o.name),
+                ("Pilot", &o.pilot),
+                ("Group", &o.group),
+                ("Color", &o.color),
+                ("Coalition", &o.coalition),
+            ] {
                 if let Some(v) = v {
                     let _ = write!(out, ",{k}={}", esc(v));
                 }
@@ -626,7 +713,9 @@ mod tests {
             pilot: "Casper".into(),
             unit_type: "FA-18C_hornet".into(),
             // RecordingTime 12:00:00 + 100 s
-            ts_ms: DateTime::parse_from_rfc3339("2026-10-08T12:01:40Z").unwrap().timestamp_millis(),
+            ts_ms: DateTime::parse_from_rfc3339("2026-10-08T12:01:40Z")
+                .unwrap()
+                .timestamp_millis(),
             mission_date: "2026/10/8".into(),
             mission_time: "10:01:40".into(),
             lead_s: 30.0,
@@ -649,7 +738,9 @@ mod tests {
             let x = 0.10 + i as f64 * 0.0001;
             s.push_str(&format!("#{i}\na1,T={x:.4}|0.10|{}|{}||\n", 500 - i, i % 10));
             if i == 85 {
-                s.push_str("f6,T=0.1085|0.10|400,Type=Weapon+Bomb,Name=Mk-82,Parent=a1\n");
+                s.push_str(
+                    "f6,T=0.1085|0.10|400,Type=Weapon+Bomb,Name=Mk-82,Parent=a1\n",
+                );
             }
             if (86..95).contains(&i) {
                 s.push_str(&format!("f6,T=0.11|0.105|{}\n", 400 - (i - 85) * 40));
@@ -665,7 +756,8 @@ mod tests {
         // one folder a call: tests run in parallel, and two texts can be the same length
         static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let k = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("bfdb-clip-{}-{k}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("bfdb-clip-{}-{k}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("t.txt.acmi");
         std::fs::write(&p, text).unwrap();
@@ -687,7 +779,8 @@ mod tests {
         assert!(me.t.len() >= 40, "{}", me.t.len());
         // attitude kept, carried over from earlier lines
         assert_eq!(me.yaw[0], 90.0);
-        let roles: FxHashMap<&str, &str> = c.objects.iter().map(|o| (o.id.as_str(), o.role.as_str())).collect();
+        let roles: FxHashMap<&str, &str> =
+            c.objects.iter().map(|o| (o.id.as_str(), o.role.as_str())).collect();
         assert_eq!(roles.get("b2"), Some(&"boat"));
         assert_eq!(roles.get("f6"), Some(&"weapon"));
         assert_eq!(roles.get("d4"), Some(&"ground"));
@@ -728,7 +821,8 @@ mod tests {
 
     #[test]
     fn prune_keeps_young_clips() {
-        let dir = std::env::temp_dir().join(format!("bfdb-clip-prune-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("bfdb-clip-prune-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.json.gz"), b"x").unwrap();
         std::fs::write(dir.join("notes.txt"), b"x").unwrap();
@@ -741,6 +835,9 @@ mod tests {
     #[test]
     fn falls_back_to_the_mission_clock() {
         let r = req();
-        assert_eq!(event_seconds(&r, 0.0, Some("2026-10-08T10:00:00Z"), None), Some(100.0));
+        assert_eq!(
+            event_seconds(&r, 0.0, Some("2026-10-08T10:00:00Z"), None),
+            Some(100.0)
+        );
     }
 }

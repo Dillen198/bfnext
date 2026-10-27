@@ -131,9 +131,15 @@ pub struct GroundVehicleCargo {
     pub can_board_while_moving: bool,
 }
 
-pub(super) fn default_board_radius_m() -> f64 { 50.0 }
-pub(super) fn default_board_speed_threshold_ms() -> f64 { 1.0 }
-pub(super) fn default_dismount_radius_m() -> f64 { 30.0 }
+pub(super) fn default_board_radius_m() -> f64 {
+    50.0
+}
+pub(super) fn default_board_speed_threshold_ms() -> f64 {
+    1.0
+}
+pub(super) fn default_dismount_radius_m() -> f64 {
+    30.0
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 // #[serde(deny_unknown_fields)]
@@ -189,9 +195,7 @@ impl DeployableKind {
 }
 
 pub(super) fn default_deployable_kind() -> DeployableKind {
-    DeployableKind::Group {
-        template: "".into(),
-    }
+    DeployableKind::Group { template: "".into() }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

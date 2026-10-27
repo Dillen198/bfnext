@@ -34,16 +34,27 @@ pub(crate) fn harness() -> Harness {
 
 /// A harness over an `--instances` file's worth of JSON, with a hook to adjust
 /// the route context before the chain is built.
-pub(crate) fn harness_with(instances: serde_json::Value, tweak: impl FnOnce(&mut RouteCtx)) -> Harness {
+pub(crate) fn harness_with(
+    instances: serde_json::Value,
+    tweak: impl FnOnce(&mut RouteCtx),
+) -> Harness {
     // never ask GitHub from a test
     let _ = COCKPIT_VERSION_OVERRIDE.set("9.9.9-test".into());
     let dir = std::env::temp_dir().join(format!("bfdb-route-test-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let file: instance::InstancesFile = serde_json::from_value(instances).unwrap();
     let reg = Registry::new(file).unwrap();
-    let db = StatsDb::new(&std::collections::HashMap::new(), dir.join("db"), reg).unwrap();
+    let db =
+        StatsDb::new(&std::collections::HashMap::new(), dir.join("db"), reg).unwrap();
     let bot: Arc<Option<BotLinkConfig>> = Arc::new(None);
-    let range_ctx = range::RangeCtx::new(db.clone(), bot.clone(), "https://range.example.org", API, dir.join("clips")).unwrap();
+    let range_ctx = range::RangeCtx::new(
+        db.clone(),
+        bot.clone(),
+        "https://range.example.org",
+        API,
+        dir.join("clips"),
+    )
+    .unwrap();
     let replay_ctx = replay::ReplayCtx::new(db.clone(), dir.join("replays"), 30).unwrap();
     let mut live = std::collections::HashMap::new();
     let mut gci = std::collections::HashMap::new();
@@ -125,7 +136,13 @@ impl Harness {
         r.reply(&self.routes).await
     }
 
-    pub(crate) async fn post_json(&self, path: &str, cookie: Option<&str>, origin: Option<&str>, body: &str) -> TestResp {
+    pub(crate) async fn post_json(
+        &self,
+        path: &str,
+        cookie: Option<&str>,
+        origin: Option<&str>,
+        body: &str,
+    ) -> TestResp {
         let mut r = warp::test::request()
             .method("POST")
             .path(path)
@@ -152,7 +169,11 @@ pub(crate) fn peer() -> SocketAddr {
 }
 
 pub(crate) fn ctype(r: &TestResp) -> String {
-    r.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_string()
+    r.headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string()
 }
 
 pub(crate) fn body_json(r: TestResp) -> serde_json::Value {
@@ -255,7 +276,8 @@ async fn require_admin_gates() {
     let r = h.get("/api/admin/sessions", Some(&admin)).await;
     assert_eq!(r.status(), 200);
     // an unknown or expired session is "not logged in", not an admin
-    let r = h.get("/api/admin/sessions", Some(&format!("session={}", Uuid::new_v4()))).await;
+    let r =
+        h.get("/api/admin/sessions", Some(&format!("session={}", Uuid::new_v4()))).await;
     assert_eq!(r.status(), 401);
     // POST admin actions use the same gate
     let r = h.post_json("/api/admin/merge-rounds", Some(&player), Some(DASH), "{}").await;
@@ -317,7 +339,14 @@ async fn csrf_guard_in_front_of_cookie_posts() {
     let admin = h.session(true);
     // a hostile page riding the admin's cookie (the CORS layer refuses the
     // Origin too; either way it never reaches the handler)
-    let r = h.post_json("/api/admin/merge-rounds", Some(&admin), Some("https://evil.example"), "{}").await;
+    let r = h
+        .post_json(
+            "/api/admin/merge-rounds",
+            Some(&admin),
+            Some("https://evil.example"),
+            "{}",
+        )
+        .await;
     assert_eq!(r.status(), 403);
     // no Origin but a hostile Referer: only the CSRF guard catches this one
     let r = warp::test::request()
@@ -388,7 +417,9 @@ async fn unknown_instance_is_a_400_on_gets_and_posts() {
     let r = h.get("/api/rounds?instance=nope", None).await;
     assert_eq!(r.status(), 400);
     let admin = h.session(true);
-    let r = h.post_json("/api/admin/reset?instance=nope", Some(&admin), Some(DASH), "{}").await;
+    let r = h
+        .post_json("/api/admin/reset?instance=nope", Some(&admin), Some(DASH), "{}")
+        .await;
     assert_eq!(r.status(), 400);
     let r = h.get("/api/rounds?instance=b", None).await;
     assert_eq!(r.status(), 200);
@@ -405,9 +436,13 @@ async fn admin_roles_split_the_admin_api() {
     // the ban list is moderation
     assert_eq!(h.get("/api/admin/banned", Some(&ops)).await.status(), 403);
     // wiki deletes are content
-    let r = h.post_json("/api/wiki/delete", Some(&ops), Some(DASH), r#"{"slug":"nope"}"#).await;
+    let r = h
+        .post_json("/api/wiki/delete", Some(&ops), Some(DASH), r#"{"slug":"nope"}"#)
+        .await;
     assert_eq!(r.status(), 403);
-    let r = h.post_json("/api/wiki/delete", Some(&content), Some(DASH), r#"{"slug":"nope"}"#).await;
+    let r = h
+        .post_json("/api/wiki/delete", Some(&content), Some(DASH), r#"{"slug":"nope"}"#)
+        .await;
     assert_eq!(r.status(), 200);
     // full-admin only actions stay that way
     assert_eq!(h.get("/api/admin/sessions", Some(&ops)).await.status(), 403);
@@ -430,11 +465,14 @@ async fn admin_actions_land_in_the_audit_log() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn public_gets_are_metered_per_ip() {
-    let h = harness_with(serde_json::json!({ "instances": [{ "id": "default" }] }), |rc| {
-        rc.get_limits = websec::GetLimits { per_min: 60, heavy_per_min: 0 };
-    });
+    let h =
+        harness_with(serde_json::json!({ "instances": [{ "id": "default" }] }), |rc| {
+            rc.get_limits = websec::GetLimits { per_min: 60, heavy_per_min: 0 };
+        });
     let visitor = peer();
-    let get = |addr: SocketAddr| warp::test::request().method("GET").path("/api/version").remote_addr(addr);
+    let get = |addr: SocketAddr| {
+        warp::test::request().method("GET").path("/api/version").remote_addr(addr)
+    };
     let mut limited = None;
     for i in 0..80 {
         let r = get(visitor).reply(&h.routes).await;
@@ -454,7 +492,8 @@ async fn public_gets_are_metered_per_ip() {
     }
     // a visitor behind Cloudflare that bfdb was not told to trust cannot be
     // told apart from the others: not metered
-    let cf = get(visitor).header("cf-connecting-ip", "198.51.100.1").reply(&h.routes).await;
+    let cf =
+        get(visitor).header("cf-connecting-ip", "198.51.100.1").reply(&h.routes).await;
     assert_eq!(cf.status(), 200);
 }
 
@@ -477,26 +516,50 @@ async fn public_health_keeps_internals_for_admins() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn metrics_and_log_tokens() {
-    let h = harness_with(serde_json::json!({ "instances": [{ "id": "default" }] }), |rc| {
-        rc.log_read_token = Some("logs-secret".into());
-        rc.metrics_token = Some("metrics-secret".into());
-    });
-    let get = |path: &str, addr: SocketAddr| warp::test::request().method("GET").path(path).remote_addr(addr);
+    let h =
+        harness_with(serde_json::json!({ "instances": [{ "id": "default" }] }), |rc| {
+            rc.log_read_token = Some("logs-secret".into());
+            rc.metrics_token = Some("metrics-secret".into());
+        });
+    let get = |path: &str, addr: SocketAddr| {
+        warp::test::request().method("GET").path(path).remote_addr(addr)
+    };
     let me = peer();
-    assert_eq!(get("/api/metrics?token=metrics-secret", me).reply(&h.routes).await.status(), 200);
-    assert_eq!(get("/api/metrics?token=logs-secret", me).reply(&h.routes).await.status(), 200);
-    let r = get("/api/metrics", me).header("authorization", "Bearer metrics-secret").reply(&h.routes).await;
+    assert_eq!(
+        get("/api/metrics?token=metrics-secret", me).reply(&h.routes).await.status(),
+        200
+    );
+    assert_eq!(
+        get("/api/metrics?token=logs-secret", me).reply(&h.routes).await.status(),
+        200
+    );
+    let r = get("/api/metrics", me)
+        .header("authorization", "Bearer metrics-secret")
+        .reply(&h.routes)
+        .await;
     assert_eq!(r.status(), 200);
     // the metrics token does not read logs
-    assert_eq!(get("/api/logs/bfdb?token=metrics-secret", me).reply(&h.routes).await.status(), 401);
-    assert_eq!(get("/api/logs/bfdb?token=logs-secret", me).reply(&h.routes).await.status(), 200);
+    assert_eq!(
+        get("/api/logs/bfdb?token=metrics-secret", me).reply(&h.routes).await.status(),
+        401
+    );
+    assert_eq!(
+        get("/api/logs/bfdb?token=logs-secret", me).reply(&h.routes).await.status(),
+        200
+    );
     // guessing gets an address locked out of both
     let guesser = peer();
     for _ in 0..21 {
         get("/api/metrics?token=nope", guesser).reply(&h.routes).await;
     }
-    assert_eq!(get("/api/metrics?token=metrics-secret", guesser).reply(&h.routes).await.status(), 429);
-    assert_eq!(get("/api/metrics?token=metrics-secret", peer()).reply(&h.routes).await.status(), 200);
+    assert_eq!(
+        get("/api/metrics?token=metrics-secret", guesser).reply(&h.routes).await.status(),
+        429
+    );
+    assert_eq!(
+        get("/api/metrics?token=metrics-secret", peer()).reply(&h.routes).await.status(),
+        200
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -514,7 +577,11 @@ async fn a_private_default_is_not_served_to_the_public() {
         h.db.insert_test_round(rid, inst, t0);
     }
     let instances_of = |v: serde_json::Value| -> Vec<String> {
-        v.as_array().unwrap().iter().map(|r| r["instance"].as_str().unwrap().to_string()).collect()
+        v.as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["instance"].as_str().unwrap().to_string())
+            .collect()
     };
     // no ?instance=: the public gets the public campaign
     assert_eq!(instances_of(body_json(h.get("/api/rounds", None).await)), vec!["live"]);
@@ -522,10 +589,16 @@ async fn a_private_default_is_not_served_to_the_public() {
     assert_eq!(h.get("/api/rounds?instance=test", None).await.status(), 404);
     // an admin gets the configured default either way
     let admin = h.session(true);
-    assert_eq!(instances_of(body_json(h.get("/api/rounds", Some(&admin)).await)), vec!["test"]);
+    assert_eq!(
+        instances_of(body_json(h.get("/api/rounds", Some(&admin)).await)),
+        vec!["test"]
+    );
 
     // a box with nothing public: the implicit default is locked too
-    let h = harness_with(serde_json::json!({ "instances": [{ "id": "test", "public": false }] }), |_| ());
+    let h = harness_with(
+        serde_json::json!({ "instances": [{ "id": "test", "public": false }] }),
+        |_| (),
+    );
     assert_eq!(h.get("/api/rounds", None).await.status(), 404);
     assert_eq!(h.get("/api/version", None).await.status(), 200);
     let admin = h.session(true);
@@ -553,7 +626,10 @@ async fn list_routes_page_with_limit_and_offset() {
     let page = page.as_array().unwrap();
     assert_eq!(page.len(), 5);
     assert_eq!(page[0], all[3]);
-    assert_eq!(body_json(h.get("/api/wiki/pages?offset=100000", None).await), serde_json::json!([]));
+    assert_eq!(
+        body_json(h.get("/api/wiki/pages?offset=100000", None).await),
+        serde_json::json!([])
+    );
     let r = h.get("/api/pilots?limit=1", None).await;
     assert_eq!(r.headers()["x-total-count"], "0");
 }
@@ -587,10 +663,15 @@ async fn cors_preflight_and_simple_requests() {
     let hd = r.headers();
     assert_eq!(hd["access-control-allow-origin"], DASH);
     assert_eq!(hd["access-control-allow-credentials"], "true");
-    let methods = hd["access-control-allow-methods"].to_str().unwrap().to_ascii_uppercase();
+    let methods =
+        hd["access-control-allow-methods"].to_str().unwrap().to_ascii_uppercase();
     assert!(methods.contains("POST") && methods.contains("GET"), "{methods}");
-    let allowed = hd["access-control-allow-headers"].to_str().unwrap().to_ascii_lowercase();
-    assert!(allowed.contains("x-intel-filename") && allowed.contains("content-type"), "{allowed}");
+    let allowed =
+        hd["access-control-allow-headers"].to_str().unwrap().to_ascii_lowercase();
+    assert!(
+        allowed.contains("x-intel-filename") && allowed.contains("content-type"),
+        "{allowed}"
+    );
 
     // an origin that is not ours gets no CORS grant
     let r = preflight("https://evil.example").reply(&h.routes).await;
@@ -607,15 +688,19 @@ async fn cors_preflight_and_simple_requests() {
         .await;
     assert_eq!(r.status(), 200);
     assert_eq!(r.headers()["access-control-allow-origin"], DASH);
-    let exposed = r.headers()["access-control-expose-headers"].to_str().unwrap().to_ascii_lowercase();
+    let exposed = r.headers()["access-control-expose-headers"]
+        .to_str()
+        .unwrap()
+        .to_ascii_lowercase();
     assert!(exposed.contains("x-total-count"), "{exposed}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn log_websocket_is_admin_only_and_replays_history() {
-    let h = harness_with(serde_json::json!({ "instances": [{ "id": "default" }] }), |rc| {
-        rc.log_history.lock().unwrap().push_back(r#"{"msg":"hello"}"#.to_string());
-    });
+    let h =
+        harness_with(serde_json::json!({ "instances": [{ "id": "default" }] }), |rc| {
+            rc.log_history.lock().unwrap().push_back(r#"{"msg":"hello"}"#.to_string());
+        });
     let admin = h.session(true);
     let mut ws = warp::test::ws()
         .path("/ws/logs")
@@ -627,7 +712,11 @@ async fn log_websocket_is_admin_only_and_replays_history() {
     assert_eq!(m.to_str().unwrap(), r#"{"msg":"hello"}"#);
 
     let player = h.session(false);
-    let refused = warp::test::ws().path("/ws/logs").header("cookie", player.as_str()).handshake(h.routes.clone()).await;
+    let refused = warp::test::ws()
+        .path("/ws/logs")
+        .header("cookie", player.as_str())
+        .handshake(h.routes.clone())
+        .await;
     assert!(refused.is_err(), "a player must not get the log stream");
     let anon = warp::test::ws().path("/ws/logs").handshake(h.routes.clone()).await;
     assert!(anon.is_err());
@@ -647,12 +736,22 @@ async fn cached_public_scans_keep_their_answers() {
     // f44: these now go through the stale-while-revalidate cache on the
     // blocking pool; statuses, bodies and paging must be what they were.
     let h = harness();
-    for path in ["/api/rounds", "/api/captures", "/api/capture-events", "/api/aircraft-usage", "/api/online"] {
+    for path in [
+        "/api/rounds",
+        "/api/captures",
+        "/api/capture-events",
+        "/api/aircraft-usage",
+        "/api/online",
+    ] {
         let r = h.get(path, None).await;
         assert_eq!(r.status(), 200, "{path}");
         assert_eq!(body_json(r), serde_json::json!([]), "{path}");
     }
-    for path in ["/api/pilot/not-a-ucid", "/api/pilot/not-a-ucid/kills", "/api/pilot/not-a-ucid/sorties"] {
+    for path in [
+        "/api/pilot/not-a-ucid",
+        "/api/pilot/not-a-ucid/kills",
+        "/api/pilot/not-a-ucid/sorties",
+    ] {
         assert_eq!(h.get(path, None).await.status(), 400, "{path}");
     }
     let ucid = "0123456789abcdef0123456789abcdef";

@@ -53,13 +53,19 @@ impl Land {
     }
 
     pub fn is_visible(&self, origin: LuaVec3, destination: LuaVec3) -> Result<bool> {
-        Ok(record_perf!(land_is_visible, self.t.call_function("isVisible", (origin, destination))?))
+        Ok(record_perf!(
+            land_is_visible,
+            self.t.call_function("isVisible", (origin, destination))?
+        ))
     }
 
-    pub fn get_ip(&self, origin: LuaVec3, direction: LuaVec3, distance: f64) -> Result<LuaVec3> {
-        Ok(self
-            .t
-            .call_function("getIP", (origin, direction, distance))?)
+    pub fn get_ip(
+        &self,
+        origin: LuaVec3,
+        direction: LuaVec3,
+        distance: f64,
+    ) -> Result<LuaVec3> {
+        Ok(self.t.call_function("getIP", (origin, direction, distance))?)
     }
 
     /// `land.getIP`, but `None` when the ray does not reach the ground within
@@ -70,23 +76,28 @@ impl Land {
         direction: LuaVec3,
         distance: f64,
     ) -> Result<Option<LuaVec3>> {
-        Ok(self
-            .t
-            .call_function("getIP", (origin, direction, distance))?)
+        Ok(self.t.call_function("getIP", (origin, direction, distance))?)
     }
 
-    pub fn get_profile(&self, origin: LuaVec3, destination: LuaVec3) -> Result<Sequence<LuaVec3>> {
+    pub fn get_profile(
+        &self,
+        origin: LuaVec3,
+        destination: LuaVec3,
+    ) -> Result<Sequence<LuaVec3>> {
         Ok(self.t.call_function("profile", (origin, destination))?)
     }
 
-    pub fn get_closest_point_on_roads(&self, typ: RoadType, from: LuaVec2) -> Result<LuaVec2> {
+    pub fn get_closest_point_on_roads(
+        &self,
+        typ: RoadType,
+        from: LuaVec2,
+    ) -> Result<LuaVec2> {
         let typ = match typ {
             RoadType::Road => "roads",
             RoadType::Rail => "railroads",
         };
-        let (x, y) = self
-            .t
-            .call_function("getClosestPointOnRoads", (typ, from.x, from.y))?;
+        let (x, y) =
+            self.t.call_function("getClosestPointOnRoads", (typ, from.x, from.y))?;
         Ok(LuaVec2(Vector2::new(x, y)))
     }
 

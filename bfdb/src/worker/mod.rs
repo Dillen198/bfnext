@@ -74,20 +74,36 @@ pub(crate) struct WorkerArgs {
 
 /// The shared secret. bfdb (`create`) makes one when there is none yet; the
 /// worker waits for it to appear.
-pub(crate) fn secret(args: &WorkerArgs, db: &std::path::Path, create: bool) -> anyhow::Result<Option<String>> {
-    if let Some(s) = std::env::var("BFDB_WORKER_SECRET").ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+pub(crate) fn secret(
+    args: &WorkerArgs,
+    db: &std::path::Path,
+    create: bool,
+) -> anyhow::Result<Option<String>> {
+    if let Some(s) = std::env::var("BFDB_WORKER_SECRET")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
         return Ok(Some(s));
     }
-    let path = args.secret_file.clone().unwrap_or_else(|| crate::beside_db(db, ".worker-secret"));
+    let path = args
+        .secret_file
+        .clone()
+        .unwrap_or_else(|| crate::beside_db(db, ".worker-secret"));
     match std::fs::read_to_string(&path) {
         Ok(s) if !s.trim().is_empty() => Ok(Some(s.trim().to_string())),
         _ if create => {
-            let s = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
+            let s = format!(
+                "{}{}",
+                uuid::Uuid::new_v4().simple(),
+                uuid::Uuid::new_v4().simple()
+            );
             if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
                 std::fs::create_dir_all(dir)?;
             }
-            std::fs::write(&path, &s)
-                .map_err(|e| anyhow::anyhow!("writing the worker secret to {}: {e}", path.display()))?;
+            std::fs::write(&path, &s).map_err(|e| {
+                anyhow::anyhow!("writing the worker secret to {}: {e}", path.display())
+            })?;
             log::info!("worker: new shared secret written to {}", path.display());
             Ok(Some(s))
         }
@@ -98,11 +114,18 @@ pub(crate) fn secret(args: &WorkerArgs, db: &std::path::Path, create: bool) -> a
 /// The GCI config that applies to one instance: its own `gci_config` file,
 /// else (for the default instance only, never a range) the box-wide one from
 /// --gci-config or campaign.json's `gci` block.
-pub(crate) fn gci_config_for(cfg: &InstanceCfg, is_default: bool, global: &Option<GciConfig>) -> Option<GciConfig> {
-    cfg.gci_config
-        .as_ref()
-        .and_then(|p| crate::gci::from_file(p))
-        .or_else(|| if is_default && !cfg.is_range() { global.clone() } else { None })
+pub(crate) fn gci_config_for(
+    cfg: &InstanceCfg,
+    is_default: bool,
+    global: &Option<GciConfig>,
+) -> Option<GciConfig> {
+    cfg.gci_config.as_ref().and_then(|p| crate::gci::from_file(p)).or_else(|| {
+        if is_default && !cfg.is_range() {
+            global.clone()
+        } else {
+            None
+        }
+    })
 }
 
 /// Start one instance's voice services -- the range's military ATC, or a
@@ -149,7 +172,9 @@ pub(crate) fn spawn_voice(
 pub(crate) enum DiaryWriter {
     Local(crate::news_llm::WriterCfg),
     /// The worker's, by model name.
-    Worker { model: String },
+    Worker {
+        model: String,
+    },
 }
 
 impl DiaryWriter {
@@ -198,7 +223,9 @@ impl DiarySource {
     pub(crate) fn current(&self) -> Option<DiaryWriter> {
         match self {
             DiarySource::Local(w) => w.clone().map(DiaryWriter::Local),
-            DiarySource::Worker => hub::hub().and_then(|h| h.writer_model()).map(|model| DiaryWriter::Worker { model }),
+            DiarySource::Worker => hub::hub()
+                .and_then(|h| h.writer_model())
+                .map(|model| DiaryWriter::Worker { model }),
         }
     }
 }

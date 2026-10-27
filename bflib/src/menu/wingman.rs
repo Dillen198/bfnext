@@ -18,13 +18,13 @@ for more details.
 //! inside a menu callback would fire Birth into a second `&mut Context`, so
 //! `airlife::process_requests` does the work on the next 1 Hz tick.
 
-use super::{slot_for_group, Pager};
+use super::{Pager, slot_for_group};
 use crate::airlife::WingmanCmd;
 use anyhow::{Context as ErrContext, Result};
 use dcso3::{
+    MizLua,
     env::miz::GroupId,
     mission_commands::{GroupSubMenu, MissionCommands},
-    MizLua,
 };
 
 fn queue(lua: MizLua, gid: GroupId, cmd: WingmanCmd) -> Result<()> {

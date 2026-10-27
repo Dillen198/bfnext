@@ -114,7 +114,10 @@ pub(crate) fn spawn_signal_handlers(sd: Shutdown) {
 pub(crate) fn flush_db(db: &StatsDb) {
     let started = std::time::Instant::now();
     match db.sled().flush() {
-        Ok(n) => log::info!("database flushed ({n} bytes) in {}ms", started.elapsed().as_millis()),
+        Ok(n) => log::info!(
+            "database flushed ({n} bytes) in {}ms",
+            started.elapsed().as_millis()
+        ),
         Err(e) => log::error!("database flush on shutdown FAILED: {e}"),
     }
 }
@@ -177,8 +180,14 @@ pub(crate) fn backup_engine(backup: &Path) -> crate::storage::Backend {
 /// photos never change, so keeping seven backups of them costs one copy --
 /// falling back to a copy where links are not possible (another volume, a
 /// network share).
-pub(crate) fn backup_now(db: &yats::Db, dir: &Path, keep: usize, files: &[(String, PathBuf)]) -> Result<PathBuf> {
-    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+pub(crate) fn backup_now(
+    db: &yats::Db,
+    dir: &Path,
+    keep: usize,
+    files: &[(String, PathBuf)],
+) -> Result<PathBuf> {
+    std::fs::create_dir_all(dir)
+        .with_context(|| format!("creating {}", dir.display()))?;
     let previous = list_backups(dir).pop();
     db.flush().context("flushing before backup")?;
     let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
@@ -187,11 +196,15 @@ pub(crate) fn backup_now(db: &yats::Db, dir: &Path, keep: usize, files: &[(Strin
     let _ = std::fs::remove_dir_all(&partial);
     if db.engine() == yats::Engine::Redb {
         // Live credentials stay out of it (see BACKUP_EXCLUDED_TREES).
-        db.snapshot_redb(&partial.join(REDB_BACKUP_FILE), crate::db::BACKUP_EXCLUDED_TREES)
-            .context("writing the redb snapshot")?;
+        db.snapshot_redb(
+            &partial.join(REDB_BACKUP_FILE),
+            crate::db::BACKUP_EXCLUDED_TREES,
+        )
+        .context("writing the redb snapshot")?;
     } else {
         let db = db.as_sled().expect("a sled database");
-        let out = sled::open(&partial).with_context(|| format!("creating {}", partial.display()))?;
+        let out = sled::open(&partial)
+            .with_context(|| format!("creating {}", partial.display()))?;
         // sled::import panics on IO trouble rather than returning it; keep a
         // failed backup from taking the whole process down with it.
         // Live credentials stay out of it (see BACKUP_EXCLUDED_TREES).
@@ -199,13 +212,17 @@ pub(crate) fn backup_now(db: &yats::Db, dir: &Path, keep: usize, files: &[(Strin
             .export()
             .into_iter()
             .filter(|(_, name, _)| {
-                !crate::db::BACKUP_EXCLUDED_TREES.iter().any(|t| t.as_bytes() == &name[..])
+                !crate::db::BACKUP_EXCLUDED_TREES
+                    .iter()
+                    .any(|t| t.as_bytes() == &name[..])
             })
             .collect();
         // cursors first (stable: everything else keeps sled's order)
         export.sort_by_key(|(_, name, _)| !name.windows(6).any(|w| w == b"cursor"));
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| out.import(export)))
-            .map_err(|_| anyhow::anyhow!("sled import panicked while writing the backup"))?;
+            .map_err(|_| {
+                anyhow::anyhow!("sled import panicked while writing the backup")
+            })?;
         out.flush().context("flushing the backup")?;
     }
     for (name, src) in files {
@@ -214,8 +231,9 @@ pub(crate) fn backup_now(db: &yats::Db, dir: &Path, keep: usize, files: &[(Strin
         }
         let dst = partial.join("files").join(name);
         let prev = previous.as_ref().map(|p| p.join("files").join(name));
-        copy_linked(src, &dst, prev.as_deref())
-            .with_context(|| format!("backing up {} into {}", src.display(), dst.display()))?;
+        copy_linked(src, &dst, prev.as_deref()).with_context(|| {
+            format!("backing up {} into {}", src.display(), dst.display())
+        })?;
     }
     // On Windows a file in the backup can still be open for a moment after
     // sled lets go of it (its own threads winding down, or a virus scanner
@@ -301,14 +319,19 @@ pub(crate) fn spawn_backups(db: StatsDb, cfg: BackupCfg) {
         );
         let first = first_backup_in(&cfg);
         log::info!("database backups: the next one in {} min", first.as_secs() / 60);
-        let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + first, cfg.every);
+        let mut tick =
+            tokio::time::interval_at(tokio::time::Instant::now() + first, cfg.every);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
             let sled = db.sled().clone();
             let c = cfg.clone();
             let started = std::time::Instant::now();
-            match task::spawn_blocking(move || backup_now(&sled, &c.dir, c.keep, &c.files)).await {
+            match task::spawn_blocking(move || {
+                backup_now(&sled, &c.dir, c.keep, &c.files)
+            })
+            .await
+            {
                 Ok(Ok(p)) => log::info!(
                     "database backup written to {} in {}s",
                     p.display(),
@@ -329,7 +352,11 @@ pub(crate) fn restore_latest(db_path: &Path, dir: &Path) -> Result<PathBuf> {
     restore_latest_on(db_path, dir, crate::storage::selected())
 }
 
-pub(crate) fn restore_latest_on(db_path: &Path, dir: &Path, engine: crate::storage::Backend) -> Result<PathBuf> {
+pub(crate) fn restore_latest_on(
+    db_path: &Path,
+    dir: &Path,
+    engine: crate::storage::Backend,
+) -> Result<PathBuf> {
     let all = list_backups(dir);
     let latest = all.iter().rev().find(|b| backup_engine(b) == engine).cloned().ok_or_else(|| {
         let other = all.iter().filter(|b| backup_engine(b) != engine).count();
@@ -346,14 +373,20 @@ pub(crate) fn restore_latest_on(db_path: &Path, dir: &Path, engine: crate::stora
         let live = crate::storage::location(db_path, engine);
         if live.exists() {
             let mut aside = live.as_os_str().to_os_string();
-            aside.push(format!(".damaged-{}", chrono::Utc::now().format("%Y%m%dT%H%M%SZ")));
+            aside.push(format!(
+                ".damaged-{}",
+                chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+            ));
             let aside = PathBuf::from(aside);
-            std::fs::rename(&live, &aside)
-                .with_context(|| format!("moving {} aside to {}", live.display(), aside.display()))?;
+            std::fs::rename(&live, &aside).with_context(|| {
+                format!("moving {} aside to {}", live.display(), aside.display())
+            })?;
             log::warn!("moved the current database aside to {}", aside.display());
         }
         let from = latest.join(REDB_BACKUP_FILE);
-        std::fs::copy(&from, &live).with_context(|| format!("copying {} -> {}", from.display(), live.display()))?;
+        std::fs::copy(&from, &live).with_context(|| {
+            format!("copying {} -> {}", from.display(), live.display())
+        })?;
         log::warn!("restored {} from backup {}", live.display(), latest.display());
         return Ok(latest);
     }
@@ -361,8 +394,9 @@ pub(crate) fn restore_latest_on(db_path: &Path, dir: &Path, engine: crate::stora
         let mut aside = db_path.as_os_str().to_os_string();
         aside.push(format!(".damaged-{}", chrono::Utc::now().format("%Y%m%dT%H%M%SZ")));
         let aside = PathBuf::from(aside);
-        std::fs::rename(db_path, &aside)
-            .with_context(|| format!("moving {} aside to {}", db_path.display(), aside.display()))?;
+        std::fs::rename(db_path, &aside).with_context(|| {
+            format!("moving {} aside to {}", db_path.display(), aside.display())
+        })?;
         log::warn!("moved the current database aside to {}", aside.display());
     }
     copy_dir(&latest, db_path)?;
@@ -379,16 +413,23 @@ fn copy_linked(src: &Path, dst: &Path, prev: Option<&Path>) -> Result<()> {
         for e in std::fs::read_dir(src)? {
             let e = e?;
             let name = e.file_name();
-            copy_linked(&e.path(), &dst.join(&name), prev.map(|p| p.join(&name)).as_deref())?;
+            copy_linked(
+                &e.path(),
+                &dst.join(&name),
+                prev.map(|p| p.join(&name)).as_deref(),
+            )?;
         }
         return Ok(());
     }
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let unchanged = prev.and_then(|p| std::fs::metadata(p).ok().map(|m| (p, m))).filter(|(_, pm)| {
-        pm.is_file() && pm.len() == md.len() && pm.modified().ok() == md.modified().ok()
-    });
+    let unchanged =
+        prev.and_then(|p| std::fs::metadata(p).ok().map(|m| (p, m))).filter(|(_, pm)| {
+            pm.is_file()
+                && pm.len() == md.len()
+                && pm.modified().ok() == md.modified().ok()
+        });
     if let Some((p, _)) = unchanged {
         if std::fs::hard_link(p, dst).is_ok() {
             return Ok(());
@@ -406,14 +447,17 @@ fn copy_linked(src: &Path, dst: &Path, prev: Option<&Path>) -> Result<()> {
 
 fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     std::fs::create_dir_all(to).with_context(|| format!("creating {}", to.display()))?;
-    for e in std::fs::read_dir(from).with_context(|| format!("reading {}", from.display()))? {
+    for e in
+        std::fs::read_dir(from).with_context(|| format!("reading {}", from.display()))?
+    {
         let e = e?;
         let dst = to.join(e.file_name());
         if e.file_type()?.is_dir() {
             copy_dir(&e.path(), &dst)?;
         } else {
-            std::fs::copy(e.path(), &dst)
-                .with_context(|| format!("copying {} -> {}", e.path().display(), dst.display()))?;
+            std::fs::copy(e.path(), &dst).with_context(|| {
+                format!("copying {} -> {}", e.path().display(), dst.display())
+            })?;
         }
     }
     Ok(())
@@ -448,7 +492,11 @@ pub(crate) fn explain_open_failure(db_path: &Path, dir: &Path, e: &anyhow::Error
                 let mut v: Vec<PathBuf> = rd
                     .filter_map(|e| e.ok())
                     .map(|e| e.path())
-                    .filter(|p| p.is_dir() && p.file_name().map_or(false, |n| n.to_string_lossy().starts_with("db-")))
+                    .filter(|p| {
+                        p.is_dir()
+                            && p.file_name()
+                                .map_or(false, |n| n.to_string_lossy().starts_with("db-"))
+                    })
                     .collect();
                 v.sort();
                 v.pop()
@@ -507,7 +555,8 @@ pub(crate) fn spawn_sweeps(db: StatsDb) {
 /// Free space on the volume holding `path`, if it can be determined. Cached
 /// for a minute: it is read by the public health check.
 pub(crate) fn disk_free(path: &Path) -> Option<u64> {
-    static CACHE: std::sync::Mutex<Option<(std::time::Instant, Option<u64>)>> = std::sync::Mutex::new(None);
+    static CACHE: std::sync::Mutex<Option<(std::time::Instant, Option<u64>)>> =
+        std::sync::Mutex::new(None);
     let mut g = CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((at, v)) = *g {
         if at.elapsed() < Duration::from_secs(60) {
@@ -526,7 +575,9 @@ fn disk_free_uncached(path: &Path) -> Option<u64> {
     let disks = Disks::new_with_refreshed_list();
     disks
         .iter()
-        .filter(|d| abs.starts_with(&d.mount_point().to_string_lossy().to_ascii_lowercase()))
+        .filter(|d| {
+            abs.starts_with(&d.mount_point().to_string_lossy().to_ascii_lowercase())
+        })
         .max_by_key(|d| d.mount_point().as_os_str().len())
         .map(|d| d.available_space())
 }
@@ -537,7 +588,8 @@ mod tests {
 
     #[test]
     fn backup_copies_files_and_links_unchanged_ones() {
-        let base = std::env::temp_dir().join(format!("bfdb-backup-files-{}", uuid::Uuid::new_v4()));
+        let base = std::env::temp_dir()
+            .join(format!("bfdb-backup-files-{}", uuid::Uuid::new_v4()));
         let dir = base.join("backups");
         let photos = base.join("db.intel");
         std::fs::create_dir_all(photos.join("sub")).unwrap();
@@ -545,7 +597,10 @@ mod tests {
         std::fs::write(photos.join("sub").join("b.png"), b"bb").unwrap();
         let cfg = base.join("ODF_CFG");
         std::fs::write(&cfg, b"{}").unwrap();
-        let files = vec![("intel".to_string(), photos.clone()), ("engine-cfg/default".to_string(), cfg)];
+        let files = vec![
+            ("intel".to_string(), photos.clone()),
+            ("engine-cfg/default".to_string(), cfg),
+        ];
         let db = yats::Db::open_sled(base.join("db")).unwrap();
         let first = backup_now(&db, &dir, 5, &files).unwrap();
         assert_eq!(std::fs::read(first.join("files/intel/sub/b.png")).unwrap(), b"bb");
@@ -566,7 +621,8 @@ mod tests {
 
     #[test]
     fn backup_roundtrip_and_rotation() {
-        let base = std::env::temp_dir().join(format!("bfdb-backup-test-{}", uuid::Uuid::new_v4()));
+        let base = std::env::temp_dir()
+            .join(format!("bfdb-backup-test-{}", uuid::Uuid::new_v4()));
         let db_path = base.join("db");
         let dir = base.join("backups");
         {
@@ -576,7 +632,10 @@ mod tests {
             let b = backup_now(&db, &dir, 2, &[]).unwrap();
             assert_eq!(backup_engine(&b), crate::storage::Backend::Sled);
             let restored = sled::open(&b).unwrap();
-            assert_eq!(restored.open_tree("t").unwrap().get(b"k").unwrap().as_deref(), Some(&b"v"[..]));
+            assert_eq!(
+                restored.open_tree("t").unwrap().get(b"k").unwrap().as_deref(),
+                Some(&b"v"[..])
+            );
             // live logins are not copied into backups
             assert!(!restored.tree_names().iter().any(|n| &n[..] == b"auth_sessions_h"));
         }
@@ -593,7 +652,8 @@ mod tests {
     #[test]
     fn redb_backup_is_a_snapshot_and_restores() {
         use crate::storage::{location, Backend};
-        let base = std::env::temp_dir().join(format!("bfdb-backup-redb-{}", uuid::Uuid::new_v4()));
+        let base = std::env::temp_dir()
+            .join(format!("bfdb-backup-redb-{}", uuid::Uuid::new_v4()));
         let db_path = base.join("db");
         let dir = base.join("backups");
         let photos = base.join("db.intel");
@@ -604,7 +664,8 @@ mod tests {
             db.open_tree("t").unwrap().insert(b"k", b"v").unwrap();
             db.open_tree("auth_sessions_h").unwrap().insert(b"k", b"secret").unwrap();
             db.ensure_next_id(500).unwrap();
-            let b = backup_now(&db, &dir, 2, &[("intel".into(), photos.clone())]).unwrap();
+            let b =
+                backup_now(&db, &dir, 2, &[("intel".into(), photos.clone())]).unwrap();
             // written after the backup: must not be in it
             db.open_tree("t").unwrap().insert(b"later", b"x").unwrap();
             b
@@ -613,7 +674,10 @@ mod tests {
         assert_eq!(std::fs::read(b.join("files/intel/a.png")).unwrap(), b"aaaa");
         {
             let snap = yats::Db::open_redb(b.join(REDB_BACKUP_FILE)).unwrap();
-            assert_eq!(snap.open_tree("t").unwrap().get(b"k").unwrap().as_deref(), Some(&b"v"[..]));
+            assert_eq!(
+                snap.open_tree("t").unwrap().get(b"k").unwrap().as_deref(),
+                Some(&b"v"[..])
+            );
             assert!(snap.open_tree("t").unwrap().get(b"later").unwrap().is_none());
             assert!(!snap.tree_names().unwrap().iter().any(|n| n == b"auth_sessions_h"));
             assert!(snap.generate_id().unwrap() >= 500);
@@ -625,9 +689,11 @@ mod tests {
         let restored = yats::Db::open_redb(location(&db_path, Backend::Redb)).unwrap();
         assert!(restored.open_tree("t").unwrap().get(b"later").unwrap().is_none());
         drop(restored);
-        assert!(std::fs::read_dir(&base)
+        assert!(std::fs::read_dir(&base).unwrap().any(|e| e
             .unwrap()
-            .any(|e| e.unwrap().file_name().to_string_lossy().starts_with("db.redb.damaged-")));
+            .file_name()
+            .to_string_lossy()
+            .starts_with("db.redb.damaged-")));
         let _ = std::fs::remove_dir_all(&base);
     }
 }

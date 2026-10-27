@@ -43,7 +43,8 @@ fn emergency_crate(cfg: &Cfg) -> Option<&bfprotocols::cfg::Crate> {
 fn unpakistan(lua: MizLua, gid: GroupId) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let (side, slot) =
+        slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     match ctx.db.unpakistan(lua, &ctx.idx, &slot) {
         Ok(unpakistan) => {
             let player = player_name(&ctx.db, &slot);
@@ -61,18 +62,21 @@ fn unpakistan(lua: MizLua, gid: GroupId) -> Result<()> {
 fn load_crate(lua: MizLua, gid: GroupId) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let (side, slot) =
+        slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     match ctx.db.load_nearby_crate(lua, &slot) {
         Ok(cr) => {
-            let (dep_name, limit_enforce, limit) = match ctx.db.deployable_by_crate(&side, &cr.name)
+            let (dep_name, limit_enforce, limit) = match ctx
+                .db
+                .deployable_by_crate(&side, &cr.name)
             {
                 Some((dep_name, dep)) => (dep_name, &dep.limit_enforce, Some(dep.limit)),
                 None => (&cr.name, &LimitEnforceTyp::DenyCrate, None),
             };
-            let (n, oldest) = ctx
-                .db
-                .number_deployed(side, dep_name.as_str())
-                .with_context(|| format_compact!("getting number of {} deployed", dep_name))?;
+            let (n, oldest) =
+                ctx.db.number_deployed(side, dep_name.as_str()).with_context(|| {
+                    format_compact!("getting number of {} deployed", dep_name)
+                })?;
             let enforce = match limit_enforce {
                 LimitEnforceTyp::DenyCrate => {
                     format_compact!("unpacking will be denied when the limit is exceeded")
@@ -91,7 +95,9 @@ fn load_crate(lua: MizLua, gid: GroupId) -> Result<()> {
                         )
                     }
                     None => {
-                        format_compact!("unpacking will delete oldest when the limit is exceeded")
+                        format_compact!(
+                            "unpacking will delete oldest when the limit is exceeded"
+                        )
                     }
                 },
             };
@@ -118,7 +124,8 @@ fn load_crate(lua: MizLua, gid: GroupId) -> Result<()> {
 fn unload_crate(lua: MizLua, gid: GroupId) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let (_side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let (_side, slot) =
+        slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     match ctx.db.unload_crate(lua, &ctx.idx, &slot) {
         Ok(cr) => {
             let msg = format_compact!("{} crate unloaded", cr.name);
@@ -133,20 +140,14 @@ fn unload_crate(lua: MizLua, gid: GroupId) -> Result<()> {
 }
 
 pub(crate) fn list_cargo_for_slot(ctx: &mut Context, slot: &SlotId) -> Result<()> {
-    let uid = slot
-        .as_unit_id()
-        .ok_or_else(|| anyhow!("{slot:?} is not an aircraft slot"))?;
+    let uid =
+        slot.as_unit_id().ok_or_else(|| anyhow!("{slot:?} is not an aircraft slot"))?;
     let cargo = Cargo::default();
     let cargo = ctx.db.list_cargo(&slot).unwrap_or(&cargo);
-    let sifo = ctx
-        .db
-        .ephemeral
-        .get_slot_info(slot)
-        .ok_or_else(|| anyhow!("invalid slot"))?;
-    let capacity = ctx
-        .db
-        .cargo_capacity(&sifo.typ)
-        .context("getting unit cargo capacity")?;
+    let sifo =
+        ctx.db.ephemeral.get_slot_info(slot).ok_or_else(|| anyhow!("invalid slot"))?;
+    let capacity =
+        ctx.db.cargo_capacity(&sifo.typ).context("getting unit cargo capacity")?;
     let mut msg = CompactString::new("Current Cargo\n----------------------------\n");
     msg.push_str(&format_compact!(
         "troops: {} of {}\n",
@@ -173,11 +174,7 @@ pub(crate) fn list_cargo_for_slot(ctx: &mut Context, slot: &SlotId) -> Result<()
     msg.push_str("----------------------------\n");
     let mut total = 0;
     for (_, cr) in &cargo.crates {
-        msg.push_str(&format_compact!(
-            "{} crate weighing {} kg\n",
-            cr.name,
-            cr.weight
-        ));
+        msg.push_str(&format_compact!("{} crate weighing {} kg\n", cr.name, cr.weight));
         total += cr.weight
     }
     for it in &cargo.troops {
@@ -195,29 +192,25 @@ pub(crate) fn list_cargo_for_slot(ctx: &mut Context, slot: &SlotId) -> Result<()
         msg.push_str("----------------------------\n");
     }
     msg.push_str(&format_compact!("total cargo weight: {} kg", total as u32));
-    ctx.db
-        .ephemeral
-        .msgs()
-        .panel_to_unit(15, false, uid, msg);
+    ctx.db.ephemeral.msgs().panel_to_unit(15, false, uid, msg);
     Ok(())
 }
 
 pub fn list_current_cargo(lua: MizLua, gid: GroupId) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let (_side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let (_side, slot) =
+        slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     list_cargo_for_slot(ctx, &slot)
 }
 
 fn list_nearby_crates(lua: MizLua, gid: GroupId) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let (_side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let (_side, slot) =
+        slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     let st = SlotStats::get(&ctx.db, lua, &slot).context("getting slot stats")?;
-    let nearby = ctx
-        .db
-        .list_nearby_crates(&st)
-        .context("listing nearby crates")?;
+    let nearby = ctx.db.list_nearby_crates(&st).context("listing nearby crates")?;
     if nearby.len() > 0 {
         let mut msg = CompactString::new("");
         for nc in nearby {
@@ -231,10 +224,7 @@ fn list_nearby_crates(lua: MizLua, gid: GroupId) -> Result<()> {
         ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, msg)
     } else {
         drop(nearby);
-        ctx.db
-            .ephemeral
-            .msgs()
-            .panel_to_group(10, false, gid, "No nearby crates")
+        ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, "No nearby crates")
     }
     Ok(())
 }
@@ -242,12 +232,10 @@ fn list_nearby_crates(lua: MizLua, gid: GroupId) -> Result<()> {
 fn destroy_nearby_crate(lua: MizLua, gid: GroupId) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let (_side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let (_side, slot) =
+        slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Err(e) = ctx.db.destroy_nearby_crate(lua, &slot) {
-        ctx.db
-            .ephemeral
-            .msgs()
-            .panel_to_group(10, false, gid, format_compact!("{}", e))
+        ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, format_compact!("{}", e))
     }
     Ok(())
 }
@@ -255,17 +243,23 @@ fn destroy_nearby_crate(lua: MizLua, gid: GroupId) -> Result<()> {
 fn destroy_all_nearby_crates(lua: MizLua, gid: GroupId) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let (_side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let (_side, slot) =
+        slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     match ctx.db.destroy_all_nearby_crates(lua, &slot) {
         Ok(n) => {
-            let msg = format_compact!("destroyed {} nearby crate{}", n, if n == 1 { "" } else { "s" });
+            let msg = format_compact!(
+                "destroyed {} nearby crate{}",
+                n,
+                if n == 1 { "" } else { "s" }
+            );
             ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, msg)
         }
-        Err(e) => ctx
-            .db
-            .ephemeral
-            .msgs()
-            .panel_to_group(10, false, gid, format_compact!("{}", e)),
+        Err(e) => ctx.db.ephemeral.msgs().panel_to_group(
+            10,
+            false,
+            gid,
+            format_compact!("{}", e),
+        ),
     }
     Ok(())
 }
@@ -273,14 +267,15 @@ fn destroy_all_nearby_crates(lua: MizLua, gid: GroupId) -> Result<()> {
 fn spawn_crate(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let (_side, slot) = slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
+    let (_side, slot) =
+        slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
     match ctx.db.spawn_crate(lua, &ctx.idx, &slot, &arg.snd) {
-        Err(e) => {
-            ctx.db
-                .ephemeral
-                .msgs()
-                .panel_to_group(10, false, arg.fst, format_compact!("{e}"))
-        }
+        Err(e) => ctx.db.ephemeral.msgs().panel_to_group(
+            10,
+            false,
+            arg.fst,
+            format_compact!("{e}"),
+        ),
         Ok(st) => {
             if let Some(max_crates) = ctx.db.ephemeral.cfg.max_crates {
                 let (n, oldest) = ctx
@@ -293,10 +288,7 @@ fn spawn_crate(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
                         "{n} of {max_crates} crates spawned, {gid} will be deleted if the limit is exceeded"
                     ),
                 };
-                ctx.db
-                    .ephemeral
-                    .msgs()
-                    .panel_to_group(10, false, arg.fst, msg)
+                ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, msg)
             }
         }
     }
@@ -307,10 +299,19 @@ fn spawn_crate(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
 fn spawn_c130_crate(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let (side, slot) = slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
+    let (side, slot) =
+        slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
     let origin = ctx.db.player_current_objective_id(&slot)?;
 
-    match ctx.db.spawn_c130_crate(lua, &ctx.idx, &slot, arg.snd.clone(), side, origin, true) {
+    match ctx.db.spawn_c130_crate(
+        lua,
+        &ctx.idx,
+        &slot,
+        arg.snd.clone(),
+        side,
+        origin,
+        true,
+    ) {
         Ok(msg) => {
             ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, msg);
         }
@@ -325,7 +326,8 @@ fn spawn_c130_crate(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
 fn spawn_c130_vehicle(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let (side, slot) = slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
+    let (side, slot) =
+        slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
     let origin = ctx.db.player_current_objective_id(&slot)?;
 
     match ctx.db.spawn_c130_vehicle(lua, &ctx.idx, &slot, arg.snd.clone(), side, origin) {
@@ -382,23 +384,22 @@ pub(crate) fn spawn_crates_for_ucid(
                 .filter(|cr| cr.name.as_str() == crate_name)
         })
         .or_else(|| {
-            cfg.repair_crate
-                .get(&side)
-                .filter(|cr| cr.name.as_str() == crate_name)
+            cfg.repair_crate.get(&side).filter(|cr| cr.name.as_str() == crate_name)
         })
         .or_else(|| emergency_crate(cfg).filter(|cr| cr.name.as_str() == crate_name))
         .or_else(|| {
-            cfg.deployables
-                .get(&side)
-                .and_then(|deps| {
-                    deps.iter().flat_map(|d| &d.crates).find(|cr| cr.name.as_str() == crate_name)
-                })
+            cfg.deployables.get(&side).and_then(|deps| {
+                deps.iter()
+                    .flat_map(|d| &d.crates)
+                    .find(|cr| cr.name.as_str() == crate_name)
+            })
         })
         .cloned()
         .ok_or_else(|| anyhow!("crate {} not found", crate_name))?;
 
     let name = String::from(crate_name);
-    let crate_list: Vec<_> = std::iter::repeat((name, crate_def)).take(qty as usize).collect();
+    let crate_list: Vec<_> =
+        std::iter::repeat((name, crate_def)).take(qty as usize).collect();
     ctx.db.queue_c130_crate_spawns(lua, &slot, crate_list, side, origin, auto_unpack)
 }
 
@@ -412,7 +413,8 @@ fn spawn_n_crates(
 ) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let (_side, slot) = slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
+    let (_side, slot) =
+        slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
     let ucid = *ctx
         .db
         .ephemeral
@@ -446,7 +448,8 @@ fn spawn_n_helo_crates(lua: MizLua, arg: ArgTriple<GroupId, String, u32>) -> Res
 fn list_downed_pilots(lua: MizLua, gid: GroupId) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let (side, slot) =
+        slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     let st = SlotStats::get(&ctx.db, lua, &slot).context("getting slot stats")?;
     let pilots: Vec<_> = ctx
         .db
@@ -480,16 +483,16 @@ fn list_downed_pilots(lua: MizLua, gid: GroupId) -> Result<()> {
         })
         .collect();
     if pilots.is_empty() {
-        ctx.db
-            .ephemeral
-            .msgs()
-            .panel_to_group(10, false, gid, "No downed pilots on your side");
+        ctx.db.ephemeral.msgs().panel_to_group(
+            10,
+            false,
+            gid,
+            "No downed pilots on your side",
+        );
     } else {
         let mut msg = CompactString::new("Downed Pilots\n----------------------------\n");
         for (name, dist, bearing) in &pilots {
-            msg.push_str(&format_compact!(
-                "{name}: {bearing}° / {dist}m\n"
-            ));
+            msg.push_str(&format_compact!("{name}: {bearing}° / {dist}m\n"));
         }
         ctx.db.ephemeral.msgs().panel_to_group(15, false, gid, msg);
     }
@@ -500,7 +503,8 @@ fn request_smoke(lua: MizLua, gid: GroupId) -> Result<()> {
     use dcso3::trigger::{SmokeColor, Trigger};
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let (side, slot) =
+        slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     let st = SlotStats::get(&ctx.db, lua, &slot).context("getting slot stats")?;
     // Find the nearest downed pilot of the player's side
     let nearest = ctx
@@ -531,10 +535,12 @@ fn request_smoke(lua: MizLua, gid: GroupId) -> Result<()> {
         .min_by(|a, b| a.3.total_cmp(&b.3));
     match nearest {
         None => {
-            ctx.db
-                .ephemeral
-                .msgs()
-                .panel_to_group(10, false, gid, "No downed pilots nearby");
+            ctx.db.ephemeral.msgs().panel_to_group(
+                10,
+                false,
+                gid,
+                "No downed pilots nearby",
+            );
         }
         Some((pgid, name, pos, dist2)) => {
             let dist = dist2.sqrt() as u32;
@@ -548,12 +554,7 @@ fn request_smoke(lua: MizLua, gid: GroupId) -> Result<()> {
                 .map(|c| c.smoke_cooldown as i64)
                 .unwrap_or(300);
             let now: chrono::DateTime<chrono::Utc> = ctx.now();
-            let last_smoke = ctx
-                .db
-                .ephemeral
-                .csar_smoke_cooldown
-                .get(&pgid)
-                .copied();
+            let last_smoke = ctx.db.ephemeral.csar_smoke_cooldown.get(&pgid).copied();
             if let Some(last) = last_smoke {
                 let elapsed = now - last;
                 if elapsed < chrono::Duration::seconds(cooldown_secs) {
@@ -567,17 +568,14 @@ fn request_smoke(lua: MizLua, gid: GroupId) -> Result<()> {
             }
             let act = Trigger::singleton(lua)?.action()?;
             use dcso3::land::Land;
-            let alt = Land::singleton(lua)?
-                .get_height(dcso3::LuaVec2(pos))
-                .unwrap_or(0.);
+            let alt = Land::singleton(lua)?.get_height(dcso3::LuaVec2(pos)).unwrap_or(0.);
             let smoke_pos = dcso3::LuaVec3(dcso3::Vector3::new(pos.x, alt + 1., pos.y));
             if let Err(e) = act.smoke(smoke_pos, SmokeColor::Green) {
                 let msg = format_compact!("smoke failed: {e}");
                 ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, msg);
             } else {
                 ctx.db.ephemeral.csar_smoke_cooldown.insert(pgid, now);
-                let msg =
-                    format_compact!("{name} popped green smoke — {dist}m away");
+                let msg = format_compact!("{name} popped green smoke — {dist}m away");
                 ctx.db.ephemeral.msgs().panel_to_group(15, false, gid, msg);
             }
         }
@@ -588,7 +586,8 @@ fn request_smoke(lua: MizLua, gid: GroupId) -> Result<()> {
 fn pickup_pilot(lua: MizLua, gid: GroupId) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let (side, slot) =
+        slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     match ctx.db.pickup_pilot(lua, &slot) {
         Ok(pilot_name) => {
             let player = player_name(&ctx.db, &slot);
@@ -596,10 +595,7 @@ fn pickup_pilot(lua: MizLua, gid: GroupId) -> Result<()> {
             ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg);
         }
         Err(e) => {
-            ctx.db
-                .ephemeral
-                .msgs()
-                .panel_to_group(10, false, gid, format_compact!("{e}"))
+            ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, format_compact!("{e}"))
         }
     }
     Ok(())
@@ -608,27 +604,20 @@ fn pickup_pilot(lua: MizLua, gid: GroupId) -> Result<()> {
 fn deliver_pilots(lua: MizLua, gid: GroupId) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let (side, slot) =
+        slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     let player = player_name(&ctx.db, &slot);
     match ctx.db.deliver_pilots(lua, &slot) {
         Err(e) => {
-            ctx.db
-                .ephemeral
-                .msgs()
-                .panel_to_group(10, false, gid, format_compact!("{e}"))
+            ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, format_compact!("{e}"))
         }
         Ok(pilots) => {
-            let rescue_reward = ctx
-                .db
-                .ephemeral
-                .cfg
-                .csar
-                .as_ref()
-                .map(|c| c.rescue_reward)
-                .unwrap_or(0);
+            let rescue_reward =
+                ctx.db.ephemeral.cfg.csar.as_ref().map(|c| c.rescue_reward).unwrap_or(0);
             let rescuer_ucid = ctx.db.ephemeral.player_in_slot(&slot).cloned();
             for pilot in &pilots {
-                if let Some(new_count) = ctx.db.restore_life(&pilot.ucid, pilot.life_type) {
+                if let Some(new_count) = ctx.db.restore_life(&pilot.ucid, pilot.life_type)
+                {
                     let msg = format_compact!(
                         "your pilot {} was rescued by {player} and delivered safely — you now have {new_count} {} lives",
                         pilot.name,
@@ -644,7 +633,9 @@ fn deliver_pilots(lua: MizLua, gid: GroupId) -> Result<()> {
                 // Rescuing your own ejected pilot gets the life back, not a
                 // reward on top (see tick_csar).
                 if rescue_reward > 0 {
-                    if let Some(ucid) = rescuer_ucid.as_ref().filter(|u| **u != pilot.ucid) {
+                    if let Some(ucid) =
+                        rescuer_ucid.as_ref().filter(|u| **u != pilot.ucid)
+                    {
                         ctx.db.earn_points(
                             ucid,
                             rescue_reward as i32,
@@ -794,16 +785,14 @@ pub(super) fn add_cargo_menu_for_group(
     // "Base Supply", not "Logistics" -- a deployable's own category path can be
     // named "Logistics" too (e.g. Ammo Truck), and two addSubMenuForGroup calls
     // with the same name+parent collide in DCS, breaking both menus.
-    let logi = mc.add_submenu_for_group(group, "Base Supply".into(), Some(root.clone()))?;
+    let logi =
+        mc.add_submenu_for_group(group, "Base Supply".into(), Some(root.clone()))?;
     mc.add_command_for_group(
         group,
         rep.name.clone(),
         Some(logi.clone()),
         spawn_crate,
-        ArgTuple {
-            fst: group,
-            snd: rep.name.clone(),
-        },
+        ArgTuple { fst: group, snd: rep.name.clone() },
     )?;
     if let Some(er) = emergency_crate(cfg) {
         mc.add_command_for_group(
@@ -811,10 +800,7 @@ pub(super) fn add_cargo_menu_for_group(
             er.name.clone(),
             Some(logi.clone()),
             spawn_crate,
-            ArgTuple {
-                fst: group,
-                snd: er.name.clone(),
-            },
+            ArgTuple { fst: group, snd: er.name.clone() },
         )?;
     }
     if let Some(whcfg) = &cfg.warehouse {
@@ -825,10 +811,7 @@ pub(super) fn add_cargo_menu_for_group(
                 fuel_cr.name.clone(),
                 Some(logi.clone()),
                 spawn_crate,
-                ArgTuple {
-                    fst: group,
-                    snd: fuel_cr.name.clone(),
-                },
+                ArgTuple { fst: group, snd: fuel_cr.name.clone() },
             )?;
         }
         // Add weapons transfer crate menu item
@@ -838,10 +821,7 @@ pub(super) fn add_cargo_menu_for_group(
                 weapons_cr.name.clone(),
                 Some(logi.clone()),
                 spawn_crate,
-                ArgTuple {
-                    fst: group,
-                    snd: weapons_cr.name.clone(),
-                },
+                ArgTuple { fst: group, snd: weapons_cr.name.clone() },
             )?;
         }
     }
@@ -865,10 +845,7 @@ pub(super) fn add_cargo_menu_for_group(
                 title,
                 Some(page),
                 spawn_crate,
-                ArgTuple {
-                    fst: group,
-                    snd: cr.name.clone(),
-                },
+                ArgTuple { fst: group, snd: cr.name.clone() },
             )?;
         }
     }
@@ -943,16 +920,22 @@ pub(super) fn add_c130_cargo_menu_for_group(
         group,
     )?;
 
-    let crates_menu = mc.add_submenu_for_group(group, "Crates".into(), Some(root.clone()))?;
+    let crates_menu =
+        mc.add_submenu_for_group(group, "Crates".into(), Some(root.clone()))?;
 
     // Add logistics submenu (base repair, supply transfer, and carrier repair).
     // "Base Supply", not "Logistics" -- a deployable's own category path can be
     // named "Logistics" too (e.g. Ammo Truck), and two addSubMenuForGroup calls
     // with the same name+parent collide in DCS, breaking both menus.
-    let has_base_supply =
-        cfg.warehouse.is_some() || !cfg.repair_crate.is_empty() || emergency_crate(cfg).is_some();
+    let has_base_supply = cfg.warehouse.is_some()
+        || !cfg.repair_crate.is_empty()
+        || emergency_crate(cfg).is_some();
     if has_base_supply {
-        let logi = mc.add_submenu_for_group(group, "Base Supply".into(), Some(crates_menu.clone()))?;
+        let logi = mc.add_submenu_for_group(
+            group,
+            "Base Supply".into(),
+            Some(crates_menu.clone()),
+        )?;
         // One base-supply crate: the single "spawn 1" command plus a "xN"
         // submenu (1-9) so a poor base can be topped off / a wreck fully
         // repaired in one trip, same as deployable crates.
@@ -1042,10 +1025,7 @@ pub(super) fn add_c130_cargo_menu_for_group(
                 title,
                 Some(tree.page_in(mc, &leaf)?),
                 spawn_c130_crate,
-                ArgTuple {
-                    fst: group,
-                    snd: cr.name.clone(),
-                },
+                ArgTuple { fst: group, snd: cr.name.clone() },
             )?;
             // Per-crate quantity submenu: pick 1-9 of this crate to spawn at
             // once. The name must include the crate name -- a leaf category
@@ -1074,8 +1054,11 @@ pub(super) fn add_c130_cargo_menu_for_group(
     if let Some(c130_cfg) = &cfg.c130_cargo {
         if let Some(vehicles) = c130_cfg.loadable_vehicles.get(side) {
             if !vehicles.is_empty() {
-                let vehicles_menu =
-                    mc.add_submenu_for_group(group, "Vehicles".into(), Some(root.clone()))?;
+                let vehicles_menu = mc.add_submenu_for_group(
+                    group,
+                    "Vehicles".into(),
+                    Some(root.clone()),
+                )?;
                 // Same tree as the crate categories: an optional path per
                 // vehicle, every level of it paged.
                 let mut tree = CrateTree::new(group, vehicles_menu, 0);
@@ -1090,7 +1073,11 @@ pub(super) fn add_c130_cargo_menu_for_group(
 
                     // Create menu item with cost if applicable
                     let title = if vehicle.cost > 0 {
-                        String::from(format_compact!("{} ({} pts)", vehicle.name, vehicle.cost))
+                        String::from(format_compact!(
+                            "{} ({} pts)",
+                            vehicle.name,
+                            vehicle.cost
+                        ))
                     } else {
                         String::from(vehicle.name.clone())
                     };
@@ -1100,10 +1087,7 @@ pub(super) fn add_c130_cargo_menu_for_group(
                         title,
                         Some(page),
                         spawn_c130_vehicle,
-                        ArgTuple {
-                            fst: group,
-                            snd: String::from(vehicle.name.clone()),
-                        },
+                        ArgTuple { fst: group, snd: String::from(vehicle.name.clone()) },
                     )?;
                 }
             }
@@ -1118,11 +1102,21 @@ pub(super) fn add_c130_cargo_menu_for_group(
 fn spawn_helo_crate(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let (side, slot) = slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
+    let (side, slot) =
+        slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
     let origin = ctx.db.player_current_objective_id(&slot)?;
-    let auto_unpack = ctx.db.ephemeral.cfg.helo_cargo.as_ref().map(|c| c.auto_unpack).unwrap_or(false);
+    let auto_unpack =
+        ctx.db.ephemeral.cfg.helo_cargo.as_ref().map(|c| c.auto_unpack).unwrap_or(false);
 
-    match ctx.db.spawn_c130_crate(lua, &ctx.idx, &slot, arg.snd.clone(), side, origin, auto_unpack) {
+    match ctx.db.spawn_c130_crate(
+        lua,
+        &ctx.idx,
+        &slot,
+        arg.snd.clone(),
+        side,
+        origin,
+        auto_unpack,
+    ) {
         Ok(msg) => {
             ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, msg);
         }
@@ -1140,7 +1134,9 @@ fn unpack_helo_crates(lua: MizLua, arg: GroupId) -> Result<()> {
     let (_, slot) = slot_for_group(lua, ctx, &arg).context("getting slot for group")?;
     match ctx.db.unpack_nearby_helo_crates(lua, &ctx.idx, &slot) {
         Ok(msg) => ctx.db.ephemeral.msgs().panel_to_group(10, false, arg, msg),
-        Err(e) => ctx.db.ephemeral.msgs().panel_to_group(10, false, arg, format_compact!("{e}")),
+        Err(e) => {
+            ctx.db.ephemeral.msgs().panel_to_group(10, false, arg, format_compact!("{e}"))
+        }
     }
     Ok(())
 }
@@ -1151,7 +1147,9 @@ fn pack_fat_cow(lua: MizLua, arg: GroupId) -> Result<()> {
     let (_, slot) = slot_for_group(lua, ctx, &arg).context("getting slot for group")?;
     match ctx.db.pack_fat_cow(lua, &ctx.idx, &slot) {
         Ok(msg) => ctx.db.ephemeral.msgs().panel_to_group(15, false, arg, msg),
-        Err(e) => ctx.db.ephemeral.msgs().panel_to_group(10, false, arg, format_compact!("{e}")),
+        Err(e) => {
+            ctx.db.ephemeral.msgs().panel_to_group(10, false, arg, format_compact!("{e}"))
+        }
     }
     Ok(())
 }
@@ -1192,9 +1190,10 @@ pub(super) fn add_helo_cargo_menu_for_group(
         destroy_nearby_crate,
         group,
     )?;
-    let has_fat_cow = cfg.deployables.get(side).into_iter().flatten().any(|d| {
-        matches!(&d.kind, DeployableKind::Objective(o) if o.fat_cow.is_some())
-    });
+    let has_fat_cow =
+        cfg.deployables.get(side).into_iter().flatten().any(
+            |d| matches!(&d.kind, DeployableKind::Objective(o) if o.fat_cow.is_some()),
+        );
     if has_fat_cow {
         mc.add_command_for_group(
             group,
@@ -1205,16 +1204,22 @@ pub(super) fn add_helo_cargo_menu_for_group(
         )?;
     }
 
-    let crates_menu = mc.add_submenu_for_group(group, "Crates".into(), Some(root.clone()))?;
+    let crates_menu =
+        mc.add_submenu_for_group(group, "Crates".into(), Some(root.clone()))?;
 
     // "Base Supply", not "Logistics" -- a deployable's own category path can be
     // named "Logistics" too (e.g. Ammo Truck), and two addSubMenuForGroup calls
     // with the same name+parent collide in DCS, breaking both menus. Build it
     // once and hang every base-supply crate off it.
-    let has_base_supply =
-        cfg.warehouse.is_some() || !cfg.repair_crate.is_empty() || emergency_crate(cfg).is_some();
+    let has_base_supply = cfg.warehouse.is_some()
+        || !cfg.repair_crate.is_empty()
+        || emergency_crate(cfg).is_some();
     if has_base_supply {
-        let logi = mc.add_submenu_for_group(group, "Base Supply".into(), Some(crates_menu.clone()))?;
+        let logi = mc.add_submenu_for_group(
+            group,
+            "Base Supply".into(),
+            Some(crates_menu.clone()),
+        )?;
         // "spawn 1" command + a "xN" submenu (1-9) per base-supply crate.
         // Two entries per crate (the command and its xN submenu), so four
         // base-supply crates already fill most of a page -- pager it.

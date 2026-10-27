@@ -125,11 +125,7 @@ pub enum Spawned {
 
 impl<'lua> SpawnCtx<'lua> {
     pub fn new(lua: MizLua<'lua>) -> Result<Self> {
-        Ok(Self {
-            coalition: Coalition::singleton(lua)?,
-            miz: Miz::singleton(lua)?,
-            lua,
-        })
+        Ok(Self { coalition: Coalition::singleton(lua)?, miz: Miz::singleton(lua)?, lua })
     }
 
     pub fn lua(&self) -> MizLua<'lua> {
@@ -164,13 +160,16 @@ impl<'lua> SpawnCtx<'lua> {
             .ok_or_else(|| anyhow!("no such template {template_name}"))
     }
 
-    pub fn get_trigger_zone<'a>(&'a self, idx: &MizIndex, name: &str) -> Result<TriggerZone> {
+    pub fn get_trigger_zone<'a>(
+        &'a self,
+        idx: &MizIndex,
+        name: &str,
+    ) -> Result<TriggerZone> {
         Ok(self
             .miz
             .get_trigger_zone(idx, name)?
             .ok_or_else(|| anyhow!("no such trigger zone {name}"))?)
     }
-
 
     pub fn move_farp_pad(
         &self,
@@ -205,7 +204,11 @@ impl<'lua> SpawnCtx<'lua> {
     /// Spawn a group/static with optional linking to a ship unit.
     /// If link_unit_id is provided and the template is a static object,
     /// the static will be linked to that ship and move with it.
-    pub fn spawn_with_link(&self, template: GroupInfo, link_unit_name: Option<String>) -> Result<Spawned> {
+    pub fn spawn_with_link(
+        &self,
+        template: GroupInfo,
+        link_unit_name: Option<String>,
+    ) -> Result<Spawned> {
         match GroupCategory::from_kind(template.category) {
             Some(category) => Ok(Spawned::Group(
                 self.coalition
@@ -243,7 +246,10 @@ impl<'lua> SpawnCtx<'lua> {
                     .coalition
                     .add_static_object(template.country, unit)
                     .with_context(|| {
-                        format_compact!("spawning static object from template {:?}", template)
+                        format_compact!(
+                            "spawning static object from template {:?}",
+                            template
+                        )
                     })?;
                 let oid = match &obj {
                     Static::Airbase(a) => a.object_id()?.erased(),
@@ -261,16 +267,18 @@ impl<'lua> SpawnCtx<'lua> {
                 match dcso3::object::Object::get_instance(self.lua, &oid) {
                     Ok(obj) => {
                         match obj.as_unit() {
-                            Ok(unit) => {
-                                match unit.get_group() {
-                                    Ok(group) => group.destroy()?,
-                                    Err(e) => info!("attempt to despawn unit without group {e:?}"),
+                            Ok(unit) => match unit.get_group() {
+                                Ok(group) => group.destroy()?,
+                                Err(e) => {
+                                    info!("attempt to despawn unit without group {e:?}")
                                 }
-                            }
+                            },
                             Err(_) => {
                                 // oid is a Group, not a unit — destroy directly
                                 if let Err(e) = obj.destroy() {
-                                    info!("attempt to despawn group directly failed: {e:?}");
+                                    info!(
+                                        "attempt to despawn group directly failed: {e:?}"
+                                    );
                                 }
                             }
                         }
@@ -284,10 +292,15 @@ impl<'lua> SpawnCtx<'lua> {
                 match Group::get_by_name(self.lua, &*name) {
                     Ok(group) => {
                         if let Err(e) = group.destroy() {
-                            info!("attempt to despawn group by name '{}' failed: {e:?}", name);
+                            info!(
+                                "attempt to despawn group by name '{}' failed: {e:?}",
+                                name
+                            );
                         }
                     }
-                    Err(e) => info!("attempt to despawn unknown group by name '{}' {e:?}", name),
+                    Err(e) => {
+                        info!("attempt to despawn unknown group by name '{}' {e:?}", name)
+                    }
                 }
                 record_perf(&mut perf.despawn, ts);
                 Ok(())

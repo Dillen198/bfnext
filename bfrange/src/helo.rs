@@ -22,19 +22,17 @@ use crate::{
     spawn::{self, Spawn, SpawnKind, Spawns},
     util::{self, V3},
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use bfprotocols::range::{
+    AirdropRelease, AirdropResult, LandingResult, PilotRef, RangeResult, SlingResult,
+    TroopResult,
     cfg::{DropZoneCfg, LandingPadCfg, RangeCfg, SlingCourseCfg, TroopLzCfg},
-    grading, AirdropRelease, AirdropResult, LandingResult, PilotRef, RangeResult, SlingResult, TroopResult,
+    grading,
 };
 use chrono::{Duration, Utc};
 use dcso3::{
-    airbase::AirbaseCategory,
-    coalition::Static,
-    world::World,
-    static_object::StaticObject,
-    trigger::Trigger,
-    MizLua,
+    MizLua, airbase::AirbaseCategory, coalition::Static, static_object::StaticObject,
+    trigger::Trigger, world::World,
 };
 use fxhash::FxHashMap;
 use log::{info, warn};
@@ -123,12 +121,20 @@ pub struct Helo {
 
 impl Helo {
     pub fn init(&mut self, lua: MizLua, cfg: &RangeCfg) {
-        let dry = |lua: MizLua, loc| ag::resolve(lua, loc).map(|p| util::nearest_land(lua, p, 300.).unwrap_or(p));
+        let dry = |lua: MizLua, loc| {
+            ag::resolve(lua, loc).map(|p| util::nearest_land(lua, p, 300.).unwrap_or(p))
+        };
         for p in &cfg.helo.pads {
             match dry(lua, &p.loc) {
                 Ok(pos) => {
                     if let Some(m) = &p.marker {
-                        let s = spawn::static_object(&format!("RNG-PAD-{}", p.id), m, pos, p.heading_deg.unwrap_or(0.), None);
+                        let s = spawn::static_object(
+                            &format!("RNG-PAD-{}", p.id),
+                            m,
+                            pos,
+                            p.heading_deg.unwrap_or(0.),
+                            None,
+                        );
                         if let Ok(c) = spawn::country_id("CJTF_BLUE") {
                             if let Err(e) = spawn::add_static(lua, c, &s) {
                                 warn!("pad {} marker: {e:?}", p.id)
@@ -175,7 +181,10 @@ impl Helo {
                 if ab.get_category().ok() != Some(AirbaseCategory::Airdrome) {
                     continue;
                 }
-                v.push((ab.as_object()?.get_name()?.to_string(), ab.as_object()?.get_point()?.0));
+                v.push((
+                    ab.as_object()?.get_name()?.to_string(),
+                    ab.as_object()?.get_point()?.0,
+                ));
             }
             Ok(v)
         })();
@@ -200,7 +209,12 @@ impl Helo {
     pub fn pad_list(&self) -> Vec<String> {
         self.pads
             .iter()
-            .map(|p| format!("{} ({}, perfect inside {:.0} m)", p.cfg.name, p.cfg.drill, p.cfg.perfect_m))
+            .map(|p| {
+                format!(
+                    "{} ({}, perfect inside {:.0} m)",
+                    p.cfg.name, p.cfg.drill, p.cfg.perfect_m
+                )
+            })
             .collect()
     }
 
@@ -209,7 +223,15 @@ impl Helo {
     }
 
     /// Start a sling-load course: spawn the cargo at the pickup.
-    pub fn start_sling(&mut self, lua: MizLua, cfg: &RangeCfg, spawns: &mut Spawns, f: &Flying, course: &str, now: f64) -> Result<String> {
+    pub fn start_sling(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        spawns: &mut Spawns,
+        f: &Flying,
+        course: &str,
+        now: f64,
+    ) -> Result<String> {
         if !f.is_helo {
             bail!("sling loads are for helicopters")
         }
@@ -234,7 +256,10 @@ impl Helo {
         }
         let country = spawn::country_id(spawn::default_country(f.side))?;
         spawn::add_static(lua, country, &s)?;
-        let life0 = cargo(lua, &name).and_then(|s| s.get_life().ok()).map(|l| l as f64).unwrap_or(1.);
+        let life0 = cargo(lua, &name)
+            .and_then(|s| s.get_life().ok())
+            .map(|l| l as f64)
+            .unwrap_or(1.);
         spawns.insert(Spawn {
             id: name.clone(),
             item: "sling_course".into(),
@@ -244,7 +269,9 @@ impl Helo {
             groups: vec![],
             statics: vec![name.clone()],
             created: Utc::now(),
-            expires: Some(Utc::now() + Duration::seconds(cfg.spawn.despawn_after_s as i64)),
+            expires: Some(
+                Utc::now() + Duration::seconds(cfg.spawn.despawn_after_s as i64),
+            ),
             units: 0,
             pos: pick,
             kind: SpawnKind::Cargo,
@@ -285,7 +312,13 @@ impl Helo {
         Ok(name)
     }
 
-    pub fn load_troops(&mut self, lua: MizLua, f: &Flying, lz: &str, now: f64) -> Result<String> {
+    pub fn load_troops(
+        &mut self,
+        lua: MizLua,
+        f: &Flying,
+        lz: &str,
+        now: f64,
+    ) -> Result<String> {
         let (c, pick, lzp) = self
             .troops
             .iter()
@@ -296,14 +329,25 @@ impl Helo {
             bail!("land at the pickup to load")
         }
         if util::dist2(f.pos, pick) > c.radius_m.max(100.) {
-            bail!("you are {:.0} m from the pickup; land within {:.0} m", util::dist2(f.pos, pick), c.radius_m.max(100.))
+            bail!(
+                "you are {:.0} m from the pickup; land within {:.0} m",
+                util::dist2(f.pos, pick),
+                c.radius_m.max(100.)
+            )
         }
         let kg = c.troops as f64 * c.kg_per_troop;
-        Trigger::singleton(lua)?.action()?.set_unit_internal_cargo(f.unit_name.as_str().into(), kg as i64)?;
+        Trigger::singleton(lua)?
+            .action()?
+            .set_unit_internal_cargo(f.unit_name.as_str().into(), kg as i64)?;
         let started = self.troop_started.remove(&f.unit_name).unwrap_or(now);
         self.troop_runs.insert(
             f.unit_name.clone(),
-            TroopRun { lz: c.clone(), lz_pos: lzp, loaded_at: now, load_time: now - started },
+            TroopRun {
+                lz: c.clone(),
+                lz_pos: lzp,
+                loaded_at: now,
+                load_time: now - started,
+            },
         );
         Ok(format!(
             "{} troops aboard ({:.0} kg). LZ {} {:03.0}/{:.1} nm.",
@@ -315,8 +359,18 @@ impl Helo {
         ))
     }
 
-    pub fn unload_troops(&mut self, lua: MizLua, cfg: &RangeCfg, rec: &mut Recorder, f: &Flying, now: f64) -> Result<String> {
-        let run = self.troop_runs.get(&f.unit_name).ok_or_else(|| anyhow!("no troops aboard"))?;
+    pub fn unload_troops(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        rec: &mut Recorder,
+        f: &Flying,
+        now: f64,
+    ) -> Result<String> {
+        let run = self
+            .troop_runs
+            .get(&f.unit_name)
+            .ok_or_else(|| anyhow!("no troops aboard"))?;
         if f.in_air {
             bail!("land in the LZ to unload")
         }
@@ -325,7 +379,9 @@ impl Helo {
             bail!("you are {:.0} m from the LZ centre", d)
         }
         let run = self.troop_runs.remove(&f.unit_name).unwrap();
-        Trigger::singleton(lua)?.action()?.set_unit_internal_cargo(f.unit_name.as_str().into(), 0)?;
+        Trigger::singleton(lua)?
+            .action()?
+            .set_unit_internal_cargo(f.unit_name.as_str().into(), 0)?;
         let q = grading::precision_quality(run.lz.radius_m / 4., d);
         let total = now - run.loaded_at + run.load_time;
         let res = TroopResult {
@@ -344,13 +400,30 @@ impl Helo {
             q.label(),
             now - run.loaded_at
         );
-        rec.emit(lua, records::pilot_of(f), &f.typ, f.side, &f.group_name, Some(q.score()), RangeResult::Troops(res), None);
+        rec.emit(
+            lua,
+            records::pilot_of(f),
+            &f.typ,
+            f.side,
+            &f.group_name,
+            Some(q.score()),
+            RangeResult::Troops(res),
+            None,
+        );
         let _ = cfg;
         Ok(msg)
     }
 
     /// Poll cargo and sample helos near pads.
-    pub fn tick(&mut self, lua: MizLua, cfg: &RangeCfg, players: &Players, spawns: &mut Spawns, rec: &mut Recorder, now: f64) {
+    pub fn tick(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        players: &Players,
+        spawns: &mut Spawns,
+        rec: &mut Recorder,
+        now: f64,
+    ) {
         self.dyn_cargo_tick(lua, cfg, players, rec, now);
         // approaches to pads (5 Hz)
         for f in players.flying.values().filter(|f| f.is_helo) {
@@ -390,13 +463,20 @@ impl Helo {
                 done.push((i, None));
                 continue;
             };
-            let Ok(p) = s.as_object().and_then(|o| o.get_point()).map(|p| p.0) else { continue };
+            let Ok(p) = s.as_object().and_then(|o| o.get_point()).map(|p| p.0) else {
+                continue;
+            };
             let agl = p.y - util::ground_height(lua, p);
             let moved = r.last_pos.map(|l| util::dist3(l, p)).unwrap_or(0.);
             r.last_pos = Some(p);
             if r.picked.is_none() && agl > 2. {
                 r.picked = Some(now);
-                records::to_group(lua, r.group_id, &format!("SLING {}: cargo off the ground", r.course.name), 5);
+                records::to_group(
+                    lua,
+                    r.group_id,
+                    &format!("SLING {}: cargo off the ground", r.course.name),
+                    5,
+                );
             }
             if r.picked.is_some() && agl < 1.5 && moved < 0.3 {
                 let since = *r.still_since.get_or_insert(now);
@@ -415,8 +495,12 @@ impl Helo {
             let r = self.runs.remove(i);
             if let Some(p) = p {
                 let d = util::dist2(p, r.dz);
-                let life = cargo(lua, &r.cargo).and_then(|s| s.get_life().ok()).map(|l| l as f64).unwrap_or(0.);
-                let damage = if r.life0 > 0. { (1. - life / r.life0).clamp(0., 1.) } else { 0. };
+                let life = cargo(lua, &r.cargo)
+                    .and_then(|s| s.get_life().ok())
+                    .map(|l| l as f64)
+                    .unwrap_or(0.);
+                let damage =
+                    if r.life0 > 0. { (1. - life / r.life0).clamp(0., 1.) } else { 0. };
                 let q = grading::precision_quality(r.course.perfect_m, d);
                 let t = now - r.picked.unwrap_or(r.started);
                 let res = SlingResult {
@@ -434,18 +518,44 @@ impl Helo {
                 records::to_group(
                     lua,
                     r.group_id,
-                    &format!("SLING {}: set down {:.1} m from the DZ centre in {:.0} s - {}{}", r.course.name, d, t, q.label(),
-                        if damage > 0.05 { format!(", cargo {:.0}% damaged", damage * 100.) } else { String::new() }),
+                    &format!(
+                        "SLING {}: set down {:.1} m from the DZ centre in {:.0} s - {}{}",
+                        r.course.name,
+                        d,
+                        t,
+                        q.label(),
+                        if damage > 0.05 {
+                            format!(", cargo {:.0}% damaged", damage * 100.)
+                        } else {
+                            String::new()
+                        }
+                    ),
                     cfg.message_s,
                 );
-                rec.emit(lua, r.pilot.clone(), &r.typ, r.side, &r.callsign, Some(q.score()), RangeResult::Sling(res), None);
+                rec.emit(
+                    lua,
+                    r.pilot.clone(),
+                    &r.typ,
+                    r.side,
+                    &r.callsign,
+                    Some(q.score()),
+                    RangeResult::Sling(res),
+                    None,
+                );
             }
             spawns.remove(lua, &r.spawn_id);
         }
     }
 
     /// A helo landed (LAND event): grade it if it was on a pad.
-    pub fn landed(&mut self, lua: MizLua, cfg: &RangeCfg, rec: &mut Recorder, f: &Flying, now: f64) {
+    pub fn landed(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        rec: &mut Recorder,
+        f: &Flying,
+        now: f64,
+    ) {
         let Some(a) = self.approaches.remove(&f.unit_name) else { return };
         let Some(pad) = self.pads.get(a.pad) else { return };
         let d = util::dist2(pad.pos, f.pos);
@@ -481,7 +591,16 @@ impl Helo {
             ),
             cfg.message_s,
         );
-        rec.emit(lua, records::pilot_of(f), &f.typ, f.side, &f.group_name, Some(q.score()), RangeResult::Landing(res), None);
+        rec.emit(
+            lua,
+            records::pilot_of(f),
+            &f.typ,
+            f.side,
+            &f.group_name,
+            Some(q.score()),
+            RangeResult::Landing(res),
+            None,
+        );
     }
 
     /// A static was born; if it is a dynamic-cargo package, start watching it.
@@ -490,10 +609,15 @@ impl Helo {
             return;
         }
         let Some(s) = cargo(lua, name) else { return };
-        let Ok(p) = s.as_object().and_then(|o| o.get_point()).map(|p| p.0) else { return };
+        let Ok(p) = s.as_object().and_then(|o| o.get_point()).map(|p| p.0) else {
+            return;
+        };
         let owner = name.split('|').next().unwrap_or_default().to_string();
         let mass_kg = s.get_cargo_weight().unwrap_or(0.);
-        let cargo_name = s.get_cargo_display_name().map(|s| s.to_string()).unwrap_or_else(|_| "cargo".into());
+        let cargo_name = s
+            .get_cargo_display_name()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|_| "cargo".into());
         let life0 = s.get_life().map(|l| l as f64).unwrap_or(1.);
         info!("dynamic cargo {name}: {cargo_name}, {mass_kg:.0} kg, for {owner}");
         self.dyn_cargo.insert(
@@ -518,15 +642,32 @@ impl Helo {
     /// Every marked place a load can be delivered to: pads, sling drop zones
     /// and troop LZs, with the radius that grades PERFECT.
     fn destinations(&self) -> Vec<(String, V3, f64)> {
-        let mut v: Vec<(String, V3, f64)> = self.pads.iter().map(|p| (p.cfg.name.clone(), p.pos, p.cfg.perfect_m.max(5.))).collect();
-        v.extend(self.sling.iter().map(|(c, _, dz)| (format!("{} DZ", c.name), *dz, c.perfect_m)));
-        v.extend(self.troops.iter().map(|(c, _, lz)| (format!("{} LZ", c.name), *lz, (c.radius_m / 4.).max(5.))));
+        let mut v: Vec<(String, V3, f64)> = self
+            .pads
+            .iter()
+            .map(|p| (p.cfg.name.clone(), p.pos, p.cfg.perfect_m.max(5.)))
+            .collect();
+        v.extend(
+            self.sling
+                .iter()
+                .map(|(c, _, dz)| (format!("{} DZ", c.name), *dz, c.perfect_m)),
+        );
+        v.extend(self.troops.iter().map(|(c, _, lz)| {
+            (format!("{} LZ", c.name), *lz, (c.radius_m / 4.).max(5.))
+        }));
         v
     }
 
     /// Poll dynamic-cargo packages (1 Hz) and grade the ones set down at a
     /// destination.
-    fn dyn_cargo_tick(&mut self, lua: MizLua, cfg: &RangeCfg, players: &Players, rec: &mut Recorder, now: f64) {
+    fn dyn_cargo_tick(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        players: &Players,
+        rec: &mut Recorder,
+        now: f64,
+    ) {
         if self.dyn_cargo.is_empty() || now - self.last_dyn < 1. {
             return;
         }
@@ -540,7 +681,9 @@ impl Helo {
                 done.push(name.clone());
                 continue;
             };
-            let Ok(p) = s.as_object().and_then(|o| o.get_point()).map(|p| p.0) else { continue };
+            let Ok(p) = s.as_object().and_then(|o| o.get_point()).map(|p| p.0) else {
+                continue;
+            };
             let owner = players.flying.values().find(|f| f.name == c.owner);
             // in the cargo bay right now (None: DCS cannot say)
             let mut on_now = None;
@@ -569,7 +712,10 @@ impl Helo {
                         heading_deg: f.hdg.rem_euclid(360.),
                         to_dz_m: None,
                     };
-                    info!("airdrop: {name} left {}'s cargo bay at {:.0} ft AGL, {:.0} kt", f.name, rel.alt_agl_ft, rel.gs_kts);
+                    info!(
+                        "airdrop: {name} left {}'s cargo bay at {:.0} ft AGL, {:.0} kt",
+                        f.name, rel.alt_agl_ft, rel.gs_kts
+                    );
                     c.release = Some((now, rel, f.pos));
                 }
             }
@@ -579,16 +725,17 @@ impl Helo {
             let moved = util::dist3(p, c.last_pos);
             c.last_pos = p;
             let agl = p.y - util::ground_height(lua, p);
-            let aboard = owner
-                .map(|f| f.in_air && util::dist3(f.pos, p) < 40.)
-                .unwrap_or(false);
+            let aboard =
+                owner.map(|f| f.in_air && util::dist3(f.pos, p) < 40.).unwrap_or(false);
             if c.picked.is_some() && !aboard && agl < 2. && moved < 0.3 {
                 let since = *c.still_since.get_or_insert(now);
                 if now - since < 5. {
                     continue;
                 }
                 if c.fixed_wing {
-                    if fixed_wing_delivery(lua, cfg, rec, c, owner, &s, p, &zones, &fields, now) {
+                    if fixed_wing_delivery(
+                        lua, cfg, rec, c, owner, &s, p, &zones, &fields, now,
+                    ) {
                         done.push(name.clone());
                     }
                     continue;
@@ -600,7 +747,11 @@ impl Helo {
                 match (best, owner) {
                     (Some((dn, dpos, perfect, dist)), Some(f)) if dist <= 200. => {
                         let life = s.get_life().map(|l| l as f64).unwrap_or(c.life0);
-                        let damage = if c.life0 > 0. { (1. - life / c.life0).clamp(0., 1.) } else { 0. };
+                        let damage = if c.life0 > 0. {
+                            (1. - life / c.life0).clamp(0., 1.)
+                        } else {
+                            0.
+                        };
                         let q = grading::precision_quality(perfect, dist);
                         let t = now - c.picked.unwrap_or(c.born);
                         let method = if c.inside { "internal" } else { "sling" };
@@ -624,7 +775,11 @@ impl Helo {
                                 c.cargo,
                                 method,
                                 c.mass_kg,
-                                if damage > 0.05 { format!("{:.0}% damaged", damage * 100.) } else { "intact".into() },
+                                if damage > 0.05 {
+                                    format!("{:.0}% damaged", damage * 100.)
+                                } else {
+                                    "intact".into()
+                                },
                                 dn,
                                 dist,
                                 t,
@@ -632,7 +787,16 @@ impl Helo {
                             ),
                             cfg.message_s,
                         );
-                        rec.emit(lua, records::pilot_of(f), &f.typ, f.side, &f.group_name, Some(q.score()), RangeResult::Sling(res), None);
+                        rec.emit(
+                            lua,
+                            records::pilot_of(f),
+                            &f.typ,
+                            f.side,
+                            &f.group_name,
+                            Some(q.score()),
+                            RangeResult::Sling(res),
+                            None,
+                        );
                         done.push(name.clone());
                     }
                     // set down away from every marked place: not a delivery;
@@ -658,7 +822,10 @@ impl Helo {
         self.drop_zones
             .iter()
             .map(|(z, _)| match z.run_in_deg {
-                Some(h) => format!("{} DZ (run-in {:03.0}, perfect inside {:.0} m)", z.name, h, z.perfect_m),
+                Some(h) => format!(
+                    "{} DZ (run-in {:03.0}, perfect inside {:.0} m)",
+                    z.name, h, z.perfect_m
+                ),
                 None => format!("{} DZ (perfect inside {:.0} m)", z.name, z.perfect_m),
             })
             .collect()
@@ -668,7 +835,11 @@ impl Helo {
         let mut t = vec![
             "DYNAMIC CARGO: at a home field ask the ground crew (F8) for cargo, load it into the cabin with the cargo loader or sling it, and set it down at any of these to have the delivery graded:".to_string(),
         ];
-        t.extend(self.destinations().into_iter().map(|(n, _, perfect)| format!("  {n} (perfect inside {perfect:.0} m)")));
+        t.extend(
+            self.destinations()
+                .into_iter()
+                .map(|(n, _, perfect)| format!("  {n} (perfect inside {perfect:.0} m)")),
+        );
         if !self.drop_zones.is_empty() {
             t.push("Fixed-wing (C-130J): airdrop the load out of the cargo bay over a drop zone, or air-land it at another field:".into());
             t.extend(self.drop_zone_list().into_iter().map(|z| format!("  {z}")));
@@ -707,10 +878,23 @@ fn fixed_wing_delivery(
     let flight_s = now - c.picked.unwrap_or(c.born);
     if let Some((t_rel, mut rel, rp)) = c.release.clone() {
         let Some(f) = owner else { return true };
-        let best = zones.iter().map(|(z, zp)| (z, *zp, util::dist2(*zp, p))).min_by(|a, b| a.2.total_cmp(&b.2));
+        let best = zones
+            .iter()
+            .map(|(z, zp)| (z, *zp, util::dist2(*zp, p)))
+            .min_by(|a, b| a.2.total_cmp(&b.2));
         let Some((z, zp, dist)) = best.filter(|b| b.2 <= cfg.airdrop.reach_m) else {
-            let near = best.map(|b| format!(", {:.1} nm from {} DZ", b.2 / util::NM, b.0.name)).unwrap_or_default();
-            records::to_group(lua, f.group_id, &format!("AIRDROP {}: down off every drop zone{near}; not scored.", c.cargo), cfg.message_s);
+            let near = best
+                .map(|b| format!(", {:.1} nm from {} DZ", b.2 / util::NM, b.0.name))
+                .unwrap_or_default();
+            records::to_group(
+                lua,
+                f.group_id,
+                &format!(
+                    "AIRDROP {}: down off every drop zone{near}; not scored.",
+                    c.cargo
+                ),
+                cfg.message_s,
+            );
             return true;
         };
         let brg = util::bearing(zp, p);
@@ -742,7 +926,13 @@ fn fixed_wing_delivery(
             impact_pos: util::geo(lua, p),
         };
         let lr = match (long_m, cross_m) {
-            (Some(l), Some(x)) => format!(" ({:.0} m {}, {:.0} m {})", l.abs(), if l >= 0. { "long" } else { "short" }, x.abs(), if x >= 0. { "right" } else { "left" }),
+            (Some(l), Some(x)) => format!(
+                " ({:.0} m {}, {:.0} m {})",
+                l.abs(),
+                if l >= 0. { "long" } else { "short" },
+                x.abs(),
+                if x >= 0. { "right" } else { "left" }
+            ),
             _ => String::new(),
         };
         records::to_group(
@@ -761,14 +951,29 @@ fn fixed_wing_delivery(
             ),
             cfg.message_s,
         );
-        rec.emit(lua, records::pilot_of(f), &f.typ, f.side, &f.group_name, Some(q.score()), RangeResult::Airdrop(res), None);
+        rec.emit(
+            lua,
+            records::pilot_of(f),
+            &f.typ,
+            f.side,
+            &f.group_name,
+            Some(q.score()),
+            RangeResult::Airdrop(res),
+            None,
+        );
         return true;
     }
     // unloaded on the ground away from home: an air-land delivery
     if c.inside && util::dist2(c.spawn_pos, p) > 5000. {
         let Some(f) = owner.filter(|f| !f.in_air) else { return false };
-        let field = fields.iter().map(|(n, fp)| (n, util::dist2(*fp, p))).min_by(|a, b| a.1.total_cmp(&b.1));
-        let zone = field.filter(|x| x.1 < 6000.).map(|x| x.0.clone()).unwrap_or_else(|| "a field".into());
+        let field = fields
+            .iter()
+            .map(|(n, fp)| (n, util::dist2(*fp, p)))
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        let zone = field
+            .filter(|x| x.1 < 6000.)
+            .map(|x| x.0.clone())
+            .unwrap_or_else(|| "a field".into());
         let res = AirdropResult {
             method: "airland".into(),
             zone: zone.clone(),
@@ -787,8 +992,27 @@ fn fixed_wing_delivery(
             dz_pos: util::geo(lua, p),
             impact_pos: util::geo(lua, p),
         };
-        records::to_group(lua, f.group_id, &format!("AIR-LAND {} ({:.0} kg) delivered to {zone} after {:.0} min", c.cargo, c.mass_kg, flight_s / 60.), cfg.message_s);
-        rec.emit(lua, records::pilot_of(f), &f.typ, f.side, &f.group_name, Some(res.quality.score() * (1. - damage).max(0.2)), RangeResult::Airdrop(res), None);
+        records::to_group(
+            lua,
+            f.group_id,
+            &format!(
+                "AIR-LAND {} ({:.0} kg) delivered to {zone} after {:.0} min",
+                c.cargo,
+                c.mass_kg,
+                flight_s / 60.
+            ),
+            cfg.message_s,
+        );
+        rec.emit(
+            lua,
+            records::pilot_of(f),
+            &f.typ,
+            f.side,
+            &f.group_name,
+            Some(res.quality.score() * (1. - damage).max(0.2)),
+            RangeResult::Airdrop(res),
+            None,
+        );
         return true;
     }
     // set down at home (or not yet anywhere it counts): it can be loaded again
@@ -804,12 +1028,19 @@ const PAD_REACH_M: f64 = 60.;
 /// The steepest descent in the last second before the touchdown, feet per
 /// minute (0 when only climbing). `vs`: (time, vertical speed m/s).
 fn touchdown_fpm<'a>(vs: impl IntoIterator<Item = &'a (f64, f64)>, now: f64) -> f64 {
-    vs.into_iter().filter(|(t, _)| now - t < 1.2).map(|(_, v)| -v * 60. * util::M_TO_FT).fold(0., f64::max)
+    vs.into_iter()
+        .filter(|(t, _)| now - t < 1.2)
+        .map(|(_, v)| -v * 60. * util::M_TO_FT)
+        .fold(0., f64::max)
 }
 
 /// Precision against the pad's perfect radius; a hard landing (over 500
 /// fpm) caps it at FAIR.
-fn pad_landing_quality(perfect_m: f64, d: f64, fpm: f64) -> bfprotocols::range::PrecisionQuality {
+fn pad_landing_quality(
+    perfect_m: f64,
+    d: f64,
+    fpm: f64,
+) -> bfprotocols::range::PrecisionQuality {
     let q = grading::precision_quality(perfect_m, d);
     if fpm > 500. && q > bfprotocols::range::PrecisionQuality::Fair {
         bfprotocols::range::PrecisionQuality::Fair
@@ -847,14 +1078,24 @@ pub fn cargo_shape(typ: &str) -> Option<&'static str> {
 }
 
 fn draw_pad(lua: MizLua, p: V3, name: &str, radius: f64) {
-    use dcso3::{trigger::{CircleSpec, LineType, SideFilter, TextSpec}, Color, LuaVec3};
+    use dcso3::{
+        Color, LuaVec3,
+        trigger::{CircleSpec, LineType, SideFilter, TextSpec},
+    };
     let r = (|| -> Result<()> {
         let act = Trigger::singleton(lua)?.action()?;
         let c = Color::new(0.3, 1., 0.5, 0.9);
         act.circle_to_all(
             SideFilter::All,
             dcso3::trigger::MarkId::new(),
-            CircleSpec { center: LuaVec3(p), radius: radius.max(5.), color: c, fill_color: Color::new(0., 0., 0., 0.), line_type: LineType::Solid, read_only: true },
+            CircleSpec {
+                center: LuaVec3(p),
+                radius: radius.max(5.),
+                color: c,
+                fill_color: Color::new(0., 0., 0., 0.),
+                line_type: LineType::Solid,
+                read_only: true,
+            },
             None,
         )?;
         let mut l = p;
@@ -862,7 +1103,14 @@ fn draw_pad(lua: MizLua, p: V3, name: &str, radius: f64) {
         act.text_to_all(
             SideFilter::All,
             dcso3::trigger::MarkId::new(),
-            TextSpec { pos: LuaVec3(l), color: c, fill_color: Color::new(0., 0., 0., 0.), font_size: 9, read_only: true, text: name.into() },
+            TextSpec {
+                pos: LuaVec3(l),
+                color: c,
+                fill_color: Color::new(0., 0., 0., 0.),
+                font_size: 9,
+                read_only: true,
+                text: name.into(),
+            },
         )?;
         Ok(())
     })();

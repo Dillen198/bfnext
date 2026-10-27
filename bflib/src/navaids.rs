@@ -30,9 +30,9 @@ for more details.
 //! so a culled+respawned host re-lights its beacon.
 
 use crate::db::{
+    MapS,
     objective::{ObjGroupClass, Objective},
     persisted::Persisted,
-    MapS,
 };
 use anyhow::Result;
 use bfprotocols::{
@@ -42,13 +42,13 @@ use bfprotocols::{
         objective::{ObjectiveId, ObjectiveKind},
     },
 };
-use compact_str::{format_compact, CompactString};
+use compact_str::{CompactString, format_compact};
 use dcso3::{
+    String as LuaString, Vector2,
     coalition::Side,
     controller::{BeaconSystem, BeaconType, Command, TacanBand},
     group::Group,
     unit::Unit,
-    String as LuaString, Vector2,
 };
 use serde_derive::{Deserialize, Serialize};
 
@@ -109,7 +109,9 @@ impl Navaid {
 
     /// True if this assignment carries nothing worth persisting/broadcasting.
     fn is_empty(&self) -> bool {
-        self.tacan_channel.is_none() && self.ndb_khz.is_none() && self.icls_channel.is_none()
+        self.tacan_channel.is_none()
+            && self.ndb_khz.is_none()
+            && self.icls_channel.is_none()
     }
 
     pub fn tacan_band_enum(&self) -> dcso3::controller::TacanBand {
@@ -124,7 +126,11 @@ impl Navaid {
     pub fn summary(&self) -> CompactString {
         let mut s = CompactString::from("");
         if let Some(ch) = self.tacan_channel {
-            s.push_str(&format_compact!("TACAN {ch}{} {}  ", self.tacan_band, self.morse));
+            s.push_str(&format_compact!(
+                "TACAN {ch}{} {}  ",
+                self.tacan_band,
+                self.morse
+            ));
         }
         if let Some(khz) = self.ndb_khz {
             s.push_str(&format_compact!("NDB {khz}  "));
@@ -139,11 +145,7 @@ impl Navaid {
             s.push_str("ACLS  ");
         }
         let t = s.trim_end();
-        if t.is_empty() {
-            CompactString::from("none")
-        } else {
-            CompactString::from(t)
-        }
+        if t.is_empty() { CompactString::from("none") } else { CompactString::from(t) }
     }
 }
 
@@ -180,9 +182,9 @@ enum Want {
 
 fn wants(kind: &ObjectiveKind, cfg: &NavaidsCfg) -> Want {
     match kind {
-        ObjectiveKind::Farp { .. } | ObjectiveKind::Logistics | ObjectiveKind::NavalBase => {
-            Want::TacanNdb
-        }
+        ObjectiveKind::Farp { .. }
+        | ObjectiveKind::Logistics
+        | ObjectiveKind::NavalBase => Want::TacanNdb,
         ObjectiveKind::Fob if cfg.ndb_on_fob => Want::NdbOnly,
         ObjectiveKind::CarrierGroup { .. } => Want::Carrier,
         _ => Want::None,
@@ -194,11 +196,8 @@ fn dist_nm(a: Vector2, b: Vector2) -> f64 {
 }
 
 fn morse_of(name: &str) -> CompactString {
-    let s: std::string::String = name
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .take(3)
-        .collect();
+    let s: std::string::String =
+        name.chars().filter(|c| c.is_ascii_alphanumeric()).take(3).collect();
     if s.is_empty() {
         CompactString::from("NAV")
     } else {
@@ -211,23 +210,29 @@ struct Assigned {
     nav: Navaid,
 }
 
-fn pick_tacan(side: Side, pos: Vector2, cfg: &NavaidsCfg, done: &[Assigned]) -> Option<u16> {
+fn pick_tacan(
+    side: Side,
+    pos: Vector2,
+    cfg: &NavaidsCfg,
+    done: &[Assigned],
+) -> Option<u16> {
     let pool: NavRange = match side {
         Side::Red => cfg.red_tacan,
         _ => cfg.blue_tacan,
     };
     (pool.lo..=pool.hi).find(|ch| {
         !done.iter().any(|a| {
-            a.nav.tacan_channel == Some(*ch) && dist_nm(pos, a.pos) < cfg.min_separation_nm
+            a.nav.tacan_channel == Some(*ch)
+                && dist_nm(pos, a.pos) < cfg.min_separation_nm
         })
     })
 }
 
 fn pick_ndb(pos: Vector2, cfg: &NavaidsCfg, done: &[Assigned]) -> Option<u16> {
     (cfg.ndb_khz.lo..=cfg.ndb_khz.hi).step_by(5).find(|khz| {
-        !done
-            .iter()
-            .any(|a| a.nav.ndb_khz == Some(*khz) && dist_nm(pos, a.pos) < cfg.min_separation_nm)
+        !done.iter().any(|a| {
+            a.nav.ndb_khz == Some(*khz) && dist_nm(pos, a.pos) < cfg.min_separation_nm
+        })
     })
 }
 
@@ -235,7 +240,12 @@ fn pick_icls(done: &[Assigned]) -> Option<u8> {
     (1u8..=20).find(|c| !done.iter().any(|a| a.nav.icls_channel == Some(*c)))
 }
 
-fn dedupe_morse(base: CompactString, pos: Vector2, cfg: &NavaidsCfg, done: &[Assigned]) -> CompactString {
+fn dedupe_morse(
+    base: CompactString,
+    pos: Vector2,
+    cfg: &NavaidsCfg,
+    done: &[Assigned],
+) -> CompactString {
     let collides = |m: &str| {
         done.iter()
             .any(|a| a.nav.morse == m && dist_nm(pos, a.pos) < cfg.min_separation_nm)
@@ -435,7 +445,9 @@ pub fn reallocate(persisted: &mut Persisted, cfg: &NavaidsCfg) -> Vec<ObjectiveI
     changed
 }
 
-fn fingerprint(navs: &[Navaid]) -> Vec<(Option<u16>, Option<u16>, Option<u8>, bool, Option<u64>)> {
+fn fingerprint(
+    navs: &[Navaid],
+) -> Vec<(Option<u16>, Option<u16>, Option<u8>, bool, Option<u64>)> {
     navs.iter()
         .map(|n| {
             (
@@ -475,7 +487,10 @@ fn tacan_command(nav: &Navaid) -> Option<Command> {
     let ch = nav.tacan_channel?;
     let band = nav.tacan_band_enum();
     let Some(frequency) = tacan_frequency_hz(ch, band.clone()) else {
-        log::warn!("navaid {}: TACAN channel {ch} is outside 1-126, not lighting it", nav.morse);
+        log::warn!(
+            "navaid {}: TACAN channel {ch} is outside 1-126, not lighting it",
+            nav.morse
+        );
         return None;
     };
     // Type TACAN (4) with system TACAN (3) is the ground-station pair (MOOSE
@@ -534,7 +549,11 @@ pub fn activate_carrier(deck: &Unit, nav: &Navaid) -> Result<()> {
         con.set_command(cmd)?;
     }
     if let Some(ch) = nav.icls_channel {
-        con.set_command(Command::ActivateICLS { channel: ch as i64, unit: id, name: None })?;
+        con.set_command(Command::ActivateICLS {
+            channel: ch as i64,
+            unit: id,
+            name: None,
+        })?;
     }
     if nav.acls {
         con.set_command(Command::ActivateACLS { unit: id, name: None })?;

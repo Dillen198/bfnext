@@ -41,13 +41,16 @@ pub(crate) enum Frame {
 impl Frame {
     pub(crate) fn station(&self) -> &str {
         match self {
-            Frame::On { station, .. } | Frame::Audio { station, .. } | Frame::Off { station } => station,
+            Frame::On { station, .. }
+            | Frame::Audio { station, .. }
+            | Frame::Off { station } => station,
         }
     }
 }
 
 fn hubs() -> &'static Mutex<HashMap<String, broadcast::Sender<Arc<Frame>>>> {
-    static H: OnceLock<Mutex<HashMap<String, broadcast::Sender<Arc<Frame>>>>> = OnceLock::new();
+    static H: OnceLock<Mutex<HashMap<String, broadcast::Sender<Arc<Frame>>>>> =
+        OnceLock::new();
     H.get_or_init(Default::default)
 }
 
@@ -92,14 +95,23 @@ impl Drop for Slot {
 /// 16 kHz → 8 kHz: average each pair, which is also the low-pass a halving
 /// needs (radio audio has nothing above 4 kHz worth keeping).
 pub(crate) fn to_feed_rate(pcm16k: &[i16]) -> Vec<i16> {
-    pcm16k.chunks(2).map(|p| ((p[0] as i32 + *p.get(1).unwrap_or(&p[0]) as i32) / 2) as i16).collect()
+    pcm16k
+        .chunks(2)
+        .map(|p| ((p[0] as i32 + *p.get(1).unwrap_or(&p[0]) as i32) / 2) as i16)
+        .collect()
 }
 
 /// One frequency's turn on the feed: a player's call (which reaches us only
 /// once they unkey) and the controller's answer never play over each other.
 fn floor(inst: &str, station: &str) -> Arc<tokio::sync::Mutex<()>> {
-    static F: OnceLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
-    F.get_or_init(Default::default).lock().unwrap().entry(format!("{inst}|{station}")).or_default().clone()
+    static F: OnceLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+        OnceLock::new();
+    F.get_or_init(Default::default)
+        .lock()
+        .unwrap()
+        .entry(format!("{inst}|{station}"))
+        .or_default()
+        .clone()
 }
 
 /// Is anyone listening to an instance's feed right now?
@@ -118,7 +130,11 @@ pub(crate) fn play(inst: &str, station: &str, who: &str, text: &str, pcm16k: &[i
     let turn = floor(inst, station);
     let station: Arc<str> = Arc::from(station);
     let pcm = to_feed_rate(pcm16k);
-    let on = Frame::On { station: station.clone(), who: Arc::from(who), text: Arc::from(text) };
+    let on = Frame::On {
+        station: station.clone(),
+        who: Arc::from(who),
+        text: Arc::from(text),
+    };
     tokio::spawn(async move {
         let _turn = turn.lock().await;
         tokio::time::sleep(Duration::from_millis(250)).await;
@@ -127,7 +143,10 @@ pub(crate) fn play(inst: &str, station: &str, who: &str, text: &str, pcm16k: &[i
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         for c in pcm.chunks(CHUNK) {
             tick.tick().await;
-            let _ = tx.send(Arc::new(Frame::Audio { station: station.clone(), pcm: c.to_vec() }));
+            let _ = tx.send(Arc::new(Frame::Audio {
+                station: station.clone(),
+                pcm: c.to_vec(),
+            }));
         }
         tick.tick().await;
         let _ = tx.send(Arc::new(Frame::Off { station }));
@@ -149,8 +168,14 @@ pub(crate) fn stream(inst: &str, v: crate::voice::srs::LiveVoice) {
         return;
     }
     let f = match v {
-        LiveVoice::On { label, name } => Frame::On { station: Arc::from(label.as_str()), who: Arc::from(name.as_str()), text: Arc::from("") },
-        LiveVoice::Audio { label, pcm } => Frame::Audio { station: Arc::from(label.as_str()), pcm: to_feed_rate(&pcm) },
+        LiveVoice::On { label, name } => Frame::On {
+            station: Arc::from(label.as_str()),
+            who: Arc::from(name.as_str()),
+            text: Arc::from(""),
+        },
+        LiveVoice::Audio { label, pcm } => {
+            Frame::Audio { station: Arc::from(label.as_str()), pcm: to_feed_rate(&pcm) }
+        }
         LiveVoice::Off { label } => Frame::Off { station: Arc::from(label.as_str()) },
     };
     let _ = tx.send(Arc::new(f));
@@ -192,11 +217,19 @@ mod tests {
         let f = to_feed_rate(&pcm);
         assert_eq!(f.len(), 8_000);
         assert_eq!(f[0], 0); // (0 + 1) / 2
-        let Wire::Binary(b) = wire(&Frame::Audio { station: Arc::from("0:tower"), pcm: vec![1, -2] }) else { panic!() };
+        let Wire::Binary(b) =
+            wire(&Frame::Audio { station: Arc::from("0:tower"), pcm: vec![1, -2] })
+        else {
+            panic!()
+        };
         assert_eq!(b[0] as usize, "0:tower".len());
         assert_eq!(&b[1..8], b"0:tower");
         assert_eq!(&b[8..], &[1, 0, 0xfe, 0xff]);
-        let Wire::Text(t) = wire(&Frame::On { station: Arc::from("0:tower"), who: Arc::from("Andersen Tower"), text: Arc::from("hi") }) else {
+        let Wire::Text(t) = wire(&Frame::On {
+            station: Arc::from("0:tower"),
+            who: Arc::from("Andersen Tower"),
+            text: Arc::from("hi"),
+        }) else {
             panic!()
         };
         assert!(t.contains("\"on\":\"0:tower\"") && t.contains("\"rate\":8000"));

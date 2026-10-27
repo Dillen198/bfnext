@@ -91,8 +91,15 @@ pub(crate) enum Pos {
 
 impl Pos {
     /// An airfield's positions, in the order they are set up.
-    pub(crate) const ALL: [Pos; 7] =
-        [Pos::Atis, Pos::Clearance, Pos::Ground, Pos::Tower, Pos::Departure, Pos::Approach, Pos::Final];
+    pub(crate) const ALL: [Pos; 7] = [
+        Pos::Atis,
+        Pos::Clearance,
+        Pos::Ground,
+        Pos::Tower,
+        Pos::Departure,
+        Pos::Approach,
+        Pos::Final,
+    ];
     const EVERY: [Pos; 11] = [
         Pos::Atis,
         Pos::Clearance,
@@ -528,11 +535,19 @@ impl Ctx {
         // a pool client with room, or a new one
         let (ci, client) = {
             let mut pool = self.pool.lock().unwrap();
-            let ci = match pool.clients.iter().position(|(_, r)| r.len() + all.len() <= RADIOS_PER_CLIENT) {
+            let ci = match pool
+                .clients
+                .iter()
+                .position(|(_, r)| r.len() + all.len() <= RADIOS_PER_CLIENT)
+            {
                 Some(i) => i,
                 None => {
                     let n = pool.clients.len();
-                    let name = if n == 0 { "Range ATC".to_string() } else { format!("Range ATC {}", n + 1) };
+                    let name = if n == 0 {
+                        "Range ATC".to_string()
+                    } else {
+                        format!("Range ATC {}", n + 1)
+                    };
                     match srs::SrsClient::start(
                         &self.gci.srs_host,
                         self.gci.srs_port,
@@ -553,7 +568,10 @@ impl Ctx {
                             n
                         }
                         Err(e) => {
-                            log::error!("[{}] range ATC: SRS client '{name}' failed: {e:#}", self.inst_id);
+                            log::error!(
+                                "[{}] range ATC: SRS client '{name}' failed: {e:#}",
+                                self.inst_id
+                            );
                             return;
                         }
                     }
@@ -576,14 +594,24 @@ impl Ctx {
                 inst: self.inst_id.clone(),
                 salt: index as u64,
             };
-            tokio::spawn(transmitter(client.clone(), rs.clone(), self.cast.clone(), qrx, self.clone(), me));
+            tokio::spawn(transmitter(
+                client.clone(),
+                rs.clone(),
+                self.cast.clone(),
+                qrx,
+                self.clone(),
+                me,
+            ));
             infos.push(StationInfo {
                 id: label(index, *pos),
                 field: f.name(),
                 position: *pos,
                 name: f.facility(*pos),
                 label: f.label(*pos),
-                freq: rs.first().map(|r| speech::freq(r.freq_hz / 1e6)).unwrap_or_default(),
+                freq: rs
+                    .first()
+                    .map(|r| speech::freq(r.freq_hz / 1e6))
+                    .unwrap_or_default(),
             });
         }
         // keep the airfield's positions in their natural order on the site
@@ -592,12 +620,22 @@ impl Ctx {
             "[{}] range ATC: {} on the air: {}",
             self.inst_id,
             f.name(),
-            infos.iter().map(|i| format!("{} {}", i.name, i.freq)).collect::<Vec<_>>().join(", ")
+            infos
+                .iter()
+                .map(|i| format!("{} {}", i.name, i.freq))
+                .collect::<Vec<_>>()
+                .join(", ")
         );
         if let Ok(mut b) = boards().lock() {
             b.entry(self.inst_id.clone()).or_default().stations.extend(infos);
         }
-        self.stations.write().unwrap().push(Arc::new(Station { index, key, ctl: Mutex::new(f), queues, client: ci }));
+        self.stations.write().unwrap().push(Arc::new(Station {
+            index,
+            key,
+            ctl: Mutex::new(f),
+            queues,
+            client: ci,
+        }));
     }
 
     /// Take a facility off the air.
@@ -620,16 +658,28 @@ impl Ctx {
                 board.stations.retain(|s| !s.id.starts_with(&prefix));
             }
         }
-        log::info!("[{}] range ATC: {} off the air", self.inst_id, st.ctl.lock().unwrap().name());
+        log::info!(
+            "[{}] range ATC: {} off the air",
+            self.inst_id,
+            st.ctl.lock().unwrap().name()
+        );
     }
 }
 
 /// Run the range's controllers for one instance until the process exits.
-pub(crate) async fn run(inst: EngineHost, gci: crate::gci::GciConfig, cfg: RangeAtcConfig) {
+pub(crate) async fn run(
+    inst: EngineHost,
+    gci: crate::gci::GciConfig,
+    cfg: RangeAtcConfig,
+) {
     if !cfg.enabled {
         return;
     }
-    let fields = if cfg.fields.is_empty() { vec![FieldCfg::default()] } else { cfg.fields.clone() };
+    let fields = if cfg.fields.is_empty() {
+        vec![FieldCfg::default()]
+    } else {
+        cfg.fields.clone()
+    };
     let ctl_cfg = CtlCfg {
         require_clearance: cfg.require_clearance,
         handoff_out: cfg.handoff_out.as_ref().map(|h| (h.name.clone(), h.mhz)),
@@ -640,7 +690,11 @@ pub(crate) async fn run(inst: EngineHost, gci: crate::gci::GciConfig, cfg: Range
         Some(c) if c.eq_ignore_ascii_case("red") => 1,
         _ => 2,
     };
-    let eam = if coalition == 1 { gci.red_eam_password.clone() } else { gci.blue_eam_password.clone() };
+    let eam = if coalition == 1 {
+        gci.red_eam_password.clone()
+    } else {
+        gci.blue_eam_password.clone()
+    };
     let opus = match srs::Opus::load(gci.opus_dll_path.as_deref()) {
         Ok(o) => Some(Arc::new(o)),
         Err(e) => {
@@ -648,7 +702,11 @@ pub(crate) async fn run(inst: EngineHost, gci: crate::gci::GciConfig, cfg: Range
             None
         }
     };
-    let stt = stt::Stt::from_cfg(gci.whisper_exe.as_ref(), gci.whisper_model.as_ref(), gci.whisper_server_url.as_deref());
+    let stt = stt::Stt::from_cfg(
+        gci.whisper_exe.as_ref(),
+        gci.whisper_model.as_ref(),
+        gci.whisper_server_url.as_deref(),
+    );
     let llm = llm::Llm::from_cfg(cfg.llm.as_ref());
     let (rx_tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<srs::Transmission>();
     // Who sounds like whom (reads model folders / asks Windows for voices).
@@ -697,9 +755,19 @@ pub(crate) async fn run(inst: EngineHost, gci: crate::gci::GciConfig, cfg: Range
         match load_airport(f) {
             Ok(ap) => {
                 let key = format!("airfield:{}", ap.dcs_name);
-                ctx.add(key, Box::new(airfield::Airfield::new(Controller::new(ap, ctl_cfg.clone()), &inst.id)));
+                ctx.add(
+                    key,
+                    Box::new(airfield::Airfield::new(
+                        Controller::new(ap, ctl_cfg.clone()),
+                        &inst.id,
+                    )),
+                );
             }
-            Err(e) => log::error!("[{}] range ATC: airfield {:?} not loaded: {e:#}", inst.id, f.data.as_ref().or(None::<&PathBuf>)),
+            Err(e) => log::error!(
+                "[{}] range ATC: airfield {:?} not loaded: {e:#}",
+                inst.id,
+                f.data.as_ref().or(None::<&PathBuf>)
+            ),
         }
     }
     let range_cfg = cfg.range_control.clone().unwrap_or_default();
@@ -727,16 +795,20 @@ pub(crate) async fn run(inst: EngineHost, gci: crate::gci::GciConfig, cfg: Range
                 let ctx = ctx.clone();
                 tokio::spawn(async move {
                     let s = stt.clone();
-                    let heard = match tokio::task::spawn_blocking(move || s.transcribe(&pcm)).await {
-                        Ok(Ok(t)) if !t.trim().is_empty() => t,
-                        Ok(Err(e)) => {
-                            log::debug!("milatc: whisper failed: {e:#}");
-                            return;
-                        }
-                        _ => return,
-                    };
+                    let heard =
+                        match tokio::task::spawn_blocking(move || s.transcribe(&pcm))
+                            .await
+                        {
+                            Ok(Ok(t)) if !t.trim().is_empty() => t,
+                            Ok(Err(e)) => {
+                                log::debug!("milatc: whisper failed: {e:#}");
+                                return;
+                            }
+                            _ => return,
+                        };
                     let audio = keep.and_then(|p| store_audio(&ctx.inst_id, &p));
-                    heard_call(&ctx, st, pos, tr.unit_id, tr.name, heard, llm, audio).await;
+                    heard_call(&ctx, st, pos, tr.unit_id, tr.name, heard, llm, audio)
+                        .await;
                 });
             }
         });
@@ -759,13 +831,19 @@ pub(crate) async fn run(inst: EngineHost, gci: crate::gci::GciConfig, cfg: Range
             Err(e) => {
                 fails += 1;
                 if fails == 10 {
-                    log::warn!("[{}] range ATC: no picture from the engine: {e}", inst.id);
+                    log::warn!(
+                        "[{}] range ATC: no picture from the engine: {e}",
+                        inst.id
+                    );
                 }
                 continue;
             }
         };
         let now = ctx.clock();
-        ctx.players_on.store(atc.traffic.iter().any(|t| !t.ai), std::sync::atomic::Ordering::Relaxed);
+        ctx.players_on.store(
+            atc.traffic.iter().any(|t| !t.ai),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         // carriers, tankers and range stations change slowly: every 2 s
         if now - last_range >= 2. {
             last_range = now;
@@ -781,21 +859,32 @@ pub(crate) async fn run(inst: EngineHost, gci: crate::gci::GciConfig, cfg: Range
                 for c in &r.carriers {
                     let key = format!("carrier:{}", c.id);
                     if !ctx.has(&key) {
-                        ctx.add(key, Box::new(carrier::Carrier::new(c, cfg.carriers.get(&c.id))));
+                        ctx.add(
+                            key,
+                            Box::new(carrier::Carrier::new(c, cfg.carriers.get(&c.id))),
+                        );
                     }
                 }
             }
             if cfg.tanker_atc {
                 for t in &r.tankers {
                     let key = format!("tanker:{}", t.id);
-                    if t.state == bfprotocols::range::TankerState::OnStation && t.freq_mhz > 0. && !ctx.has(&key) {
+                    if t.state == bfprotocols::range::TankerState::OnStation
+                        && t.freq_mhz > 0.
+                        && !ctx.has(&key)
+                    {
                         ctx.add(key, Box::new(tanker::Tanker::new(t)));
                     }
                 }
             }
         }
 
-        let pic = Picture { atc: &atc, range: range.as_ref(), now, mission_s: range.as_ref().and_then(facility::mission_seconds) };
+        let pic = Picture {
+            atc: &atc,
+            range: range.as_ref(),
+            now,
+            mission_s: range.as_ref().and_then(facility::mission_seconds),
+        };
         let stations: Vec<Arc<Station>> = ctx.stations.read().unwrap().clone();
         let mut gone = vec![];
         for st in &stations {
@@ -823,10 +912,30 @@ pub(crate) async fn run(inst: EngineHost, gci: crate::gci::GciConfig, cfg: Range
                 }
                 words.extend(
                     [
-                        "request taxi", "holding short", "ready for departure", "request clearance", "initial",
-                        "break", "base, gear down", "request PAR", "request ILS", "full stop", "touch and go",
-                        "low approach", "closed", "clear of the runway", "squawk", "Alpha", "Bravo", "Charlie",
-                        "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "Kilo",
+                        "request taxi",
+                        "holding short",
+                        "ready for departure",
+                        "request clearance",
+                        "initial",
+                        "break",
+                        "base, gear down",
+                        "request PAR",
+                        "request ILS",
+                        "full stop",
+                        "touch and go",
+                        "low approach",
+                        "closed",
+                        "clear of the runway",
+                        "squawk",
+                        "Alpha",
+                        "Bravo",
+                        "Charlie",
+                        "Delta",
+                        "Echo",
+                        "Foxtrot",
+                        "Golf",
+                        "Hotel",
+                        "Kilo",
                     ]
                     .map(String::from),
                 );
@@ -958,11 +1067,15 @@ async fn transmitter(
             (Some(_), _) => cast.pilot(tx.to.unwrap_or(0)),
             (None, Some(v)) => cast.controller(v),
             // every tanker crew sounds different
-            (None, None) if me.pos == Pos::Tanker => cast.pilot(me.salt.wrapping_mul(0x5bd1_e995) ^ 0xa5a5),
+            (None, None) if me.pos == Pos::Tanker => {
+                cast.pilot(me.salt.wrapping_mul(0x5bd1_e995) ^ 0xa5a5)
+            }
             (None, None) => cast.controller(me.pos),
         };
         // A paid speech service only speaks for an audience.
-        let heard = cast.always_neural || live::listening(&me.inst) || ctx.players_on.load(std::sync::atomic::Ordering::Relaxed);
+        let heard = cast.always_neural
+            || live::listening(&me.inst)
+            || ctx.players_on.load(std::sync::atomic::Ordering::Relaxed);
         let voice = if heard { voice } else { voice.local().clone() };
         let who = match (&tx.pilot, tx.voice) {
             (Some(p), _) => p.clone(),
@@ -971,14 +1084,15 @@ async fn transmitter(
         };
         // Synthesis overlaps the pause.
         let spoken = speech::speak(&tx.text);
-        let pcm = match tokio::task::spawn_blocking(move || voice.synthesize(&spoken)).await {
-            Ok(Ok(p)) => Some(p),
-            Ok(Err(e)) => {
-                log::warn!("milatc: {} speech synthesis failed: {e:#}", me.name);
-                None
-            }
-            Err(_) => None,
-        };
+        let pcm =
+            match tokio::task::spawn_blocking(move || voice.synthesize(&spoken)).await {
+                Ok(Ok(p)) => Some(p),
+                Ok(Err(e)) => {
+                    log::warn!("milatc: {} speech synthesis failed: {e:#}", me.name);
+                    None
+                }
+                Err(_) => None,
+            };
         let from = quiet_since.max(got);
         let due = from + Duration::from_secs_f64(tx.delay.clamp(0., 6.));
         tokio::time::sleep_until(tokio::time::Instant::from_std(due)).await;
@@ -1002,7 +1116,8 @@ async fn transmitter(
         if let (Some(pcm), true) = (pcm, client.is_connected()) {
             let client = client.clone();
             let radios = radios.clone();
-            let res = tokio::task::spawn_blocking(move || client.transmit(&radios, &pcm)).await;
+            let res =
+                tokio::task::spawn_blocking(move || client.transmit(&radios, &pcm)).await;
             if let Ok(Err(e)) = res {
                 log::warn!("milatc: {} transmit failed: {e:#}", me.name);
             }
@@ -1011,7 +1126,9 @@ async fn transmitter(
         if let Some(unit) = tx.subtitle {
             let e = ctx.engine.clone();
             let text = format!("{}: {}", who.to_uppercase(), tx.text);
-            tokio::spawn(async move { e.command("text", &unit.to_string(), &text).await });
+            tokio::spawn(
+                async move { e.command("text", &unit.to_string(), &text).await },
+            );
         }
         if let Some((group, action)) = &tx.action {
             ctx.engine.command(action, group, "").await;
@@ -1020,9 +1137,12 @@ async fn transmitter(
 }
 
 async fn fetch_range(inst: &EngineHost) -> Result<RangeLive, String> {
-    let res = tokio::time::timeout(Duration::from_secs(4), inst.rpc_str("query-range", vec![])).await;
+    let res =
+        tokio::time::timeout(Duration::from_secs(4), inst.rpc_str("query-range", vec![]))
+            .await;
     match res {
-        Ok(Ok(json)) => serde_json::from_str::<RangeLive>(&json).map_err(|e| format!("bad query-range JSON: {e}")),
+        Ok(Ok(json)) => serde_json::from_str::<RangeLive>(&json)
+            .map_err(|e| format!("bad query-range JSON: {e}")),
         Ok(Err(e)) => Err(format!("query-range RPC error: {e:?}")),
         Err(_) => Err("query-range timed out".to_string()),
     }
@@ -1035,7 +1155,8 @@ async fn fetch(inst: &EngineHost) -> Result<AtcPicture, String> {
     )
     .await;
     match res {
-        Ok(Ok(json)) => serde_json::from_str::<AtcPicture>(&json).map_err(|e| format!("bad query-atc JSON: {e}")),
+        Ok(Ok(json)) => serde_json::from_str::<AtcPicture>(&json)
+            .map_err(|e| format!("bad query-atc JSON: {e}")),
         Ok(Err(e)) => Err(format!("query-atc RPC error: {e:?}")),
         Err(_) => Err("query-atc timed out".to_string()),
     }

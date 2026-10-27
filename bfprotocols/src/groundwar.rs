@@ -277,10 +277,15 @@ mod tests {
     #[test]
     fn commands_parse_from_dashboard_json() {
         let c: GroundCommand =
-            serde_json::from_str(r#"{"kind":"attack","formation":3,"objective":17}"#).unwrap();
+            serde_json::from_str(r#"{"kind":"attack","formation":3,"objective":17}"#)
+                .unwrap();
         assert!(matches!(c, GroundCommand::Attack { formation: 3, objective: 17 }));
-        let c: GroundCommand = serde_json::from_str(r#"{"kind":"raise","objective":5}"#).unwrap();
+        let c: GroundCommand =
+            serde_json::from_str(r#"{"kind":"raise","objective":5}"#).unwrap();
         assert!(matches!(c, GroundCommand::Raise { objective: 5 }));
-        assert!(serde_json::from_str::<GroundCommand>(r#"{"kind":"nuke","formation":1}"#).is_err());
+        assert!(serde_json::from_str::<GroundCommand>(
+            r#"{"kind":"nuke","formation":1}"#
+        )
+        .is_err());
     }
 }

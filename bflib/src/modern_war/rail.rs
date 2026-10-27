@@ -33,21 +33,21 @@ for more details.
 //! straight into DCS outside the campaign db; their names start with
 //! `RAIL_PREFIX`, which the birth handler leaves alone.
 
-use crate::airlife::{dist, front_dist, front_points};
 use crate::Context;
+use crate::airlife::{dist, front_dist, front_points};
 use bfprotocols::{
     cfg::RailCfg,
     db::objective::{ObjectiveId, ObjectiveKind},
 };
-use chrono::{prelude::*, Duration};
+use chrono::{Duration, prelude::*};
 use compact_str::format_compact;
 use dcso3::{
+    LuaEnv, LuaVec2, MizLua, String, Vector2,
     coalition::{Coalition, Side},
     country::Country,
     env::miz,
     group::{Group, GroupCategory},
     land::{Land, RoadType},
-    LuaEnv, LuaVec2, MizLua, String, Vector2,
 };
 use fxhash::FxHashMap;
 use log::{info, warn};
@@ -85,7 +85,13 @@ pub(crate) struct Rail {
     seq: u32,
 }
 
-fn station(land: &Land, rail: &mut Rail, oid: ObjectiveId, pos: Vector2, radius: f64) -> Option<Vector2> {
+fn station(
+    land: &Land,
+    rail: &mut Rail,
+    oid: ObjectiveId,
+    pos: Vector2,
+    radius: f64,
+) -> Option<Vector2> {
     *rail.stations.entry(oid).or_insert_with(|| {
         land.get_closest_point_on_roads(RoadType::Rail, LuaVec2(pos))
             .ok()
@@ -110,7 +116,9 @@ fn rail_path(land: &Land, a: Vector2, b: Vector2) -> Option<(Vec<Vector2>, f64)>
     let length: f64 = raw.windows(2).map(|w| dist(w[0], w[1])).sum();
     let mut out = vec![raw[0]];
     for (i, p) in raw.iter().enumerate().skip(1) {
-        if dist(*out.last().expect("nonempty"), *p) >= WAYPOINT_SPACING_M || i + 1 == raw.len() {
+        if dist(*out.last().expect("nonempty"), *p) >= WAYPOINT_SPACING_M
+            || i + 1 == raw.len()
+        {
             out.push(*p);
         }
     }
@@ -187,7 +195,13 @@ fn destroy(lua: MizLua, name: &str) {
 }
 
 /// Pick and send one train for `side`, if there is a run worth making.
-fn dispatch(lua: MizLua, ctx: &mut Context, cfg: &RailCfg, side: Side, now: DateTime<Utc>) -> bool {
+fn dispatch(
+    lua: MizLua,
+    ctx: &mut Context,
+    cfg: &RailCfg,
+    side: Side,
+    now: DateTime<Utc>,
+) -> bool {
     let Ok(land) = Land::singleton(lua) else { return false };
     let front = front_points(ctx);
     let enemy: Vec<Vector2> = ctx
@@ -200,11 +214,23 @@ fn dispatch(lua: MizLua, ctx: &mut Context, cfg: &RailCfg, side: Side, now: Date
         .db
         .objectives()
         .filter(|(_, o)| o.owner() == side)
-        .map(|(id, o)| (*id, o.name.clone(), o.pos(), o.kind().clone(), o.supply(), o.threatened()))
+        .map(|(id, o)| {
+            (*id, o.name.clone(), o.pos(), o.kind().clone(), o.supply(), o.threatened())
+        })
         .collect();
-    let mut with_rail: Vec<(ObjectiveId, String, Vector2, ObjectiveKind, u8, bool, Vector2)> = vec![];
+    let mut with_rail: Vec<(
+        ObjectiveId,
+        String,
+        Vector2,
+        ObjectiveKind,
+        u8,
+        bool,
+        Vector2,
+    )> = vec![];
     for (id, name, pos, kind, supply, threatened) in ours {
-        if let Some(r) = station(&land, &mut ctx.modern_war.rail, id, pos, cfg.station_radius_m) {
+        if let Some(r) =
+            station(&land, &mut ctx.modern_war.rail, id, pos, cfg.station_radius_m)
+        {
             with_rail.push((id, name, pos, kind, supply, threatened, r));
         }
     }
@@ -218,15 +244,14 @@ fn dispatch(lua: MizLua, ctx: &mut Context, cfg: &RailCfg, side: Side, now: Date
                 && !s.5
         })
         .collect();
-    let mut dests: Vec<_> = with_rail
-        .iter()
-        .filter(|s| s.4 < cfg.destination_supply_below)
-        .collect();
+    let mut dests: Vec<_> =
+        with_rail.iter().filter(|s| s.4 < cfg.destination_supply_below).collect();
     dests.sort_by(|a, b| {
         (a.4 as f64 + front_dist(&front, a.2) / 10_000.)
             .total_cmp(&(b.4 as f64 + front_dist(&front, b.2) / 10_000.))
     });
-    let busy: Vec<String> = ctx.modern_war.rail.trains.iter().map(|t| t.dest_name.clone()).collect();
+    let busy: Vec<String> =
+        ctx.modern_war.rail.trains.iter().map(|t| t.dest_name.clone()).collect();
     for d in dests.iter().take(6) {
         if busy.contains(&d.1) {
             continue;
@@ -303,7 +328,8 @@ fn dispatch(lua: MizLua, ctx: &mut Context, cfg: &RailCfg, side: Side, now: Date
                 origin_name: o.1.clone(),
                 dest_name: d.1.clone(),
                 dest_rail: d.6,
-                expires: now + Duration::seconds((length / speed.max(1.) * 2. + 900.) as i64),
+                expires: now
+                    + Duration::seconds((length / speed.max(1.) * 2. + 900.) as i64),
                 last_pos: path[0],
                 last_moved: now,
             });
@@ -350,12 +376,19 @@ pub(crate) fn tick(lua: MizLua, ctx: &mut Context, cfg: &RailCfg, now: DateTime<
                     15,
                     false,
                     side,
-                    format_compact!("Supply train from {} has arrived at {}.", t.origin_name, t.dest_name),
+                    format_compact!(
+                        "Supply train from {} has arrived at {}.",
+                        t.origin_name,
+                        t.dest_name
+                    ),
                 );
             }
             "destroyed" => {
                 ctx.db.lose_unmanaged_cargo(name.as_str());
-                info!("rail: {name} ({} -> {}) destroyed, cargo lost", t.origin_name, t.dest_name);
+                info!(
+                    "rail: {name} ({} -> {}) destroyed, cargo lost",
+                    t.origin_name, t.dest_name
+                );
                 ctx.db.ephemeral.msgs().panel_to_side(
                     15,
                     true,
@@ -369,13 +402,19 @@ pub(crate) fn tick(lua: MizLua, ctx: &mut Context, cfg: &RailCfg, now: DateTime<
                     15,
                     false,
                     side.opposite(),
-                    format_compact!("Enemy supply train bound for {} destroyed.", t.dest_name),
+                    format_compact!(
+                        "Enemy supply train bound for {} destroyed.",
+                        t.dest_name
+                    ),
                 );
             }
             why => {
                 // Overdue or not moving: take it off the line and give the
                 // load back rather than let a pathing fault eat it.
-                warn!("rail: {name} {why} on the way to {}, refunding its load", t.dest_name);
+                warn!(
+                    "rail: {name} {why} on the way to {}, refunding its load",
+                    t.dest_name
+                );
                 ctx.db.refund_unmanaged_cargo(name.as_str());
                 destroy(lua, name.as_str());
             }
@@ -393,8 +432,10 @@ pub(crate) fn tick(lua: MizLua, ctx: &mut Context, cfg: &RailCfg, now: DateTime<
         if now < next {
             continue;
         }
-        let running = ctx.modern_war.rail.trains.iter().filter(|t| t.side == side).count();
-        let sent = running < cfg.max_trains_per_side as usize && dispatch(lua, ctx, cfg, side, now);
+        let running =
+            ctx.modern_war.rail.trains.iter().filter(|t| t.side == side).count();
+        let sent = running < cfg.max_trains_per_side as usize
+            && dispatch(lua, ctx, cfg, side, now);
         let wait = if sent { cfg.interval_secs as i64 } else { 600 };
         ctx.modern_war.rail.next.insert(side, now + Duration::seconds(wait));
     }

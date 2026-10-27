@@ -26,17 +26,17 @@ use crate::{
     util::{self, V3},
     weapons::Shooter,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use bfprotocols::range::{
-    cfg::{IadsCfg, RangeCfg, SamSiteCfg},
     LiveIads, LiveSamSite, PilotRef, RangeResult, SeadResult,
+    cfg::{IadsCfg, RangeCfg, SamSiteCfg},
 };
 use dcso3::{
+    LuaVec3, MizLua,
     coalition::Side,
     land::Land,
     object::DcsOid,
     weapon::{ClassWeapon, Weapon, WeaponDesc},
-    LuaVec3, MizLua,
 };
 use fxhash::{FxHashMap, FxHashSet};
 use log::{info, warn};
@@ -71,12 +71,18 @@ impl Role {
     }
 
     fn emitter(&self) -> bool {
-        matches!(self, Self::Search | Self::Track | Self::Ewr | Self::PointDefence | Self::Aaa)
+        matches!(
+            self,
+            Self::Search | Self::Track | Self::Ewr | Self::PointDefence | Self::Aaa
+        )
     }
 
     /// Without one of these alive the site cannot shoot.
     fn essential(&self) -> bool {
-        matches!(self, Self::Track | Self::PointDefence | Self::Aaa | Self::Ir | Self::Ewr)
+        matches!(
+            self,
+            Self::Track | Self::PointDefence | Self::Aaa | Self::Ir | Self::Ewr
+        )
     }
 }
 
@@ -107,32 +113,264 @@ impl System {
 
 pub const SYSTEMS: &[System] = &[
     // ---- Soviet / Russian
-    System { key: "sa2", label: "SA-2 Guideline", units: &[("p-19 s-125 sr", Search), ("SNR_75V", Track), ("S_75M_Volhov", Launcher), ("S_75M_Volhov", Launcher), ("S_75M_Volhov", Launcher), ("S_75M_Volhov", Launcher)], range_m: 43_000., ring_m: 130. },
-    System { key: "sa3", label: "SA-3 Goa", units: &[("p-19 s-125 sr", Search), ("snr s-125 tr", Track), ("5p73 s-125 ln", Launcher), ("5p73 s-125 ln", Launcher), ("5p73 s-125 ln", Launcher)], range_m: 18_000., ring_m: 90. },
-    System { key: "sa5", label: "SA-5 Gammon", units: &[("RLS_19J6", Search), ("RPC_5N62V", Track), ("S-200_Launcher", Launcher), ("S-200_Launcher", Launcher), ("S-200_Launcher", Launcher)], range_m: 150_000., ring_m: 140. },
-    System { key: "sa6", label: "SA-6 Kub", units: &[("Kub 1S91 str", Track), ("Kub 2P25 ln", Launcher), ("Kub 2P25 ln", Launcher), ("Kub 2P25 ln", Launcher)], range_m: 25_000., ring_m: 80. },
-    System { key: "sa8", label: "SA-8 Osa", units: &[("Osa 9A33 ln", PointDefence), ("Osa 9A33 ln", PointDefence)], range_m: 10_000., ring_m: 150. },
-    System { key: "sa10", label: "SA-10 Grumble", units: &[("S-300PS 40B6MD sr", Search), ("S-300PS 64H6E sr", Search), ("S-300PS 40B6M tr", Track), ("S-300PS 54K6 cp", Command), ("S-300PS 5P85C ln", Launcher), ("S-300PS 5P85D ln", Launcher), ("S-300PS 5P85C ln", Launcher), ("S-300PS 5P85D ln", Launcher)], range_m: 75_000., ring_m: 150. },
-    System { key: "sa11", label: "SA-11 Buk", units: &[("SA-11 Buk SR 9S18M1", Search), ("SA-11 Buk CC 9S470M1", Command), ("SA-11 Buk LN 9A310M1", PointDefence), ("SA-11 Buk LN 9A310M1", PointDefence), ("SA-11 Buk LN 9A310M1", PointDefence)], range_m: 35_000., ring_m: 110. },
-    System { key: "sa13", label: "SA-13 Strela-10", units: &[("Strela-10M3", Ir), ("Strela-10M3", Ir)], range_m: 5_000., ring_m: 120. },
-    System { key: "sa15", label: "SA-15 Tor", units: &[("Tor 9A331", PointDefence), ("Tor 9A331", PointDefence)], range_m: 12_000., ring_m: 150. },
-    System { key: "sa19", label: "SA-19 Tunguska", units: &[("2S6 Tunguska", PointDefence), ("2S6 Tunguska", PointDefence)], range_m: 8_000., ring_m: 150. },
-    System { key: "pantsir", label: "Pantsir-S1", units: &[("CHAP_PantsirS1", PointDefence), ("CHAP_PantsirS1", PointDefence)], range_m: 20_000., ring_m: 150. },
-    System { key: "tor_m2", label: "Tor-M2", units: &[("CHAP_TorM2", PointDefence), ("CHAP_TorM2", PointDefence)], range_m: 15_000., ring_m: 150. },
-    System { key: "zsu", label: "ZSU-23-4 Shilka", units: &[("ZSU-23-4 Shilka", Aaa), ("ZSU-23-4 Shilka", Aaa)], range_m: 2_500., ring_m: 120. },
-    System { key: "ewr_1l13", label: "1L13 early warning radar", units: &[("1L13 EWR", Ewr)], range_m: 150_000., ring_m: 0. },
-    System { key: "ewr_55g6", label: "55G6 early warning radar", units: &[("55G6 EWR", Ewr)], range_m: 180_000., ring_m: 0. },
+    System {
+        key: "sa2",
+        label: "SA-2 Guideline",
+        units: &[
+            ("p-19 s-125 sr", Search),
+            ("SNR_75V", Track),
+            ("S_75M_Volhov", Launcher),
+            ("S_75M_Volhov", Launcher),
+            ("S_75M_Volhov", Launcher),
+            ("S_75M_Volhov", Launcher),
+        ],
+        range_m: 43_000.,
+        ring_m: 130.,
+    },
+    System {
+        key: "sa3",
+        label: "SA-3 Goa",
+        units: &[
+            ("p-19 s-125 sr", Search),
+            ("snr s-125 tr", Track),
+            ("5p73 s-125 ln", Launcher),
+            ("5p73 s-125 ln", Launcher),
+            ("5p73 s-125 ln", Launcher),
+        ],
+        range_m: 18_000.,
+        ring_m: 90.,
+    },
+    System {
+        key: "sa5",
+        label: "SA-5 Gammon",
+        units: &[
+            ("RLS_19J6", Search),
+            ("RPC_5N62V", Track),
+            ("S-200_Launcher", Launcher),
+            ("S-200_Launcher", Launcher),
+            ("S-200_Launcher", Launcher),
+        ],
+        range_m: 150_000.,
+        ring_m: 140.,
+    },
+    System {
+        key: "sa6",
+        label: "SA-6 Kub",
+        units: &[
+            ("Kub 1S91 str", Track),
+            ("Kub 2P25 ln", Launcher),
+            ("Kub 2P25 ln", Launcher),
+            ("Kub 2P25 ln", Launcher),
+        ],
+        range_m: 25_000.,
+        ring_m: 80.,
+    },
+    System {
+        key: "sa8",
+        label: "SA-8 Osa",
+        units: &[("Osa 9A33 ln", PointDefence), ("Osa 9A33 ln", PointDefence)],
+        range_m: 10_000.,
+        ring_m: 150.,
+    },
+    System {
+        key: "sa10",
+        label: "SA-10 Grumble",
+        units: &[
+            ("S-300PS 40B6MD sr", Search),
+            ("S-300PS 64H6E sr", Search),
+            ("S-300PS 40B6M tr", Track),
+            ("S-300PS 54K6 cp", Command),
+            ("S-300PS 5P85C ln", Launcher),
+            ("S-300PS 5P85D ln", Launcher),
+            ("S-300PS 5P85C ln", Launcher),
+            ("S-300PS 5P85D ln", Launcher),
+        ],
+        range_m: 75_000.,
+        ring_m: 150.,
+    },
+    System {
+        key: "sa11",
+        label: "SA-11 Buk",
+        units: &[
+            ("SA-11 Buk SR 9S18M1", Search),
+            ("SA-11 Buk CC 9S470M1", Command),
+            ("SA-11 Buk LN 9A310M1", PointDefence),
+            ("SA-11 Buk LN 9A310M1", PointDefence),
+            ("SA-11 Buk LN 9A310M1", PointDefence),
+        ],
+        range_m: 35_000.,
+        ring_m: 110.,
+    },
+    System {
+        key: "sa13",
+        label: "SA-13 Strela-10",
+        units: &[("Strela-10M3", Ir), ("Strela-10M3", Ir)],
+        range_m: 5_000.,
+        ring_m: 120.,
+    },
+    System {
+        key: "sa15",
+        label: "SA-15 Tor",
+        units: &[("Tor 9A331", PointDefence), ("Tor 9A331", PointDefence)],
+        range_m: 12_000.,
+        ring_m: 150.,
+    },
+    System {
+        key: "sa19",
+        label: "SA-19 Tunguska",
+        units: &[("2S6 Tunguska", PointDefence), ("2S6 Tunguska", PointDefence)],
+        range_m: 8_000.,
+        ring_m: 150.,
+    },
+    System {
+        key: "pantsir",
+        label: "Pantsir-S1",
+        units: &[("CHAP_PantsirS1", PointDefence), ("CHAP_PantsirS1", PointDefence)],
+        range_m: 20_000.,
+        ring_m: 150.,
+    },
+    System {
+        key: "tor_m2",
+        label: "Tor-M2",
+        units: &[("CHAP_TorM2", PointDefence), ("CHAP_TorM2", PointDefence)],
+        range_m: 15_000.,
+        ring_m: 150.,
+    },
+    System {
+        key: "zsu",
+        label: "ZSU-23-4 Shilka",
+        units: &[("ZSU-23-4 Shilka", Aaa), ("ZSU-23-4 Shilka", Aaa)],
+        range_m: 2_500.,
+        ring_m: 120.,
+    },
+    System {
+        key: "ewr_1l13",
+        label: "1L13 early warning radar",
+        units: &[("1L13 EWR", Ewr)],
+        range_m: 150_000.,
+        ring_m: 0.,
+    },
+    System {
+        key: "ewr_55g6",
+        label: "55G6 early warning radar",
+        units: &[("55G6 EWR", Ewr)],
+        range_m: 180_000.,
+        ring_m: 0.,
+    },
     // ---- NATO / western
-    System { key: "hawk", label: "MIM-23 Hawk", units: &[("Hawk sr", Search), ("Hawk tr", Track), ("Hawk pcp", Command), ("Hawk cwar", Search), ("Hawk ln", Launcher), ("Hawk ln", Launcher), ("Hawk ln", Launcher)], range_m: 45_000., ring_m: 100. },
-    System { key: "patriot", label: "MIM-104 Patriot", units: &[("Patriot str", Track), ("Patriot ECS", Command), ("Patriot EPP", Command), ("Patriot AMG", Command), ("Patriot cp", Command), ("Patriot ln", Launcher), ("Patriot ln", Launcher), ("Patriot ln", Launcher), ("Patriot ln", Launcher)], range_m: 100_000., ring_m: 150. },
-    System { key: "nasams", label: "NASAMS", units: &[("NASAMS_Radar_MPQ64F1", Track), ("NASAMS_Command_Post", Command), ("NASAMS_LN_C", Launcher), ("NASAMS_LN_C", Launcher), ("NASAMS_LN_B", Launcher)], range_m: 25_000., ring_m: 120. },
-    System { key: "iris_t", label: "IRIS-T SLM", units: &[("CHAP_IRISTSLM_STR", Track), ("CHAP_IRISTSLM_CP", Command), ("CHAP_IRISTSLM_LN", Launcher), ("CHAP_IRISTSLM_LN", Launcher), ("CHAP_IRISTSLM_LN", Launcher)], range_m: 30_000., ring_m: 120. },
-    System { key: "roland", label: "Roland", units: &[("Roland Radar", Search), ("Roland ADS", PointDefence), ("Roland ADS", PointDefence)], range_m: 8_000., ring_m: 120. },
-    System { key: "gepard", label: "Gepard", units: &[("Gepard", Aaa), ("Gepard", Aaa)], range_m: 4_000., ring_m: 120. },
-    System { key: "avenger", label: "M1097 Avenger", units: &[("M1097 Avenger", Ir), ("M1097 Avenger", Ir)], range_m: 5_000., ring_m: 120. },
-    System { key: "rapier", label: "Rapier", units: &[("rapier_fsa_blindfire_radar", Track), ("rapier_fsa_optical_tracker_unit", Search), ("rapier_fsa_launcher", Launcher), ("rapier_fsa_launcher", Launcher)], range_m: 7_000., ring_m: 60. },
-    System { key: "hq7", label: "HQ-7", units: &[("HQ-7_STR_SP", Search), ("HQ-7_LN_SP", PointDefence), ("HQ-7_LN_SP", PointDefence)], range_m: 12_000., ring_m: 100. },
-    System { key: "ewr_fps117", label: "FPS-117 early warning radar", units: &[("FPS-117", Ewr)], range_m: 180_000., ring_m: 0. },
+    System {
+        key: "hawk",
+        label: "MIM-23 Hawk",
+        units: &[
+            ("Hawk sr", Search),
+            ("Hawk tr", Track),
+            ("Hawk pcp", Command),
+            ("Hawk cwar", Search),
+            ("Hawk ln", Launcher),
+            ("Hawk ln", Launcher),
+            ("Hawk ln", Launcher),
+        ],
+        range_m: 45_000.,
+        ring_m: 100.,
+    },
+    System {
+        key: "patriot",
+        label: "MIM-104 Patriot",
+        units: &[
+            ("Patriot str", Track),
+            ("Patriot ECS", Command),
+            ("Patriot EPP", Command),
+            ("Patriot AMG", Command),
+            ("Patriot cp", Command),
+            ("Patriot ln", Launcher),
+            ("Patriot ln", Launcher),
+            ("Patriot ln", Launcher),
+            ("Patriot ln", Launcher),
+        ],
+        range_m: 100_000.,
+        ring_m: 150.,
+    },
+    System {
+        key: "nasams",
+        label: "NASAMS",
+        units: &[
+            ("NASAMS_Radar_MPQ64F1", Track),
+            ("NASAMS_Command_Post", Command),
+            ("NASAMS_LN_C", Launcher),
+            ("NASAMS_LN_C", Launcher),
+            ("NASAMS_LN_B", Launcher),
+        ],
+        range_m: 25_000.,
+        ring_m: 120.,
+    },
+    System {
+        key: "iris_t",
+        label: "IRIS-T SLM",
+        units: &[
+            ("CHAP_IRISTSLM_STR", Track),
+            ("CHAP_IRISTSLM_CP", Command),
+            ("CHAP_IRISTSLM_LN", Launcher),
+            ("CHAP_IRISTSLM_LN", Launcher),
+            ("CHAP_IRISTSLM_LN", Launcher),
+        ],
+        range_m: 30_000.,
+        ring_m: 120.,
+    },
+    System {
+        key: "roland",
+        label: "Roland",
+        units: &[
+            ("Roland Radar", Search),
+            ("Roland ADS", PointDefence),
+            ("Roland ADS", PointDefence),
+        ],
+        range_m: 8_000.,
+        ring_m: 120.,
+    },
+    System {
+        key: "gepard",
+        label: "Gepard",
+        units: &[("Gepard", Aaa), ("Gepard", Aaa)],
+        range_m: 4_000.,
+        ring_m: 120.,
+    },
+    System {
+        key: "avenger",
+        label: "M1097 Avenger",
+        units: &[("M1097 Avenger", Ir), ("M1097 Avenger", Ir)],
+        range_m: 5_000.,
+        ring_m: 120.,
+    },
+    System {
+        key: "rapier",
+        label: "Rapier",
+        units: &[
+            ("rapier_fsa_blindfire_radar", Track),
+            ("rapier_fsa_optical_tracker_unit", Search),
+            ("rapier_fsa_launcher", Launcher),
+            ("rapier_fsa_launcher", Launcher),
+        ],
+        range_m: 7_000.,
+        ring_m: 60.,
+    },
+    System {
+        key: "hq7",
+        label: "HQ-7",
+        units: &[
+            ("HQ-7_STR_SP", Search),
+            ("HQ-7_LN_SP", PointDefence),
+            ("HQ-7_LN_SP", PointDefence),
+        ],
+        range_m: 12_000.,
+        ring_m: 100.,
+    },
+    System {
+        key: "ewr_fps117",
+        label: "FPS-117 early warning radar",
+        units: &[("FPS-117", Ewr)],
+        range_m: 180_000.,
+        ring_m: 0.,
+    },
 ];
 
 pub fn system(key: &str) -> Option<&'static System> {
@@ -143,7 +381,12 @@ pub fn system(key: &str) -> Option<&'static System> {
 /// point-defence and AAA vehicles spread apart so one bomb doesn't get both.
 pub fn layout(sys: &System, centre: V3, heading: f64) -> Vec<(String, Role, V3)> {
     let launchers = sys.units.iter().filter(|(_, r)| *r == Launcher).count().max(1);
-    let spread = sys.units.iter().filter(|(_, r)| matches!(r, PointDefence | Aaa | Ir)).count().max(1);
+    let spread = sys
+        .units
+        .iter()
+        .filter(|(_, r)| matches!(r, PointDefence | Aaa | Ir))
+        .count()
+        .max(1);
     let (mut li, mut si, mut ri) = (0, 0, 0);
     sys.units
         .iter()
@@ -151,7 +394,8 @@ pub fn layout(sys: &System, centre: V3, heading: f64) -> Vec<(String, Role, V3)>
             let p = match role {
                 Launcher => {
                     // a fan in front of the radars
-                    let a = heading - 70. + 140. * li as f64 / (launchers.max(2) - 1) as f64;
+                    let a =
+                        heading - 70. + 140. * li as f64 / (launchers.max(2) - 1) as f64;
                     li += 1;
                     util::offset(centre, a, sys.ring_m, 0.)
                 }
@@ -162,7 +406,12 @@ pub fn layout(sys: &System, centre: V3, heading: f64) -> Vec<(String, Role, V3)>
                 }
                 _ => {
                     // radars and command posts in a short line behind
-                    let p = util::offset(centre, heading, -35. * ri as f64, 30. * (ri % 2) as f64);
+                    let p = util::offset(
+                        centre,
+                        heading,
+                        -35. * ri as f64,
+                        30. * (ri % 2) as f64,
+                    );
                     ri += 1;
                     p
                 }
@@ -191,14 +440,18 @@ impl SiteRt {
     fn effective(&self) -> bool {
         let any_essential = self.units.values().any(|(_, r)| r.essential());
         if any_essential {
-            self.alive.iter().any(|u| self.units.get(u).map(|(_, r)| r.essential()).unwrap_or(false))
+            self.alive
+                .iter()
+                .any(|u| self.units.get(u).map(|(_, r)| r.essential()).unwrap_or(false))
         } else {
             !self.alive.is_empty()
         }
     }
 
     fn has_emitter(&self) -> bool {
-        self.alive.iter().any(|u| self.units.get(u).map(|(_, r)| r.emitter()).unwrap_or(false))
+        self.alive
+            .iter()
+            .any(|u| self.units.get(u).map(|(_, r)| r.emitter()).unwrap_or(false))
     }
 }
 
@@ -249,8 +502,17 @@ pub fn set_emission(lua: MizLua, group: &str, on: bool) -> Result<()> {
     Ok(())
 }
 
-fn spawn_site(lua: MizLua, net: &IadsCfg, side: Side, site: &mut SiteRt, spawns: &mut Spawns, now: f64) -> Result<()> {
-    let country = spawn::country_id(net.country.as_deref().unwrap_or(spawn::default_country(side)))?;
+fn spawn_site(
+    lua: MizLua,
+    net: &IadsCfg,
+    side: Side,
+    site: &mut SiteRt,
+    spawns: &mut Spawns,
+    now: f64,
+) -> Result<()> {
+    let country = spawn::country_id(
+        net.country.as_deref().unwrap_or(spawn::default_country(side)),
+    )?;
     let placed = layout(site.sys, site.pos, site.cfg.heading_deg);
     let units: Vec<(String, V3, f64)> = placed
         .iter()
@@ -260,7 +522,12 @@ fn spawn_site(lua: MizLua, net: &IadsCfg, side: Side, site: &mut SiteRt, spawns:
             (t.clone(), q, site.cfg.heading_deg)
         })
         .collect();
-    let g = spawn::surface_group(&site.group, &units, "Excellent", vec![spawn::ground_waypoint(site.pos, 0., false, vec![])]);
+    let g = spawn::surface_group(
+        &site.group,
+        &units,
+        "Excellent",
+        vec![spawn::ground_waypoint(site.pos, 0., false, vec![])],
+    );
     spawn::add_group(lua, country, spawn::GROUND, &g)?;
     site.units.clear();
     site.alive.clear();
@@ -271,8 +538,18 @@ fn spawn_site(lua: MizLua, net: &IadsCfg, side: Side, site: &mut SiteRt, spawns:
     }
     // ROE: 2 open fire / 4 weapon hold; ALARM_STATE (9) red keeps them ready
     let roe = if net.weapons_free { 2 } else { 4 };
-    spawns.defer(now + 2., spawn::Pending::GroupOption { group: site.group.clone(), id: 0, value: json!(roe) });
-    spawns.defer(now + 2., spawn::Pending::GroupOption { group: site.group.clone(), id: 9, value: json!(2) });
+    spawns.defer(
+        now + 2.,
+        spawn::Pending::GroupOption {
+            group: site.group.clone(),
+            id: 0,
+            value: json!(roe),
+        },
+    );
+    spawns.defer(
+        now + 2.,
+        spawn::Pending::GroupOption { group: site.group.clone(), id: 9, value: json!(2) },
+    );
     // everything but EWRs and "always on" networks starts dark; the network
     // brings them up
     site.emitting = site.sys.is_ewr() || net.emcon == "always_on";
@@ -286,17 +563,21 @@ impl Iads {
         self.rng = 0x9E37_79B9_7F4A_7C15 ^ (now.to_bits());
         for n in &cfg.iads {
             let side = spawn::side_of_str(&n.side);
-            let area = n.engage_within.as_ref().and_then(|a| match ag::resolve(lua, &a.loc) {
-                Ok(p) => Some((p, a.radius_nm * util::NM)),
-                Err(e) => {
-                    warn!("iads {}: engage area: {e:?}", n.id);
-                    None
-                }
-            });
+            let area =
+                n.engage_within.as_ref().and_then(|a| match ag::resolve(lua, &a.loc) {
+                    Ok(p) => Some((p, a.radius_nm * util::NM)),
+                    Err(e) => {
+                        warn!("iads {}: engage area: {e:?}", n.id);
+                        None
+                    }
+                });
             let mut net = Net { cfg: n.clone(), side, sites: vec![], area };
             for s in &n.sites {
                 let Some(sys) = system(&s.system) else {
-                    warn!("iads {}: site {} has unknown system {:?}", n.id, s.id, s.system);
+                    warn!(
+                        "iads {}: site {} has unknown system {:?}",
+                        n.id, s.id, s.system
+                    );
                     continue;
                 };
                 let pos = match ag::resolve(lua, &s.loc) {
@@ -324,14 +605,23 @@ impl Iads {
                             // after the group exists; enableEmission on a
                             // group in its birth frame is ignored
                             let g = site.group.clone();
-                            spawns.defer(now + 3., spawn::Pending::Emission { group: g, on: false });
+                            spawns.defer(
+                                now + 3.,
+                                spawn::Pending::Emission { group: g, on: false },
+                            );
                         }
                         net.sites.push(site)
                     }
                     Err(e) => warn!("iads {}: site {} did not spawn: {e:?}", n.id, s.id),
                 }
             }
-            info!("iads {} ({}): {} sites, emcon {}", n.id, n.name, net.sites.len(), n.emcon);
+            info!(
+                "iads {} ({}): {} sites, emcon {}",
+                n.id,
+                n.name,
+                net.sites.len(),
+                n.emcon
+            );
             self.nets.push(net);
         }
     }
@@ -358,7 +648,13 @@ impl Iads {
     }
 
     /// Network, emission control and rebuilding; every 2 s.
-    pub fn tick(&mut self, lua: MizLua, players: &Players, spawns: &mut Spawns, now: f64) {
+    pub fn tick(
+        &mut self,
+        lua: MizLua,
+        players: &Players,
+        spawns: &mut Spawns,
+        now: f64,
+    ) {
         if now - self.last < 2. || self.nets.is_empty() {
             return;
         }
@@ -366,7 +662,9 @@ impl Iads {
         let land = Land::singleton(lua).ok();
         let visible = |a: V3, b: V3| -> bool {
             land.as_ref()
-                .and_then(|l| l.is_visible(LuaVec3(V3::new(a.x, a.y + 20., a.z)), LuaVec3(b)).ok())
+                .and_then(|l| {
+                    l.is_visible(LuaVec3(V3::new(a.x, a.y + 20., a.z)), LuaVec3(b)).ok()
+                })
                 .unwrap_or(true)
         };
         for ni in 0..self.nets.len() {
@@ -384,13 +682,21 @@ impl Iads {
                 .sites
                 .iter()
                 .filter(|s| s.emitting && s.has_emitter())
-                .map(|s| (s.pos, if s.sys.is_ewr() { s.sys.range_m } else { s.sys.range_m * 1.5 }))
+                .map(|s| {
+                    (
+                        s.pos,
+                        if s.sys.is_ewr() { s.sys.range_m } else { s.sys.range_m * 1.5 },
+                    )
+                })
                 .collect();
-            let have_ewr = self.nets[ni].sites.iter().any(|s| s.sys.is_ewr() && s.effective());
+            let have_ewr =
+                self.nets[ni].sites.iter().any(|s| s.sys.is_ewr() && s.effective());
             let seen: Vec<V3> = targets
                 .iter()
                 .copied()
-                .filter(|t| eyes.iter().any(|(e, r)| util::dist3(*e, *t) <= *r && visible(*e, *t)))
+                .filter(|t| {
+                    eyes.iter().any(|(e, r)| util::dist3(*e, *t) <= *r && visible(*e, *t))
+                })
                 .collect();
             let emcon = self.nets[ni].cfg.emcon.clone();
             for si in 0..self.nets[ni].sites.len() {
@@ -409,16 +715,27 @@ impl Iads {
                                 Ok(()) => {
                                     info!("iads {}: site {} rebuilt", cfg.id, s.cfg.id);
                                     if !s.emitting {
-                                        spawns.defer(now + 3., spawn::Pending::Emission { group: s.group.clone(), on: false });
+                                        spawns.defer(
+                                            now + 3.,
+                                            spawn::Pending::Emission {
+                                                group: s.group.clone(),
+                                                on: false,
+                                            },
+                                        );
                                     }
                                 }
-                                Err(e) => warn!("iads {}: site {} rebuild failed: {e:?}", cfg.id, s.cfg.id),
+                                Err(e) => warn!(
+                                    "iads {}: site {} rebuild failed: {e:?}",
+                                    cfg.id, s.cfg.id
+                                ),
                             }
                         }
                     }
                     continue;
                 }
-                let in_range = |from: &[V3], r: f64| from.iter().any(|t| util::dist3(s.pos, *t) <= r);
+                let in_range = |from: &[V3], r: f64| {
+                    from.iter().any(|t| util::dist3(s.pos, *t) <= r)
+                };
                 let want = if s.sys.is_ewr() || emcon == "always_on" {
                     true
                 } else if emcon == "blink" {
@@ -465,7 +782,12 @@ impl Iads {
         if self.nets.is_empty() {
             return;
         }
-        let target = weapon.get_target().ok().flatten().and_then(|t| t.get_name().ok()).map(|s| s.to_string());
+        let target = weapon
+            .get_target()
+            .ok()
+            .flatten()
+            .and_then(|t| t.get_name().ok())
+            .map(|s| s.to_string());
         // a site shooting at a player
         if let Some((ni, _)) = self.site_of(&shooter.unit_name) {
             if let Some(f) = target.as_ref().and_then(|t| players.flying.get(t)) {
@@ -488,18 +810,33 @@ impl Iads {
                     .nets
                     .iter()
                     .enumerate()
-                    .flat_map(|(ni, n)| n.sites.iter().enumerate().map(move |(si, s)| (ni, si, s)))
+                    .flat_map(|(ni, n)| {
+                        n.sites.iter().enumerate().map(move |(si, s)| (ni, si, s))
+                    })
                     .filter(|(_, _, s)| s.emitting && s.effective())
                     .filter(|(_, _, s)| util::dist2(shooter_pos, s.pos) < 180_000.)
-                    .filter(|(_, _, s)| util::angdiff(util::bearing(shooter_pos, s.pos), hdg).abs() < 12.)
-                    .min_by(|a, b| util::dist2(shooter_pos, a.2.pos).total_cmp(&util::dist2(shooter_pos, b.2.pos)))
+                    .filter(|(_, _, s)| {
+                        util::angdiff(util::bearing(shooter_pos, s.pos), hdg).abs() < 12.
+                    })
+                    .min_by(|a, b| {
+                        util::dist2(shooter_pos, a.2.pos)
+                            .total_cmp(&util::dist2(shooter_pos, b.2.pos))
+                    })
                     .map(|(ni, si, _)| (ni, si));
             }
         }
         let Some((ni, si)) = hit else { return };
         let site = &self.nets[ni].sites[si];
         if let Ok(oid) = dcso3::object::DcsObject::object_id(weapon) {
-            self.shots.insert(oid, ShotAt { emitting: site.emitting, from: shooter_pos, range_m: util::dist2(shooter_pos, site.pos), t: now });
+            self.shots.insert(
+                oid,
+                ShotAt {
+                    emitting: site.emitting,
+                    from: shooter_pos,
+                    range_m: util::dist2(shooter_pos, site.pos),
+                    t: now,
+                },
+            );
         }
         if arm {
             if let Some(d) = self.nets[ni].cfg.harm_defence_s {
@@ -511,7 +848,10 @@ impl Iads {
                     if set_emission(lua, &g, false).is_ok() {
                         s.emitting = false;
                     }
-                    info!("iads site {} going dark: ARM inbound from {}", s.cfg.id, shooter.name);
+                    info!(
+                        "iads site {} going dark: ARM inbound from {}",
+                        s.cfg.id, shooter.name
+                    );
                 }
             }
         }
@@ -520,7 +860,8 @@ impl Iads {
     pub fn trainer_kill(&mut self, players: &Players, k: &TrainerKill) {
         if let Some((ni, _)) = self.site_of(&k.shooter_unit) {
             if let Some(f) = players.flying.get(&k.target_unit) {
-                self.tally.entry((f.ucid.to_string(), ni)).or_default().trainer_deaths += 1;
+                self.tally.entry((f.ucid.to_string(), ni)).or_default().trainer_deaths +=
+                    1;
             }
         }
     }
@@ -556,22 +897,36 @@ impl Iads {
         if !self.credited.insert(target_unit.to_string()) {
             return;
         }
-        let Some(f) = shooter_unit.and_then(|u| players.flying.get(u)).cloned() else { return };
+        let Some(f) = shooter_unit.and_then(|u| players.flying.get(u)).cloned() else {
+            return;
+        };
         let shot = weapon
             .and_then(|w| dcso3::object::DcsObject::object_id(w).ok())
             .and_then(|oid| self.shots.remove(&oid));
         let (guidance, wname) = match weapon.and_then(|w| w.get_weapon_desc().ok()) {
             Some(d) => (
                 crate::weapons::guidance_str(d.guidance).to_string(),
-                if d.display_name.is_empty() { d.type_name.clone() } else { d.display_name.clone() },
+                if d.display_name.is_empty() {
+                    d.type_name.clone()
+                } else {
+                    d.display_name.clone()
+                },
             ),
-            None => ("none".into(), weapon_name.map(|s| s.to_string()).unwrap_or_else(|| "guns".into())),
+            None => (
+                "none".into(),
+                weapon_name.map(|s| s.to_string()).unwrap_or_else(|| "guns".into()),
+            ),
         };
         let net = &self.nets[ni];
         let site = &net.sites[si];
-        let (typ, role) = site.units.get(target_unit).cloned().unwrap_or_else(|| ("unknown".into(), Launcher));
+        let (typ, role) = site
+            .units
+            .get(target_unit)
+            .cloned()
+            .unwrap_or_else(|| ("unknown".into(), Launcher));
         let emitting = shot.as_ref().map(|s| s.emitting).unwrap_or(site.emitting);
-        let tally = self.tally.get(&(f.ucid.to_string(), ni)).copied().unwrap_or_default();
+        let tally =
+            self.tally.get(&(f.ucid.to_string(), ni)).copied().unwrap_or_default();
         let destroyed = !site.effective();
         let res = SeadResult {
             network: net.cfg.name.clone(),
@@ -607,13 +962,28 @@ impl Iads {
                     site.sys.label,
                     role.label(),
                     if emitting { "radar was up" } else { "radar was dark" },
-                    shot.as_ref().map(|s| format!(", launched {:.1} nm", s.range_m / util::NM)).unwrap_or_default(),
-                    if destroyed { format!(" - {} is DOWN", site.cfg.name) } else { String::new() },
+                    shot.as_ref()
+                        .map(|s| format!(", launched {:.1} nm", s.range_m / util::NM))
+                        .unwrap_or_default(),
+                    if destroyed {
+                        format!(" - {} is DOWN", site.cfg.name)
+                    } else {
+                        String::new()
+                    },
                 ),
                 cfg.message_s,
             );
         }
-        rec.emit(lua, PilotRef { ucid: Some(f.ucid.to_string()), name: f.name.clone() }, &f.typ, f.side, &f.group_name, Some(score), RangeResult::Sead(res), None);
+        rec.emit(
+            lua,
+            PilotRef { ucid: Some(f.ucid.to_string()), name: f.name.clone() },
+            &f.typ,
+            f.side,
+            &f.group_name,
+            Some(score),
+            RangeResult::Sead(res),
+            None,
+        );
     }
 
     /// Forget the sortie tallies for a player who left their aircraft, and
@@ -624,14 +994,27 @@ impl Iads {
     }
 
     /// Instructor: rebuild every site of a network now.
-    pub fn reset(&mut self, lua: MizLua, id: &str, spawns: &mut Spawns, now: f64) -> Result<String> {
-        let net = self.nets.iter_mut().find(|n| n.cfg.id == id).ok_or_else(|| anyhow!("no IADS {id}"))?;
+    pub fn reset(
+        &mut self,
+        lua: MizLua,
+        id: &str,
+        spawns: &mut Spawns,
+        now: f64,
+    ) -> Result<String> {
+        let net = self
+            .nets
+            .iter_mut()
+            .find(|n| n.cfg.id == id)
+            .ok_or_else(|| anyhow!("no IADS {id}"))?;
         let cfg = net.cfg.clone();
         for s in net.sites.iter_mut() {
             spawn::destroy_group(lua, &s.group);
             spawn_site(lua, &cfg, net.side, s, spawns, now)?;
             if !s.emitting {
-                spawns.defer(now + 3., spawn::Pending::Emission { group: s.group.clone(), on: false });
+                spawns.defer(
+                    now + 3.,
+                    spawn::Pending::Emission { group: s.group.clone(), on: false },
+                );
             }
         }
         Ok(format!("{} rebuilt", cfg.name))
@@ -649,7 +1032,11 @@ impl Iads {
             out.push(format!(
                 "{} ({}, {}):",
                 n.cfg.name,
-                if n.cfg.weapons_free { "WEAPONS FREE, trainer protects you" } else { "weapons hold" },
+                if n.cfg.weapons_free {
+                    "WEAPONS FREE, trainer protects you"
+                } else {
+                    "weapons hold"
+                },
                 match n.cfg.emcon.as_str() {
                     "iads" => "networked",
                     "blink" => "blinking",
@@ -657,7 +1044,9 @@ impl Iads {
                 }
             ));
             let mut sites: Vec<&SiteRt> = n.sites.iter().collect();
-            sites.sort_by(|a, b| util::dist2(from, a.pos).total_cmp(&util::dist2(from, b.pos)));
+            sites.sort_by(|a, b| {
+                util::dist2(from, a.pos).total_cmp(&util::dist2(from, b.pos))
+            });
             for s in sites {
                 out.push(format!(
                     "  {} [{}] {:03.0}/{:.0}nm, {:.0} nm ring{}",
@@ -711,7 +1100,11 @@ mod tests {
     #[test]
     fn every_system_has_an_essential_unit() {
         for s in SYSTEMS {
-            assert!(s.units.iter().any(|(_, r)| r.essential()), "{} has nothing that can shoot or see", s.key);
+            assert!(
+                s.units.iter().any(|(_, r)| r.essential()),
+                "{} has nothing that can shoot or see",
+                s.key
+            );
         }
     }
 
@@ -723,13 +1116,26 @@ mod tests {
         let Ok(txt) = std::fs::read_to_string(path) else { return };
         let db: serde_json::Value = serde_json::from_str(&txt).unwrap();
         let known = db["by_type"].as_object().unwrap();
-        let mut types: Vec<&str> = SYSTEMS.iter().flat_map(|s| s.units.iter().map(|(t, _)| *t)).collect();
+        let mut types: Vec<&str> =
+            SYSTEMS.iter().flat_map(|s| s.units.iter().map(|(t, _)| *t)).collect();
         for (_, _, red, blue) in crate::hotzone::HOT_ZONE_COMPOSITIONS {
             types.extend(red.iter().copied());
             types.extend(blue.iter().copied());
         }
-        types.extend(["GPS_Spoofer_Red", "GPS_Spoofer_Blue", "Soldier M4", "Infantry AK", "Paratrooper RPG-16", "SA-18 Igla manpad", "Ural-375 ZU-23", "Soldier M249", "Soldier stinger", "M1043 HMMWV Armament"]);
-        let missing: Vec<&str> = types.into_iter().filter(|t| !known.contains_key(*t)).collect();
+        types.extend([
+            "GPS_Spoofer_Red",
+            "GPS_Spoofer_Blue",
+            "Soldier M4",
+            "Infantry AK",
+            "Paratrooper RPG-16",
+            "SA-18 Igla manpad",
+            "Ural-375 ZU-23",
+            "Soldier M249",
+            "Soldier stinger",
+            "M1043 HMMWV Armament",
+        ]);
+        let missing: Vec<&str> =
+            types.into_iter().filter(|t| !known.contains_key(*t)).collect();
         assert!(missing.is_empty(), "not DCS unit types: {missing:?}");
     }
 

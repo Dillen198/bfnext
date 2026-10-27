@@ -39,27 +39,27 @@ for more details.
 //! automatically instead of drifting into a plausible lie.
 
 use crate::{
+    Context,
     db::{
+        Db,
         markup::{objective_visible_to, public_stat_pct},
         objective::Objective,
-        Db,
     },
     ewr::ContactClass,
     menu::brg_rng,
-    Context,
 };
 use bfprotocols::{
     cfg::{Cfg, CommsPlanCfg},
     db::objective::{ObjectiveId, ObjectiveKind},
     situation::{
-        AirPicture, AirThreat, CommsChannel, Hotspot, HubState, LogisticsPosture, MapObjective,
-        Posture, SituationEvent, SituationReport, SituationWeather, SupplyGap, SupportStation,
-        Task, TaskKind, ThreatArea, Urgency,
+        AirPicture, AirThreat, CommsChannel, Hotspot, HubState, LogisticsPosture,
+        MapObjective, Posture, SituationEvent, SituationReport, SituationWeather,
+        SupplyGap, SupportStation, Task, TaskKind, ThreatArea, Urgency,
     },
 };
 use chrono::prelude::*;
-use compact_str::{format_compact, CompactString};
-use dcso3::{coalition::Side, MizLua, Vector2};
+use compact_str::{CompactString, format_compact};
+use dcso3::{MizLua, Vector2, coalition::Side};
 use std::{collections::HashMap, fmt::Write};
 
 /// What the caller wants out of a report. The in-game paths want bearings from
@@ -113,7 +113,12 @@ fn brg_rng_opt(from: Option<Vector2>, to: Vector2) -> (Option<u32>, Option<f64>)
 
 // ── main entry point ───────────────────────────────────────────────────────
 
-pub(crate) fn build(ctx: &Context, lua: MizLua, side: Side, opts: Opts) -> SituationReport {
+pub(crate) fn build(
+    ctx: &Context,
+    lua: MizLua,
+    side: Side,
+    opts: Opts,
+) -> SituationReport {
     let db = &ctx.db;
     let cfg = &db.ephemeral.cfg;
     let now = ctx.now();
@@ -122,31 +127,21 @@ pub(crate) fn build(ctx: &Context, lua: MizLua, side: Side, opts: Opts) -> Situa
         coord
             .as_ref()
             .and_then(|c| {
-                c.lo_to_ll(dcso3::LuaVec3(dcso3::Vector3::new(p.x, 0.0, p.y)))
-                    .ok()
+                c.lo_to_ll(dcso3::LuaVec3(dcso3::Vector3::new(p.x, 0.0, p.y))).ok()
             })
             .map(|ll| (ll.latitude, ll.longitude))
             .unwrap_or((0.0, 0.0))
     };
-    let max_tasks = cfg
-        .situation_briefing
-        .as_ref()
-        .map(|s| s.max_tasks)
-        .unwrap_or(12)
-        .max(1);
-    let include_threats = cfg
-        .situation_briefing
-        .as_ref()
-        .map(|s| s.include_threats)
-        .unwrap_or(true);
+    let max_tasks =
+        cfg.situation_briefing.as_ref().map(|s| s.max_tasks).unwrap_or(12).max(1);
+    let include_threats =
+        cfg.situation_briefing.as_ref().map(|s| s.include_threats).unwrap_or(true);
 
     let posture = build_posture(ctx, side, now);
-    let (hotspots, mut tasking) = build_hotspots_and_tasking(ctx, side, opts.from, &to_ll);
-    let threats_pos = if include_threats {
-        build_threats(ctx, side, &to_ll)
-    } else {
-        vec![]
-    };
+    let (hotspots, mut tasking) =
+        build_hotspots_and_tasking(ctx, side, opts.from, &to_ll);
+    let threats_pos =
+        if include_threats { build_threats(ctx, side, &to_ll) } else { vec![] };
     let air = build_air(ctx, side, now, &to_ll);
     let logistics = build_logistics(ctx, side, &to_ll);
     let support = build_support(ctx, side, &to_ll);
@@ -165,9 +160,7 @@ pub(crate) fn build(ctx: &Context, lua: MizLua, side: Side, opts: Opts) -> Situa
     // the list is something this pilot can actually reach.
     tasking.sort_by(|a, b| {
         a.urgency.cmp(&b.urgency).then_with(|| {
-            a.range_nm
-                .unwrap_or(f64::MAX)
-                .total_cmp(&b.range_nm.unwrap_or(f64::MAX))
+            a.range_nm.unwrap_or(f64::MAX).total_cmp(&b.range_nm.unwrap_or(f64::MAX))
         })
     });
     tasking.truncate(max_tasks);
@@ -177,7 +170,9 @@ pub(crate) fn build(ctx: &Context, lua: MizLua, side: Side, opts: Opts) -> Situa
 
     let map = if opts.include_map {
         db.objectives()
-            .filter(|(_, o)| !o.kind().is_special_sam_site() && objective_visible_to(o, side))
+            .filter(|(_, o)| {
+                !o.kind().is_special_sam_site() && objective_visible_to(o, side)
+            })
             .map(|(_, o)| {
                 // A carrier group's position is withheld the same way
                 // /api/objectives withholds it -- mobile and sensitive.
@@ -348,7 +343,11 @@ where
         let interesting = if friendly {
             obj.threatened() || being_taken || obj.captureable() || obj.health() < 60
         } else {
-            obj.captureable() || being_taken || obj.in_capture_hold() || obj.health() <= 40 || neutral
+            obj.captureable()
+                || being_taken
+                || obj.in_capture_hold()
+                || obj.health() <= 40
+                || neutral
         };
         if !interesting {
             continue;
@@ -387,7 +386,9 @@ where
 
         if friendly {
             // Defending is the only thing that can lose the round outright.
-            let (kind, urgency, detail, success) = if let Some((by, held, need)) = in_progress {
+            let (kind, urgency, detail, success) = if let Some((by, held, need)) =
+                in_progress
+            {
                 (
                     TaskKind::Defend,
                     Urgency::Critical,
@@ -511,7 +512,8 @@ where
         }
     }
 
-    hotspots.sort_by(|a, b| a.risk.cmp(&b.risk).then_with(|| a.objective.cmp(&b.objective)));
+    hotspots
+        .sort_by(|a, b| a.risk.cmp(&b.risk).then_with(|| a.objective.cmp(&b.objective)));
     (hotspots, tasking)
 }
 
@@ -532,15 +534,24 @@ fn hotspot_risk(obj: &Objective, being_taken: bool, friendly: bool) -> Urgency {
 /// advisor does, so a briefing can't promise a repair the engine won't run.
 /// `friendly` is whether the report's side owns `obj`; only then does it get
 /// the exact supply figure.
-fn repair_outlook(db: &Db, oid: &ObjectiveId, obj: &Objective, friendly: bool) -> CompactString {
+fn repair_outlook(
+    db: &Db,
+    oid: &ObjectiveId,
+    obj: &Objective,
+    friendly: bool,
+) -> CompactString {
     if obj.health() >= 100 {
         return CompactString::from("at full strength");
     }
     if obj.health() == 0 && obj.owner() != Side::Neutral {
-        return CompactString::from("garrison wiped -- will fall to NEUTRAL, then needs troops");
+        return CompactString::from(
+            "garrison wiped -- will fall to NEUTRAL, then needs troops",
+        );
     }
     if obj.owner() == Side::Neutral {
-        return CompactString::from("NEUTRAL -- never self-repairs, must be retaken with troops");
+        return CompactString::from(
+            "NEUTRAL -- never self-repairs, must be retaken with troops",
+        );
     }
     if obj.threatened() {
         // The owner is told what is holding the base (count and a distance
@@ -569,10 +580,13 @@ fn repair_outlook(db: &Db, oid: &ObjectiveId, obj: &Objective, friendly: bool) -
         };
     }
     if obj.logi() == 0 && !obj.kind().is_special_sam_site() {
-        return CompactString::from("logistics destroyed (logi 0%) -- cannot self-repair");
+        return CompactString::from(
+            "logistics destroyed (logi 0%) -- cannot self-repair",
+        );
     }
     let pulse = db.repair_pulse_secs(obj).max(1.0);
-    let elapsed = (db.ephemeral.now() - obj.repair_clock_start()).num_seconds().max(0) as f64;
+    let elapsed =
+        (db.ephemeral.now() - obj.repair_clock_start()).num_seconds().max(0) as f64;
     format_compact!(
         "self-repairing -- next pulse in ~{:.0}m",
         ((pulse - elapsed).max(0.0) / 60.0).ceil()
@@ -602,7 +616,9 @@ where
         .flat_map(|(_, g)| g.units.into_iter())
         .filter_map(|uid| db.persisted.units.get(uid))
         .filter(|u| !u.dead)
-        .filter_map(|u| cfg.ground_radar_ewrs.get(&u.typ).map(|e| (u.pos, e.range as f64)))
+        .filter_map(|u| {
+            cfg.ground_radar_ewrs.get(&u.typ).map(|e| (u.pos, e.range as f64))
+        })
         .collect();
 
     let mut out: Vec<(ThreatArea, Vector2)> = db
@@ -615,14 +631,18 @@ where
             let r = (c.pos_uncertainty_m as f64).max(2500.0);
             let radius_m = emitters
                 .iter()
-                .filter(|(p, _)| (p.x - c.pos.x).powi(2) + (p.y - c.pos.y).powi(2) <= r * r)
+                .filter(|(p, _)| {
+                    (p.x - c.pos.x).powi(2) + (p.y - c.pos.y).powi(2) <= r * r
+                })
                 .map(|(_, range)| *range)
                 .fold(None, |acc: Option<f64>, v| Some(acc.map_or(v, |a: f64| a.max(v))));
             let area = ThreatArea {
                 label: match c.source {
                     // Eyes-on sources are allowed to be specific; a radar-fusion
                     // hit is not.
-                    IntelSource::Jtac | IntelSource::ReconFlight | IntelSource::SpecialForces => {
+                    IntelSource::Jtac
+                    | IntelSource::ReconFlight
+                    | IntelSource::SpecialForces => {
                         format!("{}x air defence", c.unit_count)
                     }
                     _ => String::from("air-defence emitter"),
@@ -738,7 +758,8 @@ where
                     lon,
                     alt_ft: (c.pos.p.y * 3.28084) as i32,
                     heading: heading as u32,
-                    speed_kts: ((v.x * v.x + v.y * v.y + v.z * v.z).sqrt() * 1.94384) as u32,
+                    speed_kts: ((v.x * v.x + v.y * v.y + v.z * v.z).sqrt() * 1.94384)
+                        as u32,
                     class: match c.class {
                         ContactClass::Fighter => "fighter",
                         ContactClass::Bomber => "bomber",
@@ -754,16 +775,13 @@ where
         }
     }
 
-    let axis = by_sector
-        .into_iter()
-        .max_by_key(|(_, n)| *n)
-        .map(|(sec, n)| {
-            if n == 1 {
-                format!("1 hostile track {sec} of your territory")
-            } else {
-                format!("{n} hostile tracks {sec} of your territory")
-            }
-        });
+    let axis = by_sector.into_iter().max_by_key(|(_, n)| *n).map(|(sec, n)| {
+        if n == 1 {
+            format!("1 hostile track {sec} of your territory")
+        } else {
+            format!("{n} hostile tracks {sec} of your territory")
+        }
+    });
 
     // No tracks at all and no friendly datalink either means the radar net is
     // simply not reporting -- say so rather than implying a clean sky.
@@ -799,14 +817,11 @@ where
     // How many of our own objectives each hub is the closest supply source for.
     let mut feeding: HashMap<ObjectiveId, u32> = HashMap::new();
     for (_, o) in db.objectives().filter(|(_, o)| o.owner() == side) {
-        if let Some((oid, _)) = hub_positions
-            .iter()
-            .min_by(|a, b| {
-                let da = (a.1.x - o.pos().x).powi(2) + (a.1.y - o.pos().y).powi(2);
-                let dbb = (b.1.x - o.pos().x).powi(2) + (b.1.y - o.pos().y).powi(2);
-                da.total_cmp(&dbb)
-            })
-        {
+        if let Some((oid, _)) = hub_positions.iter().min_by(|a, b| {
+            let da = (a.1.x - o.pos().x).powi(2) + (a.1.y - o.pos().y).powi(2);
+            let dbb = (b.1.x - o.pos().x).powi(2) + (b.1.y - o.pos().y).powi(2);
+            da.total_cmp(&dbb)
+        }) {
             *feeding.entry(*oid).or_insert(0) += 1;
         }
     }
@@ -881,8 +896,8 @@ fn build_support<F>(ctx: &Context, side: Side, to_ll: &F) -> Vec<SupportStation>
 where
     F: Fn(Vector2) -> (f64, f64),
 {
-    use bfprotocols::cfg::{ActionKind, AwacsCfg};
     use crate::db::group::DeployKind;
+    use bfprotocols::cfg::{ActionKind, AwacsCfg};
 
     let db = &ctx.db;
     let mut out = vec![];
@@ -928,10 +943,8 @@ where
     }
     for j in ctx.jtac.jtacs().filter(|j| j.side() == side) {
         let loc = j.location();
-        let near = db
-            .objective(&loc.oid)
-            .map(|o| o.name().to_string())
-            .unwrap_or_default();
+        let near =
+            db.objective(&loc.oid).map(|o| o.name().to_string()).unwrap_or_default();
         out.push(SupportStation {
             label: format!("JTAC {}", j.gid()),
             kind: String::from("JTAC"),
@@ -998,9 +1011,7 @@ fn build_comms(
             };
             // The live radio wins over the planned one -- a pilot tuning the
             // card has to reach the aircraft that is actually up there.
-            let freq_mhz = live_asset
-                .and_then(|a| a.freq_mhz)
-                .unwrap_or(c.freq_mhz);
+            let freq_mhz = live_asset.and_then(|a| a.freq_mhz).unwrap_or(c.freq_mhz);
             let note = live_asset.map(|a| match (&a.tacan, &a.note) {
                 (Some(t), Some(n)) => format!("{} -- TACAN {t}, {n}", a.label),
                 (Some(t), None) => format!("{} -- TACAN {t}", a.label),
@@ -1072,10 +1083,7 @@ fn build_weather(lua: MizLua) -> Option<SituationWeather> {
 }
 
 fn mission_time(lua: MizLua) -> Option<String> {
-    let t = dcso3::timer::Timer::singleton(lua)
-        .ok()?
-        .get_abs_time()
-        .ok()?;
+    let t = dcso3::timer::Timer::singleton(lua).ok()?.get_abs_time().ok()?;
     let secs = (t.0 as f64).rem_euclid(86_400.0) as u32;
     Some(format!("{:02}:{:02}", secs / 3600, (secs % 3600) / 60))
 }
@@ -1086,7 +1094,12 @@ fn mission_time(lua: MizLua) -> Option<String> {
 /// its own, so this is derived from the objectives themselves: anything that
 /// changed state in the last hour and is worth a line. `bfdb` extends this
 /// from its persisted capture log when it serves the dashboard.
-fn build_recent<F>(ctx: &Context, side: Side, now: DateTime<Utc>, to_ll: &F) -> Vec<SituationEvent>
+fn build_recent<F>(
+    ctx: &Context,
+    side: Side,
+    now: DateTime<Utc>,
+    to_ll: &F,
+) -> Vec<SituationEvent>
 where
     F: Fn(Vector2) -> (f64, f64),
 {
@@ -1244,7 +1257,13 @@ fn air_tasks(air: &AirPicture) -> Vec<Task> {
         title: format!("INTERCEPT inbound near {}", t.near),
         detail: format!(
             "{} track {:.0}nm off {} on a bearing of {:03}\u{b0}, {} ft, {} kt, heading {:03}\u{b0}. {} hostile track(s) on the net.",
-            t.class, t.range_nm, t.near, t.bearing_deg, t.alt_ft, t.speed_kts, t.heading,
+            t.class,
+            t.range_nm,
+            t.near,
+            t.bearing_deg,
+            t.alt_ft,
+            t.speed_kts,
+            t.heading,
             air.hostile_tracks,
         ),
         success: Some(String::from("push the raid off your territory or kill it")),
@@ -1287,7 +1306,9 @@ where
     let target = db
         .objectives()
         .filter(|(_, o)| {
-            o.owner() == side.opposite() && is_primary(o.kind()) && !o.kind().is_carrier_group()
+            o.owner() == side.opposite()
+                && is_primary(o.kind())
+                && !o.kind().is_carrier_group()
         })
         .map(|(_, o)| {
             let d = mine
@@ -1345,7 +1366,11 @@ fn build_headline(
     let _ = write!(
         s,
         "{side:?} is {trend}: {} objectives ({} primary) against {} ({} primary), {:.0}% of contested ground.",
-        p.friendly_objectives, p.friendly_primary, p.enemy_objectives, p.enemy_primary, p.territory_pct,
+        p.friendly_objectives,
+        p.friendly_primary,
+        p.enemy_objectives,
+        p.enemy_primary,
+        p.territory_pct,
     );
     let being_taken: Vec<&Hotspot> = hotspots
         .iter()
@@ -1356,7 +1381,8 @@ fn build_headline(
         .filter(|h| h.owner == side && (h.captureable || h.threatened))
         .count();
     if !being_taken.is_empty() {
-        let names: Vec<&str> = being_taken.iter().map(|h| h.objective.as_str()).take(3).collect();
+        let names: Vec<&str> =
+            being_taken.iter().map(|h| h.objective.as_str()).take(3).collect();
         let _ = write!(
             s,
             " A capture timer is running at {} right now -- that is the sortie.",
@@ -1369,10 +1395,8 @@ fn build_headline(
             if at_risk == 1 { "is" } else { "are" }
         );
     } else {
-        let takeable = hotspots
-            .iter()
-            .filter(|h| h.owner != side && h.captureable)
-            .count();
+        let takeable =
+            hotspots.iter().filter(|h| h.owner != side && h.captureable).count();
         if takeable > 0 {
             let _ = write!(
                 s,
@@ -1410,7 +1434,11 @@ fn task_line(t: &Task) -> CompactString {
 
 /// The condensed slot-entry panel: where the round stands, what is on fire,
 /// and the first few tasks. Anything longer belongs on the F10 pages.
-pub(crate) fn render_panel(rep: &SituationReport, panel_tasks: usize, note: Option<&str>) -> String {
+pub(crate) fn render_panel(
+    rep: &SituationReport,
+    panel_tasks: usize,
+    note: Option<&str>,
+) -> String {
     let mut s = String::new();
     let _ = write!(
         s,
@@ -1449,11 +1477,7 @@ pub(crate) fn render_panel(rep: &SituationReport, panel_tasks: usize, note: Opti
         );
     }
     if let Some(gci) = rep.comms.iter().find(|c| c.live || c.preset == Some(1)) {
-        let _ = write!(
-            s,
-            "\n{} -- {:.3} {}\n",
-            gci.label, gci.freq_mhz, gci.modulation
-        );
+        let _ = write!(s, "\n{} -- {:.3} {}\n", gci.label, gci.freq_mhz, gci.modulation);
     }
     if let Some(n) = note {
         let _ = write!(s, "{n}\n");
@@ -1463,14 +1487,8 @@ pub(crate) fn render_panel(rep: &SituationReport, panel_tasks: usize, note: Opti
 
 /// Page titles for the F10 report, in order. Kept next to [`render_pages`] so
 /// the menu can label its Next/Prev without rendering anything.
-pub(crate) const PAGES: [&str; 6] = [
-    "Overview",
-    "Tasking",
-    "Hotspots",
-    "Threats & Air",
-    "Logistics",
-    "Comms",
-];
+pub(crate) const PAGES: [&str; 6] =
+    ["Overview", "Tasking", "Hotspots", "Threats & Air", "Logistics", "Comms"];
 
 /// The full report, one string per page. Page count matches [`PAGES`].
 pub(crate) fn render_pages(rep: &SituationReport) -> Vec<String> {
@@ -1552,13 +1570,7 @@ pub(crate) fn render_pages(rep: &SituationReport) -> Vec<String> {
             let _ = write!(
                 s,
                 "{} [{}] {:?} -- HP {}% L {}% S {}%\n  {}\n",
-                h.objective,
-                h.kind,
-                h.owner,
-                h.health,
-                h.logi,
-                h.supply,
-                h.status
+                h.objective, h.kind, h.owner, h.health, h.logi, h.supply, h.status
             );
             if let Some(r) = h.repair_outlook.as_ref() {
                 let _ = write!(s, "  {r}\n");
@@ -1706,11 +1718,15 @@ fn assign_paid_task(
     // the enemy's air defence.
     let rookie = ctx.db.is_rookie(&ucid);
     let fits = |t: &&bfprotocols::situation::Task| {
-        let ground_job = matches!(t.kind, TaskKind::Logistics | TaskKind::Csar | TaskKind::Capture);
+        let ground_job =
+            matches!(t.kind, TaskKind::Logistics | TaskKind::Csar | TaskKind::Capture);
         ground_job == cargo_airframe
     };
     let safe = |t: &&bfprotocols::situation::Task| {
-        matches!(t.kind, TaskKind::Logistics | TaskKind::Recon | TaskKind::Defend | TaskKind::Csar)
+        matches!(
+            t.kind,
+            TaskKind::Logistics | TaskKind::Recon | TaskKind::Defend | TaskKind::Csar
+        )
     };
     let task = rookie
         .then(|| rep.tasking.iter().filter(fits).find(safe))
@@ -1719,13 +1735,19 @@ fn assign_paid_task(
     let pos = task
         .objective
         .as_ref()
-        .and_then(|n| ctx.db.persisted.objectives_by_name.get(&dcso3::String::from(n.as_str())))
+        .and_then(|n| {
+            ctx.db.persisted.objectives_by_name.get(&dcso3::String::from(n.as_str()))
+        })
         .and_then(|oid| ctx.db.persisted.objectives.get(oid))
         .map(|o| o.pos())
         .or_else(|| {
             let c = dcso3::coord::Coord::singleton(lua).ok()?;
             let p = c
-                .ll_to_lo(dcso3::coord::LLPos { latitude: task.lat, longitude: task.lon, altitude: 0. })
+                .ll_to_lo(dcso3::coord::LLPos {
+                    latitude: task.lat,
+                    longitude: task.lon,
+                    altitude: 0.,
+                })
                 .ok()?;
             Some(Vector2::new(p.0.x, p.0.z))
         })?;
@@ -1750,7 +1772,11 @@ NEW PILOT: this is a safer task to start with. F10 > Info > Help > Getting Start
     Some(line)
 }
 
-pub(crate) fn schedule_slot_briefing(lua: MizLua, ctx: &Context, slot: dcso3::net::SlotId) -> anyhow::Result<()> {
+pub(crate) fn schedule_slot_briefing(
+    lua: MizLua,
+    ctx: &Context,
+    slot: dcso3::net::SlotId,
+) -> anyhow::Result<()> {
     use dcso3::timer::Timer;
     let Some(cfg) = ctx.db.ephemeral.cfg.situation_briefing.clone() else {
         return Ok(());
@@ -1766,7 +1792,11 @@ pub(crate) fn schedule_slot_briefing(lua: MizLua, ctx: &Context, slot: dcso3::ne
     Ok(())
 }
 
-fn slot_briefing(lua: MizLua, ctx: &mut Context, slot: dcso3::net::SlotId) -> anyhow::Result<()> {
+fn slot_briefing(
+    lua: MizLua,
+    ctx: &mut Context,
+    slot: dcso3::net::SlotId,
+) -> anyhow::Result<()> {
     // The player may have jumped back to spectator in the meantime.
     let Some(si) = ctx.db.ephemeral.get_slot_info(&slot) else {
         return Ok(());
@@ -1779,21 +1809,15 @@ fn slot_briefing(lua: MizLua, ctx: &mut Context, slot: dcso3::net::SlotId) -> an
         Some(c) => c.clone(),
         None => return Ok(()),
     };
-    let mut text = render_panel(
-        &rep,
-        cfg.panel_tasks,
-        cfg.note.as_ref().map(|n| n.as_str()),
-    );
+    let mut text =
+        render_panel(&rep, cfg.panel_tasks, cfg.note.as_ref().map(|n| n.as_str()));
     if let Some(line) = task_line {
         text.push('\n');
         text.push_str(&line);
     }
     text.push('\n');
     text.push_str(ctx.db.persisted.war_effort.briefing_line(side).as_str());
-    ctx.db
-        .ephemeral
-        .msgs()
-        .panel_to_group(cfg.display_secs, false, miz_gid, text);
+    ctx.db.ephemeral.msgs().panel_to_group(cfg.display_secs, false, miz_gid, text);
     Ok(())
 }
 

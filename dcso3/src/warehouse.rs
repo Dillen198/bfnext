@@ -12,9 +12,7 @@ FITNESS FOR A PARTICULAR PURPOSE.
 */
 
 use super::as_tbl;
-use crate::{
-    airbase::Airbase, lua_err, wrapped_table, LuaEnv, MizLua, String,
-};
+use crate::{airbase::Airbase, lua_err, wrapped_table, LuaEnv, MizLua, String};
 use anyhow::Result;
 use mlua::{prelude::*, Value};
 use serde_derive::Serialize;
@@ -33,9 +31,7 @@ impl ItemInventory {
     }
 
     pub fn for_each<F: FnMut(String, u32) -> Result<()>>(&self, mut f: F) -> Result<()> {
-        Ok(self
-            .t
-            .for_each(|k, v: f64| f(k, count_to_u32(v)).map_err(lua_err))?)
+        Ok(self.t.for_each(|k, v: f64| f(k, count_to_u32(v)).map_err(lua_err))?)
     }
 }
 
@@ -46,10 +42,11 @@ impl LiquidInventory {
         Ok(count_to_u32(self.t.raw_get(name)?))
     }
 
-    pub fn for_each<F: FnMut(LiquidType, u32) -> Result<()>>(&self, mut f: F) -> Result<()> {
-        Ok(self
-            .t
-            .for_each(|k, v: f64| f(k, count_to_u32(v)).map_err(lua_err))?)
+    pub fn for_each<F: FnMut(LiquidType, u32) -> Result<()>>(
+        &self,
+        mut f: F,
+    ) -> Result<()> {
+        Ok(self.t.for_each(|k, v: f64| f(k, count_to_u32(v)).map_err(lua_err))?)
     }
 }
 
@@ -69,7 +66,9 @@ impl Inventory {
     }
 
     pub fn is_unlimited(&self) -> Result<bool> {
-        Ok(self.weapons()?.is_empty() && self.aircraft()?.is_empty() && self.liquids()?.is_empty())
+        Ok(self.weapons()?.is_empty()
+            && self.aircraft()?.is_empty()
+            && self.liquids()?.is_empty())
     }
 }
 
@@ -153,23 +152,33 @@ impl WSCategory {
     pub fn is_weapon(&self) -> bool {
         match self {
             Self::Weapons => true,
-            Self::Aircraft(_) | Self::None | Self::Ships | Self::Vehicles | Self::Other(_) => false,
+            Self::Aircraft(_)
+            | Self::None
+            | Self::Ships
+            | Self::Vehicles
+            | Self::Other(_) => false,
         }
     }
 
     pub fn is_vehicle(&self) -> bool {
         match self {
             Self::Vehicles => true,
-            Self::Aircraft(_) | Self::None | Self::Ships | Self::Weapons | Self::Other(_) => false,
+            Self::Aircraft(_)
+            | Self::None
+            | Self::Ships
+            | Self::Weapons
+            | Self::Other(_) => false,
         }
     }
 
     pub fn is_ship(&self) -> bool {
         match self {
             Self::Ships => true,
-            Self::Aircraft(_) | Self::None | Self::Weapons | Self::Vehicles | Self::Other(_) => {
-                false
-            }
+            Self::Aircraft(_)
+            | Self::None
+            | Self::Weapons
+            | Self::Vehicles
+            | Self::Other(_) => false,
         }
     }
 }
@@ -192,18 +201,19 @@ impl WSType {
             0 => Ok(WSCategory::None),
             1 => match self.t.raw_get(2)? {
                 0 => Ok(WSCategory::Aircraft(WSAircraftCategory::None)),
-                1 => Ok(WSCategory::Aircraft(WSAircraftCategory::FixedWing(
-                    match self.t.raw_get(3)? {
-                        0 => WSFixedWingCategory::None,
-                        1 => WSFixedWingCategory::Fighters,
-                        2 => WSFixedWingCategory::FastBombers,
-                        3 => WSFixedWingCategory::Interceptors,
-                        4 => WSFixedWingCategory::Bombers,
-                        5 => WSFixedWingCategory::MiscSupport,
-                        6 => WSFixedWingCategory::Attack,
-                        n => WSFixedWingCategory::Other(n),
-                    },
-                ))),
+                1 => Ok(WSCategory::Aircraft(WSAircraftCategory::FixedWing(match self
+                    .t
+                    .raw_get(3)?
+                {
+                    0 => WSFixedWingCategory::None,
+                    1 => WSFixedWingCategory::Fighters,
+                    2 => WSFixedWingCategory::FastBombers,
+                    3 => WSFixedWingCategory::Interceptors,
+                    4 => WSFixedWingCategory::Bombers,
+                    5 => WSFixedWingCategory::MiscSupport,
+                    6 => WSFixedWingCategory::Attack,
+                    n => WSFixedWingCategory::Other(n),
+                }))),
                 2 => Ok(WSCategory::Aircraft(WSAircraftCategory::Helicopters)),
                 3 => Ok(WSCategory::Aircraft(WSAircraftCategory::Droptank)),
                 n => Ok(WSCategory::Aircraft(WSAircraftCategory::Other(n))),
@@ -219,7 +229,10 @@ impl WSType {
 wrapped_table!(ResourceMap, None);
 
 impl ResourceMap {
-    pub fn for_each<F: FnMut(String, WSType) -> Result<()>>(&self, mut f: F) -> Result<()> {
+    pub fn for_each<F: FnMut(String, WSType) -> Result<()>>(
+        &self,
+        mut f: F,
+    ) -> Result<()> {
         Ok(self.t.for_each(|k, v| f(k, v).map_err(lua_err))?)
     }
 }
@@ -294,9 +307,7 @@ impl Warehouse {
     }
 
     pub fn add_item<T: Into<WarehouseItem>>(&self, item: T, count: u32) -> Result<()> {
-        Ok(self
-            .t
-            .call_method("addItem", (Into::<WarehouseItem>::into(item), count))?)
+        Ok(self.t.call_method("addItem", (Into::<WarehouseItem>::into(item), count))?)
     }
 
     pub fn remove_item<T: Into<WarehouseItem>>(&self, item: T, count: u32) -> Result<()> {
@@ -306,15 +317,12 @@ impl Warehouse {
     }
 
     pub fn set_item<T: Into<WarehouseItem>>(&self, item: T, count: u32) -> Result<()> {
-        Ok(self
-            .t
-            .call_method("setItem", (Into::<WarehouseItem>::into(item), count))?)
+        Ok(self.t.call_method("setItem", (Into::<WarehouseItem>::into(item), count))?)
     }
 
     pub fn get_item_count<T: Into<WarehouseItem>>(&self, item: T) -> Result<u32> {
-        let n: f64 = self
-            .t
-            .call_method("getItemCount", Into::<WarehouseItem>::into(item))?;
+        let n: f64 =
+            self.t.call_method("getItemCount", Into::<WarehouseItem>::into(item))?;
         Ok(count_to_u32(n))
     }
 

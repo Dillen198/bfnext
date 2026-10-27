@@ -24,7 +24,8 @@ use warp::{ws::Message, Filter, Reply};
 
 /// The engine procedures the voice services and the HQ strategist call --
 /// all a worker may ask bfdb to call for it.
-const WORKER_PROCS: &[&str] = &["query-gci", "query-atc", "query-range", "range-atc", "query-hq", "hq-directive"];
+const WORKER_PROCS: &[&str] =
+    &["query-gci", "query-atc", "query-range", "range-atc", "query-hq", "hq-directive"];
 
 pub(crate) struct Hub {
     secret: String,
@@ -49,9 +50,15 @@ pub(crate) fn hub() -> Option<&'static Arc<Hub>> {
 }
 
 /// Start the worker listener on `listen`.
-pub(crate) fn start(listen: SocketAddr, secret: String, db: StatsDb, gci: GciMap) -> anyhow::Result<()> {
+pub(crate) fn start(
+    listen: SocketAddr,
+    secret: String,
+    db: StatsDb,
+    gci: GciMap,
+) -> anyhow::Result<()> {
     let hub = Hub::new(secret, db, gci);
-    HUB.set(hub.clone()).map_err(|_| anyhow::anyhow!("the worker hub was started twice"))?;
+    HUB.set(hub.clone())
+        .map_err(|_| anyhow::anyhow!("the worker hub was started twice"))?;
     let route = routes(hub);
     log::info!("worker link listening on ws://{listen}/internal/worker (loopback callers with the secret only)");
     tokio::spawn(async move {
@@ -70,12 +77,21 @@ fn routes(hub: Arc<Hub>) -> warp::filters::BoxedFilter<(warp::reply::Response,)>
         .and(warp::ws())
         .map(move |peer: Option<SocketAddr>, auth: Option<String>, ws: warp::ws::Ws| {
             if !peer.map_or(false, |p| p.ip().is_loopback()) {
-                return websec::ws_refused(warp::http::StatusCode::FORBIDDEN, "loopback only");
+                return websec::ws_refused(
+                    warp::http::StatusCode::FORBIDDEN,
+                    "loopback only",
+                );
             }
-            let token = auth.as_deref().and_then(|a| a.strip_prefix("Bearer ")).unwrap_or("");
+            let token =
+                auth.as_deref().and_then(|a| a.strip_prefix("Bearer ")).unwrap_or("");
             if !websec::ct_eq(token, &hub.secret) {
-                log::warn!("worker link: refused a connection with a wrong or missing secret");
-                return websec::ws_refused(warp::http::StatusCode::UNAUTHORIZED, "bad worker secret");
+                log::warn!(
+                    "worker link: refused a connection with a wrong or missing secret"
+                );
+                return websec::ws_refused(
+                    warp::http::StatusCode::UNAUTHORIZED,
+                    "bad worker secret",
+                );
             }
             let hub = hub.clone();
             ws.max_message_size(32 << 20)
@@ -115,7 +131,11 @@ impl Hub {
     }
 
     /// Ask the worker.
-    async fn request(&self, op: Op, timeout: Duration) -> Result<serde_json::Value, RemoteErr> {
+    async fn request(
+        &self,
+        op: Op,
+        timeout: Duration,
+    ) -> Result<serde_json::Value, RemoteErr> {
         match self.peer() {
             Some(p) => p.call(|id| Msg::Req { id, op }, timeout).await,
             None => Err(RemoteErr::link("the voice worker is not connected")),
@@ -124,11 +144,16 @@ impl Hub {
 
     async fn serve(self: Arc<Self>, ws: warp::ws::WebSocket) {
         let (mut sink, mut stream) = ws.split();
-        let hello = match tokio::time::timeout(Duration::from_secs(10), stream.next()).await {
-            Ok(Some(Ok(m))) if m.is_text() => serde_json::from_str::<Msg>(m.to_str().unwrap_or_default()).ok(),
-            _ => None,
-        };
-        let Some(Msg::Hello { protocol, version, instances, news_writer, news_draw }) = hello else {
+        let hello =
+            match tokio::time::timeout(Duration::from_secs(10), stream.next()).await {
+                Ok(Some(Ok(m))) if m.is_text() => {
+                    serde_json::from_str::<Msg>(m.to_str().unwrap_or_default()).ok()
+                }
+                _ => None,
+            };
+        let Some(Msg::Hello { protocol, version, instances, news_writer, news_draw }) =
+            hello
+        else {
             log::warn!("worker link: the peer sent no hello -- closing");
             return;
         };
@@ -140,8 +165,10 @@ impl Hub {
             let _ = sink.send(Message::close_with(1008u16, "protocol mismatch")).await;
             return;
         }
-        let known: Vec<String> = self.db.instances().all().iter().map(|c| c.id.clone()).collect();
-        let strangers: Vec<&String> = instances.iter().filter(|i| !known.contains(i)).collect();
+        let known: Vec<String> =
+            self.db.instances().all().iter().map(|c| c.id.clone()).collect();
+        let strangers: Vec<&String> =
+            instances.iter().filter(|i| !known.contains(i)).collect();
         if !strangers.is_empty() {
             log::warn!("worker link: the worker runs instances this bfdb does not know: {strangers:?} -- check both read the same --instances");
         }
@@ -160,7 +187,10 @@ impl Hub {
             log::info!("worker link: replacing the previous worker connection");
             old.fail_all();
         }
-        peer.send(&Msg::Welcome { protocol: PROTOCOL, version: crate::BUILD_VERSION.to_string() });
+        peer.send(&Msg::Welcome {
+            protocol: PROTOCOL,
+            version: crate::BUILD_VERSION.to_string(),
+        });
         let writer = tokio::spawn(async move {
             while let Some(f) = out.recv().await {
                 let m = match f {
@@ -173,14 +203,20 @@ impl Hub {
             }
             let _ = sink.close().await;
         });
-        let still_current = |hub: &Hub| hub.current.lock().unwrap().as_ref().map_or(false, |(n, _)| *n == me);
+        let still_current = |hub: &Hub| {
+            hub.current.lock().unwrap().as_ref().map_or(false, |(n, _)| *n == me)
+        };
         loop {
             // A silent link is a dead one: the worker pings every 20 s.
-            let m = match tokio::time::timeout(Duration::from_secs(90), stream.next()).await {
+            let m = match tokio::time::timeout(Duration::from_secs(90), stream.next())
+                .await
+            {
                 Ok(Some(Ok(m))) => m,
                 Ok(_) => break,
                 Err(_) => {
-                    log::warn!("worker link: nothing from the worker for 90s -- dropping it");
+                    log::warn!(
+                        "worker link: nothing from the worker for 90s -- dropping it"
+                    );
                     break;
                 }
             };
@@ -191,8 +227,15 @@ impl Hub {
                 break;
             }
             if m.is_binary() {
-                if let Some((inst, station, pcm)) = link::parse_audio_frame(m.as_bytes()) {
-                    crate::milatc::live::inject(&inst, crate::milatc::live::Frame::Audio { station: station.into(), pcm });
+                if let Some((inst, station, pcm)) = link::parse_audio_frame(m.as_bytes())
+                {
+                    crate::milatc::live::inject(
+                        &inst,
+                        crate::milatc::live::Frame::Audio {
+                            station: station.into(),
+                            pcm,
+                        },
+                    );
                 }
                 continue;
             }
@@ -244,11 +287,16 @@ impl Hub {
             }
             Msg::LiveOn { inst, station, who, text } => crate::milatc::live::inject(
                 &inst,
-                crate::milatc::live::Frame::On { station: station.into(), who: who.into(), text: text.into() },
+                crate::milatc::live::Frame::On {
+                    station: station.into(),
+                    who: who.into(),
+                    text: text.into(),
+                },
             ),
-            Msg::LiveOff { inst, station } => {
-                crate::milatc::live::inject(&inst, crate::milatc::live::Frame::Off { station: station.into() })
-            }
+            Msg::LiveOff { inst, station } => crate::milatc::live::inject(
+                &inst,
+                crate::milatc::live::Frame::Off { station: station.into() },
+            ),
             Msg::Reply { id, ok, err } => peer.resolve(id, ok, err),
             Msg::Hello { .. } | Msg::Welcome { .. } | Msg::Req { .. } => {
                 log::debug!("worker link: ignoring a message the worker should not send")
@@ -266,19 +314,30 @@ impl Hub {
         optional: bool,
     ) -> Result<serde_json::Value, RemoteErr> {
         if !WORKER_PROCS.contains(&proc_name) {
-            return Err(RemoteErr::new(403, format!("the worker may not call {proc_name}")));
+            return Err(RemoteErr::new(
+                403,
+                format!("the worker may not call {proc_name}"),
+            ));
         }
         if !self.db.instances().all().iter().any(|c| c.id == inst) {
             return Err(RemoteErr::new(400, format!("unknown instance {inst:?}")));
         }
         let st = self.db.state(&Arc::from(inst));
-        let args: Vec<(&str, Value)> = args.iter().map(|(k, v)| (k.as_str(), Value::from(v.clone()))).collect();
+        let args: Vec<(&str, Value)> =
+            args.iter().map(|(k, v)| (k.as_str(), Value::from(v.clone()))).collect();
         if optional {
-            match tokio::time::timeout(Duration::from_secs(15), self.db.call_engine_rpc_optional(&st, proc_name, args)).await {
+            match tokio::time::timeout(
+                Duration::from_secs(15),
+                self.db.call_engine_rpc_optional(&st, proc_name, args),
+            )
+            .await
+            {
                 Ok(Ok(Value::String(s))) => Ok(serde_json::Value::String(s.to_string())),
                 // the engine's own refusal, kept apart (EngineHost::rpc_optional)
                 Ok(Ok(Value::Error(e))) => Err(RemoteErr::new(422, e.to_string())),
-                Ok(Ok(other)) => Err(RemoteErr::new(0, format!("unexpected RPC reply: {other:?}"))),
+                Ok(Ok(other)) => {
+                    Err(RemoteErr::new(0, format!("unexpected RPC reply: {other:?}")))
+                }
                 Ok(Err(e)) => Err(RemoteErr::new(0, format!("{e:#}"))),
                 Err(_) => Err(RemoteErr::new(0, format!("{proc_name} timed out"))),
             }
@@ -294,15 +353,26 @@ impl Hub {
 // ── What routes and tasks call ──────────────────────────────────────────────
 
 /// A dashboard controller's GCI transmission (`gci::human_call`).
-pub(crate) async fn gci_transmit(inst: &str, side: dcso3::coalition::Side, text: &str) -> Result<(), String> {
+pub(crate) async fn gci_transmit(
+    inst: &str,
+    side: dcso3::coalition::Side,
+    text: &str,
+) -> Result<(), String> {
     match hub() {
         None => crate::gci::human_call(inst, side, text).map_err(str::to_string),
         Some(h) => {
             let side = if side == dcso3::coalition::Side::Red { "red" } else { "blue" };
-            h.request(Op::GciTransmit { inst: inst.into(), side: side.into(), text: text.into() }, Duration::from_secs(5))
-                .await
-                .map(|_| ())
-                .map_err(|e| e.msg)
+            h.request(
+                Op::GciTransmit {
+                    inst: inst.into(),
+                    side: side.into(),
+                    text: text.into(),
+                },
+                Duration::from_secs(5),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|e| e.msg)
         }
     }
 }
@@ -312,7 +382,13 @@ pub(crate) async fn gci_transmit(inst: &str, side: dcso3::coalition::Side, text:
 pub(crate) async fn atc_transcript(inst: &str, since: i64) -> serde_json::Value {
     match hub() {
         None => crate::milatc::transcript_json(inst, since),
-        Some(h) => match h.request(Op::AtcTranscript { inst: inst.into(), since }, Duration::from_secs(5)).await {
+        Some(h) => match h
+            .request(
+                Op::AtcTranscript { inst: inst.into(), since },
+                Duration::from_secs(5),
+            )
+            .await
+        {
             Ok(v) => v,
             Err(e) => {
                 log::debug!("range ATC transcript from the worker: {e}");
@@ -328,8 +404,13 @@ pub(crate) async fn atc_audio(inst: &str, id: u64) -> Option<Arc<Vec<u8>>> {
     match hub() {
         None => crate::milatc::audio_wav(inst, id),
         Some(h) => {
-            let v = h.request(Op::AtcAudio { inst: inst.into(), id }, Duration::from_secs(10)).await.ok()?;
-            let b = base64::engine::general_purpose::STANDARD.decode(v.get("wav")?.as_str()?).ok()?;
+            let v = h
+                .request(Op::AtcAudio { inst: inst.into(), id }, Duration::from_secs(10))
+                .await
+                .ok()?;
+            let b = base64::engine::general_purpose::STANDARD
+                .decode(v.get("wav")?.as_str()?)
+                .ok()?;
             Some(Arc::new(b))
         }
     }
@@ -338,7 +419,9 @@ pub(crate) async fn atc_audio(inst: &str, id: u64) -> Option<Arc<Vec<u8>>> {
 /// Run a request from blocking code (the diary's pass runs under
 /// `block_in_place`, the picture route under `spawn_blocking`).
 fn blocking_request(op: Op, timeout: Duration) -> Result<serde_json::Value, RemoteErr> {
-    let Some(h) = hub() else { return Err(RemoteErr::link("not in external worker mode")) };
+    let Some(h) = hub() else {
+        return Err(RemoteErr::link("not in external worker mode"));
+    };
     tokio::runtime::Handle::current().block_on(h.request(op, timeout))
 }
 
@@ -352,7 +435,9 @@ pub(crate) fn news_write(
     match blocking_request(op, Duration::from_secs(180)) {
         Ok(v) => Ok(serde_json::from_value(v)?),
         Err(e) if e.rate_limited => {
-            let backoff = crate::news_llm::note_rate_limited(e.retry_secs.map(Duration::from_secs_f64));
+            let backoff = crate::news_llm::note_rate_limited(
+                e.retry_secs.map(Duration::from_secs_f64),
+            );
             Err(anyhow::Error::new(crate::news_llm::RateLimited { backoff, body: e.msg }))
         }
         Err(e) => Err(anyhow::anyhow!("worker: {}", e.msg)),
@@ -360,20 +445,34 @@ pub(crate) fn news_write(
 }
 
 /// One diary picture from the worker's provider: (bytes, who drew it).
-pub(crate) fn news_draw(prompt: &str) -> Result<(Vec<u8>, String), crate::news_image::GenError> {
+pub(crate) fn news_draw(
+    prompt: &str,
+) -> Result<(Vec<u8>, String), crate::news_image::GenError> {
     use base64::Engine as _;
-    let fail = |msg: String, billed: bool, rate_limited: bool| crate::news_image::GenError { msg, billed, rate_limited };
+    let fail = |msg: String, billed: bool, rate_limited: bool| {
+        crate::news_image::GenError { msg, billed, rate_limited }
+    };
     if !hub().map_or(false, |h| h.draws.load(Ordering::Relaxed)) {
-        return Err(fail("the worker has no picture provider (or is not connected)".into(), false, false));
+        return Err(fail(
+            "the worker has no picture provider (or is not connected)".into(),
+            false,
+            false,
+        ));
     }
-    match blocking_request(Op::NewsDraw { prompt: prompt.into() }, Duration::from_secs(240)) {
+    match blocking_request(
+        Op::NewsDraw { prompt: prompt.into() },
+        Duration::from_secs(240),
+    ) {
         Ok(v) => {
             let bytes = v
                 .get("b64")
                 .and_then(|b| b.as_str())
                 .and_then(|b| base64::engine::general_purpose::STANDARD.decode(b).ok())
                 .ok_or_else(|| fail("the worker sent no picture".into(), true, false))?;
-            Ok((bytes, v.get("by").and_then(|b| b.as_str()).unwrap_or_default().to_string()))
+            Ok((
+                bytes,
+                v.get("by").and_then(|b| b.as_str()).unwrap_or_default().to_string(),
+            ))
         }
         Err(e) => Err(fail(format!("worker: {}", e.msg), e.billed, e.rate_limited)),
     }
@@ -412,29 +511,57 @@ mod tests {
         let gci: GciMap = Arc::new([(id.clone(), fresh())].into_iter().collect());
         let hub = Hub::new("s3cret".into(), h.db.clone(), gci.clone());
         let l = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-        let url = format!("ws://127.0.0.1:{}/internal/worker", l.local_addr().unwrap().port());
+        let url =
+            format!("ws://127.0.0.1:{}/internal/worker", l.local_addr().unwrap().port());
         tokio::spawn(crate::serve::serve_on(l, routes(hub.clone()), None));
 
         // the wrong secret never gets a link
         let link = Arc::new(Link::default());
         let cfg = h.db.instances().all()[0].clone();
         let host = EngineHost::remote(cfg.clone(), false, link.clone());
-        let worker_gci: std::collections::HashMap<_, _> = [(id.clone(), fresh())].into_iter().collect();
+        let worker_gci: std::collections::HashMap<_, _> =
+            [(id.clone(), fresh())].into_iter().collect();
         let svc = client::test_services(vec![(host.clone(), None)], worker_gci.clone());
-        assert!(client::test_session(url.clone(), "wrong".into(), svc.clone(), link.clone()).await.is_err());
+        assert!(client::test_session(
+            url.clone(),
+            "wrong".into(),
+            svc.clone(),
+            link.clone()
+        )
+        .await
+        .is_err());
         assert!(hub.peer().is_none());
 
-        let session = tokio::spawn(client::test_session(url.clone(), "s3cret".into(), svc, link.clone()));
+        let session = tokio::spawn(client::test_session(
+            url.clone(),
+            "s3cret".into(),
+            svc,
+            link.clone(),
+        ));
         until(|| hub.peer().is_some()).await;
 
         // an engine call goes through bfdb: this instance is offline, so it
         // fails there with the typed error the local call gives
-        let e = host.rpc_str("query-gci", vec![("side", netidx::publisher::Value::from("blue"))]).await.unwrap_err();
-        assert_eq!(e.0.downcast_ref::<crate::websec::ApiError>().map(|a| a.status.as_u16()), Some(503), "{:#}", e.0);
+        let e = host
+            .rpc_str("query-gci", vec![("side", netidx::publisher::Value::from("blue"))])
+            .await
+            .unwrap_err();
+        assert_eq!(
+            e.0.downcast_ref::<crate::websec::ApiError>().map(|a| a.status.as_u16()),
+            Some(503),
+            "{:#}",
+            e.0
+        );
         // a procedure the services never call is refused outright
         let r = link
             .call(
-                |id| Msg::Rpc { id, inst: "default".into(), proc_name: "admin-reset".into(), args: vec![], optional: false },
+                |id| Msg::Rpc {
+                    id,
+                    inst: "default".into(),
+                    proc_name: "admin-reset".into(),
+                    args: vec![],
+                    optional: false,
+                },
                 Duration::from_secs(5),
             )
             .await;
@@ -445,14 +572,33 @@ mod tests {
         until(|| gci[&id].1.lock().unwrap().len() == 1).await;
 
         // bfdb's requests
-        let t = hub.request(Op::AtcTranscript { inst: "default".into(), since: 0 }, Duration::from_secs(5)).await.unwrap();
+        let t = hub
+            .request(
+                Op::AtcTranscript { inst: "default".into(), since: 0 },
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
         assert_eq!(t, serde_json::json!({ "stations": [], "lines": [] }));
         let e = hub
-            .request(Op::GciTransmit { inst: "default".into(), side: "blue".into(), text: "hi".into() }, Duration::from_secs(5))
+            .request(
+                Op::GciTransmit {
+                    inst: "default".into(),
+                    side: "blue".into(),
+                    text: "hi".into(),
+                },
+                Duration::from_secs(5),
+            )
             .await
             .unwrap_err();
-        assert_eq!((e.status, e.msg.as_str()), (400, "GCI voice is not running on this server"));
-        let e = hub.request(Op::NewsDraw { prompt: "x".into() }, Duration::from_secs(5)).await.unwrap_err();
+        assert_eq!(
+            (e.status, e.msg.as_str()),
+            (400, "GCI voice is not running on this server")
+        );
+        let e = hub
+            .request(Op::NewsDraw { prompt: "x".into() }, Duration::from_secs(5))
+            .await
+            .unwrap_err();
         assert!(e.msg.contains("no picture provider"), "{}", e.msg);
         session.abort();
     }

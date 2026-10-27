@@ -236,9 +236,9 @@ impl InstanceCfg {
     /// Where a range instance's engine writes its graded results: the
     /// configured `range_jsonl`, else `range.jsonl` beside `stats_jsonl`.
     pub(crate) fn range_jsonl_path(&self) -> Option<PathBuf> {
-        self.range_jsonl
-            .clone()
-            .or_else(|| self.stats_jsonl.as_ref().map(|p| p.with_file_name("range.jsonl")))
+        self.range_jsonl.clone().or_else(|| {
+            self.stats_jsonl.as_ref().map(|p| p.with_file_name("range.jsonl"))
+        })
     }
 }
 
@@ -275,11 +275,7 @@ impl Registry {
             if i.id.is_empty() {
                 bail!("an instance has an empty id");
             }
-            if !i
-                .id
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-            {
+            if !i.id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
                 bail!(
                     "instance id {:?} must be ASCII alphanumeric, '-' or '_' (it appears in URLs and DB keys)",
                     i.id
@@ -344,10 +340,7 @@ impl Registry {
     /// flags, so an existing deployment is untouched.
     pub(crate) fn single(cfg: InstanceCfg) -> Self {
         let default: InstanceId = Arc::from(cfg.id.as_str());
-        Self {
-            instances: vec![Arc::new(cfg)],
-            default,
-        }
+        Self { instances: vec![Arc::new(cfg)], default }
     }
 
     pub(crate) fn all(&self) -> &[Arc<InstanceCfg>] {
@@ -390,16 +383,14 @@ impl Registry {
             None => self
                 .get(&self.default)
                 .ok_or_else(|| anyhow::anyhow!("default instance missing")),
-            Some(id) => self
-                .get(id)
-                .ok_or_else(|| anyhow::anyhow!("unknown instance {id:?}")),
+            Some(id) => {
+                self.get(id).ok_or_else(|| anyhow::anyhow!("unknown instance {id:?}"))
+            }
         }
     }
 
     /// Find the instance that owns a DCSServerBot server name.
     pub(crate) fn by_dcs_server_name(&self, name: &str) -> Option<&Arc<InstanceCfg>> {
-        self.instances
-            .iter()
-            .find(|i| i.dcs_server_name.as_deref() == Some(name))
+        self.instances.iter().find(|i| i.dcs_server_name.as_deref() == Some(name))
     }
 }

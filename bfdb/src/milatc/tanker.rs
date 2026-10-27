@@ -124,7 +124,13 @@ impl Tanker {
         }
         let first = self.line.is_empty();
         let n = self.line.len() + 1;
-        self.line.push(Receiver { unit: a.id, call: call.clone(), stage: if first { Stage::Astern } else { Stage::Waiting }, since: now, plugged: false });
+        self.line.push(Receiver {
+            unit: a.id,
+            call: call.clone(),
+            stage: if first { Stage::Astern } else { Stage::Waiting },
+            since: now,
+            plugged: false,
+        });
         let track = format!(
             "{}, heading {}, {} knots",
             self.altitude(),
@@ -148,7 +154,11 @@ impl Tanker {
                 let t = format!(
                     "{}, {me}, cleared to depart{}",
                     r.call,
-                    self.mouth.pick(&[", thanks for the business.", ", good hunting.", ", see you next time."])
+                    self.mouth.pick(&[
+                        ", thanks for the business.",
+                        ", good hunting.",
+                        ", see you next time."
+                    ])
                 );
                 self.mouth.say(Pos::Tanker, None, &a, &r.call, &me, t, now, out);
             }
@@ -158,8 +168,10 @@ impl Tanker {
                     next.stage = Stage::Astern;
                     next.since = now;
                     let call = next.call.clone();
-                    if let Some(a) = self.air.iter().find(|a| a.id == next.unit).cloned() {
-                        let t = format!("{call}, {me}, cleared astern, cleared pre-contact.");
+                    if let Some(a) = self.air.iter().find(|a| a.id == next.unit).cloned()
+                    {
+                        let t =
+                            format!("{call}, {me}, cleared astern, cleared pre-contact.");
                         self.mouth.say(Pos::Tanker, None, &a, &call, &me, t, now, out);
                     }
                 }
@@ -174,7 +186,10 @@ impl Facility for Tanker {
     }
 
     fn radios(&self) -> Vec<(Pos, Vec<FreqSpec>)> {
-        vec![(Pos::Tanker, vec![FreqSpec { mhz: self.live.freq_mhz, modulation: None, label: None }])]
+        vec![(
+            Pos::Tanker,
+            vec![FreqSpec { mhz: self.live.freq_mhz, modulation: None, label: None }],
+        )]
     }
 
     fn facility(&self, _pos: Pos) -> String {
@@ -209,9 +224,16 @@ impl Facility for Tanker {
         let alive: Vec<u64> = self.air.iter().map(|a| a.id).collect();
         self.line.retain(|r| alive.contains(&r.unit));
 
-        if self.live.state == TankerState::Rtb && !self.rtb_said && !self.line.is_empty() {
+        if self.live.state == TankerState::Rtb && !self.rtb_said && !self.line.is_empty()
+        {
             self.rtb_said = true;
-            self.mouth.broadcast(Pos::Tanker, None, format!("All receivers, {me} is RTB, cleared to depart."), now, &mut out);
+            self.mouth.broadcast(
+                Pos::Tanker,
+                None,
+                format!("All receivers, {me} is RTB, cleared to depart."),
+                now,
+                &mut out,
+            );
             self.line.clear();
         }
 
@@ -219,11 +241,20 @@ impl Facility for Tanker {
         if let Some(r) = self.line.first().cloned() {
             if let Some(a) = self.air.iter().find(|a| a.id == r.unit).cloned() {
                 let (behind, side, below) = self.relative(&a);
-                let close = behind > 10. && behind < 250. && side.abs() < 60. && below.abs() < 300.;
+                let close = behind > 10.
+                    && behind < 250.
+                    && side.abs() < 60.
+                    && below.abs() < 300.;
                 let on = behind > 5. && behind < 90. && side.abs() < 25.;
-                if r.stage == Stage::Astern && close && (a.gs - self.live.speed_kts).abs() < 25. {
+                if r.stage == Stage::Astern
+                    && close
+                    && (a.gs - self.live.speed_kts).abs() < 25.
+                {
                     let t = if self.boom() {
-                        format!("{}, {me}, stabilized pre-contact, cleared contact.", r.call)
+                        format!(
+                            "{}, {me}, stabilized pre-contact, cleared contact.",
+                            r.call
+                        )
                     } else {
                         format!("{}, {me}, cleared to plug.", r.call)
                     };
@@ -241,7 +272,10 @@ impl Facility for Tanker {
                 // backed out well behind after taking fuel, or wandered off
                 let gone_far = behind.abs() > 2. * NM || side.abs() > NM;
                 let backed_off = r.plugged && behind > 800.;
-                if gone_far || backed_off || (r.stage == Stage::Contact && now - r.since > 20. * 60.) {
+                if gone_far
+                    || backed_off
+                    || (r.stage == Stage::Contact && now - r.since > 20. * 60.)
+                {
                     self.done(r.unit, &mut out);
                 }
             }
@@ -249,7 +283,12 @@ impl Facility for Tanker {
 
         // AI receivers on a tanker sortie ask to join when they are close.
         let mine = format!("tanker:{}", self.id);
-        let ai: Vec<Air> = self.air.iter().filter(|a| a.ai && a.ai_plan.as_deref() == Some(mine.as_str())).cloned().collect();
+        let ai: Vec<Air> = self
+            .air
+            .iter()
+            .filter(|a| a.ai && a.ai_plan.as_deref() == Some(mine.as_str()))
+            .cloned()
+            .collect();
         for a in ai {
             if self.ai_seen.contains(&a.id) || a.on_ground {
                 continue;
@@ -266,11 +305,21 @@ impl Facility for Tanker {
         out
     }
 
-    fn respond(&mut self, pos: Pos, who: &Caller, heard: &str, parsed: Option<Parsed>, now: f64) -> Vec<Tx> {
+    fn respond(
+        &mut self,
+        pos: Pos,
+        who: &Caller,
+        heard: &str,
+        parsed: Option<Parsed>,
+        now: f64,
+    ) -> Vec<Tx> {
         self.now = now;
         let mut out = vec![];
         let me = self.call.clone();
-        let Some(a) = super::facility::locate(&self.air, who, parsed.as_ref(), &self.calls.0).cloned() else {
+        let Some(a) =
+            super::facility::locate(&self.air, who, parsed.as_ref(), &self.calls.0)
+                .cloned()
+        else {
             return out;
         };
         self.calls.learn(&a, parsed.as_ref());
@@ -287,13 +336,19 @@ impl Facility for Tanker {
                 self.mouth.say(pos, None, &a, &call, &me, t, now, &mut out);
             }
             Some(Intent::RequestFuel) | Some(Intent::CheckIn) => self.join(&a, &mut out),
-            Some(Intent::FuelComplete) | Some(Intent::RequestFrequencyChange) => self.done(a.id, &mut out),
+            Some(Intent::FuelComplete) | Some(Intent::RequestFrequencyChange) => {
+                self.done(a.id, &mut out)
+            }
             _ => {}
         }
         out
     }
 
-    fn caller(&mut self, who: &Caller, parsed: Option<&Parsed>) -> (Option<String>, Option<String>) {
+    fn caller(
+        &mut self,
+        who: &Caller,
+        parsed: Option<&Parsed>,
+    ) -> (Option<String>, Option<String>) {
         match super::facility::locate(&self.air, who, parsed, &self.calls.0).cloned() {
             Some(a) => {
                 self.calls.learn(&a, parsed);
@@ -305,16 +360,27 @@ impl Facility for Tanker {
 
     fn llm_context(&mut self, _pos: Pos, who: &Caller, heard: &str) -> llm::Context {
         let a = super::facility::locate(&self.air, who, None, &self.calls.0);
-        let situation = match a.and_then(|a| self.line.iter().position(|r| r.unit == a.id)) {
-            Some(0) => "first in line to refuel from this tanker".into(),
-            Some(n) => format!("number {} in line to refuel from this tanker", n + 1),
-            None => "not yet joined on this tanker".into(),
-        };
-        llm::Context { position: self.call.clone(), situation, last_instruction: None, heard: heard.to_string() }
+        let situation =
+            match a.and_then(|a| self.line.iter().position(|r| r.unit == a.id)) {
+                Some(0) => "first in line to refuel from this tanker".into(),
+                Some(n) => format!("number {} in line to refuel from this tanker", n + 1),
+                None => "not yet joined on this tanker".into(),
+            };
+        llm::Context {
+            position: self.call.clone(),
+            situation,
+            last_instruction: None,
+            heard: heard.to_string(),
+        }
     }
 
     fn vocabulary(&self) -> Vec<String> {
-        vec![self.call.clone(), "request rejoin".into(), "pre-contact".into(), "fuel complete".into()]
+        vec![
+            self.call.clone(),
+            "request rejoin".into(),
+            "pre-contact".into(),
+            "fuel complete".into(),
+        ]
     }
 }
 
@@ -392,18 +458,60 @@ mod tests {
         k.update(&Picture { atc: &atc, range: Some(&range), now: 0., mission_s: None });
         let caller = |u| Caller { unit_id: Some(u), srs_name: String::new() };
         let p = |s: &str| super::super::intent::parse(s, "Texaco");
-        let r = k.respond(Pos::Tanker, &caller(1), "Texaco 11, Viper 11, request rejoin", p("Texaco 11, Viper 11, request rejoin"), 1.);
-        assert!(texts(&r).contains("cleared to join, FL250, heading 090, 280 knots, cleared pre-contact"), "{}", texts(&r));
-        let r = k.respond(Pos::Tanker, &caller(2), "Texaco 11, Enfield 21, request rejoin", p("Texaco 11, Enfield 21, request rejoin"), 2.);
-        assert!(texts(&r).contains("number 2, cleared to the left observation"), "{}", texts(&r));
+        let r = k.respond(
+            Pos::Tanker,
+            &caller(1),
+            "Texaco 11, Viper 11, request rejoin",
+            p("Texaco 11, Viper 11, request rejoin"),
+            1.,
+        );
+        assert!(
+            texts(&r).contains(
+                "cleared to join, FL250, heading 090, 280 knots, cleared pre-contact"
+            ),
+            "{}",
+            texts(&r)
+        );
+        let r = k.respond(
+            Pos::Tanker,
+            &caller(2),
+            "Texaco 11, Enfield 21, request rejoin",
+            p("Texaco 11, Enfield 21, request rejoin"),
+            2.,
+        );
+        assert!(
+            texts(&r).contains("number 2, cleared to the left observation"),
+            "{}",
+            texts(&r)
+        );
         // Viper stabilises 60 m behind: cleared contact
         atc.traffic[0] = receiver(1, "alice", 60.);
-        let r = k.update(&Picture { atc: &atc, range: Some(&range), now: 30., mission_s: None });
-        assert!(texts(&r).contains("Viper 1-1, Texaco 1-1, stabilized pre-contact, cleared contact"), "{}", texts(&r));
+        let r = k.update(&Picture {
+            atc: &atc,
+            range: Some(&range),
+            now: 30.,
+            mission_s: None,
+        });
+        assert!(
+            texts(&r).contains(
+                "Viper 1-1, Texaco 1-1, stabilized pre-contact, cleared contact"
+            ),
+            "{}",
+            texts(&r)
+        );
         // fuelled and backed out: Enfield is cleared astern
         atc.traffic[0] = receiver(1, "alice", 1500.);
-        let r = k.update(&Picture { atc: &atc, range: Some(&range), now: 300., mission_s: None });
+        let r = k.update(&Picture {
+            atc: &atc,
+            range: Some(&range),
+            now: 300.,
+            mission_s: None,
+        });
         let t = texts(&r);
-        assert!(t.contains("Viper 1-1, Texaco 1-1, cleared to depart") && t.contains("Enfield 2-1, Texaco 1-1, cleared astern"), "{t}");
+        assert!(
+            t.contains("Viper 1-1, Texaco 1-1, cleared to depart")
+                && t.contains("Enfield 2-1, Texaco 1-1, cleared astern"),
+            "{t}"
+        );
     }
 }

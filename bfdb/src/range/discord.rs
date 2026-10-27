@@ -28,8 +28,9 @@
 
 use super::{deckplan, icons, RangeCtx};
 use bfprotocols::range::{
-    lso, BombQuality, CsarOutcome, EngagementOutcome, FieldLandingOutcome, HotZoneOutcome,
-    MissileOutcome, PrecisionQuality, RangeRecord, RangeResult, StrafeQuality,
+    lso, BombQuality, CsarOutcome, EngagementOutcome, FieldLandingOutcome,
+    HotZoneOutcome, MissileOutcome, PrecisionQuality, RangeRecord, RangeResult,
+    StrafeQuality,
 };
 use serde_json::{json, Value};
 
@@ -164,20 +165,36 @@ pub(crate) fn title_and_color(r: &RangeRecord) -> (String, u32) {
                 EngagementOutcome::Abort => GREY,
             },
         ),
-        RangeResult::AntiShip(a) => ("Anti-ship strike".into(), if a.hit { GREEN } else { RED }),
+        RangeResult::AntiShip(a) => {
+            ("Anti-ship strike".into(), if a.hit { GREEN } else { RED })
+        }
         RangeResult::Sling(s) => (
-            if s.method == "internal" { "Cargo delivery (internal)".into() } else { "Sling-load delivery".into() },
+            if s.method == "internal" {
+                "Cargo delivery (internal)".into()
+            } else {
+                "Sling-load delivery".into()
+            },
             precision_color(s.quality),
         ),
         RangeResult::Landing(l) => (
-            if l.drill == "ship" { "Deck landing".into() } else { "Precision landing".into() },
+            if l.drill == "ship" {
+                "Deck landing".into()
+            } else {
+                "Precision landing".into()
+            },
             precision_color(l.quality),
         ),
         RangeResult::Troops(t) => ("Troop insertion".into(), precision_color(t.quality)),
         RangeResult::Gunnery(_) => ("Gunnery lane".into(), BLUE),
-        RangeResult::Cas(c) => ("Close air support".into(), if c.correct_target { GREEN } else { RED }),
+        RangeResult::Cas(c) => {
+            ("Close air support".into(), if c.correct_target { GREEN } else { RED })
+        }
         RangeResult::Sead(s) => (
-            if s.site_destroyed { "SEAD: site destroyed".into() } else { "SEAD / DEAD kill".into() },
+            if s.site_destroyed {
+                "SEAD: site destroyed".into()
+            } else {
+                "SEAD / DEAD kill".into()
+            },
             match (s.site_destroyed, s.site_was_emitting) {
                 (true, _) => DARK_GREEN,
                 (false, true) => GREEN,
@@ -194,18 +211,32 @@ pub(crate) fn title_and_color(r: &RangeRecord) -> (String, u32) {
                 _ => YELLOW,
             },
         ),
-        RangeResult::LowLevel(l) => ("Low-level route".into(), precision_color(l.quality)),
+        RangeResult::LowLevel(l) => {
+            ("Low-level route".into(), precision_color(l.quality))
+        }
         RangeResult::FieldLanding(fl) => (
             "Field landing".into(),
-            if fl.outcome == FieldLandingOutcome::Undershoot { RED } else { precision_color(fl.quality) },
+            if fl.outcome == FieldLandingOutcome::Undershoot {
+                RED
+            } else {
+                precision_color(fl.quality)
+            },
         ),
         RangeResult::Airdrop(a) => (
-            if a.method == "airland" { "Air-land delivery".into() } else { "Airdrop result".into() },
+            if a.method == "airland" {
+                "Air-land delivery".into()
+            } else {
+                "Airdrop result".into()
+            },
             precision_color(a.quality),
         ),
         RangeResult::Csar(c) => (
             "Combat search and rescue".into(),
-            if c.outcome == CsarOutcome::Failed { RED } else { precision_color(c.quality) },
+            if c.outcome == CsarOutcome::Failed {
+                RED
+            } else {
+                precision_color(c.quality)
+            },
         ),
     }
 }
@@ -240,7 +271,11 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
     let mut o = vec![];
     match &r.result {
         RangeResult::Trap(t) => {
-            o.push(f("LSO Grade", format!("{} => {}", t.grade, lso::grade_name(&t.grade)), false));
+            o.push(f(
+                "LSO Grade",
+                format!("{} => {}", t.grade, lso::grade_name(&t.grade)),
+                false,
+            ));
             o.push(f("LSO Comment", t.lso_comment.clone(), false));
             let desc = if t.lso_description.is_empty() {
                 lso::describe(&t.lso_comment)
@@ -261,23 +296,46 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
                 o.push(f("Points", format!("{p:.1}"), true));
             }
             let plan = deckplan::plan_for(&t.carrier_type);
-            let ship = if t.carrier.is_empty() { plan.hull_no.clone().unwrap_or_default() } else { t.carrier.clone() };
+            let ship = if t.carrier.is_empty() {
+                plan.hull_no.clone().unwrap_or_default()
+            } else {
+                t.carrier.clone()
+            };
             // the deck file's names are capitals for the drawings: "Nimitz class (CVN)" here
             let class = plan
                 .name
                 .split(' ')
-                .map(|w| if w.starts_with('(') { w.to_string() } else if w.eq_ignore_ascii_case("class") || w.eq_ignore_ascii_case("de") { w.to_lowercase() } else { cap(&w.to_lowercase()) })
+                .map(|w| {
+                    if w.starts_with('(') {
+                        w.to_string()
+                    } else if w.eq_ignore_ascii_case("class")
+                        || w.eq_ignore_ascii_case("de")
+                    {
+                        w.to_lowercase()
+                    } else {
+                        cap(&w.to_lowercase())
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join(" ");
-            o.push(f("Ship", if ship.is_empty() { class } else { format!("{ship} · {class}") }, true));
+            o.push(f(
+                "Ship",
+                if ship.is_empty() { class } else { format!("{ship} · {class}") },
+                true,
+            ));
         }
         RangeResult::Bomb(b) => {
-            let w = if b.weapon_display.is_empty() { &b.weapon } else { &b.weapon_display };
+            let w =
+                if b.weapon_display.is_empty() { &b.weapon } else { &b.weapon_display };
             let rel = &b.release;
             let alt = if rel.pos.alt_m != 0. { rel.pos.alt_m } else { rel.alt_agl_m };
             o.push(f("Range", format!("{}: {}", b.range, b.target), true));
             o.push(f("Quality", format!("**{}**", b.quality.label()), true));
-            o.push(f("Miss", format!("**{:.1} m** at {} o'clock", b.miss_m, b.clock), true));
+            o.push(f(
+                "Miss",
+                format!("**{:.1} m** at {} o'clock", b.miss_m, b.clock),
+                true,
+            ));
             o.push(f(
                 "Impact",
                 format!(
@@ -322,7 +380,11 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
         RangeResult::Strafe(s) => {
             o.push(f("Range", format!("{}: {}", s.range, s.pit), true));
             o.push(f("Quality", format!("**{}**", s.quality.label()), true));
-            o.push(f("Hits", format!("**{} / {}** · {:.1}%", s.hits, s.rounds_fired, s.accuracy_pct), true));
+            o.push(f(
+                "Hits",
+                format!("**{} / {}** · {:.1}%", s.hits, s.rounds_fired, s.accuracy_pct),
+                true,
+            ));
             o.push(f(
                 "Run",
                 format!(
@@ -343,7 +405,11 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
         RangeResult::Aar(a) => {
             o.push(f("Tanker", format!("{} ({})", a.tanker, a.tanker_type), true));
             o.push(f("Grade", format!("**{}**", a.grade), true));
-            o.push(f("Fuel", format!("**{:.0} lb** · {:.0} lb/min", a.fuel_lbs, a.onload_rate_lbs_min), true));
+            o.push(f(
+                "Fuel",
+                format!("**{:.0} lb** · {:.0} lb/min", a.fuel_lbs, a.onload_rate_lbs_min),
+                true,
+            ));
             o.push(f(
                 "Contacts",
                 format!(
@@ -354,7 +420,9 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
                     if a.disconnects == 1 { "" } else { "s" },
                     a.time_connected_s,
                     mmss(a.session_s),
-                    a.precontact_closure_kts.map(|c| format!("closure {c:.1} kts")).unwrap_or_else(|| "-".into()),
+                    a.precontact_closure_kts
+                        .map(|c| format!("closure {c:.1} kts"))
+                        .unwrap_or_else(|| "-".into()),
                     if a.overshoot { " · **overshoot**" } else { "" }
                 ),
                 true,
@@ -368,15 +436,35 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
                 true,
             ));
             if !a.calls.is_empty() {
-                o.push(f("Calls", a.calls.iter().map(|c| format!("• {}", cap(c))).collect::<Vec<_>>().join("\n"), false));
+                o.push(f(
+                    "Calls",
+                    a.calls
+                        .iter()
+                        .map(|c| format!("• {}", cap(c)))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    false,
+                ));
             }
         }
         RangeResult::Missile(m) => {
             let l = &m.launch;
             let d = &m.defense;
-            o.push(f("Shooter", format!("{} ({})", m.shooter.name, short_airframe(&m.shooter_type)), true));
-            o.push(f("Target", format!("{} ({})", m.target.name, short_airframe(&m.target_type)), true));
-            o.push(f("Outcome", format!("**{}** · miss {:.0} m", m.outcome.label(), m.min_distance_m), true));
+            o.push(f(
+                "Shooter",
+                format!("{} ({})", m.shooter.name, short_airframe(&m.shooter_type)),
+                true,
+            ));
+            o.push(f(
+                "Target",
+                format!("{} ({})", m.target.name, short_airframe(&m.target_type)),
+                true,
+            ));
+            o.push(f(
+                "Outcome",
+                format!("**{}** · miss {:.0} m", m.outcome.label(), m.min_distance_m),
+                true,
+            ));
             o.push(f(
                 "Launch",
                 format!(
@@ -396,7 +484,9 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
                     "Defence",
                     format!(
                         "reaction {}\nbeam {:.0} s · drag {:.0} s\n{:+.0} ft{}",
-                        d.reaction_s.map(|x| format!("{x:.1} s")).unwrap_or_else(|| "**none**".into()),
+                        d.reaction_s
+                            .map(|x| format!("{x:.1} s"))
+                            .unwrap_or_else(|| "**none**".into()),
                         d.beam_s,
                         d.drag_s,
                         d.alt_change_m * FT,
@@ -412,7 +502,11 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
             o.push(f("Outcome", format!("**{}**", e.outcome.label()), true));
             o.push(f("Duration", format!("{:.0} s", e.duration_s), true));
             o.push(f("Shots", e.shots_fired.to_string(), true));
-            o.push(f("Kills", format!("{} (+{} gun hits)", e.trainer_kills, e.gun_hits), true));
+            o.push(f(
+                "Kills",
+                format!("{} (+{} gun hits)", e.trainer_kills, e.gun_hits),
+                true,
+            ));
             if !e.notes.is_empty() {
                 o.push(f("Notes", e.notes.join("\n"), false));
             }
@@ -421,8 +515,20 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
             o.push(f("Ship", format!("{} ({})", a.ship, a.ship_type), true));
             o.push(f("Weapon", a.weapon.clone(), true));
             o.push(f("Result", if a.hit { "**HIT**" } else { "**MISS**" }, true));
-            o.push(f("Damage", format!("{:.0}%{}", a.damage * 100., if a.ship_sunk { ", sunk" } else { "" }), true));
-            o.push(f("Launch range", format!("{:.1} nm", a.launch_range_m / 1852.), true));
+            o.push(f(
+                "Damage",
+                format!(
+                    "{:.0}%{}",
+                    a.damage * 100.,
+                    if a.ship_sunk { ", sunk" } else { "" }
+                ),
+                true,
+            ));
+            o.push(f(
+                "Launch range",
+                format!("{:.1} nm", a.launch_range_m / 1852.),
+                true,
+            ));
             o.push(f("Time of flight", format!("{:.0} s", a.time_of_flight_s), true));
         }
         RangeResult::Sling(s) => {
@@ -456,7 +562,11 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
         }
         RangeResult::Gunnery(g) => {
             o.push(f("Lane", g.lane.clone(), true));
-            o.push(f("Targets", format!("{}/{}", g.targets_killed, g.targets_total), true));
+            o.push(f(
+                "Targets",
+                format!("{}/{}", g.targets_killed, g.targets_total),
+                true,
+            ));
             o.push(f("Hits", format!("{}/{}", g.hits, g.shots), true));
             o.push(f("Time", format!("{:.0} s", g.time_s), true));
             o.push(f("First-round hits", g.first_round_hits.to_string(), true));
@@ -465,28 +575,48 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
             o.push(f("JTAC", c.jtac.clone(), true));
             o.push(f("Target", c.target.clone(), true));
             o.push(f("Weapon", c.weapon.clone(), true));
-            o.push(f("Correct target", if c.correct_target { "yes" } else { "**NO**" }, true));
+            o.push(f(
+                "Correct target",
+                if c.correct_target { "yes" } else { "**NO**" },
+                true,
+            ));
             o.push(f("Miss", format!("{:.0} m", c.miss_m), true));
             o.push(f("Time to impact", format!("{:.0} s", c.time_to_impact_s), true));
             if c.danger_close {
                 o.push(f(
                     "Danger close",
-                    c.nearest_friendly_m.map(|d| format!("{d:.0} m from friendlies")).unwrap_or_else(|| "yes".into()),
+                    c.nearest_friendly_m
+                        .map(|d| format!("{d:.0} m from friendlies"))
+                        .unwrap_or_else(|| "yes".into()),
                     true,
                 ));
             }
         }
         RangeResult::Sead(s) => {
-            let g = if s.guidance.is_empty() { String::new() } else { format!(" ({})", s.guidance.to_uppercase()) };
+            let g = if s.guidance.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", s.guidance.to_uppercase())
+            };
             o.push(f("Site", format!("{} · {}", s.site, s.system), true));
             o.push(f("Killed", format!("{} ({})", s.role, s.unit_type), true));
-            o.push(f("Site status", if s.site_destroyed { "**DESTROYED**".into() } else { "radars still alive".to_string() }, true));
+            o.push(f(
+                "Site status",
+                if s.site_destroyed {
+                    "**DESTROYED**".into()
+                } else {
+                    "radars still alive".to_string()
+                },
+                true,
+            ));
             o.push(f(
                 "Shot",
                 format!(
                     "{}{g}\n{}\nradar {}",
                     s.weapon,
-                    s.launch_range_m.map(|r| format!("{:.1} nm", r / 1852.)).unwrap_or_else(|| "range not recorded".into()),
+                    s.launch_range_m
+                        .map(|r| format!("{:.1} nm", r / 1852.))
+                        .unwrap_or_else(|| "range not recorded".into()),
                     if s.site_was_emitting { "**UP** (emitting)" } else { "dark" }
                 ),
                 true,
@@ -494,9 +624,18 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
             o.push(f(
                 "Threat",
                 if s.trainer_deaths > 0 {
-                    format!("{} SAM{} at you\n**{} would have killed you**", s.shots_at_you, if s.shots_at_you == 1 { "" } else { "s" }, s.trainer_deaths)
+                    format!(
+                        "{} SAM{} at you\n**{} would have killed you**",
+                        s.shots_at_you,
+                        if s.shots_at_you == 1 { "" } else { "s" },
+                        s.trainer_deaths
+                    )
                 } else {
-                    format!("{} SAM{} at you", s.shots_at_you, if s.shots_at_you == 1 { "" } else { "s" })
+                    format!(
+                        "{} SAM{} at you",
+                        s.shots_at_you,
+                        if s.shots_at_you == 1 { "" } else { "s" }
+                    )
                 },
                 true,
             ));
@@ -512,7 +651,11 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
             o.push(f("Missiles defeated", h.missiles_defeated.to_string(), true));
             o.push(f(
                 "Trainer deaths",
-                if h.trainer_deaths > 0 { format!("**{}**", h.trainer_deaths) } else { "0".into() },
+                if h.trainer_deaths > 0 {
+                    format!("**{}**", h.trainer_deaths)
+                } else {
+                    "0".into()
+                },
                 true,
             ));
             if !h.kills.is_empty() {
@@ -532,7 +675,13 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
             o.push(f("Gates", format!("**{}/{}**", l.gates_hit, l.gates_total), true));
             o.push(f(
                 "Timing",
-                format!("{} (plan {})\non target {:+.0} s{when}\n{:.0} kts average", mmss(l.time_s), mmss(l.planned_s), l.tot_error_s, l.avg_speed_kts),
+                format!(
+                    "{} (plan {})\non target {:+.0} s{when}\n{:.0} kts average",
+                    mmss(l.time_s),
+                    mmss(l.planned_s),
+                    l.tot_error_s,
+                    l.avg_speed_kts
+                ),
                 true,
             ));
             o.push(f(
@@ -544,12 +693,24 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
                     l.max_agl_ft,
                     l.pct_below_ceiling,
                     l.max_allowed_agl_ft,
-                    if l.below_floor_s > 0. { format!("\n**{:.0} s under the floor**", l.below_floor_s) } else { String::new() }
+                    if l.below_floor_s > 0. {
+                        format!("\n**{:.0} s under the floor**", l.below_floor_s)
+                    } else {
+                        String::new()
+                    }
                 ),
                 true,
             ));
             if !l.calls.is_empty() {
-                o.push(f("Calls", l.calls.iter().map(|c| format!("• {}", cap(c))).collect::<Vec<_>>().join("\n"), false));
+                o.push(f(
+                    "Calls",
+                    l.calls
+                        .iter()
+                        .map(|c| format!("• {}", cap(c)))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    false,
+                ));
             }
         }
         RangeResult::FieldLanding(fl) => field_landing(fl, &mut o),
@@ -564,10 +725,24 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
             } else {
                 o.push(f("Drop zone", a.zone.clone(), true));
                 o.push(f("Quality", format!("**{}**", a.quality.label()), true));
-                o.push(f("Off the PI", format!("**{:.0} m** @ {:03.0}°", a.distance_m, a.bearing_deg.rem_euclid(360.)), true));
+                o.push(f(
+                    "Off the PI",
+                    format!(
+                        "**{:.0} m** @ {:03.0}°",
+                        a.distance_m,
+                        a.bearing_deg.rem_euclid(360.)
+                    ),
+                    true,
+                ));
                 let mut imp = vec![];
                 if let (Some(l), Some(x)) = (a.long_m, a.cross_m) {
-                    imp.push(format!("{:.0} m {} · {:.0} m {}", l.abs(), if l >= 0. { "long" } else { "short" }, x.abs(), if x >= 0. { "right" } else { "left" }));
+                    imp.push(format!(
+                        "{:.0} m {} · {:.0} m {}",
+                        l.abs(),
+                        if l >= 0. { "long" } else { "short" },
+                        x.abs(),
+                        if x >= 0. { "right" } else { "left" }
+                    ));
                 }
                 if let Some(t) = a.fall_s {
                     imp.push(format!("{t:.0} s under canopy"));
@@ -588,21 +763,44 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
                             r.alt_msl_ft,
                             r.gs_kts,
                             r.heading_deg.rem_euclid(360.),
-                            r.to_dz_m.map(|d| format!("\n{d:.0} m from the PI")).unwrap_or_default()
+                            r.to_dz_m
+                                .map(|d| format!("\n{d:.0} m from the PI"))
+                                .unwrap_or_default()
                         ),
                         true,
                     ));
                 }
-                o.push(f("Cargo", format!("{} ({:.0} kg)\nflight {}", a.cargo, a.mass_kg, mmss(a.flight_s)), true));
+                o.push(f(
+                    "Cargo",
+                    format!(
+                        "{} ({:.0} kg)\nflight {}",
+                        a.cargo,
+                        a.mass_kg,
+                        mmss(a.flight_s)
+                    ),
+                    true,
+                ));
             }
         }
         RangeResult::Csar(c) => {
             o.push(f("Area", c.area.clone(), true));
             o.push(f("Outcome", format!("**{}**", c.outcome.label()), true));
             o.push(f("Quality", format!("**{}**", c.quality.label()), true));
-            o.push(f("Threat", if c.hostile { "hostile (troops hunting him)" } else { "permissive" }, true));
-            o.push(f("MAYDAY to pickup", c.time_to_pickup_s.map(mmss).unwrap_or_else(|| "-".into()), true));
-            o.push(f("MAYDAY to home", c.time_total_s.map(mmss).unwrap_or_else(|| "-".into()), true));
+            o.push(f(
+                "Threat",
+                if c.hostile { "hostile (troops hunting him)" } else { "permissive" },
+                true,
+            ));
+            o.push(f(
+                "MAYDAY to pickup",
+                c.time_to_pickup_s.map(mmss).unwrap_or_else(|| "-".into()),
+                true,
+            ));
+            o.push(f(
+                "MAYDAY to home",
+                c.time_total_s.map(mmss).unwrap_or_else(|| "-".into()),
+                true,
+            ));
             if !c.pickup_method.is_empty() {
                 o.push(f("Pickup", c.pickup_method.clone(), true));
             }
@@ -615,10 +813,14 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
 }
 
 /// A field landing in four fields of short lines, then every call.
-fn field_landing(fl: &bfprotocols::range::FieldLandingResult, o: &mut Vec<(String, String, bool)>) {
+fn field_landing(
+    fl: &bfprotocols::range::FieldLandingResult,
+    o: &mut Vec<(String, String, bool)>,
+) {
     const FT: f64 = 3.28084;
     const NM: f64 = 1852.;
-    let deg = |v: Option<f64>| v.map(|v| format!("{v:+.1}°")).unwrap_or_else(|| "-".into());
+    let deg =
+        |v: Option<f64>| v.map(|v| format!("{v:+.1}°")).unwrap_or_else(|| "-".into());
     o.push(f("Runway", format!("{} {}", fl.airfield, fl.runway), true));
     o.push(f("Outcome", fl.outcome.label(), true));
     o.push(f("Quality", format!("**{}**", fl.quality.label()), true));
@@ -637,8 +839,15 @@ fn field_landing(fl: &bfprotocols::range::FieldLandingResult, o: &mut Vec<(Strin
         ),
         true,
     ));
-    let mut ap = vec![if fl.stable { "stable from 1 nm".to_string() } else { "**NOT stable** from 1 nm".to_string() }];
-    for (what, a, b) in [("glideslope", fl.gs_error_1nm_deg, fl.gs_error_half_nm_deg), ("lineup", fl.lineup_1nm_deg, fl.lineup_half_nm_deg)] {
+    let mut ap = vec![if fl.stable {
+        "stable from 1 nm".to_string()
+    } else {
+        "**NOT stable** from 1 nm".to_string()
+    }];
+    for (what, a, b) in [
+        ("glideslope", fl.gs_error_1nm_deg, fl.gs_error_half_nm_deg),
+        ("lineup", fl.lineup_1nm_deg, fl.lineup_half_nm_deg),
+    ] {
         if a.is_some() || b.is_some() {
             ap.push(format!("{what} {} at 1 nm, {} at ½", deg(a), deg(b)));
         }
@@ -664,10 +873,17 @@ fn field_landing(fl: &bfprotocols::range::FieldLandingResult, o: &mut Vec<(Strin
             });
         }
         if let Some(b) = p.base_at_m {
-            l.push(format!("base {:.2} nm {}", b.abs() / NM, if b < 0. { "past" } else { "short" }));
+            l.push(format!(
+                "base {:.2} nm {}",
+                b.abs() / NM,
+                if b < 0. { "past" } else { "short" }
+            ));
         }
         if let Some(r) = p.rollout_nm {
-            l.push(format!("wings level {r:.2} nm, {:.0} ft", p.rollout_alt_ft.unwrap_or(0.)));
+            l.push(format!(
+                "wings level {r:.2} nm, {:.0} ft",
+                p.rollout_alt_ft.unwrap_or(0.)
+            ));
         }
         let mut last = vec![];
         if let Some(g) = p.final_gs_kts {
@@ -691,7 +907,8 @@ fn field_landing(fl: &bfprotocols::range::FieldLandingResult, o: &mut Vec<(Strin
                 "timeout" => "lost after 10 min",
                 e => e,
             };
-            let top = if t.max_taxi_kts > bfprotocols::range::pattern_legs::TAXI_LIMIT_KTS {
+            let top = if t.max_taxi_kts > bfprotocols::range::pattern_legs::TAXI_LIMIT_KTS
+            {
                 format!("**{:.0} kts**", t.max_taxi_kts)
             } else {
                 format!("{:.0} kts", t.max_taxi_kts)
@@ -727,14 +944,20 @@ fn field_landing(fl: &bfprotocols::range::FieldLandingResult, o: &mut Vec<(Strin
         .chain(fl.taxi.iter().flat_map(|t| t.calls.iter()))
         .collect();
     if !calls.is_empty() {
-        o.push(f("Calls", calls.iter().map(|c| format!("• {}", cap(c))).collect::<Vec<_>>().join("\n"), false));
+        o.push(f(
+            "Calls",
+            calls.iter().map(|c| format!("• {}", cap(c))).collect::<Vec<_>>().join("\n"),
+            false,
+        ));
     }
     let _ = FT;
 }
 
 fn cap(s: &str) -> String {
     let mut c = s.chars();
-    c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+    c.next()
+        .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+        .unwrap_or_default()
 }
 
 /// The ways into a result from Discord, as link buttons: (label, url).
@@ -742,9 +965,17 @@ pub(crate) fn links(ctx: &RangeCtx, r: &RangeRecord) -> Vec<(&'static str, Strin
     let id = urlencoding::encode(&r.id);
     let page = format!("{}/result/{}", ctx.site_url, id);
     let mut o = vec![("Debrief", page.clone()), ("3D replay", format!("{page}?view=3d"))];
-    if r.track.is_some() || matches!(r.result, RangeResult::Trap(_) | RangeResult::FieldLanding(_) | RangeResult::Bomb(_)) {
+    if r.track.is_some()
+        || matches!(
+            r.result,
+            RangeResult::Trap(_) | RangeResult::FieldLanding(_) | RangeResult::Bomb(_)
+        )
+    {
         o.push(("Web Tacview", format!("{page}?open=tacview")));
-        o.push(("Tacview clip", format!("{}/api/range/result/{}/clip.acmi", ctx.api_url, id)));
+        o.push((
+            "Tacview clip",
+            format!("{}/api/range/result/{}/clip.acmi", ctx.api_url, id),
+        ));
     }
     o
 }
@@ -769,7 +1000,10 @@ pub(crate) fn embed(ctx: &RangeCtx, r: &RangeRecord) -> Value {
             r.pilot.name,
             air,
             fl.runway,
-            fl.pattern.as_ref().map(|p| p.kind.replace('_', "-").to_uppercase()).unwrap_or_else(|| fl.outcome.label().to_uppercase())
+            fl.pattern
+                .as_ref()
+                .map(|p| p.kind.replace('_', "-").to_uppercase())
+                .unwrap_or_else(|| fl.outcome.label().to_uppercase())
         ),
         _ => format!("**{} | {}**", r.pilot.name, air),
     };
@@ -779,7 +1013,10 @@ pub(crate) fn embed(ctx: &RangeCtx, r: &RangeRecord) -> Value {
     let footer = if r.theatre.is_empty() {
         "Vector Strike Range".to_string()
     } else {
-        format!("{}: {} ({})  ·  Vector Strike Range", r.theatre, r.mission_date, r.mission_time)
+        format!(
+            "{}: {} ({})  ·  Vector Strike Range",
+            r.theatre, r.mission_date, r.mission_time
+        )
     };
     let fields: Vec<Value> = fields(r)
         .into_iter()
@@ -790,7 +1027,10 @@ pub(crate) fn embed(ctx: &RangeCtx, r: &RangeRecord) -> Value {
         })
         .collect();
     let id = urlencoding::encode(&r.id);
-    let links: Vec<Value> = links(ctx, r).into_iter().map(|(label, url)| json!({ "label": label, "url": url })).collect();
+    let links: Vec<Value> = links(ctx, r)
+        .into_iter()
+        .map(|(label, url)| json!({ "label": label, "url": url }))
+        .collect();
     json!({
         "title": title,
         "description": description,
@@ -843,9 +1083,16 @@ mod tests {
         recs.extend(super::super::cards::tests::all_cards());
         for (i, r) in recs.iter().enumerate() {
             let (title, color) = title_and_color(r);
-            let fields: Vec<Value> = fields(r).into_iter().map(|(n, v, inl)| json!({"name": n, "value": v, "inline": inl})).collect();
+            let fields: Vec<Value> = fields(r)
+                .into_iter()
+                .map(|(n, v, inl)| json!({"name": n, "value": v, "inline": inl}))
+                .collect();
             let v = json!({"title": title, "color": color, "fields": fields});
-            std::fs::write(format!("{dir}/embed-{i:02}-{}.json", r.kind()), serde_json::to_string_pretty(&v).unwrap()).unwrap();
+            std::fs::write(
+                format!("{dir}/embed-{i:02}-{}.json", r.kind()),
+                serde_json::to_string_pretty(&v).unwrap(),
+            )
+            .unwrap();
         }
     }
 
@@ -859,12 +1106,24 @@ mod tests {
                 assert!(k.len() <= 256 && v.chars().count() <= 1024, "{k}");
             }
             let names: Vec<&str> = o.iter().map(|x| x.0.as_str()).collect();
-            assert!(names.contains(&"Touchdown") && names.contains(&"Approach"), "{names:?}");
+            assert!(
+                names.contains(&"Touchdown") && names.contains(&"Approach"),
+                "{names:?}"
+            );
             if fl.pattern.is_some() {
                 let p = &o.iter().find(|x| x.0 == "Pattern").unwrap().1;
-                assert!(p.starts_with("**Overhead**, left-hand") && p.contains("downwind 1000 ft, 1.2 nm abeam"), "{p}");
+                assert!(
+                    p.starts_with("**Overhead**, left-hand")
+                        && p.contains("downwind 1000 ft, 1.2 nm abeam"),
+                    "{p}"
+                );
                 let t = &o.iter().find(|x| x.0 == "Rollout and taxi").unwrap().1;
-                assert!(t.contains("clear in 27 s, 1580 m down") && t.contains("**38 kts**") && t.contains("parked"), "{t}");
+                assert!(
+                    t.contains("clear in 27 s, 1580 m down")
+                        && t.contains("**38 kts**")
+                        && t.contains("parked"),
+                    "{t}"
+                );
                 assert!(o.iter().any(|x| x.0 == "Calls" && x.1.contains("Fast taxi")));
             }
         }

@@ -78,13 +78,23 @@ pub struct RailCfg {
     pub enemy_clearance_m: f64,
 }
 
-pub(super) fn default_rail_interval() -> u32 { 1800 }
-pub(super) fn default_rail_max() -> u32 { 2 }
+pub(super) fn default_rail_interval() -> u32 {
+    1800
+}
+pub(super) fn default_rail_max() -> u32 {
+    2
+}
 pub(super) fn default_rail_train_red() -> Vec<String> {
-    ["Locomotive", "Coach a tank yellow", "Coach cargo", "Coach cargo open", "Coach cargo"]
-        .into_iter()
-        .map(String::from)
-        .collect()
+    [
+        "Locomotive",
+        "Coach a tank yellow",
+        "Coach cargo",
+        "Coach cargo open",
+        "Coach cargo",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
 }
 pub(super) fn default_rail_train_blue() -> Vec<String> {
     ["ES44AH", "Tankcartrinity", "Boxcartrinity", "Wellcarnsc", "Boxcartrinity"]
@@ -92,13 +102,27 @@ pub(super) fn default_rail_train_blue() -> Vec<String> {
         .map(String::from)
         .collect()
 }
-pub(super) fn default_rail_speed() -> f64 { 60.0 }
-pub(super) fn default_rail_station_radius() -> f64 { 5_000.0 }
-pub(super) fn default_rail_cap() -> u32 { 150 }
-pub(super) fn default_rail_below() -> u8 { 70 }
-pub(super) fn default_rail_min_route() -> f64 { 30_000.0 }
-pub(super) fn default_rail_max_route() -> f64 { 400_000.0 }
-pub(super) fn default_rail_clearance() -> f64 { 15_000.0 }
+pub(super) fn default_rail_speed() -> f64 {
+    60.0
+}
+pub(super) fn default_rail_station_radius() -> f64 {
+    5_000.0
+}
+pub(super) fn default_rail_cap() -> u32 {
+    150
+}
+pub(super) fn default_rail_below() -> u8 {
+    70
+}
+pub(super) fn default_rail_min_route() -> f64 {
+    30_000.0
+}
+pub(super) fn default_rail_max_route() -> f64 {
+    400_000.0
+}
+pub(super) fn default_rail_clearance() -> f64 {
+    15_000.0
+}
 
 /// Ground electronic warfare. Objectives of `host_kinds` get a radio/GNSS
 /// jammer truck (`GPS_Spoofer_Blue`/`_Red`) that switches on while enemy
@@ -168,7 +192,9 @@ pub struct EwCfg {
 }
 
 /// Satellite-navigation mode of a jammer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub enum GnssMode {
     Off,
     Jam,
@@ -176,7 +202,9 @@ pub enum GnssMode {
 }
 
 /// Radio mode of a jammer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub enum RadioJamMode {
     Off,
     Simple,
@@ -189,21 +217,45 @@ pub(super) fn default_ew_host_kinds() -> Vec<String> {
 pub(super) fn default_ew_sam_kinds() -> Vec<String> {
     ["Special SAM Site"].into_iter().map(String::from).collect()
 }
-pub(super) fn default_ew_sam_activation() -> f64 { 40_000.0 }
-pub(super) fn default_ew_sam_reveal_after() -> u32 { 600 }
-pub(super) fn default_ew_sam_uncertainty() -> f64 { 15_000.0 }
+pub(super) fn default_ew_sam_activation() -> f64 {
+    40_000.0
+}
+pub(super) fn default_ew_sam_reveal_after() -> u32 {
+    600
+}
+pub(super) fn default_ew_sam_uncertainty() -> f64 {
+    15_000.0
+}
 pub(super) fn default_ew_spoof_kinds() -> Vec<String> {
     ["Naval Base"].into_iter().map(String::from).collect()
 }
-pub(super) fn default_ew_activation() -> f64 { 80_000.0 }
-pub(super) fn default_ew_min_on() -> u32 { 180 }
-pub(super) fn default_ew_gnss() -> GnssMode { GnssMode::Jam }
-pub(super) fn default_ew_radio() -> RadioJamMode { RadioJamMode::Adaptive }
-pub(super) fn default_ew_band() -> (f64, f64) { (225.0, 400.0) }
-pub(super) fn default_ew_spoof_offset() -> f64 { 25_000.0 }
-pub(super) fn default_ew_comms_radius() -> f64 { 60_000.0 }
-pub(super) fn default_ew_respawn() -> u32 { 1800 }
-pub(super) fn default_ew_uncertainty() -> f64 { 5_000.0 }
+pub(super) fn default_ew_activation() -> f64 {
+    80_000.0
+}
+pub(super) fn default_ew_min_on() -> u32 {
+    180
+}
+pub(super) fn default_ew_gnss() -> GnssMode {
+    GnssMode::Jam
+}
+pub(super) fn default_ew_radio() -> RadioJamMode {
+    RadioJamMode::Adaptive
+}
+pub(super) fn default_ew_band() -> (f64, f64) {
+    (225.0, 400.0)
+}
+pub(super) fn default_ew_spoof_offset() -> f64 {
+    25_000.0
+}
+pub(super) fn default_ew_comms_radius() -> f64 {
+    60_000.0
+}
+pub(super) fn default_ew_respawn() -> u32 {
+    1800
+}
+pub(super) fn default_ew_uncertainty() -> f64 {
+    5_000.0
+}
 
 /// Finite SAM interceptors. Each SAM group holds `missiles_per_launcher` x
 /// its launchers x `reload_multiplier` missiles; every SAM launch spends one.
@@ -231,11 +283,21 @@ pub struct SamStockCfg {
     pub announce: bool,
 }
 
-pub(super) fn default_sam_per_launcher() -> u32 { 4 }
-pub(super) fn default_sam_reload_mult() -> f32 { 2.0 }
-pub(super) fn default_sam_resupply_period() -> u32 { 900 }
-pub(super) fn default_sam_resupply() -> u32 { 4 }
-pub(super) fn default_sam_min_supply() -> u8 { 40 }
+pub(super) fn default_sam_per_launcher() -> u32 {
+    4
+}
+pub(super) fn default_sam_reload_mult() -> f32 {
+    2.0
+}
+pub(super) fn default_sam_resupply_period() -> u32 {
+    900
+}
+pub(super) fn default_sam_resupply() -> u32 {
+    4
+}
+pub(super) fn default_sam_min_supply() -> u8 {
+    40
+}
 
 /// Long-range strike raids on infrastructure: one-way attack drones (a
 /// template flown low to the target, which explodes on arrival) and ballistic
@@ -303,14 +365,30 @@ pub struct RaidsCfg {
     pub warn_defenders: bool,
 }
 
-pub(super) fn default_raid_hours() -> Option<(u32, u32)> { Some((20, 5)) }
-pub(super) fn default_raid_interval() -> u32 { 2700 }
-pub(super) fn default_raid_drones() -> u32 { 4 }
-pub(super) fn default_raid_drone_speed() -> f64 { 50.0 }
-pub(super) fn default_raid_drone_alt() -> f64 { 400.0 }
-pub(super) fn default_raid_drone_range() -> f64 { 400_000.0 }
-pub(super) fn default_raid_warhead() -> f64 { 60.0 }
-pub(super) fn default_raid_launchers() -> u32 { 2 }
+pub(super) fn default_raid_hours() -> Option<(u32, u32)> {
+    Some((20, 5))
+}
+pub(super) fn default_raid_interval() -> u32 {
+    2700
+}
+pub(super) fn default_raid_drones() -> u32 {
+    4
+}
+pub(super) fn default_raid_drone_speed() -> f64 {
+    50.0
+}
+pub(super) fn default_raid_drone_alt() -> f64 {
+    400.0
+}
+pub(super) fn default_raid_drone_range() -> f64 {
+    400_000.0
+}
+pub(super) fn default_raid_warhead() -> f64 {
+    60.0
+}
+pub(super) fn default_raid_launchers() -> u32 {
+    2
+}
 pub(super) fn default_raid_missile_types() -> Vec<String> {
     [
         "Scud_B",
@@ -323,12 +401,21 @@ pub(super) fn default_raid_missile_types() -> Vec<String> {
     .map(String::from)
     .collect()
 }
-pub(super) fn default_raid_intercept() -> f64 { 0.35 }
-pub(super) fn default_raid_targets() -> Vec<String> {
-    ["Factory", "Logistics Hub", "Airbase", "Naval Base"].into_iter().map(String::from).collect()
+pub(super) fn default_raid_intercept() -> f64 {
+    0.35
 }
-pub(super) fn default_raid_supply_damage() -> u8 { 5 }
-pub(super) fn default_raid_factory_pause() -> u32 { 1800 }
+pub(super) fn default_raid_targets() -> Vec<String> {
+    ["Factory", "Logistics Hub", "Airbase", "Naval Base"]
+        .into_iter()
+        .map(String::from)
+        .collect()
+}
+pub(super) fn default_raid_supply_damage() -> u8 {
+    5
+}
+pub(super) fn default_raid_factory_pause() -> u32 {
+    1800
+}
 
 /// Sea-drone raids: fast boats run at enemy ships from friendly water and
 /// detonate alongside. Needs a friendly Naval Base to launch from.
@@ -356,13 +443,27 @@ pub struct BoatRaidsCfg {
     pub max_range_m: f64,
 }
 
-pub(super) fn default_boat_interval() -> u32 { 3600 }
-pub(super) fn default_boat_count() -> u32 { 3 }
-pub(super) fn default_boat_type() -> String { "speedboat".into() }
-pub(super) fn default_boat_speed() -> f64 { 18.0 }
-pub(super) fn default_boat_warhead() -> f64 { 250.0 }
-pub(super) fn default_boat_trigger() -> f64 { 150.0 }
-pub(super) fn default_boat_range() -> f64 { 150_000.0 }
+pub(super) fn default_boat_interval() -> u32 {
+    3600
+}
+pub(super) fn default_boat_count() -> u32 {
+    3
+}
+pub(super) fn default_boat_type() -> String {
+    "speedboat".into()
+}
+pub(super) fn default_boat_speed() -> f64 {
+    18.0
+}
+pub(super) fn default_boat_warhead() -> f64 {
+    250.0
+}
+pub(super) fn default_boat_trigger() -> f64 {
+    150.0
+}
+pub(super) fn default_boat_range() -> f64 {
+    150_000.0
+}
 
 /// Campaign tempo: each side alternates an offensive (raids and AI packages
 /// come faster, aimed along one axis) with a regroup, and is told when its
@@ -385,11 +486,18 @@ pub struct TempoCfg {
     pub announce: bool,
 }
 
-pub(super) fn default_tempo_offensive() -> f64 { 6.0 }
-pub(super) fn default_tempo_regroup() -> f64 { 10.0 }
-pub(super) fn default_tempo_offensive_factor() -> f64 { 0.5 }
-pub(super) fn default_tempo_regroup_factor() -> f64 { 1.5 }
-
+pub(super) fn default_tempo_offensive() -> f64 {
+    6.0
+}
+pub(super) fn default_tempo_regroup() -> f64 {
+    10.0
+}
+pub(super) fn default_tempo_offensive_factor() -> f64 {
+    0.5
+}
+pub(super) fn default_tempo_regroup_factor() -> f64 {
+    1.5
+}
 
 /// See `Cfg::air_life`. Each part is independent; leave one out to disable it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
@@ -446,11 +554,21 @@ pub struct WingmanCfg {
     pub rotary_engage_dist_m: f64,
 }
 
-pub(super) fn default_wingman_max_side_pilots() -> u32 { 4 }
-pub(super) fn default_wingman_lifetime() -> u32 { 3600 }
-pub(super) fn default_wingman_cooldown() -> u32 { 300 }
-pub(super) fn default_wingman_engage_m() -> f64 { 40_000.0 }
-pub(super) fn default_wingman_rotary_engage_m() -> f64 { 8_000.0 }
+pub(super) fn default_wingman_max_side_pilots() -> u32 {
+    4
+}
+pub(super) fn default_wingman_lifetime() -> u32 {
+    3600
+}
+pub(super) fn default_wingman_cooldown() -> u32 {
+    300
+}
+pub(super) fn default_wingman_engage_m() -> f64 {
+    40_000.0
+}
+pub(super) fn default_wingman_rotary_engage_m() -> f64 {
+    8_000.0
+}
 
 /// Autonomous AI packages: while a side has few human pilots, the engine
 /// launches that side's own Fighters / Attackers / SEAD actions (the same
@@ -499,12 +617,24 @@ pub struct AiPackagesCfg {
     pub announce: bool,
 }
 
-pub(super) fn default_packages_max_side_pilots() -> u32 { 3 }
-pub(super) fn default_packages_check_interval() -> u32 { 120 }
-pub(super) fn default_packages_launch_interval() -> u32 { 900 }
-pub(super) fn default_packages_max_active() -> u32 { 2 }
-pub(super) fn default_packages_lifetime() -> u32 { 1800 }
-pub(super) fn default_packages_max_range() -> f64 { 150_000.0 }
+pub(super) fn default_packages_max_side_pilots() -> u32 {
+    3
+}
+pub(super) fn default_packages_check_interval() -> u32 {
+    120
+}
+pub(super) fn default_packages_launch_interval() -> u32 {
+    900
+}
+pub(super) fn default_packages_max_active() -> u32 {
+    2
+}
+pub(super) fn default_packages_lifetime() -> u32 {
+    1800
+}
+pub(super) fn default_packages_max_range() -> f64 {
+    150_000.0
+}
 
 /// Neutral civilian airliners: high overflights that keep clear of the front
 /// where they can, plus departures from and arrivals at airports well behind
@@ -586,14 +716,24 @@ pub struct CivilShipCfg {
     pub speed_ms: f64,
 }
 
-pub(super) fn default_civil_ship_speed() -> f64 { 7.0 }
-pub(super) fn default_civil_max_ships() -> u32 { 3 }
-pub(super) fn default_civil_ship_interval() -> u32 { 900 }
+pub(super) fn default_civil_ship_speed() -> f64 {
+    7.0
+}
+pub(super) fn default_civil_max_ships() -> u32 {
+    3
+}
+pub(super) fn default_civil_ship_interval() -> u32 {
+    900
+}
 
 pub(super) fn default_civil_ships() -> Vec<CivilShipCfg> {
     ["Dry-cargo ship-1", "Dry-cargo ship-2", "HandyWind", "ELNYA", "Seawise_Giant"]
         .into_iter()
-        .map(|t| CivilShipCfg { typ: t.into(), weight: 1, speed_ms: default_civil_ship_speed() })
+        .map(|t| CivilShipCfg {
+            typ: t.into(),
+            weight: 1,
+            speed_ms: default_civil_ship_speed(),
+        })
         .collect()
 }
 
@@ -612,17 +752,39 @@ pub struct CivilAircraftCfg {
     pub cruise_speed_ms: f64,
 }
 
-pub(super) fn default_civil_min_players() -> u32 { 1 }
-pub(super) fn default_civil_max_active() -> u32 { 4 }
-pub(super) fn default_civil_spawn_interval() -> u32 { 300 }
-pub(super) fn default_civil_overflight_weight() -> u32 { 3 }
-pub(super) fn default_civil_airport_weight() -> u32 { 1 }
-pub(super) fn default_civil_rear_airport_min_front() -> f64 { 60_000.0 }
-pub(super) fn default_civil_front_standoff() -> f64 { 40_000.0 }
-pub(super) fn default_civil_map_margin() -> f64 { 20_000.0 }
-pub(super) fn default_civil_max_flight() -> u32 { 5400 }
-pub(super) fn default_civil_shootdown_points() -> i32 { 500 }
-pub(super) fn default_civil_shootdown_treasury() -> i64 { 1000 }
+pub(super) fn default_civil_min_players() -> u32 {
+    1
+}
+pub(super) fn default_civil_max_active() -> u32 {
+    4
+}
+pub(super) fn default_civil_spawn_interval() -> u32 {
+    300
+}
+pub(super) fn default_civil_overflight_weight() -> u32 {
+    3
+}
+pub(super) fn default_civil_airport_weight() -> u32 {
+    1
+}
+pub(super) fn default_civil_rear_airport_min_front() -> f64 {
+    60_000.0
+}
+pub(super) fn default_civil_front_standoff() -> f64 {
+    40_000.0
+}
+pub(super) fn default_civil_map_margin() -> f64 {
+    20_000.0
+}
+pub(super) fn default_civil_max_flight() -> u32 {
+    5400
+}
+pub(super) fn default_civil_shootdown_points() -> i32 {
+    500
+}
+pub(super) fn default_civil_shootdown_treasury() -> i64 {
+    1000
+}
 
 pub(super) fn default_civil_aircraft() -> Vec<CivilAircraftCfg> {
     let t = |typ: &str, alt_min: f64, alt_max: f64, speed: f64| CivilAircraftCfg {

@@ -19,14 +19,15 @@ use crate::{
     spawn::{self, AirSpec, Spawn, SpawnKind, Spawns},
     util::{self, Frame, V3},
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use bfprotocols::range::{
-    cfg::{Loc, RangeCfg, TacanBand, TacanCfg, TankerCfg},
-    grading, AarResult, LiveTanker, PilotRef, RangeResult, RefuelMethod, RelSample, Stability,
+    AarResult, LiveTanker, PilotRef, RangeResult, RefuelMethod, RelSample, Stability,
     TankerState, Track,
+    cfg::{Loc, RangeCfg, TacanBand, TacanCfg, TankerCfg},
+    grading,
 };
 use chrono::{Duration, Utc};
-use dcso3::{unit::Unit, MizLua};
+use dcso3::{MizLua, unit::Unit};
 use fxhash::FxHashMap;
 use log::{info, warn};
 use serde_json::json;
@@ -139,14 +140,22 @@ pub fn spawn_tanker(
         hdg: t.heading_deg,
         pylons,
         livery: t.livery.clone(),
-        callsign: Some((spawn::tanker_callsign_id(&t.callsign), t.callsign_number as i64, t.callsign.clone())),
+        callsign: Some((
+            spawn::tanker_callsign_id(&t.callsign),
+            t.callsign_number as i64,
+            t.callsign.clone(),
+        )),
         freq_mhz: Some(t.freq_mhz),
         task: "Refueling".into(),
-        route: vec![spawn::waypoint(pos, alt, speed, tasks), spawn::waypoint(p2, alt, speed, vec![])],
+        route: vec![
+            spawn::waypoint(pos, alt, speed, tasks),
+            spawn::waypoint(p2, alt, speed, vec![]),
+        ],
         fuel_kg: harvest::max_fuel_kg(&t.typ),
         side,
     };
-    let country = spawn::country_id(&t.country).or_else(|_| spawn::country_id(spawn::default_country(side)))?;
+    let country = spawn::country_id(&t.country)
+        .or_else(|_| spawn::country_id(spawn::default_country(side)))?;
     spawn::add_group(lua, country, spawn::AIRPLANE, &spawn::air_group(&spec))?;
     for c in [
         spawn::bool_cmd("SetUnlimitedFuel", true),
@@ -154,7 +163,10 @@ pub fn spawn_tanker(
         spawn::bool_cmd("SetInvisible", true),
         spawn::set_frequency_cmd(t.freq_mhz),
     ] {
-        spawns.defer(now + 2., spawn::Pending::GroupCommand { group: name.clone(), cmd: c });
+        spawns.defer(
+            now + 2.,
+            spawn::Pending::GroupCommand { group: name.clone(), cmd: c },
+        );
     }
     if t.tacan.is_some() {
         // needs the unit id, which only exists after the spawn: done in
@@ -183,7 +195,9 @@ impl Aar {
                     continue;
                 }
             };
-            let method = bfprotocols::range::cfg::tanker_type(&t.typ).map(|tt| tt.method).unwrap_or(RefuelMethod::Drogue);
+            let method = bfprotocols::range::cfg::tanker_type(&t.typ)
+                .map(|tt| tt.method)
+                .unwrap_or(RefuelMethod::Drogue);
             match spawn_tanker(lua, t, start, spawns, None, now) {
                 Ok(group) => self.tankers.push(Tanker {
                     cfg: t.clone(),
@@ -203,7 +217,11 @@ impl Aar {
     /// Next free TACAN channel for an on-demand tanker (40Y..59Y).
     fn next_tacan(&mut self) -> TacanCfg {
         self.tacan_pool = (self.tacan_pool + 1) % 20;
-        TacanCfg { channel: 40 + self.tacan_pool, band: TacanBand::Y, morse: format!("T{:02}", 40 + self.tacan_pool) }
+        TacanCfg {
+            channel: 40 + self.tacan_pool,
+            band: TacanBand::Y,
+            morse: format!("T{:02}", 40 + self.tacan_pool),
+        }
     }
 
     /// Spawn a tanker for a player: a 20 nm race-track starting where they
@@ -223,7 +241,8 @@ impl Aar {
         if !player.in_air {
             bail!("you need to be airborne to call a tanker to your position")
         }
-        let tt = bfprotocols::range::cfg::tanker_type(typ).ok_or_else(|| anyhow!("{typ} is not a tanker"))?;
+        let tt = bfprotocols::range::cfg::tanker_type(typ)
+            .ok_or_else(|| anyhow!("{typ} is not a tanker"))?;
         let n = self.tankers.len() + 1;
         let id = format!("od{}", spawns.next_name("t").trim_start_matches("RNG-t-"));
         let tacan = self.next_tacan();
@@ -254,13 +273,18 @@ impl Aar {
         spawns.insert(Spawn {
             id: spawn_id.clone(),
             item: "tanker".into(),
-            label: format!("Tanker {} {}{} ({typ})", t.callsign, t.callsign, t.callsign_number),
+            label: format!(
+                "Tanker {} {}{} ({typ})",
+                t.callsign, t.callsign, t.callsign_number
+            ),
             owner: Some(player.ucid.to_string()),
             owner_name: player.name.clone(),
             groups: vec![group.clone()],
             statics: vec![],
             created: Utc::now(),
-            expires: Some(Utc::now() + Duration::seconds(cfg.spawn.despawn_after_s as i64)),
+            expires: Some(
+                Utc::now() + Duration::seconds(cfg.spawn.despawn_after_s as i64),
+            ),
             units: 1,
             pos: start,
             kind: SpawnKind::Tanker,
@@ -308,11 +332,16 @@ impl Aar {
             let exists = spawn::group_exists(lua, &t.group);
             match t.state {
                 TankerState::Spawning if exists => {
-                    if let (Some(tac), Some(uid)) = (&t.cfg.tacan, spawn::first_unit_id(lua, &t.group)) {
-                        spawns.defer(now + 0.5, spawn::Pending::UnitCommand {
-                            unit: t.unit_name(),
-                            cmd: spawn::tacan_cmd(uid, tac, true),
-                        });
+                    if let (Some(tac), Some(uid)) =
+                        (&t.cfg.tacan, spawn::first_unit_id(lua, &t.group))
+                    {
+                        spawns.defer(
+                            now + 0.5,
+                            spawn::Pending::UnitCommand {
+                                unit: t.unit_name(),
+                                cmd: spawn::tacan_cmd(uid, tac, true),
+                            },
+                        );
                     }
                     t.state = TankerState::OnStation;
                 }
@@ -327,14 +356,16 @@ impl Aar {
                     if let Some(r) = t.respawn_at {
                         if now >= r && t.recovery_for.is_none() {
                             t.respawn_at = None;
-                            match crate::ag::resolve(lua, &t.cfg.loc)
-                                .and_then(|p| spawn_tanker(lua, &t.cfg, p, spawns, None, now))
-                            {
+                            match crate::ag::resolve(lua, &t.cfg.loc).and_then(|p| {
+                                spawn_tanker(lua, &t.cfg, p, spawns, None, now)
+                            }) {
                                 Ok(g) => {
                                     t.group = g;
                                     t.state = TankerState::Spawning;
                                 }
-                                Err(e) => warn!("tanker {} respawn failed: {e:?}", t.cfg.id),
+                                Err(e) => {
+                                    warn!("tanker {} respawn failed: {e:?}", t.cfg.id)
+                                }
                             }
                         }
                     }
@@ -376,12 +407,24 @@ impl Aar {
     }
 
     /// Start/advance/end sessions. Runs at 5 Hz while anyone is near a tanker.
-    pub fn tick(&mut self, lua: MizLua, players: &mut Players, rec: &mut Recorder, msg_s: u32, now: f64) {
+    pub fn tick(
+        &mut self,
+        lua: MizLua,
+        players: &mut Players,
+        rec: &mut Recorder,
+        msg_s: u32,
+        now: f64,
+    ) {
         let mut frames: Vec<(String, String, Frame, V3)> = vec![];
         for t in self.tankers.iter().filter(|t| t.state == TankerState::OnStation) {
             if let Ok(u) = Unit::get_by_name(lua, &t.unit_name()) {
                 if let (Ok(p), Ok(v)) = (u.get_position(), u.get_velocity()) {
-                    frames.push((t.cfg.id.clone(), format!("{}{}", t.cfg.callsign, t.cfg.callsign_number), Frame::from_pos(&p), v.0));
+                    frames.push((
+                        t.cfg.id.clone(),
+                        format!("{}{}", t.cfg.callsign, t.cfg.callsign_number),
+                        Frame::from_pos(&p),
+                        v.0,
+                    ));
                 }
             }
         }
@@ -394,7 +437,9 @@ impl Aar {
                 let (fwd, up, right) = fr.to_local(f.pos);
                 if (-1852. ..0.).contains(&fwd) && right.abs() < 600. && up.abs() < 300. {
                     let tk = self.tankers.iter().find(|t| &t.cfg.id == tid);
-                    let (tt, tc) = tk.map(|t| (t.cfg.typ.clone(), t.cfg.side.clone())).unwrap_or_default();
+                    let (tt, tc) = tk
+                        .map(|t| (t.cfg.typ.clone(), t.cfg.side.clone()))
+                        .unwrap_or_default();
                     if spawn::side_of_str(&tc) != f.side {
                         continue;
                     }
@@ -434,7 +479,8 @@ impl Aar {
         // advance
         let mut ended = vec![];
         for (unit, s) in self.sessions.iter_mut() {
-            let Some((_, cs, fr, tvel)) = frames.iter().find(|(id, ..)| *id == s.tanker) else {
+            let Some((_, cs, fr, tvel)) = frames.iter().find(|(id, ..)| *id == s.tanker)
+            else {
                 ended.push(unit.clone());
                 continue;
             };
@@ -512,23 +558,44 @@ impl Aar {
     }
 
     /// The receiver left its aircraft: close their session now.
-    pub fn player_left(&mut self, lua: MizLua, rec: &mut Recorder, unit: &str, msg_s: u32, now: f64) {
+    pub fn player_left(
+        &mut self,
+        lua: MizLua,
+        rec: &mut Recorder,
+        unit: &str,
+        msg_s: u32,
+        now: f64,
+    ) {
         if let Some(s) = self.sessions.remove(unit) {
             self.finish(lua, rec, s, msg_s, now);
         }
     }
 
-    fn finish(&mut self, lua: MizLua, rec: &mut Recorder, s: Session, msg_s: u32, now: f64) {
+    fn finish(
+        &mut self,
+        lua: MizLua,
+        rec: &mut Recorder,
+        s: Session,
+        msg_s: u32,
+        now: f64,
+    ) {
         let dur = now - s.start;
         if s.contacts == 0 && dur < 60. {
             return;
         }
         let t = self.tankers.iter().find(|t| t.cfg.id == s.tanker);
         let (tname, ttype, method) = t
-            .map(|t| (format!("{}{}", t.cfg.callsign, t.cfg.callsign_number), t.cfg.typ.clone(), t.method))
+            .map(|t| {
+                (
+                    format!("{}{}", t.cfg.callsign, t.cfg.callsign_number),
+                    t.cfg.typ.clone(),
+                    t.method,
+                )
+            })
             .unwrap_or_else(|| (s.tanker.clone(), String::new(), RefuelMethod::Drogue));
         let stability = contact_stability(&s.samples);
-        let (sf, sr, su) = (stability.fore_aft_sd_m, stability.lateral_sd_m, stability.vertical_sd_m);
+        let (sf, sr, su) =
+            (stability.fore_aft_sd_m, stability.lateral_sd_m, stability.vertical_sd_m);
         let join = s.first_contact.map(|fc| fc - s.start);
         let mut calls = vec![];
         let (score, grade) = grading::aar_grade(
@@ -553,7 +620,11 @@ impl Aar {
             time_connected_s: s.time_connected,
             fuel_kg: s.fuel_gained,
             fuel_lbs,
-            onload_rate_lbs_min: if s.time_connected > 0. { fuel_lbs / (s.time_connected / 60.) } else { 0. },
+            onload_rate_lbs_min: if s.time_connected > 0. {
+                fuel_lbs / (s.time_connected / 60.)
+            } else {
+                0.
+            },
             stability,
             precontact_closure_kts: s.precontact_closure,
             overshoot: s.overshoot,
@@ -593,7 +664,9 @@ impl Aar {
             .iter()
             .filter_map(|t| {
                 let u = Unit::get_by_name(lua, &t.unit_name()).ok();
-                let pv = u.and_then(|u| Some((u.get_point().ok()?.0, u.get_velocity().ok()?.0)));
+                let pv = u.and_then(|u| {
+                    Some((u.get_point().ok()?.0, u.get_velocity().ok()?.0))
+                });
                 // no unit: it never spawned or it is gone, so not on station at the map origin
                 let alive = pv.is_some();
                 let (p, v) = pv.unwrap_or((V3::zeros(), V3::zeros()));
@@ -614,7 +687,11 @@ impl Aar {
                     alt_ft: p.y * util::M_TO_FT,
                     tacan: t.cfg.tacan.as_ref().map(|t| t.describe()),
                     freq_mhz: t.cfg.freq_mhz,
-                    state: if alive || t.state == TankerState::Spawning { t.state } else { TankerState::Dead },
+                    state: if alive || t.state == TankerState::Spawning {
+                        t.state
+                    } else {
+                        TankerState::Dead
+                    },
                     receivers,
                     owner: t.owner.as_ref().map(|o| o.1.clone()),
                     recovery_for: t.recovery_for.clone(),
@@ -638,7 +715,11 @@ impl Aar {
                     },
                     t.cfg.alt_ft,
                     t.cfg.freq_mhz,
-                    t.cfg.tacan.as_ref().map(|t| format!(", TACAN {}", t.describe())).unwrap_or_default(),
+                    t.cfg
+                        .tacan
+                        .as_ref()
+                        .map(|t| format!(", TACAN {}", t.describe()))
+                        .unwrap_or_default(),
                     match t.state {
                         TankerState::OnStation => "",
                         TankerState::Spawning => " (launching)",
@@ -667,7 +748,14 @@ fn contact_stability(samples: &[RelSample]) -> Stability {
     let (mean_fwd_m, fore_aft_sd_m) = stat(&|x| x.fwd_m);
     let (mean_right_m, lateral_sd_m) = stat(&|x| x.right_m);
     let (mean_up_m, vertical_sd_m) = stat(&|x| x.up_m);
-    Stability { fore_aft_sd_m, lateral_sd_m, vertical_sd_m, mean_fwd_m, mean_right_m, mean_up_m }
+    Stability {
+        fore_aft_sd_m,
+        lateral_sd_m,
+        vertical_sd_m,
+        mean_fwd_m,
+        mean_right_m,
+        mean_up_m,
+    }
 }
 
 #[cfg(test)]
@@ -706,14 +794,22 @@ mod tests {
         let st = contact_stability(&session(2.));
         assert!((st.fore_aft_sd_m - 2. / 2f64.sqrt()).abs() < 0.05, "{st:?}");
         // no contact at all
-        let none: Vec<RelSample> = session(2.).into_iter().map(|s| RelSample { connected: false, ..s }).collect();
+        let none: Vec<RelSample> = session(2.)
+            .into_iter()
+            .map(|s| RelSample { connected: false, ..s })
+            .collect();
         let st = contact_stability(&none);
         assert_eq!((st.mean_fwd_m, st.fore_aft_sd_m), (0., 0.));
     }
 
     #[test]
     fn grades_from_a_session() {
-        let grade = |amp: f64, contacts: u32, disconnects: u32, join: Option<f64>, closure: Option<f64>, over: bool| {
+        let grade = |amp: f64,
+                     contacts: u32,
+                     disconnects: u32,
+                     join: Option<f64>,
+                     closure: Option<f64>,
+                     over: bool| {
             let st = contact_stability(&session(amp));
             let mut calls = vec![];
             let (score, letter) = grading::aar_grade(

@@ -25,21 +25,20 @@ for more details.
 //! budget or the per-pass limit runs out, skipping whatever fails to launch.
 
 use super::{
-    dist,
+    Record, dist,
     picture::{Obj, Picture},
     requests::RequestStatus,
     strategy::Plan,
-    Record,
 };
-use crate::{db::intel::IntelUnitClass, Context};
+use crate::{Context, db::intel::IntelUnitClass};
 use bfprotocols::{
     cfg::{Action, ActionKind, EscortPolicy, HqCfg, TaskCfg, TaskTarget},
     db::{group::GroupId, objective::ObjectiveId},
     hq::{Line, OpKind, Posture},
 };
 use chrono::prelude::*;
-use compact_str::{format_compact, CompactString};
-use dcso3::{coalition::Side, String, Vector2};
+use compact_str::{CompactString, format_compact};
+use dcso3::{String, Vector2, coalition::Side};
 use log::debug;
 use smallvec::SmallVec;
 use std::collections::BTreeMap;
@@ -97,7 +96,12 @@ pub(crate) struct Situation {
 }
 
 impl Situation {
-    pub(crate) fn at(pic: &Picture, pos: Vector2, night: bool, target: &'static str) -> Self {
+    pub(crate) fn at(
+        pic: &Picture,
+        pos: Vector2,
+        night: bool,
+        target: &'static str,
+    ) -> Self {
         Self {
             threat: pic.enemy_air_near(pos, 80_000.),
             air_defence: pic.air_defence_near(pos, SAM_RISK_M),
@@ -114,17 +118,22 @@ impl Situation {
 /// then one meant for this kind of target -- chosen by weight among equals.
 /// None when nothing the side has fits (a helicopter into a SAM belt, a
 /// day-only jet at night, a target past everyone's range).
-pub(crate) fn pick_air<'a>(options: &'a [AirOption], sit: &Situation) -> Option<&'a AirOption> {
+pub(crate) fn pick_air<'a>(
+    options: &'a [AirOption],
+    sit: &Situation,
+) -> Option<&'a AirOption> {
     use rand::seq::SliceRandom;
     let fits = |o: &&AirOption| {
-        let range = o.max_range_m.unwrap_or(if o.helicopter { 120_000. } else { f64::INFINITY });
+        let range =
+            o.max_range_m.unwrap_or(if o.helicopter { 120_000. } else { f64::INFINITY });
         let dist = if o.helicopter { sit.from_ground_m } else { sit.from_airbase_m };
         sit.threat >= o.min_threat
             && o.max_threat.map_or(true, |m| sit.threat <= m)
             && o.max_air_defence.map_or(true, |m| sit.air_defence <= m)
             && (o.night || !sit.night)
             && dist <= range
-            && (o.targets.is_empty() || o.targets.iter().any(|t| t.eq_ignore_ascii_case(sit.target)))
+            && (o.targets.is_empty()
+                || o.targets.iter().any(|t| t.eq_ignore_ascii_case(sit.target)))
     };
     let fit: Vec<&AirOption> = options.iter().filter(fits).collect();
     let rank = |o: &AirOption| (o.min_threat, !o.targets.is_empty() as u32);
@@ -171,16 +180,25 @@ fn scaled(cfg: &HqCfg, cost: i64) -> i64 {
 }
 
 /// The operations `side` has the means to run, and what each costs.
-pub(crate) fn available(ctx: &Context, cfg: &HqCfg, side: Side) -> BTreeMap<OpKind, Avail> {
+pub(crate) fn available(
+    ctx: &Context,
+    cfg: &HqCfg,
+    side: Side,
+) -> BTreeMap<OpKind, Avail> {
     let mut out = BTreeMap::new();
     let c = &cfg.costs;
     // Air rosters: the HQ's own entries, then the side's actions of the
     // same kind. `pick_air` chooses from these per package.
     let mut rosters: BTreeMap<OpKind, Vec<AirOption>> = BTreeMap::new();
     if let Some(air) = cfg.air.get(&side) {
-        for (kind, list) in [(OpKind::Cap, &air.cap), (OpKind::Strike, &air.strike), (OpKind::Sead, &air.sead)] {
+        for (kind, list) in [
+            (OpKind::Cap, &air.cap),
+            (OpKind::Strike, &air.strike),
+            (OpKind::Sead, &air.sead),
+        ] {
             for t in list {
-                let helicopter = matches!(t.plane.kind, bfprotocols::cfg::AiPlaneKind::Helicopter);
+                let helicopter =
+                    matches!(t.plane.kind, bfprotocols::cfg::AiPlaneKind::Helicopter);
                 let akind = match kind {
                     OpKind::Cap => ActionKind::Fighters(t.plane.clone()),
                     OpKind::Strike => ActionKind::Attackers(t.plane.clone()),
@@ -188,7 +206,13 @@ pub(crate) fn available(ctx: &Context, cfg: &HqCfg, side: Side) -> BTreeMap<OpKi
                 };
                 rosters.entry(kind).or_default().push(AirOption {
                     label: t.label.clone().unwrap_or_else(|| t.plane.template.clone()),
-                    action: Action { kind: akind, cost: 0, penalty: None, limit: None, geo_limit: Default::default() },
+                    action: Action {
+                        kind: akind,
+                        cost: 0,
+                        penalty: None,
+                        limit: None,
+                        geo_limit: Default::default(),
+                    },
                     weight: t.weight,
                     min_threat: t.min_threat,
                     max_threat: t.max_threat,
@@ -222,18 +246,31 @@ pub(crate) fn available(ctx: &Context, cfg: &HqCfg, side: Side) -> BTreeMap<OpKi
                 night: true,
                 max_range_m: None,
                 targets: vec![],
-                helicopter: matches!(plane.kind, bfprotocols::cfg::AiPlaneKind::Helicopter),
+                helicopter: matches!(
+                    plane.kind,
+                    bfprotocols::cfg::AiPlaneKind::Helicopter
+                ),
             });
         }
     }
-    for (kind, cost) in [(OpKind::Cap, c.cap), (OpKind::Strike, c.strike), (OpKind::Sead, c.sead)] {
+    for (kind, cost) in
+        [(OpKind::Cap, c.cap), (OpKind::Strike, c.strike), (OpKind::Sead, c.sead)]
+    {
         if let Some(opts) = rosters.remove(&kind) {
-            let first = opts.first().map(|o| (String::from(o.label.as_str()), o.action.clone()));
-            out.insert(kind, Avail { cost: scaled(cfg, cost), action: first, options: opts });
+            let first =
+                opts.first().map(|o| (String::from(o.label.as_str()), o.action.clone()));
+            out.insert(
+                kind,
+                Avail { cost: scaled(cfg, cost), action: first, options: opts },
+            );
         }
     }
     let mut put = |k: OpKind, cost: i64, action: Option<(String, Action)>| {
-        out.entry(k).or_insert(Avail { cost: scaled(cfg, cost), action, options: vec![] });
+        out.entry(k).or_insert(Avail {
+            cost: scaled(cfg, cost),
+            action,
+            options: vec![],
+        });
     };
     if let Some(actions) = ctx.db.ephemeral.cfg.actions.get(&side) {
         for (name, a) in actions.iter() {
@@ -242,14 +279,20 @@ pub(crate) fn available(ctx: &Context, cfg: &HqCfg, side: Side) -> BTreeMap<OpKi
             }
             let pick = Some((name.clone(), a.clone()));
             match &a.kind {
-                ActionKind::Recon(_) | ActionKind::Drone(_) => put(OpKind::Recon, c.recon, pick),
+                ActionKind::Recon(_) | ActionKind::Drone(_) => {
+                    put(OpKind::Recon, c.recon, pick)
+                }
                 ActionKind::Artillery(_) => put(OpKind::Artillery, c.artillery, pick),
                 ActionKind::Reinforce(_) => put(OpKind::Reinforce, c.reinforce, pick),
                 ActionKind::Bomber(_) => put(OpKind::Bomber, c.bomber, pick),
                 ActionKind::Awacs(_) => put(OpKind::Awacs, c.awacs, pick),
                 ActionKind::Tanker(_) => put(OpKind::Tanker, c.tanker, pick),
-                ActionKind::NavalCruiseMissileStrike(_) => put(OpKind::NavalStrike, c.naval_strike, pick),
-                ActionKind::LogisticsRepair(_) => put(OpKind::AirRepair, c.air_repair, pick),
+                ActionKind::NavalCruiseMissileStrike(_) => {
+                    put(OpKind::NavalStrike, c.naval_strike, pick)
+                }
+                ActionKind::LogisticsRepair(_) => {
+                    put(OpKind::AirRepair, c.air_repair, pick)
+                }
                 _ => (),
             }
         }
@@ -304,9 +347,19 @@ impl<'a> Gen<'a> {
             .map(|o| o.id)
     }
 
-    fn push(&mut self, kind: OpKind, target: Option<&Obj>, pos: Vector2, name: CompactString, value: f64, why: CompactString) {
+    fn push(
+        &mut self,
+        kind: OpKind,
+        target: Option<&Obj>,
+        pos: Vector2,
+        name: CompactString,
+        value: f64,
+        why: CompactString,
+    ) {
         let Some(av) = self.avail.get(&kind) else { return };
-        let Some(anchor) = target.map(|o| o.id).or_else(|| self.anchor(pos)) else { return };
+        let Some(anchor) = target.map(|o| o.id).or_else(|| self.anchor(pos)) else {
+            return;
+        };
         if value <= 0. {
             return;
         }
@@ -347,7 +400,8 @@ impl<'a> Gen<'a> {
         let pic = self.pic;
         // CAP over the bases we are holding and the one we stage from, where
         // the radars show enemy aircraft about.
-        let mut cover: Vec<&Obj> = self.plan.defend.iter().filter_map(|id| pic.get(id)).collect();
+        let mut cover: Vec<&Obj> =
+            self.plan.defend.iter().filter_map(|id| pic.get(id)).collect();
         if let Some(s) = self.staging() {
             if !cover.iter().any(|o| o.id == s.id) {
                 cover.push(s);
@@ -388,18 +442,30 @@ impl<'a> Gen<'a> {
                     me.pos,
                     me.name.clone(),
                     value,
-                    format_compact!("main effort{}", if ad > 0 { ", air defence known nearby" } else { "" }),
+                    format_compact!(
+                        "main effort{}",
+                        if ad > 0 { ", air defence known nearby" } else { "" }
+                    ),
                 );
             }
         }
         // ... and whatever enemy ground our intel holds closing on a base we
         // are holding.
-        let defended: Vec<&Obj> = pic.own().filter(|o| o.threatened || o.being_captured).collect();
+        let defended: Vec<&Obj> =
+            pic.own().filter(|o| o.threatened || o.being_captured).collect();
         for c in pic.enemy_ground.iter() {
-            if !matches!(c.class, IntelUnitClass::Armor | IntelUnitClass::Artillery | IntelUnitClass::Infantry) {
+            if !matches!(
+                c.class,
+                IntelUnitClass::Armor
+                    | IntelUnitClass::Artillery
+                    | IntelUnitClass::Infantry
+            ) {
                 continue;
             }
-            let Some(base) = defended.iter().find(|o| dist(o.pos, c.pos) <= 20_000.) else { continue };
+            let Some(base) = defended.iter().find(|o| dist(o.pos, c.pos) <= 20_000.)
+            else {
+                continue;
+            };
             if !self.in_air_range(c.pos) || c.age_mins > 20 {
                 continue;
             }
@@ -424,7 +490,9 @@ impl<'a> Gen<'a> {
             let battle = pic.battles.iter().any(|b| dist(*b, *p) <= 8_000.);
             let (value, why) = match (base, battle) {
                 (_, true) => (55., CompactString::from("enemy formation fighting ours")),
-                (Some(b), false) => (50., format_compact!("enemy formation closing on {}", b.name)),
+                (Some(b), false) => {
+                    (50., format_compact!("enemy formation closing on {}", b.name))
+                }
                 (None, false) => continue,
             };
             let near = pic
@@ -433,7 +501,14 @@ impl<'a> Gen<'a> {
                 .min_by(|a, b| dist(a.pos, *p).total_cmp(&dist(b.pos, *p)))
                 .map(|o| o.name.clone())
                 .unwrap_or_default();
-            self.push(OpKind::Strike, None, *p, format_compact!("enemy formation near {near}"), value, why);
+            self.push(
+                OpKind::Strike,
+                None,
+                *p,
+                format_compact!("enemy formation near {near}"),
+                value,
+                why,
+            );
         }
         // A JTAC drone over every battle we are in that has no JTAC on it:
         // the bombers need someone lasing for them.
@@ -442,7 +517,14 @@ impl<'a> Gen<'a> {
             if covered || !self.in_air_range(*b) {
                 continue;
             }
-            self.push(OpKind::Recon, None, *b, "battle area".into(), 34., "no JTAC over our battle".into());
+            self.push(
+                OpKind::Recon,
+                None,
+                *b,
+                "battle area".into(),
+                34.,
+                "no JTAC over our battle".into(),
+            );
         }
 
         // SEAD whatever air defence covers the main effort.
@@ -460,7 +542,9 @@ impl<'a> Gen<'a> {
                     format_compact!("covers the main effort {}", me.name),
                 );
             }
-            for site in pic.enemy().filter(|o| o.sam_site() && dist(o.pos, me.pos) <= 50_000.) {
+            for site in
+                pic.enemy().filter(|o| o.sam_site() && dist(o.pos, me.pos) <= 50_000.)
+            {
                 if !self.in_air_range(site.pos) {
                     continue;
                 }
@@ -477,7 +561,9 @@ impl<'a> Gen<'a> {
 
         // Recon where the side is blind: the main effort, and the base most
         // under threat.
-        let blind = |p: Vector2| !pic.enemy_ground.iter().any(|c| dist(c.pos, p) <= 8_000. && c.age_mins < 30);
+        let blind = |p: Vector2| {
+            !pic.enemy_ground.iter().any(|c| dist(c.pos, p) <= 8_000. && c.age_mins < 30)
+        };
         if let Some(me) = self.main_effort() {
             if blind(me.pos) && self.in_air_range(me.pos) {
                 self.push(
@@ -509,22 +595,36 @@ impl<'a> Gen<'a> {
         let batteries: Vec<&Obj> = pic.own().filter(|o| o.fires).collect();
         let reach = ctx.db.ephemeral.cfg.artillery_mission_range as f64;
         let reach = if reach > 0. { reach.min(40_000.) } else { 30_000. };
-        let covered = |p: Vector2| batteries.iter().any(|b| dist(b.pos, p) <= reach && dist(b.pos, p) >= 5_000.);
+        let covered = |p: Vector2| {
+            batteries.iter().any(|b| dist(b.pos, p) <= reach && dist(b.pos, p) >= 5_000.)
+        };
         let me = self.plan.main_effort;
         for o in pic.enemy().filter(|o| !o.at_sea()) {
             if !covered(o.pos) {
                 continue;
             }
             let weak = (100 - o.health.min(100)) as f64 * 0.3;
-            let value = if Some(o.id) == me { 45. + weak } else { 20. + weak + if o.capturable { 15. } else { 0. } };
-            self.push(OpKind::Artillery, Some(o), o.pos, o.name.clone(), value, "in range of our guns".into());
+            let value = if Some(o.id) == me {
+                45. + weak
+            } else {
+                20. + weak + if o.capturable { 15. } else { 0. }
+            };
+            self.push(
+                OpKind::Artillery,
+                Some(o),
+                o.pos,
+                o.name.clone(),
+                value,
+                "in range of our guns".into(),
+            );
         }
         for c in pic.enemy_ground.iter().filter(|c| c.age_mins <= 15) {
             if !covered(c.pos) || c.class == IntelUnitClass::AirBase {
                 continue;
             }
             let near_own = pic.gap(c.pos) <= 15_000.;
-            let value = 25. + 5. * c.count.min(6) as f64 + if near_own { 15. } else { 0. };
+            let value =
+                25. + 5. * c.count.min(6) as f64 + if near_own { 15. } else { 0. };
             self.push(
                 OpKind::Artillery,
                 None,
@@ -559,7 +659,14 @@ impl<'a> Gen<'a> {
                 }
                 let value = 35. * o.value() + if Some(o.id) == me { 20. } else { 0. };
                 let n = self.out.len();
-                self.push(OpKind::MissileStrike, Some(o), o.pos, o.name.clone(), value, "high-value target in missile range".into());
+                self.push(
+                    OpKind::MissileStrike,
+                    Some(o),
+                    o.pos,
+                    o.name.clone(),
+                    value,
+                    "high-value target in missile range".into(),
+                );
                 if let Some(c) = self.out.get_mut(n) {
                     c.shooters = shooters;
                 }
@@ -567,7 +674,8 @@ impl<'a> Gen<'a> {
         }
 
         if pic.enemy_convoys_near > 0 {
-            if let Some(anchor) = pic.own().min_by(|a, b| a.front_m.total_cmp(&b.front_m)) {
+            if let Some(anchor) = pic.own().min_by(|a, b| a.front_m.total_cmp(&b.front_m))
+            {
                 let value = 28. + 12. * pic.enemy_convoys_near.min(4) as f64;
                 self.push(
                     OpKind::Ambush,
@@ -575,7 +683,10 @@ impl<'a> Gen<'a> {
                     anchor.pos,
                     "enemy supply route".into(),
                     value,
-                    format_compact!("{} enemy convoy(s) on roads near the front", pic.enemy_convoys_near),
+                    format_compact!(
+                        "{} enemy convoy(s) on roads near the front",
+                        pic.enemy_convoys_near
+                    ),
                 );
             }
         }
@@ -586,18 +697,28 @@ impl<'a> Gen<'a> {
     fn bombers(&mut self) {
         let pic = self.pic;
         let me = self.main_effort();
-        let defended: Vec<&Obj> = pic.own().filter(|o| o.threatened || o.being_captured).collect();
+        let defended: Vec<&Obj> =
+            pic.own().filter(|o| o.threatened || o.being_captured).collect();
         for (jt, pos) in pic.jtac_targets.iter() {
             if !self.in_air_range(*pos) {
                 continue;
             }
             let at_effort = me.filter(|m| dist(m.pos, *pos) <= 25_000.);
-            let (value, why) = match (at_effort, defended.iter().find(|o| dist(o.pos, *pos) <= 20_000.)) {
-                (Some(m), _) => (60., format_compact!("JTAC target at the main effort {}", m.name)),
-                (_, Some(d)) => (55., format_compact!("JTAC target closing on {}", d.name)),
-                _ if pic.gap(*pos) <= self.cfg.max_ground_range_m => (35., CompactString::from("JTAC target near the front")),
-                _ => continue,
-            };
+            let (value, why) =
+                match (at_effort, defended.iter().find(|o| dist(o.pos, *pos) <= 20_000.))
+                {
+                    (Some(m), _) => (
+                        60.,
+                        format_compact!("JTAC target at the main effort {}", m.name),
+                    ),
+                    (_, Some(d)) => {
+                        (55., format_compact!("JTAC target closing on {}", d.name))
+                    }
+                    _ if pic.gap(*pos) <= self.cfg.max_ground_range_m => {
+                        (35., CompactString::from("JTAC target near the front"))
+                    }
+                    _ => continue,
+                };
             let name = match at_effort {
                 Some(m) => format_compact!("JTAC target at {}", m.name),
                 None => CompactString::from("JTAC target"),
@@ -616,47 +737,54 @@ impl<'a> Gen<'a> {
     /// restart -- unless every one up is due to be relieved.
     fn support(&mut self, ctx: &Context, side: Side, now: DateTime<Utc>) {
         let pic = self.pic;
-        let air_ops = ctx
-            .hq
-            .sides
-            .get(&side)
-            .map_or(0, |rt| rt.active().filter(|o| o.kind.line() == Line::Air).count()) as u32;
+        let air_ops =
+            ctx.hq.sides.get(&side).map_or(0, |rt| {
+                rt.active().filter(|o| o.kind.line() == Line::Air).count()
+            }) as u32;
         let enemy_air = pic.enemy_air.len() as u32;
         let near = self.main_effort().map(|o| o.pos).or_else(|| pic.front_point());
         let lead = self.cfg.support.relief_secs;
-        let station = |g: &mut Self, kind: OpKind, what: &str, value: f64, why: CompactString| {
-            let up: Vec<_> = pic.support_of(kind).collect();
-            let relief = !up.is_empty() && up.iter().all(|f| f.relief_due(now, lead));
-            if !up.is_empty() && !relief {
-                return;
-            }
-            let rules = super::picture::StationRules::of(g.cfg, kind);
-            let Some(st) = pic.support_station(&rules, near, &[]) else { return };
-            let mut why = format_compact!(
-                "{why}; {:.0} km behind the front{}",
-                st.front_m / 1000.,
-                if st.clearance >= 0. {
-                    CompactString::from(", clear of enemy bases and SAMs")
-                } else {
-                    format_compact!(", {:.0} km inside a threat ring (nowhere safer)", -st.clearance / 1000.)
+        let station =
+            |g: &mut Self, kind: OpKind, what: &str, value: f64, why: CompactString| {
+                let up: Vec<_> = pic.support_of(kind).collect();
+                let relief = !up.is_empty() && up.iter().all(|f| f.relief_due(now, lead));
+                if !up.is_empty() && !relief {
+                    return;
                 }
-            );
-            let name = if relief {
-                let old = up.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(", ");
-                why.push_str(&format_compact!("; relieving {old}"));
-                format_compact!("{what} relief")
-            } else {
-                CompactString::from(what)
+                let rules = super::picture::StationRules::of(g.cfg, kind);
+                let Some(st) = pic.support_station(&rules, near, &[]) else { return };
+                let mut why = format_compact!(
+                    "{why}; {:.0} km behind the front{}",
+                    st.front_m / 1000.,
+                    if st.clearance >= 0. {
+                        CompactString::from(", clear of enemy bases and SAMs")
+                    } else {
+                        format_compact!(
+                            ", {:.0} km inside a threat ring (nowhere safer)",
+                            -st.clearance / 1000.
+                        )
+                    }
+                );
+                let name = if relief {
+                    let old =
+                        up.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(", ");
+                    why.push_str(&format_compact!("; relieving {old}"));
+                    format_compact!("{what} relief")
+                } else {
+                    CompactString::from(what)
+                };
+                g.push(kind, None, st.pos, name, value, why);
             };
-            g.push(kind, None, st.pos, name, value, why);
-        };
         if enemy_air > 0 || pic.humans_fw_air > 0 || air_ops > 0 {
             station(
                 self,
                 OpKind::Awacs,
                 "AWACS station",
                 30. + 10. * enemy_air.min(4) as f64,
-                format_compact!("{enemy_air} enemy aircraft on radar, {} of ours up", pic.humans_fw_air + air_ops),
+                format_compact!(
+                    "{enemy_air} enemy aircraft on radar, {} of ours up",
+                    pic.humans_fw_air + air_ops
+                ),
             );
         }
         let thirsty = pic.humans_fw_air + air_ops;
@@ -674,9 +802,11 @@ impl<'a> Gen<'a> {
     /// Cruise missiles from a carrier group, at what hurts most.
     fn naval(&mut self) {
         let pic = self.pic;
-        let range = self.avail.get(&OpKind::NavalStrike).and_then(|a| match a.action.as_ref().map(|(_, a)| &a.kind) {
-            Some(ActionKind::NavalCruiseMissileStrike(c)) => Some(c.max_range as f64),
-            _ => None,
+        let range = self.avail.get(&OpKind::NavalStrike).and_then(|a| {
+            match a.action.as_ref().map(|(_, a)| &a.kind) {
+                Some(ActionKind::NavalCruiseMissileStrike(c)) => Some(c.max_range as f64),
+                _ => None,
+            }
         });
         let Some(range) = range else { return };
         if pic.carriers.is_empty() {
@@ -697,7 +827,14 @@ impl<'a> Gen<'a> {
                 continue;
             }
             let value = 40. * o.value() + if Some(o.id) == me { 20. } else { 0. };
-            self.push(OpKind::NavalStrike, Some(o), o.pos, o.name.clone(), value, "in range of our carrier group".into());
+            self.push(
+                OpKind::NavalStrike,
+                Some(o),
+                o.pos,
+                o.name.clone(),
+                value,
+                "in range of our carrier group".into(),
+            );
         }
     }
 
@@ -722,7 +859,14 @@ impl<'a> Gen<'a> {
             self.push(OpKind::Convoy, Some(o), o.pos, o.name.clone(), value, why.clone());
             // A helo run is faster and does not care about a cut road, but
             // carries less: a little less value for more money.
-            self.push(OpKind::HeloSupply, Some(o), o.pos, o.name.clone(), value * 0.9, why);
+            self.push(
+                OpKind::HeloSupply,
+                Some(o),
+                o.pos,
+                o.name.clone(),
+                value * 0.9,
+                why,
+            );
         }
         // Logistics flown in by air to bases whose logistics are shot up.
         for o in pic.own().filter(|o| o.logi < 60 && !o.at_sea() && !o.being_captured) {
@@ -730,7 +874,14 @@ impl<'a> Gen<'a> {
             if self.plan.defend.contains(&o.id) {
                 value *= 1.4;
             }
-            self.push(OpKind::AirRepair, Some(o), o.pos, o.name.clone(), value, format_compact!("logistics at {}%", o.logi));
+            self.push(
+                OpKind::AirRepair,
+                Some(o),
+                o.pos,
+                o.name.clone(),
+                value,
+                format_compact!("logistics at {}%", o.logi),
+            );
         }
     }
 
@@ -747,7 +898,8 @@ impl<'a> Gen<'a> {
         let offensive = self.plan.posture != Posture::Defensive;
         let me = self.plan.main_effort;
         if helo_range > 0. {
-            for o in pic.enemy().filter(|o| o.capturable && !o.at_sea() && !o.sam_site()) {
+            for o in pic.enemy().filter(|o| o.capturable && !o.at_sea() && !o.sam_site())
+            {
                 if pic.gap(o.pos) > helo_range.min(self.cfg.max_ground_range_m * 1.5) {
                     continue;
                 }
@@ -758,15 +910,32 @@ impl<'a> Gen<'a> {
                 if offensive {
                     value *= 1.2;
                 }
-                self.push(OpKind::HeloTroops, Some(o), o.pos, o.name.clone(), value, "no logistics left, troops will take it".into());
+                self.push(
+                    OpKind::HeloTroops,
+                    Some(o),
+                    o.pos,
+                    o.name.clone(),
+                    value,
+                    "no logistics left, troops will take it".into(),
+                );
             }
-            for o in pic.own().filter(|o| o.capturable && (o.being_captured || o.threatened)) {
-                self.push(OpKind::HeloTroops, Some(o), o.pos, o.name.clone(), 50., "garrison gone, troops to hold it".into());
+            for o in
+                pic.own().filter(|o| o.capturable && (o.being_captured || o.threatened))
+            {
+                self.push(
+                    OpKind::HeloTroops,
+                    Some(o),
+                    o.pos,
+                    o.name.clone(),
+                    50.,
+                    "garrison gone, troops to hold it".into(),
+                );
             }
         }
         // Reinforcement convoys rebuild the garrisons we are holding and
         // staging from.
-        let mut bases: Vec<&Obj> = self.plan.defend.iter().filter_map(|id| pic.get(id)).collect();
+        let mut bases: Vec<&Obj> =
+            self.plan.defend.iter().filter_map(|id| pic.get(id)).collect();
         if let Some(s) = self.staging() {
             if !bases.iter().any(|o| o.id == s.id) {
                 bases.push(s);
@@ -784,7 +953,14 @@ impl<'a> Gen<'a> {
                 continue;
             }
             let value = 28. + 8. * n.min(4) as f64;
-            self.push(OpKind::Reinforce, Some(o), o.pos, o.name.clone(), value, format_compact!("{n} garrison group(s) to rebuild"));
+            self.push(
+                OpKind::Reinforce,
+                Some(o),
+                o.pos,
+                o.name.clone(),
+                value,
+                format_compact!("{n} garrison group(s) to rebuild"),
+            );
         }
     }
 
@@ -796,7 +972,11 @@ impl<'a> Gen<'a> {
             for kind in r.kind.answered_by() {
                 // An existing candidate for the same thing just gets the bonus.
                 let mut found = false;
-                for c in self.out.iter_mut().filter(|c| c.kind == *kind && c.anchor == r.target) {
+                for c in self
+                    .out
+                    .iter_mut()
+                    .filter(|c| c.kind == *kind && c.anchor == r.target)
+                {
                     c.value *= bonus;
                     c.request = Some(r.id);
                     found = true;
@@ -897,8 +1077,10 @@ pub(crate) fn rank(
     // Strikes fly as packages: fighters escorting them, SEAD ahead of them
     // where our intel holds air defence near the target. What the side
     // cannot fly goes without -- an unescorted bomber is still a bomber.
-    let escort_cost = avail.get(&OpKind::Cap).filter(|a| a.action.is_some()).map(|a| a.cost);
-    let sead_cost = avail.get(&OpKind::Sead).filter(|a| a.action.is_some()).map(|a| a.cost);
+    let escort_cost =
+        avail.get(&OpKind::Cap).filter(|a| a.action.is_some()).map(|a| a.cost);
+    let sead_cost =
+        avail.get(&OpKind::Sead).filter(|a| a.action.is_some()).map(|a| a.cost);
     for c in g.out.iter_mut() {
         let policy = match c.kind {
             OpKind::Bomber => cfg.packages.escort_bombers,
@@ -972,7 +1154,10 @@ pub(crate) fn rank(
         .filter(|c| !plan.avoided(c.target) && !plan.avoided(Some(c.anchor)))
         // AWACS and tankers are kept to one per station by `room`, which
         // counts every one on the map and lets a relief through.
-        .filter(|c| matches!(c.kind, OpKind::Awacs | OpKind::Tanker) || !pic.busy(c.kind, c.target))
+        .filter(|c| {
+            matches!(c.kind, OpKind::Awacs | OpKind::Tanker)
+                || !pic.busy(c.kind, c.target)
+        })
         .filter(|c| {
             c.kind.line() != Line::Fires
                 || rt
@@ -988,7 +1173,11 @@ pub(crate) fn rank(
                 gap = gap.max(0.8);
             }
             let trust = record.get(&c.kind).copied().unwrap_or_default().trust();
-            let effort = if c.target.is_some() && c.target == plan.main_effort { 1.25 } else { 1. };
+            let effort = if c.target.is_some() && c.target == plan.main_effort {
+                1.25
+            } else {
+                1.
+            };
             c.score = c.value * plan.weight(line) * gap * trust * effort;
             c
         })
@@ -1006,25 +1195,40 @@ pub(crate) fn rank(
 /// How many of `kind`'s line the side may still start, against the limits.
 pub(crate) fn room(cfg: &HqCfg, ctx: &Context, side: Side, kind: OpKind) -> u32 {
     let Some(rt) = ctx.hq.sides.get(&side) else { return u32::MAX };
-    let count = |pred: &dyn Fn(OpKind) -> bool| rt.active().filter(|o| pred(o.kind)).count() as u32;
+    let count = |pred: &dyn Fn(OpKind) -> bool| {
+        rt.active().filter(|o| pred(o.kind)).count() as u32
+    };
     let l = &cfg.limits;
     match kind {
         OpKind::Cap | OpKind::Strike | OpKind::Sead => {
-            l.air.saturating_sub(count(&|k| matches!(k, OpKind::Cap | OpKind::Strike | OpKind::Sead)))
+            l.air.saturating_sub(count(&|k| {
+                matches!(k, OpKind::Cap | OpKind::Strike | OpKind::Sead)
+            }))
         }
         OpKind::Recon => l.recon.saturating_sub(count(&|k| k == OpKind::Recon)),
         OpKind::Convoy | OpKind::HeloSupply => l.logistics.saturating_sub(count(&|k| {
             matches!(k, OpKind::Convoy | OpKind::HeloSupply | OpKind::AirRepair)
         })),
-        OpKind::HeloTroops => l.troops.saturating_sub(count(&|k| k == OpKind::HeloTroops)),
-        OpKind::Reinforce => l.reinforce.saturating_sub(count(&|k| k == OpKind::Reinforce)),
+        OpKind::HeloTroops => {
+            l.troops.saturating_sub(count(&|k| k == OpKind::HeloTroops))
+        }
+        OpKind::Reinforce => {
+            l.reinforce.saturating_sub(count(&|k| k == OpKind::Reinforce))
+        }
         OpKind::Bomber => l.bomber.saturating_sub(count(&|k| k == OpKind::Bomber)),
-        OpKind::Awacs => l.awacs.saturating_sub(support_up(cfg, ctx, side, OpKind::Awacs)),
-        OpKind::Tanker => l.tanker.saturating_sub(support_up(cfg, ctx, side, OpKind::Tanker)),
+        OpKind::Awacs => {
+            l.awacs.saturating_sub(support_up(cfg, ctx, side, OpKind::Awacs))
+        }
+        OpKind::Tanker => {
+            l.tanker.saturating_sub(support_up(cfg, ctx, side, OpKind::Tanker))
+        }
         OpKind::AirRepair => l.logistics.saturating_sub(count(&|k| {
             matches!(k, OpKind::Convoy | OpKind::HeloSupply | OpKind::AirRepair)
         })),
-        OpKind::Artillery | OpKind::MissileStrike | OpKind::Ambush | OpKind::NavalStrike => u32::MAX,
+        OpKind::Artillery
+        | OpKind::MissileStrike
+        | OpKind::Ambush
+        | OpKind::NavalStrike => u32::MAX,
     }
 }
 
@@ -1043,7 +1247,14 @@ fn support_up(cfg: &HqCfg, ctx: &Context, side: Side, kind: OpKind) -> u32 {
 /// supply the base that needs it most, CAS on the main effort and CAP over
 /// the base most under air threat -- whichever of those the side's board has
 /// task types for.
-pub(crate) fn post_tasks(ctx: &mut Context, cfg: &HqCfg, side: Side, pic: &Picture, plan: &Plan, now: DateTime<Utc>) {
+pub(crate) fn post_tasks(
+    ctx: &mut Context,
+    cfg: &HqCfg,
+    side: Side,
+    pic: &Picture,
+    plan: &Plan,
+    now: DateTime<Utc>,
+) {
     let Some(tcfg) = task_cfg(ctx, side) else { return };
     // Forget the ones that have come off the board.
     let open: Vec<_> = {
@@ -1056,11 +1267,15 @@ pub(crate) fn post_tasks(ctx: &mut Context, cfg: &HqCfg, side: Side, pic: &Pictu
     if room == 0 {
         return;
     }
-    let by_target = |f: fn(&TaskTarget) -> bool| tcfg.types.iter().find(|t| f(&t.target)).map(|t| t.name.clone());
+    let by_target = |f: fn(&TaskTarget) -> bool| {
+        tcfg.types.iter().find(|t| f(&t.target)).map(|t| t.name.clone())
+    };
     let by_name = |n: &str| {
         tcfg.types
             .iter()
-            .find(|t| t.name.eq_ignore_ascii_case(n) && matches!(t.target, TaskTarget::Position))
+            .find(|t| {
+                t.name.eq_ignore_ascii_case(n) && matches!(t.target, TaskTarget::Position)
+            })
             .map(|t| t.name.clone())
     };
     let mut wants: Vec<(String, Option<ObjectiveId>, Vector2)> = vec![];
@@ -1094,15 +1309,17 @@ pub(crate) fn post_tasks(ctx: &mut Context, cfg: &HqCfg, side: Side, pic: &Pictu
             break;
         }
         // Don't re-post a position task the board already has nearby.
-        let dup = ctx
-            .db
-            .tasks(side)
-            .any(|t| t.kind == kind && (t.oid == oid && oid.is_some() || dist(t.pos, pos) < 10_000.));
+        let dup = ctx.db.tasks(side).any(|t| {
+            t.kind == kind
+                && (t.oid == oid && oid.is_some() || dist(t.pos, pos) < 10_000.)
+        });
         if dup {
             continue;
         }
         let res = match oid {
-            Some(oid) => ctx.db.add_objective_task(&tcfg, side, None, kind.as_str(), oid, now),
+            Some(oid) => {
+                ctx.db.add_objective_task(&tcfg, side, None, kind.as_str(), oid, now)
+            }
             None => ctx.db.add_task(&tcfg, side, None, kind.as_str(), pos, now),
         };
         match res {
@@ -1161,8 +1378,14 @@ mod tests {
         let light = AirOption { max_threat: Some(2), ..opt("F-16 pair", false) };
         let heavy = AirOption { min_threat: 3, ..opt("F-15C four-ship", false) };
         let opts = [light, heavy];
-        assert_eq!(pick_air(&opts, &sit(0, 0, false, 50.)).unwrap().label.as_str(), "F-16 pair");
-        assert_eq!(pick_air(&opts, &sit(5, 0, false, 50.)).unwrap().label.as_str(), "F-15C four-ship");
+        assert_eq!(
+            pick_air(&opts, &sit(0, 0, false, 50.)).unwrap().label.as_str(),
+            "F-16 pair"
+        );
+        assert_eq!(
+            pick_air(&opts, &sit(5, 0, false, 50.)).unwrap().label.as_str(),
+            "F-15C four-ship"
+        );
     }
 
     #[test]
@@ -1171,7 +1394,10 @@ mod tests {
         let jet = AirOption { targets: vec!["base".into()], ..opt("Su-25T", false) };
         let opts = [helo, jet];
         // Armour near the front, nothing defending it: the helicopter.
-        assert_eq!(pick_air(&opts, &sit(0, 0, false, 40.)).unwrap().label.as_str(), "Ka-50");
+        assert_eq!(
+            pick_air(&opts, &sit(0, 0, false, 40.)).unwrap().label.as_str(),
+            "Ka-50"
+        );
         // A SAM over it: the jet is the only thing that fits, and it is for
         // bases only, so nothing goes.
         assert!(pick_air(&opts, &sit(0, 1, false, 40.)).is_none());

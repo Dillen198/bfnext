@@ -42,7 +42,9 @@ fn string_args(args: Vec<(&str, Value)>) -> Result<Vec<(String, String)>, Error>
     args.into_iter()
         .map(|(k, v)| match v {
             Value::String(s) => Ok((k.to_string(), s.to_string())),
-            other => Err(Error(anyhow::anyhow!("engine RPC argument {k} is not a string: {other:?}"))),
+            other => Err(Error(anyhow::anyhow!(
+                "engine RPC argument {k} is not a string: {other:?}"
+            ))),
         })
         .collect()
 }
@@ -57,25 +59,48 @@ impl EngineHost {
         }
     }
 
-    pub(crate) fn remote(cfg: Arc<InstanceCfg>, multi_instance: bool, link: Arc<super::client::Link>) -> Self {
-        Self { id: Arc::from(cfg.id.as_str()), cfg, multi_instance, via: Via::Remote(link) }
+    pub(crate) fn remote(
+        cfg: Arc<InstanceCfg>,
+        multi_instance: bool,
+        link: Arc<super::client::Link>,
+    ) -> Self {
+        Self {
+            id: Arc::from(cfg.id.as_str()),
+            cfg,
+            multi_instance,
+            via: Via::Remote(link),
+        }
     }
 
     /// `call_engine_rpc_str`: a counted call, bounded to 10 s.
-    pub(crate) async fn rpc_str(&self, proc_name: &str, args: Vec<(&str, Value)>) -> Result<String, Error> {
+    pub(crate) async fn rpc_str(
+        &self,
+        proc_name: &str,
+        args: Vec<(&str, Value)>,
+    ) -> Result<String, Error> {
         match &self.via {
-            Via::Local { db, inst } => crate::call_engine_rpc_str(db, inst, proc_name, args).await,
+            Via::Local { db, inst } => {
+                crate::call_engine_rpc_str(db, inst, proc_name, args).await
+            }
             Via::Remote(link) => {
                 let args = string_args(args)?;
                 // bfdb bounds the call itself at 10 s; a little more for the hop
                 let v = link
                     .call(
-                        |id| Msg::Rpc { id, inst: self.id.to_string(), proc_name: proc_name.into(), args, optional: false },
+                        |id| Msg::Rpc {
+                            id,
+                            inst: self.id.to_string(),
+                            proc_name: proc_name.into(),
+                            args,
+                            optional: false,
+                        },
                         Duration::from_secs(12),
                     )
                     .await
                     .map_err(|e| Error(e.into_anyhow()))?;
-                v.as_str().map(str::to_string).ok_or_else(|| Error(anyhow::anyhow!("unexpected RPC reply: {v}")))
+                v.as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| Error(anyhow::anyhow!("unexpected RPC reply: {v}")))
             }
         }
     }
@@ -83,18 +108,30 @@ impl EngineHost {
     /// `StatsDb::call_engine_rpc_optional`: uncounted, with the engine's own
     /// refusal kept apart from a failed call. Not bounded here, like the
     /// local call; callers put their own timeout on it.
-    pub(crate) async fn rpc_optional(&self, proc_name: &str, args: Vec<(&str, Value)>) -> anyhow::Result<Answer> {
+    pub(crate) async fn rpc_optional(
+        &self,
+        proc_name: &str,
+        args: Vec<(&str, Value)>,
+    ) -> anyhow::Result<Answer> {
         match &self.via {
-            Via::Local { db, inst } => match db.call_engine_rpc_optional(inst, proc_name, args).await? {
-                Value::String(s) => Ok(Answer::Str(s.to_string())),
-                Value::Error(e) => Ok(Answer::Refused(e.to_string())),
-                other => anyhow::bail!("unexpected RPC reply: {other:?}"),
-            },
+            Via::Local { db, inst } => {
+                match db.call_engine_rpc_optional(inst, proc_name, args).await? {
+                    Value::String(s) => Ok(Answer::Str(s.to_string())),
+                    Value::Error(e) => Ok(Answer::Refused(e.to_string())),
+                    other => anyhow::bail!("unexpected RPC reply: {other:?}"),
+                }
+            }
             Via::Remote(link) => {
                 let args = string_args(args).map_err(|e| e.0)?;
                 let r = link
                     .call(
-                        |id| Msg::Rpc { id, inst: self.id.to_string(), proc_name: proc_name.into(), args, optional: true },
+                        |id| Msg::Rpc {
+                            id,
+                            inst: self.id.to_string(),
+                            proc_name: proc_name.into(),
+                            args,
+                            optional: true,
+                        },
                         Duration::from_secs(20),
                     )
                     .await;

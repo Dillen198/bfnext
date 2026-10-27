@@ -831,7 +831,8 @@ impl Db {
         // The threat has gone; `threatened` holds for the cooldown after it.
         let cooldown =
             chrono::Duration::seconds(self.ephemeral.cfg.threatened_cooldown as i64);
-        let left = (obj.last_threatened_ts + cooldown - self.ephemeral.now()).num_seconds();
+        let left =
+            (obj.last_threatened_ts + cooldown - self.ephemeral.now()).num_seconds();
         Some(format_compact!(
             "FROZEN -- threat has cleared, repairs resume in ~{}",
             fmt_mins(left)

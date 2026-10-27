@@ -21,7 +21,17 @@ use super::*;
 /// Radar frequency band — determines aspect/RCS variation and stealth effectiveness.
 /// Lower bands (VHF/UHF) have compressed aspect variation, making shaping less effective.
 /// Higher bands (X/Ku) have sharp aspect dependence and are best countered by shaping.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    Default,
+    schemars::JsonSchema,
+)]
 pub enum RadarBand {
     Vhf,   // 30–300 MHz   — EWR (55G6, P-14, 1L13). Least affected by stealth shaping.
     Uhf,   // 300–3000 MHz — some older SAMs
@@ -30,7 +40,7 @@ pub enum RadarBand {
     Cband, // 4–8 GHz      — some acquisition radars
     #[default]
     Xband, // 8–12 GHz     — most fighters, SAMs, NASAMS, Tor. Sharpest aspect dependence.
-    Kuband,// 12–18 GHz    — some precision track/fire-control radars
+    Kuband, // 12–18 GHz    — some precision track/fire-control radars
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -85,12 +95,22 @@ pub struct AirborneEwr {
     pub frequency_band: RadarBand,
 }
 
-pub(super) fn default_look_down_capable() -> bool { true }
-pub(super) fn default_chaff_susceptibility() -> f32 { 0.3 }
-pub(super) fn default_ecm_susceptibility() -> f32 { 0.4 }
-pub(super) fn default_scan_interval_secs() -> u32 { 2 }
+pub(super) fn default_look_down_capable() -> bool {
+    true
+}
+pub(super) fn default_chaff_susceptibility() -> f32 {
+    0.3
+}
+pub(super) fn default_ecm_susceptibility() -> f32 {
+    0.4
+}
+pub(super) fn default_scan_interval_secs() -> u32 {
+    2
+}
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema,
+)]
 // #[serde(deny_unknown_fields)]
 pub enum EwrMode {
     /// Original EWR implementation with immediate track updates
@@ -106,7 +126,9 @@ impl Default for EwrMode {
 }
 
 /// Sensor category used by the IADN fusion layer to apply appropriate detection physics.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema,
+)]
 pub enum SensorType {
     /// Ground-based omnidirectional EWR / deployed radar.
     GroundEwr,
@@ -169,15 +191,33 @@ impl Default for RadarPhysicsCfg {
     }
 }
 
-pub(super) fn default_rcs_hot() -> f32 { 1.0 }
-pub(super) fn default_rcs_flank() -> f32 { 0.7 }
-pub(super) fn default_rcs_beam() -> f32 { 0.35 }
-pub(super) fn default_rcs_cold() -> f32 { 0.15 }
-pub(super) fn default_notch_attenuation() -> f32 { 0.05 }
-pub(super) fn default_notch_closure_threshold_ms() -> f32 { 50.0 }
-pub(super) fn default_ground_radar_low_alt_threshold_m() -> f32 { 300.0 }
-pub(super) fn default_track_smoothing_alpha() -> f32 { 0.3 }
-pub(super) fn default_awacs_look_down_bonus() -> f32 { 1.5 }
+pub(super) fn default_rcs_hot() -> f32 {
+    1.0
+}
+pub(super) fn default_rcs_flank() -> f32 {
+    0.7
+}
+pub(super) fn default_rcs_beam() -> f32 {
+    0.35
+}
+pub(super) fn default_rcs_cold() -> f32 {
+    0.15
+}
+pub(super) fn default_notch_attenuation() -> f32 {
+    0.05
+}
+pub(super) fn default_notch_closure_threshold_ms() -> f32 {
+    50.0
+}
+pub(super) fn default_ground_radar_low_alt_threshold_m() -> f32 {
+    300.0
+}
+pub(super) fn default_track_smoothing_alpha() -> f32 {
+    0.3
+}
+pub(super) fn default_awacs_look_down_bonus() -> f32 {
+    1.5
+}
 
 /// Integrated Air Defence Network configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -329,29 +369,69 @@ impl Default for IadnConfig {
     }
 }
 
-pub(super) fn default_track_association_radius_m() -> f64 { 3000.0 }
-pub(super) fn default_detection_snr_threshold() -> f32 { 0.5 }
-pub(super) fn default_track_stale_secs() -> u32 { 60 }
-pub(super) fn default_track_drop_secs() -> u32 { 120 }
-pub(super) fn default_sam_cue_enabled() -> bool { true }
-pub(super) fn default_sam_cue_confidence_threshold() -> f32 { 0.4 }
-pub(super) fn default_harm_defense_radius_m() -> f64 { 20_000.0 }
-pub(super) fn default_harm_defense_cooldown_secs() -> u32 { 20 }
-pub(super) fn default_arm_discipline() -> f64 { 0.6 }
-pub(super) fn default_arm_react_chance() -> f64 { 0.75 }
-pub(super) fn default_arm_aim_cone_deg() -> f64 { 25.0 }
+pub(super) fn default_track_association_radius_m() -> f64 {
+    3000.0
+}
+pub(super) fn default_detection_snr_threshold() -> f32 {
+    0.5
+}
+pub(super) fn default_track_stale_secs() -> u32 {
+    60
+}
+pub(super) fn default_track_drop_secs() -> u32 {
+    120
+}
+pub(super) fn default_sam_cue_enabled() -> bool {
+    true
+}
+pub(super) fn default_sam_cue_confidence_threshold() -> f32 {
+    0.4
+}
+pub(super) fn default_harm_defense_radius_m() -> f64 {
+    20_000.0
+}
+pub(super) fn default_harm_defense_cooldown_secs() -> u32 {
+    20
+}
+pub(super) fn default_arm_discipline() -> f64 {
+    0.6
+}
+pub(super) fn default_arm_react_chance() -> f64 {
+    0.75
+}
+pub(super) fn default_arm_aim_cone_deg() -> f64 {
+    25.0
+}
 pub(super) fn default_decoy_weapons() -> FxHashSet<std::string::String> {
     ["ADM_141A", "ADM_141B"].into_iter().map(std::string::String::from).collect()
 }
-pub(super) fn default_decoy_saturation() -> f64 { 0.3 }
-pub(super) fn default_min_hot_dwell_secs() -> u32 { 15 }
-pub(super) fn default_reaction_delay_max_secs() -> u32 { 4 }
-pub(super) fn default_track_radar_range_fraction() -> f32 { 0.5 }
-pub(super) fn default_jamming_enabled() -> bool { true }
-pub(super) fn default_jamming_range_m() -> f64 { 40_000.0 }
-pub(super) fn default_jamming_detection_penalty() -> f32 { 0.5 }
-pub(super) fn default_sam_offboard_cue_enabled() -> bool { true }
-pub(super) fn default_sam_offboard_cue_range_m() -> f64 { 60_000.0 }
+pub(super) fn default_decoy_saturation() -> f64 {
+    0.3
+}
+pub(super) fn default_min_hot_dwell_secs() -> u32 {
+    15
+}
+pub(super) fn default_reaction_delay_max_secs() -> u32 {
+    4
+}
+pub(super) fn default_track_radar_range_fraction() -> f32 {
+    0.5
+}
+pub(super) fn default_jamming_enabled() -> bool {
+    true
+}
+pub(super) fn default_jamming_range_m() -> f64 {
+    40_000.0
+}
+pub(super) fn default_jamming_detection_penalty() -> f32 {
+    0.5
+}
+pub(super) fn default_sam_offboard_cue_enabled() -> bool {
+    true
+}
+pub(super) fn default_sam_offboard_cue_range_m() -> f64 {
+    60_000.0
+}
 
 /// ELINT/SIGINT intelligence system configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -409,16 +489,36 @@ impl Default for ElintConfig {
     }
 }
 
-pub(super) fn default_contact_cluster_radius_m() -> f64 { 500.0 }
-pub(super) fn default_half_life_recon() -> u32 { 600 }
-pub(super) fn default_half_life_sf() -> u32 { 1800 }
-pub(super) fn default_half_life_awacs() -> u32 { 300 }
-pub(super) fn default_half_life_ewr() -> u32 { 180 }
-pub(super) fn default_half_life_jtac() -> u32 { 3600 }
-pub(super) fn default_confidence_delete_threshold() -> f32 { 0.05 }
-pub(super) fn default_max_contacts_per_side() -> usize { 200 }
-pub(super) fn default_show_unit_class() -> bool { true }
-pub(super) fn default_show_confidence_on_map() -> bool { true }
+pub(super) fn default_contact_cluster_radius_m() -> f64 {
+    500.0
+}
+pub(super) fn default_half_life_recon() -> u32 {
+    600
+}
+pub(super) fn default_half_life_sf() -> u32 {
+    1800
+}
+pub(super) fn default_half_life_awacs() -> u32 {
+    300
+}
+pub(super) fn default_half_life_ewr() -> u32 {
+    180
+}
+pub(super) fn default_half_life_jtac() -> u32 {
+    3600
+}
+pub(super) fn default_confidence_delete_threshold() -> f32 {
+    0.05
+}
+pub(super) fn default_max_contacts_per_side() -> usize {
+    200
+}
+pub(super) fn default_show_unit_class() -> bool {
+    true
+}
+pub(super) fn default_show_confidence_on_map() -> bool {
+    true
+}
 
 /// A plain 2-D position in DCS LO coordinates that serializes as `{"x":…,"y":…}`.
 /// Used instead of `nalgebra::Vector2` in config structs because nalgebra serializes

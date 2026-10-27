@@ -11,13 +11,14 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
-use crate::object::DcsOidExt;
 use super::{as_tbl, controller::Controller, group::Group, object::Object, String};
+use crate::object::DcsOidExt;
 use crate::{
     env::miz::UnitId,
     net::SlotId,
     object::{DcsObject, DcsOid},
-    record_perf, simple_enum_unknown, wrapped_table, LuaEnv, LuaVec2, LuaVec3, MizLua, Position3, Sequence,
+    record_perf, simple_enum_unknown, wrapped_table, LuaEnv, LuaVec2, LuaVec3, MizLua,
+    Position3, Sequence,
 };
 use anyhow::{bail, Result};
 use log::debug;
@@ -53,10 +54,7 @@ impl Ammo {
     }
 
     pub fn display_name(&self) -> Result<String> {
-        Ok(self
-            .t
-            .raw_get::<LuaTable>("desc")?
-            .raw_get("displayName")?)
+        Ok(self.t.raw_get::<LuaTable>("desc")?.raw_get("displayName")?)
     }
 
     pub fn weapon_flags(&self) -> Result<u64> {
@@ -70,17 +68,11 @@ impl Unit {
     pub fn get_by_name(lua: MizLua, name: &str) -> Result<Unit> {
         let globals = lua.inner().globals();
         let unit = as_tbl("Unit", None, globals.raw_get("Unit")?)?;
-        Ok(record_perf!(
-            unit_get_by_name,
-            unit.call_function("getByName", name)?
-        ))
+        Ok(record_perf!(unit_get_by_name, unit.call_function("getByName", name)?))
     }
 
     pub fn is_exist(&self) -> Result<bool> {
-        Ok(record_perf!(
-            unit_is_exist,
-            self.t.call_method("isExist", ())?
-        ))
+        Ok(record_perf!(unit_is_exist, self.t.call_method("isExist", ())?))
     }
 
     pub fn destroy(self) -> Result<()> {
@@ -104,10 +96,7 @@ impl Unit {
     }
 
     pub fn get_position(&self) -> Result<Position3> {
-        Ok(record_perf!(
-            get_position,
-            self.t.call_method("getPosition", ())?
-        ))
+        Ok(record_perf!(get_position, self.t.call_method("getPosition", ())?))
     }
 
     pub fn get_ground_position(&self) -> Result<LuaVec2> {
@@ -116,10 +105,7 @@ impl Unit {
     }
 
     pub fn get_velocity(&self) -> Result<LuaVec3> {
-        Ok(record_perf!(
-            get_velocity,
-            self.t.call_method("getVelocity", ())?
-        ))
+        Ok(record_perf!(get_velocity, self.t.call_method("getVelocity", ())?))
     }
 
     pub fn in_air(&self) -> Result<bool> {
@@ -259,21 +245,14 @@ impl DcsObject for Unit {
     type Class = ClassUnit;
 
     fn object_id(&self) -> Result<DcsOid<Self::Class>> {
-        Ok(DcsOid {
-            id: self.raw_get("id_")?,
-            class: "Unit".into(),
-            t: PhantomData,
-        })
+        Ok(DcsOid { id: self.raw_get("id_")?, class: "Unit".into(), t: PhantomData })
     }
 
     fn get_instance(lua: MizLua, id: &DcsOid<Self::Class>) -> Result<Self> {
         let t = lua.inner().create_table()?;
         t.set_metatable(Some(lua.inner().globals().raw_get(&**id.class)?));
         t.raw_set("id_", id.id)?;
-        let t = Unit {
-            t,
-            lua: lua.inner().clone(),
-        };
+        let t = Unit { t, lua: lua.inner().clone() };
         if !t.is_exist()? {
             debug!("{} is an invalid unit", id.id);
             bail!("{} is an invalid unit", id.id)
@@ -288,11 +267,7 @@ impl DcsObject for Unit {
 
     fn get_instance_dyn<T>(lua: MizLua, id: &DcsOid<T>) -> Result<Self> {
         id.check_implements(lua, "Unit")?;
-        let id = DcsOid {
-            id: id.id,
-            class: id.class.clone(),
-            t: PhantomData,
-        };
+        let id = DcsOid { id: id.id, class: id.class.clone(), t: PhantomData };
         Self::get_instance(lua, &id)
     }
 

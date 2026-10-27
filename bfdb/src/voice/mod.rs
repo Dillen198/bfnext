@@ -32,11 +32,7 @@ pub(crate) struct Radio {
 
 impl Radio {
     pub(crate) fn new(freq_mhz: f64, modulation: u8, label: impl Into<String>) -> Self {
-        Radio {
-            freq_hz: freq_mhz * 1e6,
-            modulation,
-            label: label.into(),
-        }
+        Radio { freq_hz: freq_mhz * 1e6, modulation, label: label.into() }
     }
 
     /// Does this radio match a frequency heard on the wire? SRS frequencies are
@@ -66,9 +62,9 @@ impl Radio {
 pub(crate) fn band_of(freq_hz: f64) -> &'static str {
     match freq_hz / 1e6 {
         f if f < 30.0 => "HF",
-        f if f < 108.0 => "VHF",  // 30–87.995 is the FM combat-net band
-        f if f < 156.0 => "VHF",  // 108–151.995 AM aviation band
-        f if f < 400.0 => "UHF",  // 225–399.975
+        f if f < 108.0 => "VHF", // 30–87.995 is the FM combat-net band
+        f if f < 156.0 => "VHF", // 108–151.995 AM aviation band
+        f if f < 400.0 => "UHF", // 225–399.975
         _ => "SHF",
     }
 }

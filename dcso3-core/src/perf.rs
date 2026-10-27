@@ -152,10 +152,7 @@ impl<'a> Drop for Snap<'a> {
 
 impl<'a> Snap<'a> {
     pub fn new(perf: &'a mut HistogramSer) -> Self {
-        Self {
-            ts: Utc::now(),
-            perf: Some(perf),
-        }
+        Self { ts: Utc::now(), perf: Some(perf) }
     }
 
     pub fn commit(&mut self) {
@@ -315,7 +312,11 @@ impl Perf {
             in_air: HistStat::new(&in_air, "Unit.inAir", false),
             land_get_height: HistStat::new(&land_get_height, "Land.getHeight", false),
             land_is_visible: HistStat::new(&land_is_visible, "Land.isVisible", false),
-            timer_get_abs_time: HistStat::new(&timer_get_abs_time, "Timer.getAbsTime", false),
+            timer_get_abs_time: HistStat::new(
+                &timer_get_abs_time,
+                "Timer.getAbsTime",
+                false,
+            ),
             timer_get_time: HistStat::new(&timer_get_time, "Timer.getTime", false),
             timer_get_time0: HistStat::new(&timer_get_time0, "Timer.getTime0", false),
             timer_remove_function: HistStat::new(
@@ -457,14 +458,17 @@ pub struct SingletonGuard<T: 'static> {
 
 impl<T: Default + 'static> SingletonGuard<T> {
     #[doc(hidden)]
-    pub fn acquire(key: &'static LocalKey<Cell<Option<&'static SingletonSlot<T>>>>) -> Self {
+    pub fn acquire(
+        key: &'static LocalKey<Cell<Option<&'static SingletonSlot<T>>>>,
+    ) -> Self {
         let slot = key.with(|c| match c.get() {
             Some(slot) => slot,
             None => {
-                let slot: &'static SingletonSlot<T> = Box::leak(Box::new(SingletonSlot {
-                    held: Cell::new(false),
-                    value: UnsafeCell::new(T::default()),
-                }));
+                let slot: &'static SingletonSlot<T> =
+                    Box::leak(Box::new(SingletonSlot {
+                        held: Cell::new(false),
+                        value: UnsafeCell::new(T::default()),
+                    }));
                 c.set(Some(slot));
                 slot
             }

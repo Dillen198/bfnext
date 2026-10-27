@@ -19,7 +19,7 @@ use fowlbg::{
     jsonl::{JsonlSink, open_append},
     netidx::{BIND_BACKOFF, Tls, load_config, start_publisher},
 };
-use futures::{channel::mpsc as fmpsc, StreamExt};
+use futures::{StreamExt, channel::mpsc as fmpsc};
 use log::{error, info};
 use netidx::{
     chars::Chars,
@@ -49,12 +49,24 @@ pub enum Cmd {
     QueryAtc,
     /// A controller's command: "start" / "hold" / "resume" an AI flight (target =
     /// group), or "text": show `text` to the player in unit `target`.
-    Atc { action: String, target: String, text: String },
+    Atc {
+        action: String,
+        target: String,
+        text: String,
+    },
     QueryCatalog,
     QueryWeapons,
     Spawn(bfprotocols::range::SpawnRequest),
-    Despawn { ucid: String, spawn_id: String, instructor: bool },
-    ResetStation { ucid: String, station: String, instructor: bool },
+    Despawn {
+        ucid: String,
+        spawn_id: String,
+        instructor: bool,
+    },
+    ResetStation {
+        ucid: String,
+        station: String,
+        instructor: bool,
+    },
 }
 
 pub type CmdQueue = Arc<SegQueue<(Cmd, oneshot::Sender<Value>)>>;
@@ -77,9 +89,16 @@ pub enum Task {
     WriteLog(Bytes),
     Stat(Stat),
     Record(Box<RangeRecord>),
-    Start { sortie: String, net: NetCfg, q: CmdQueue },
+    Start {
+        sortie: String,
+        net: NetCfg,
+        q: CmdQueue,
+    },
     /// Rotate the JSONL feeds that are bigger than these many bytes.
-    RotateJsonl { range_max: Option<u64>, stats_max: Option<u64> },
+    RotateJsonl {
+        range_max: Option<u64>,
+        stats_max: Option<u64>,
+    },
 }
 
 impl fowlbg::Task for Task {
@@ -330,7 +349,16 @@ impl Rpcs {
             station: Chars = Value::Null; "The station id",
             instructor: bool = false; "The caller is an instructor/admin"
         )?;
-        Ok(Self { query_range, query_atc, atc_cmd, query_catalog, query_weapons, spawn, despawn, reset_station })
+        Ok(Self {
+            query_range,
+            query_atc,
+            atc_cmd,
+            query_catalog,
+            query_weapons,
+            spawn,
+            despawn,
+            reset_station,
+        })
     }
 }
 
@@ -351,14 +379,15 @@ impl Background {
         // the resolver never lists two publishers for one path
         self.rpcs = None;
         self.publisher = None;
-        let cfg = match load_config(net.config.as_deref().map(Path::new), net.tls.as_ref()) {
-            Ok(c) => c,
-            Err(e) => {
-                let from = net.config.as_deref().unwrap_or("the default location");
-                error!("failed to load the netidx config from {from}: {e:?}");
-                return;
-            }
-        };
+        let cfg =
+            match load_config(net.config.as_deref().map(Path::new), net.tls.as_ref()) {
+                Ok(c) => c,
+                Err(e) => {
+                    let from = net.config.as_deref().unwrap_or("the default location");
+                    error!("failed to load the netidx config from {from}: {e:?}");
+                    return;
+                }
+            };
         if let Some(tls) = &net.tls {
             info!("netidx: TLS to resolver {} as {}", tls.resolver_name, tls.certificate);
         }
@@ -377,7 +406,9 @@ impl Background {
             }
         };
         info!("netidx: publishing on {}", publisher.addr());
-        info!("netidx: range RPCs under {base}/api (bfdb's instance base must be the parent)");
+        info!(
+            "netidx: range RPCs under {base}/api (bfdb's instance base must be the parent)"
+        );
         match Rpcs::new(&publisher, &q, &base) {
             Ok(r) => self.rpcs = Some(r),
             Err(e) => error!("failed to publish range RPCs: {e:?}"),
@@ -398,7 +429,9 @@ impl fowlbg::Handler for Background {
             }
             Task::Stat(st) => self.sinks.stat(&st),
             Task::Record(r) => self.sinks.record(&r),
-            Task::RotateJsonl { range_max, stats_max } => self.sinks.rotate_jsonl(range_max, stats_max),
+            Task::RotateJsonl { range_max, stats_max } => {
+                self.sinks.rotate_jsonl(range_max, stats_max)
+            }
             Task::Start { sortie, net, q } => self.start(sortie, net, q).await,
         }
     }
@@ -407,10 +440,13 @@ impl fowlbg::Handler for Background {
 pub fn init(write_dir: PathBuf) -> UnboundedSender<Task> {
     // Unsupervised, no fallback log and no netidx filter: the range as it
     // was before fowlbg. Each is one option away.
-    let opts = fowlbg::Options { worker_threads: Some(2), ..fowlbg::Options::new("bfrange") };
+    let opts =
+        fowlbg::Options { worker_threads: Some(2), ..fowlbg::Options::new("bfrange") };
     fowlbg::init(opts, move |_restart| {
         let write_dir = write_dir.clone();
-        async move { Background { sinks: Sinks::new(&write_dir), rpcs: None, publisher: None } }
+        async move {
+            Background { sinks: Sinks::new(&write_dir), rpcs: None, publisher: None }
+        }
     })
 }
 

@@ -51,7 +51,9 @@ impl DiscordRoles {
     /// The roles a guild member with `member_roles` gets. The admin role
     /// grants all of them.
     pub(crate) fn roles_for(&self, admin_role: &str, member_roles: &[String]) -> u8 {
-        let has = |id: &Option<String>| id.as_ref().map_or(false, |id| member_roles.iter().any(|r| r == id));
+        let has = |id: &Option<String>| {
+            id.as_ref().map_or(false, |id| member_roles.iter().any(|r| r == id))
+        };
         if member_roles.iter().any(|r| r == admin_role) {
             return Role::ALL;
         }
@@ -75,10 +77,17 @@ mod tests {
 
     #[test]
     fn discord_roles() {
-        let d = DiscordRoles { ops: Some("10".into()), content: Some("20".into()), moderation: None };
+        let d = DiscordRoles {
+            ops: Some("10".into()),
+            content: Some("20".into()),
+            moderation: None,
+        };
         assert_eq!(d.roles_for("1", &["1".into()]), Role::ALL);
         assert_eq!(d.roles_for("1", &["20".into(), "99".into()]), Role::CONTENT);
-        assert_eq!(d.roles_for("1", &["10".into(), "20".into()]), Role::OPS | Role::CONTENT);
+        assert_eq!(
+            d.roles_for("1", &["10".into(), "20".into()]),
+            Role::OPS | Role::CONTENT
+        );
         assert_eq!(d.roles_for("1", &["99".into()]), 0);
         assert_eq!(DiscordRoles::default().roles_for("1", &["10".into()]), 0);
         assert_eq!(role_names(Role::OPS | Role::MODERATION), vec!["ops", "moderation"]);

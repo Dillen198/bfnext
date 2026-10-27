@@ -12,10 +12,12 @@ use crate::{
     util::{self, V3},
     weapons::{Impact, Purpose},
 };
-use anyhow::{bail, Result};
-use bfprotocols::range::{cfg::RangeCfg, AntiShipResult, PilotRef, RangeResult, StationKind, Track};
+use anyhow::{Result, bail};
+use bfprotocols::range::{
+    AntiShipResult, PilotRef, RangeResult, StationKind, Track, cfg::RangeCfg,
+};
 use chrono::{Duration, Utc};
-use dcso3::{unit::Unit, MizLua};
+use dcso3::{MizLua, unit::Unit};
 use fxhash::FxHashMap;
 use serde_json::json;
 
@@ -80,41 +82,74 @@ impl AntiShip {
         let hdg = if f.vel.norm() < 5. { f.hdg } else { h };
         let pos = util::offset(f.pos, hdg, dist_nm * util::NM, 0.);
         if !util::is_water(lua, pos) {
-            bail!("{:.0} nm ahead of you is not open water - turn toward the sea and try again", dist_nm)
+            bail!(
+                "{:.0} nm ahead of you is not open water - turn toward the sea and try again",
+                dist_nm
+            )
         }
         let name = spawns.next_name("SHIP");
         let units: Vec<(String, V3, f64)> = (0..count.clamp(1, 4))
-            .map(|i| (typ.to_string(), util::offset(pos, hdg + 90., 0., 400. * i as f64), hdg + 90.))
+            .map(|i| {
+                (
+                    typ.to_string(),
+                    util::offset(pos, hdg + 90., 0., 400. * i as f64),
+                    hdg + 90.,
+                )
+            })
             .collect();
         let speed = if moving { 8. } else { 0. };
         let p2 = util::offset(pos, hdg + 90., 10. * util::NM, 0.);
         let route = if moving {
             vec![
                 spawn::waypoint(pos, 0., speed, vec![]),
-                spawn::waypoint(p2, 0., speed, vec![spawn::wrapped(
-                    1,
-                    json!({ "id": "SwitchWaypoint", "params": { "fromWaypointIndex": 2, "goToWaypointIndex": 1 } }),
-                )]),
+                spawn::waypoint(
+                    p2,
+                    0.,
+                    speed,
+                    vec![spawn::wrapped(
+                        1,
+                        json!({ "id": "SwitchWaypoint", "params": { "fromWaypointIndex": 2, "goToWaypointIndex": 1 } }),
+                    )],
+                ),
             ]
         } else {
             vec![spawn::waypoint(pos, 0., 0., vec![])]
         };
         let g = spawn::surface_group(&name, &units, "Average", route);
         let side = f.side.opposite();
-        spawn::add_group(lua, spawn::country_id(spawn::default_country(side))?, spawn::SHIP, &g)?;
+        spawn::add_group(
+            lua,
+            spawn::country_id(spawn::default_country(side))?,
+            spawn::SHIP,
+            &g,
+        )?;
         // hold fire unless the instructor asked for a live warship
-        spawns.defer(now + 2., spawn::Pending::GroupOption { group: name.clone(), id: 0, value: json!(if weapons_free { 2 } else { 4 }) });
+        spawns.defer(
+            now + 2.,
+            spawn::Pending::GroupOption {
+                group: name.clone(),
+                id: 0,
+                value: json!(if weapons_free { 2 } else { 4 }),
+            },
+        );
         self.groups.push(name.clone());
         spawns.insert(Spawn {
             id: name.clone(),
             item: "ship_target".into(),
-            label: format!("{} x{}{}", typ, units.len(), if moving { " (moving)" } else { "" }),
+            label: format!(
+                "{} x{}{}",
+                typ,
+                units.len(),
+                if moving { " (moving)" } else { "" }
+            ),
             owner: Some(f.ucid.to_string()),
             owner_name: f.name.clone(),
             groups: vec![name.clone()],
             statics: vec![],
             created: Utc::now(),
-            expires: Some(Utc::now() + Duration::seconds(cfg.spawn.despawn_after_s as i64)),
+            expires: Some(
+                Utc::now() + Duration::seconds(cfg.spawn.despawn_after_s as i64),
+            ),
             units: units.len() as u32,
             pos,
             kind: SpawnKind::Ship,
@@ -122,7 +157,13 @@ impl AntiShip {
         records::to_group(
             lua,
             f.group_id,
-            &format!("{} x{} spawned {:03.0} for {:.0} nm", typ, units.len(), hdg, dist_nm),
+            &format!(
+                "{} x{} spawned {:03.0} for {:.0} nm",
+                typ,
+                units.len(),
+                hdg,
+                dist_nm
+            ),
             15,
         );
         Ok(name)
@@ -147,7 +188,14 @@ impl AntiShip {
 
     /// Score an impact if it was aimed at / hit / landed near a ship.
     /// Returns the impact unchanged when it had nothing to do with ships.
-    pub fn score_impact(&mut self, lua: MizLua, cfg: &RangeCfg, ag: &AirToGround, rec: &mut Recorder, imp: Impact) -> Option<Impact> {
+    pub fn score_impact(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        ag: &AirToGround,
+        rec: &mut Recorder,
+        imp: Impact,
+    ) -> Option<Impact> {
         if !imp.w.shooter.is_player() {
             return Some(imp);
         }
@@ -156,16 +204,23 @@ impl AntiShip {
         let aimed = imp.w.target_name.clone().filter(|t| ships.contains(t));
         let near = ships
             .iter()
-            .filter_map(|s| Some((s.clone(), Unit::get_by_name(lua, s).ok()?.get_point().ok()?.0)))
+            .filter_map(|s| {
+                Some((s.clone(), Unit::get_by_name(lua, s).ok()?.get_point().ok()?.0))
+            })
             .map(|(s, p)| (s, util::dist2(p, imp.pos), p))
             .min_by(|a, b| a.1.total_cmp(&b.1));
         let ship = match (&hit_ship, &aimed, &near) {
             (Some(s), _, _) => s.clone(),
             (None, Some(s), _) => s.clone(),
-            (None, None, Some((s, d, _))) if *d < 500. || imp.w.purpose == Purpose::AntiShip => s.clone(),
+            (None, None, Some((s, d, _)))
+                if *d < 500. || imp.w.purpose == Purpose::AntiShip =>
+            {
+                s.clone()
+            }
             _ => return Some(imp),
         };
-        let ship_pos = near.as_ref().filter(|n| n.0 == ship).map(|n| n.2).unwrap_or(imp.pos);
+        let ship_pos =
+            near.as_ref().filter(|n| n.0 == ship).map(|n| n.2).unwrap_or(imp.pos);
         let (typ, life_now) = Unit::get_by_name(lua, &ship)
             .ok()
             .map(|u| {
@@ -191,7 +246,9 @@ impl AntiShip {
             damage,
             ship_sunk: life_now <= 0.,
             time_of_flight_s: imp.tof,
-            intercepted: !hit && util::dist2(imp.pos, ship_pos) > 200. && imp.w.purpose == Purpose::AntiShip,
+            intercepted: !hit
+                && util::dist2(imp.pos, ship_pos) > 200.
+                && imp.w.purpose == Purpose::AntiShip,
             launch_pos: util::geo(lua, imp.w.rel_pos),
             ship_pos: util::geo(lua, ship_pos),
         };
@@ -208,7 +265,11 @@ impl AntiShip {
                         if hit { "HIT" } else { "MISS" },
                         res.launch_range_m / util::NM,
                         imp.tof,
-                        if hit { format!(", {:.0}% damage", damage * 100.) } else { String::new() }
+                        if hit {
+                            format!(", {:.0}% damage", damage * 100.)
+                        } else {
+                            String::new()
+                        }
                     ),
                     cfg.message_s,
                 );

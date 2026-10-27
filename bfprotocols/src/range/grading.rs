@@ -11,7 +11,9 @@ pub fn good_radius(cfg: &ScoringCfg, class: WeaponClass) -> f64 {
     match class {
         WeaponClass::Guided | WeaponClass::Missile => cfg.good_guided_m,
         WeaponClass::Rocket => cfg.good_rocket_m,
-        WeaponClass::Unguided | WeaponClass::Cluster | WeaponClass::Gun => cfg.good_unguided_m,
+        WeaponClass::Unguided | WeaponClass::Cluster | WeaponClass::Gun => {
+            cfg.good_unguided_m
+        }
     }
 }
 
@@ -116,7 +118,10 @@ pub fn lineup_call(lue_deg: f64) -> Option<(&'static str, super::lso::Magnitude)
     }
 }
 
-pub fn aoa_call(band: &AoaBand, aoa_deg: f64) -> Option<(&'static str, super::lso::Magnitude)> {
+pub fn aoa_call(
+    band: &AoaBand,
+    aoa_deg: f64,
+) -> Option<(&'static str, super::lso::Magnitude)> {
     use super::lso::Magnitude::*;
     if aoa_deg < band.fast_lot {
         Some(("F", Lot))
@@ -176,10 +181,16 @@ pub fn aar_grade(
         calls.push(format!("{disconnects} disconnects"));
     }
     let spread = |sd: f64, lim: f64| ((sd - lim) / lim).clamp(0., 1.);
-    let st = spread(fore_aft_sd, 2.0) * 0.6 + spread(lateral_sd, 1.5) * 0.7 + spread(vertical_sd, 1.5) * 0.7;
+    let st = spread(fore_aft_sd, 2.0) * 0.6
+        + spread(lateral_sd, 1.5) * 0.7
+        + spread(vertical_sd, 1.5) * 0.7;
     if st > 0.05 {
         s -= st;
-        let mut worst = vec![(fore_aft_sd / 2.0, "fore-aft"), (lateral_sd / 1.5, "lateral"), (vertical_sd / 1.5, "vertical")];
+        let mut worst = vec![
+            (fore_aft_sd / 2.0, "fore-aft"),
+            (lateral_sd / 1.5, "lateral"),
+            (vertical_sd / 1.5, "vertical"),
+        ];
         worst.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         calls.push(format!("Unstable in contact, mostly {}", worst[0].1));
     }
@@ -348,9 +359,15 @@ mod tests {
         let cfg = ScoringCfg::default();
         // GBU-16 at 37 m graded against the unguided 25 m radius is
         // INEFFECTIVE, as on the reference card.
-        assert_eq!(bomb_quality(&cfg, WeaponClass::Unguided, 37.), BombQuality::Ineffective);
+        assert_eq!(
+            bomb_quality(&cfg, WeaponClass::Unguided, 37.),
+            BombQuality::Ineffective
+        );
         assert_eq!(bomb_quality(&cfg, WeaponClass::Unguided, 1.0), BombQuality::Shack);
-        assert_eq!(bomb_quality(&cfg, WeaponClass::Unguided, 12.), BombQuality::Excellent);
+        assert_eq!(
+            bomb_quality(&cfg, WeaponClass::Unguided, 12.),
+            BombQuality::Excellent
+        );
         assert_eq!(bomb_quality(&cfg, WeaponClass::Unguided, 60.), BombQuality::Poor);
     }
 
@@ -439,7 +456,10 @@ pub fn field_landing_quality(
 }
 
 /// CSAR: a rescue graded on the time from the MAYDAY to the survivor home.
-pub fn csar_quality(outcome: super::CsarOutcome, time_total_s: Option<f64>) -> PrecisionQuality {
+pub fn csar_quality(
+    outcome: super::CsarOutcome,
+    time_total_s: Option<f64>,
+) -> PrecisionQuality {
     use super::CsarOutcome::*;
     match (outcome, time_total_s) {
         (Rescued, Some(t)) if t <= 20. * 60. => PrecisionQuality::Perfect,
@@ -464,9 +484,21 @@ mod new_sector_tests {
 
     #[test]
     fn field_landing_bands() {
-        assert_eq!(field_landing_quality(40., 1., 300., true, false), PrecisionQuality::Perfect);
-        assert_eq!(field_landing_quality(200., 6., 700., true, false), PrecisionQuality::Fair);
-        assert_eq!(field_landing_quality(200., 6., 700., false, false), PrecisionQuality::Poor);
-        assert_eq!(field_landing_quality(0., 0., 100., true, true), PrecisionQuality::Poor);
+        assert_eq!(
+            field_landing_quality(40., 1., 300., true, false),
+            PrecisionQuality::Perfect
+        );
+        assert_eq!(
+            field_landing_quality(200., 6., 700., true, false),
+            PrecisionQuality::Fair
+        );
+        assert_eq!(
+            field_landing_quality(200., 6., 700., false, false),
+            PrecisionQuality::Poor
+        );
+        assert_eq!(
+            field_landing_quality(0., 0., 100., true, true),
+            PrecisionQuality::Poor
+        );
     }
 }

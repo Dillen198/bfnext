@@ -174,7 +174,9 @@ fn backup_state(path: &Path, now: DateTime<Utc>) -> Result<()> {
         return Ok(());
     }
     let mut backup = PathBuf::from(path);
-    backup.set_file_name(format_compact!("{}{}", save_name(path)?, now.timestamp()).as_str());
+    backup.set_file_name(
+        format_compact!("{}{}", save_name(path)?, now.timestamp()).as_str(),
+    );
     if backup.exists() {
         // two saves in the same second, one backup of them is plenty
         return Ok(());
@@ -191,9 +193,7 @@ fn backup_state(path: &Path, now: DateTime<Utc>) -> Result<()> {
 fn prune_backups(path: &Path, now: DateTime<Utc>) -> Result<()> {
     {
         let name = save_name(path)?;
-        let dir = path
-            .parent()
-            .ok_or_else(|| anyhow!("path has no parent dir"))?;
+        let dir = path.parent().ok_or_else(|| anyhow!("path has no parent dir"))?;
         let mut by_age: FxHashMap<i64, Vec<(i64, PathBuf)>> = FxHashMap::default();
         for file in fs::read_dir(dir)? {
             let file = file?;
@@ -225,10 +225,7 @@ fn prune_backups(path: &Path, now: DateTime<Utc>) -> Result<()> {
                                 .or_default()
                                 .push((ts, file));
                         } else if age > day {
-                            by_age
-                                .entry((age / day) * day)
-                                .or_default()
-                                .push((ts, file));
+                            by_age.entry((age / day) * day).or_default().push((ts, file));
                         } else if age > hour {
                             by_age
                                 .entry((age / hour) * hour)
@@ -266,11 +263,7 @@ async fn save(path: PathBuf, encoded: Bytes) -> Result<()> {
     task::spawn_blocking(move || {
         use std::fs::File;
         let tmp = save_tmp_path(&path);
-        let file = File::options()
-            .write(true)
-            .truncate(true)
-            .create(true)
-            .open(&tmp)?;
+        let file = File::options().write(true).truncate(true).create(true).open(&tmp)?;
         // Level 3 (zstd's default): a large campaign compressed at 9 took
         // seconds of CPU per save for a few percent of size.
         let mut file = zstd::stream::Encoder::new(file, 3)?;
@@ -336,17 +329,18 @@ impl Saver {
     /// Write whatever is pending, while holding `writing`.
     async fn write_pending(&self) {
         let Some((path, db)) = self.pending.lock().take() else { return };
-        let encoded = match task::spawn_blocking(move || encode(&db).map(|b| b.freeze())).await {
-            Ok(Ok(encoded)) => encoded,
-            Ok(Err(e)) => {
-                error!("failed to encode save state {e:?}");
-                return;
-            }
-            Err(e) => {
-                error!("encoding the save state panicked {e:?}");
-                return;
-            }
-        };
+        let encoded =
+            match task::spawn_blocking(move || encode(&db).map(|b| b.freeze())).await {
+                Ok(Ok(encoded)) => encoded,
+                Ok(Err(e)) => {
+                    error!("failed to encode save state {e:?}");
+                    return;
+                }
+                Err(e) => {
+                    error!("encoding the save state panicked {e:?}");
+                    return;
+                }
+            };
         if let Err(e) = save(path.clone(), encoded).await {
             error!("failed to save state to {path:?}, {e:?}")
         }
@@ -440,7 +434,9 @@ fn maybe_rotate_stats_jsonl(path: &Path) {
     let to = rotated_stats_path(path, Utc::now());
     match fs::rename(path, &to) {
         Ok(()) => info!("rotated {path:?} ({len} bytes) to {to:?}"),
-        Err(e) => error!("could not rotate {path:?} to {to:?}, still appending to it: {e:?}"),
+        Err(e) => {
+            error!("could not rotate {path:?} to {to:?}, still appending to it: {e:?}")
+        }
     }
 }
 
@@ -554,17 +550,9 @@ impl Logs {
     async fn open_files(&mut self) -> Result<()> {
         match self {
             Self::Netidx { .. } => Ok(()),
-            Self::Files {
-                log_path,
-                log_file,
-                stats_path: _, ..
-            } => {
+            Self::Files { log_path, log_file, stats_path: _, .. } => {
                 *log_file = Some(
-                    File::options()
-                        .create(true)
-                        .append(true)
-                        .open(&log_path)
-                        .await?,
+                    File::options().create(true).append(true).open(&log_path).await?,
                 );
                 Ok(())
             }
@@ -590,14 +578,14 @@ impl Logs {
                 None
             }
         };
-        let mut t = Self::Files {
-            log_file: None,
-            log_path,
-            stats_path,
-            stats_jsonl,
-        };
+        let mut t = Self::Files { log_file: None, log_path, stats_path, stats_jsonl };
         if let Err(e) = t.open_files().await {
-            fallback_log(format!("bflib: could not open the log file, using the fallback log: {e:?}\n").as_bytes())
+            fallback_log(
+                format!(
+                    "bflib: could not open the log file, using the fallback log: {e:?}\n"
+                )
+                .as_bytes(),
+            )
         }
         t
     }
@@ -611,10 +599,7 @@ impl Logs {
                 }
                 Ok(())
             }
-            Self::Files {
-                log_file: Some(log_file),
-                ..
-            } => {
+            Self::Files { log_file: Some(log_file), .. } => {
                 if let Err(e) = log_file.write_all_buf(&mut buf.as_bytes()).await {
                     fallback_log(buf.as_bytes());
                     bail!("log file write failed {e:?}")
@@ -646,14 +631,17 @@ impl Logs {
         }
     }
 
-    async fn log_perf(&self, players: usize, perf_stat: &PerfStat, api_perf_stat: &ApiPerfStat) {
+    async fn log_perf(
+        &self,
+        players: usize,
+        perf_stat: &PerfStat,
+        api_perf_stat: &ApiPerfStat,
+    ) {
         perf_stat.log();
         api_perf_stat.log();
         match self {
             Self::Files { .. } => (),
-            Self::Netidx {
-                publisher, perf, ..
-            } => {
+            Self::Netidx { publisher, perf, .. } => {
                 let mut batch = publisher.start_batch();
                 perf.update(&mut batch, players, perf_stat, api_perf_stat);
                 batch.commit(None).await
@@ -671,12 +659,7 @@ impl Logs {
     ) -> Result<()> {
         match self {
             Self::Netidx { .. } => Ok(()),
-            Self::Files {
-                log_path,
-                log_file,
-                stats_path,
-                stats_jsonl,
-            } => {
+            Self::Files { log_path, log_file, stats_path, stats_jsonl } => {
                 drop(log_file.take());
                 let taken_jsonl = stats_jsonl.take();
                 let go = || async {
@@ -698,8 +681,12 @@ impl Logs {
                     )
                     .await
                     .context("starting stats pub")?;
-                    let log = LogPublisher::new(publisher.clone(), log_path, base.append("log"))
-                        .context("starting log pub")?;
+                    let log = LogPublisher::new(
+                        publisher.clone(),
+                        log_path,
+                        base.append("log"),
+                    )
+                    .context("starting log pub")?;
                     Ok::<_, anyhow::Error>((perf, stats, log))
                 };
                 match go().await {
@@ -716,7 +703,9 @@ impl Logs {
                     Err(e) => {
                         *stats_jsonl = taken_jsonl;
                         if let Err(e) = self.open_files().await {
-                            error!("netidx init failed and reopening files also failed {e:?}")
+                            error!(
+                                "netidx init failed and reopening files also failed {e:?}"
+                            )
                         }
                         return Err(e);
                     }
@@ -735,12 +724,7 @@ impl Logs {
     async fn shutdown(&mut self) {
         match self {
             Self::Files { .. } => (),
-            Self::Netidx {
-                publisher,
-                log,
-                stats,
-                ..
-            } => {
+            Self::Netidx { publisher, log, stats, .. } => {
                 let _ = log.close().await;
                 let _ = task::block_in_place(|| stats.flush());
                 publisher.clone().shutdown().await
@@ -775,7 +759,11 @@ struct Background {
 impl Background {
     /// One run of the loop: a fresh start, or a restart after a panic (the
     /// supervisor's), when `last_cfg` and any pending save carry over.
-    async fn start(write_dir: PathBuf, saver: Arc<Saver>, last_cfg: Arc<Mutex<Option<CfgReplay>>>) -> Self {
+    async fn start(
+        write_dir: PathBuf,
+        saver: Arc<Saver>,
+        last_cfg: Arc<Mutex<Option<CfgReplay>>>,
+    ) -> Self {
         let replay = last_cfg.lock().clone();
         let worker = task::spawn(Arc::clone(&saver).run());
         // a snapshot left pending by a loop that died gets written now
@@ -794,18 +782,17 @@ impl Background {
         if let Some(replay) = replay {
             // restarted after a panic: bring netidx back up for the mission that
             // is still running. Never a new round -- the round didn't change.
-            error!("background loop restarted, restoring netidx for sortie {:?}", replay.sortie);
+            error!(
+                "background loop restarted, restoring netidx for sortie {:?}",
+                replay.sortie
+            );
             bg.cfg_loaded(replay, false).await;
         }
         bg
     }
 
     async fn cfg_loaded(&mut self, replay: CfgReplay, fresh: bool) {
-        let CfgReplay {
-            sortie,
-            cfg,
-            admin_channel,
-        } = replay.clone();
+        let CfgReplay { sortie, cfg, admin_channel } = replay.clone();
         *self.last_cfg.lock() = Some(replay);
         // A second CfgLoaded is a new mission in the same DCS process
         // (MissionEnd -> load). The old code kept the first mission's stats
@@ -813,7 +800,9 @@ impl Background {
         // netidx mode, while swapping in new RPCs -- so stats went out under the
         // previous sortie. Tear the old netidx state down first.
         if let Logs::Netidx { .. } = &self.logs {
-            info!("netidx: new mission loaded, replacing the previous sortie's publishers");
+            info!(
+                "netidx: new mission loaded, replacing the previous sortie's publishers"
+            );
             self.logs.shutdown().await;
             self.rpcs = None;
             self.publisher = None;
@@ -836,7 +825,10 @@ impl Background {
                 }
             };
             if let Some(tls) = tls {
-                info!("netidx: TLS to resolver {} as {}", tls.resolver_name, tls.certificate);
+                info!(
+                    "netidx: TLS to resolver {} as {}",
+                    tls.resolver_name, tls.certificate
+                );
             }
             // one try, on the config's default bind
             let publisher = match fowlbg::netidx::start_publisher(&cfg, None, &[]).await {
@@ -857,7 +849,13 @@ impl Background {
             };
             if let Err(e) = self
                 .logs
-                .switch_to_netidx(publisher.clone(), &cfg, base.clone(), sortie.clone(), fresh)
+                .switch_to_netidx(
+                    publisher.clone(),
+                    &cfg,
+                    base.clone(),
+                    sortie.clone(),
+                    fresh,
+                )
                 .await
             {
                 // The netidx stats archive picks up a torn segment
@@ -876,7 +874,8 @@ impl Background {
                 let stats_dir = self.write_dir.join("Logs").join("stats");
                 if corrupt && stats_dir.exists() {
                     let aside = self.write_dir.join("Logs").join(
-                        format_compact!("stats.corrupt-{}", Utc::now().timestamp()).as_str(),
+                        format_compact!("stats.corrupt-{}", Utc::now().timestamp())
+                            .as_str(),
                     );
                     match fs::rename(&stats_dir, &aside) {
                         Ok(()) => {
@@ -928,17 +927,8 @@ impl fowlbg::Handler for Background {
 
     async fn handle(&mut self, msg: Task) {
         match msg {
-            Task::CfgLoaded {
-                sortie,
-                cfg,
-                admin_channel,
-                fresh,
-            } => {
-                let replay = CfgReplay {
-                    sortie,
-                    cfg,
-                    admin_channel,
-                };
+            Task::CfgLoaded { sortie, cfg, admin_channel, fresh } => {
+                let replay = CfgReplay { sortie, cfg, admin_channel };
                 self.cfg_loaded(replay, fresh).await
             }
             Task::SaveState(path, db) => {
@@ -948,18 +938,22 @@ impl fowlbg::Handler for Background {
                     error!("failed to flush stats {e:?}")
                 }
             }
-            Task::ResetState(path) => match self.saver.cancel_then(|| reset_state(&path)).await {
-                Ok(()) => (),
-                Err(e) => error!("failed to reset state {path:?}, {e:?}"),
-            },
+            Task::ResetState(path) => {
+                match self.saver.cancel_then(|| reset_state(&path)).await {
+                    Ok(()) => (),
+                    Err(e) => error!("failed to reset state {path:?}, {e:?}"),
+                }
+            }
             Task::SaveVeterans(path, vets) => {
-                let res = serde_json::to_vec(&vets).map_err(anyhow::Error::from).and_then(|buf| {
-                    let mut tmp = path.clone();
-                    tmp.set_extension("veterans.tmp");
-                    fs::write(&tmp, buf)?;
-                    fs::rename(&tmp, &path)?;
-                    Ok(())
-                });
+                let res = serde_json::to_vec(&vets)
+                    .map_err(anyhow::Error::from)
+                    .and_then(|buf| {
+                        let mut tmp = path.clone();
+                        tmp.set_extension("veterans.tmp");
+                        fs::write(&tmp, buf)?;
+                        fs::rename(&tmp, &path)?;
+                        Ok(())
+                    });
                 if let Err(e) = res {
                     error!("failed to save the veterans list to {path:?}, {e:?}")
                 }
@@ -971,7 +965,9 @@ impl fowlbg::Handler for Background {
             Task::RewriteMissionWeather { miz_path, cfg } => {
                 match task::spawn_blocking(move || livewx::apply(&miz_path, &cfg)).await {
                     Ok(Ok(())) => log::info!("applied live weather/time to mission file"),
-                    Ok(Err(e)) => error!("failed to apply live weather to mission file {e:?}"),
+                    Ok(Err(e)) => {
+                        error!("failed to apply live weather to mission file {e:?}")
+                    }
                     Err(e) => error!("live weather task panicked {e:?}"),
                 }
             }
@@ -983,14 +979,8 @@ impl fowlbg::Handler for Background {
                     }
                 }
             },
-            Task::LogPerf {
-                players,
-                perf,
-                api_perf,
-            } => {
-                self.logs
-                    .log_perf(players, &perf.stat(), &api_perf.stat())
-                    .await;
+            Task::LogPerf { players, perf, api_perf } => {
+                self.logs.log_perf(players, &perf.stat(), &api_perf.stat()).await;
             }
             Task::Shutdown(a) => {
                 self.shutdown = Some(a);
@@ -1054,7 +1044,8 @@ mod tests {
     use tokio::runtime::Builder;
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = env::temp_dir().join(format!("bflib-save-test-{name}-{}", std::process::id()));
+        let dir = env::temp_dir()
+            .join(format!("bflib-save-test-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -1114,7 +1105,9 @@ mod tests {
         let rt = Builder::new_multi_thread().enable_all().build().unwrap();
         rt.block_on(async {
             let last_cfg: Arc<Mutex<Option<CfgReplay>>> = Arc::default();
-            let mut bg = Background::start(dir.clone(), Arc::default(), Arc::clone(&last_cfg)).await;
+            let mut bg =
+                Background::start(dir.clone(), Arc::default(), Arc::clone(&last_cfg))
+                    .await;
             *last_cfg.lock() = Some(CfgReplay {
                 sortie: "s".into(),
                 cfg: Arc::new(Cfg::default()),
@@ -1192,7 +1185,8 @@ mod tests {
         let now = Utc::now();
         // three backups in the same two-hour-old bucket, one recent
         for age in [7200 + 10, 7200 + 20, 7200 + 30, 30] {
-            fs::write(dir.join(format!("campaign{}", now.timestamp() - age)), b"x").unwrap();
+            fs::write(dir.join(format!("campaign{}", now.timestamp() - age)), b"x")
+                .unwrap();
         }
         prune_backups(&live, now).unwrap();
         let left = backup_saves(&live);

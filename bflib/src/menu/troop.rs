@@ -14,21 +14,20 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
-use super::{cargo, player_name, slot_for_group, ArgTuple, Pager};
+use super::{ArgTuple, Pager, cargo, player_name, slot_for_group};
 use crate::jtac::JtId;
 use anyhow::{Context as ErrContext, Result};
 use bfprotocols::cfg::{Cfg, LimitEnforceTyp};
 use compact_str::format_compact;
 use dcso3::{
-    coalition::Side, env::miz::GroupId, mission_commands::MissionCommands, MizLua, String,
-
+    MizLua, String, coalition::Side, env::miz::GroupId, mission_commands::MissionCommands,
 };
-
 
 fn load_troops(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let (side, slot) = slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
+    let (side, slot) =
+        slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
     match ctx.db.load_troops(lua, &slot, &arg.snd) {
         Ok((tr, oid)) => {
             let (n, oldest) = ctx
@@ -51,7 +50,9 @@ fn load_troops(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
                         )
                     }
                     None => {
-                        format_compact!("unloading will delete oldest when the limit is exceeded")
+                        format_compact!(
+                            "unloading will delete oldest when the limit is exceeded"
+                        )
                     }
                 },
             };
@@ -64,12 +65,12 @@ fn load_troops(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
             );
             ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg)
         }
-        Err(e) => {
-            ctx.db
-                .ephemeral
-                .msgs()
-                .panel_to_group(10, false, arg.fst, format_compact!("{e}"))
-        }
+        Err(e) => ctx.db.ephemeral.msgs().panel_to_group(
+            10,
+            false,
+            arg.fst,
+            format_compact!("{e}"),
+        ),
     }
     Ok(())
 }
@@ -84,14 +85,19 @@ fn capture_hint(
 ) -> Option<compact_str::CompactString> {
     let pos = db.group_center(tgid).ok()?;
     let (dist, _, obj) =
-        crate::db::Db::objective_near_point(&db.persisted.objectives, pos, |o| o.owner != side)?;
+        crate::db::Db::objective_near_point(&db.persisted.objectives, pos, |o| {
+            o.owner != side
+        })?;
     let name = obj.name();
     let edge = dist - obj.radius();
     if edge > 5_000. {
         return None;
     }
     Some(if !tr.can_capture {
-        format_compact!("{} troops can't capture -- bring a squad that can to take {name}", tr.name)
+        format_compact!(
+            "{} troops can't capture -- bring a squad that can to take {name}",
+            tr.name
+        )
     } else if !obj.contains(pos) {
         format_compact!(
             "these troops are {:.0}m outside {name}'s ring -- they only capture from inside it",
@@ -109,7 +115,8 @@ fn capture_hint(
 fn unload_troops(lua: MizLua, gid: GroupId) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let (side, slot) =
+        slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     match ctx.db.unload_troops(lua, &ctx.idx, &slot) {
         Ok((tr, tgid, oid)) => {
             let player = player_name(&ctx.db, &slot);
@@ -120,7 +127,8 @@ fn unload_troops(lua: MizLua, gid: GroupId) -> Result<()> {
             }
             super::jtac::init_jtac_menu_for_slot(ctx, lua, &slot)?;
 
-            let msg = format_compact!("{player} dropped {} troops into the field", tr.name);
+            let msg =
+                format_compact!("{player} dropped {} troops into the field", tr.name);
             ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg);
             // Tell the crew straight away whether this drop can take anything.
             // Players reported landing troops by a CAPTURABLE label and
@@ -130,11 +138,9 @@ fn unload_troops(lua: MizLua, gid: GroupId) -> Result<()> {
                 ctx.db.ephemeral.msgs().panel_to_group(15, false, gid, hint);
             }
         }
-        Err(e) => ctx
-            .db
-            .ephemeral
-            .msgs()
-            .panel_to_group(10, false, gid, format_compact!("{e}")),
+        Err(e) => {
+            ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, format_compact!("{e}"))
+        }
     }
     Ok(())
 }
@@ -142,7 +148,8 @@ fn unload_troops(lua: MizLua, gid: GroupId) -> Result<()> {
 fn extract_troops(lua: MizLua, gid: GroupId) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let (side, slot) =
+        slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     match ctx.db.extract_troops(lua, &ctx.jtac, &slot) {
         Ok((tr, _extracted_gid)) => {
             let player = player_name(&ctx.db, &slot);
@@ -158,15 +165,16 @@ fn extract_troops(lua: MizLua, gid: GroupId) -> Result<()> {
                     "{player} extracted {} troops from the field ({alive} of {total} left)",
                     tr.name
                 ),
-                None => format_compact!("{player} extracted {} troops from the field", tr.name),
+                None => format_compact!(
+                    "{player} extracted {} troops from the field",
+                    tr.name
+                ),
             };
             ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg)
         }
-        Err(e) => ctx
-            .db
-            .ephemeral
-            .msgs()
-            .panel_to_group(10, false, gid, format_compact!("{e}")),
+        Err(e) => {
+            ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, format_compact!("{e}"))
+        }
     }
     Ok(())
 }
@@ -174,20 +182,18 @@ fn extract_troops(lua: MizLua, gid: GroupId) -> Result<()> {
 fn return_troops(lua: MizLua, gid: GroupId) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let (side, slot) =
+        slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     match ctx.db.return_troops(lua, &slot) {
         Ok(tr) => {
             let player = player_name(&ctx.db, &slot);
 
-
             let msg = format_compact!("{player} returned {} troops", tr.name);
             ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg)
         }
-        Err(e) => ctx
-            .db
-            .ephemeral
-            .msgs()
-            .panel_to_group(10, false, gid, format_compact!("{e}")),
+        Err(e) => {
+            ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, format_compact!("{e}"))
+        }
     }
     Ok(())
 }
@@ -242,10 +248,7 @@ pub(super) fn add_troops_menu_for_group(
                 mc,
                 item.into(),
                 load_troops,
-                ArgTuple {
-                    fst: group,
-                    snd: sq.name.clone(),
-                },
+                ArgTuple { fst: group, snd: sq.name.clone() },
             )?;
         }
     }

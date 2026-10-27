@@ -101,7 +101,8 @@ pub(crate) fn error_response(e: &anyhow::Error) -> Response {
             )
         }
     };
-    let mut r = warp::reply::with_status(warp::reply::json(&body), status).into_response();
+    let mut r =
+        warp::reply::with_status(warp::reply::json(&body), status).into_response();
     r.headers_mut().insert("cache-control", HeaderValue::from_static("no-store"));
     r
 }
@@ -113,7 +114,8 @@ use warp::Reply;
 /// Constant-time equality for secrets. The length is not hidden (it is not
 /// the secret), the content is.
 pub(crate) fn ct_eq(a: &str, b: &str) -> bool {
-    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    a.len() == b.len()
+        && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// SHA-256 (FIPS 180-4). Written out here rather than pulled in as a crate:
@@ -121,17 +123,21 @@ pub(crate) fn ct_eq(a: &str, b: &str) -> bool {
 /// copy of the database (or a backup) holds nothing a browser could present.
 pub(crate) fn sha256(data: &[u8]) -> [u8; 32] {
     const K: [u32; 64] = [
-        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
+        0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+        0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
+        0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147,
+        0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+        0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
+        0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+        0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
     ];
     let mut h: [u32; 8] = [
-        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c,
+        0x1f83d9ab, 0x5be0cd19,
     ];
     let mut msg = data.to_vec();
     let bit_len = (data.len() as u64).wrapping_mul(8);
@@ -146,15 +152,21 @@ pub(crate) fn sha256(data: &[u8]) -> [u8; 32] {
             w[i] = u32::from_be_bytes([c[0], c[1], c[2], c[3]]);
         }
         for i in 16..64 {
-            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
-            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+            let s0 =
+                w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+            let s1 =
+                w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
             w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
         }
         let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh] = h;
         for i in 0..64 {
             let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
             let ch = (e & f) ^ (!e & g);
-            let t1 = hh.wrapping_add(s1).wrapping_add(ch).wrapping_add(K[i]).wrapping_add(w[i]);
+            let t1 = hh
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(K[i])
+                .wrapping_add(w[i]);
             let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
             let maj = (a & b) ^ (a & c) ^ (b & c);
             let t2 = s0.wrapping_add(maj);
@@ -193,10 +205,14 @@ impl std::str::FromStr for IpNet {
             Some((a, p)) => (a, Some(p)),
             None => (s, None),
         };
-        let addr: IpAddr = a.trim().parse().map_err(|e| anyhow::anyhow!("bad ip {a:?}: {e}"))?;
+        let addr: IpAddr =
+            a.trim().parse().map_err(|e| anyhow::anyhow!("bad ip {a:?}: {e}"))?;
         let max = if addr.is_ipv4() { 32 } else { 128 };
         let prefix = match p {
-            Some(p) => p.trim().parse::<u8>().map_err(|e| anyhow::anyhow!("bad prefix {p:?}: {e}"))?,
+            Some(p) => p
+                .trim()
+                .parse::<u8>()
+                .map_err(|e| anyhow::anyhow!("bad prefix {p:?}: {e}"))?,
             None => max,
         };
         if prefix > max {
@@ -216,11 +232,19 @@ impl IpNet {
         };
         match (self.addr, ip) {
             (IpAddr::V4(n), IpAddr::V4(i)) => {
-                let mask = if self.prefix == 0 { 0 } else { u32::MAX << (32 - self.prefix as u32) };
+                let mask = if self.prefix == 0 {
+                    0
+                } else {
+                    u32::MAX << (32 - self.prefix as u32)
+                };
                 u32::from(n) & mask == u32::from(i) & mask
             }
             (IpAddr::V6(n), IpAddr::V6(i)) => {
-                let mask = if self.prefix == 0 { 0 } else { u128::MAX << (128 - self.prefix as u32) };
+                let mask = if self.prefix == 0 {
+                    0
+                } else {
+                    u128::MAX << (128 - self.prefix as u32)
+                };
                 u128::from(n) & mask == u128::from(i) & mask
             }
             _ => false,
@@ -230,7 +254,9 @@ impl IpNet {
 
 fn is_loopback(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V6(v6) => v6.is_loopback() || v6.to_ipv4_mapped().map_or(false, |v4| v4.is_loopback()),
+        IpAddr::V6(v6) => {
+            v6.is_loopback() || v6.to_ipv4_mapped().map_or(false, |v4| v4.is_loopback())
+        }
         IpAddr::V4(v4) => v4.is_loopback(),
     }
 }
@@ -269,7 +295,8 @@ pub(crate) fn set_trusted_proxies(t: TrustedProxies) {
 }
 
 pub(crate) fn trusted_proxies() -> &'static TrustedProxies {
-    static NONE: std::sync::LazyLock<TrustedProxies> = std::sync::LazyLock::new(TrustedProxies::default);
+    static NONE: std::sync::LazyLock<TrustedProxies> =
+        std::sync::LazyLock::new(TrustedProxies::default);
     TRUSTED.get().unwrap_or(&NONE)
 }
 
@@ -308,12 +335,19 @@ pub(crate) fn client_ip_via(
     let Some(&nearest) = hops.last() else { return peer_ip };
     if trusted.trusts(nearest) {
         if trusted.cloudflare {
-            if let Some(ip) = cf_connecting_ip.and_then(|s| s.trim().parse::<IpAddr>().ok()) {
+            if let Some(ip) =
+                cf_connecting_ip.and_then(|s| s.trim().parse::<IpAddr>().ok())
+            {
                 return ip;
             }
         }
         // walk left past every trusted hop; all trusted means the leftmost
-        return hops.iter().rev().copied().find(|ip| !trusted.trusts(*ip)).unwrap_or(hops[0]);
+        return hops
+            .iter()
+            .rev()
+            .copied()
+            .find(|ip| !trusted.trusts(*ip))
+            .unwrap_or(hops[0]);
     }
     nearest
 }
@@ -324,9 +358,13 @@ pub(crate) fn with_client_ip(
     crate::serve::peer_addr()
         .and(warp::header::optional::<std::string::String>("x-forwarded-for"))
         .and(warp::header::optional::<std::string::String>("cf-connecting-ip"))
-        .map(|peer: Option<SocketAddr>, xff: Option<std::string::String>, cf: Option<std::string::String>| {
-            client_ip_via(trusted_proxies(), peer, xff.as_deref(), cf.as_deref())
-        })
+        .map(
+            |peer: Option<SocketAddr>,
+             xff: Option<std::string::String>,
+             cf: Option<std::string::String>| {
+                client_ip_via(trusted_proxies(), peer, xff.as_deref(), cf.as_deref())
+            },
+        )
 }
 
 /// True when the request came straight from this machine, not through the
@@ -384,7 +422,9 @@ pub(crate) fn ws_slot(ip: IpAddr) -> Option<WsSlot> {
 pub(crate) fn ws_limited(
 ) -> impl Filter<Extract = (warp::ws::Ws, IpAddr), Error = warp::Rejection> + Clone {
     warp::ws()
-        .map(|ws: warp::ws::Ws| ws.max_message_size(WS_MAX_MESSAGE).max_frame_size(WS_MAX_MESSAGE))
+        .map(|ws: warp::ws::Ws| {
+            ws.max_message_size(WS_MAX_MESSAGE).max_frame_size(WS_MAX_MESSAGE)
+        })
         .and(with_client_ip())
 }
 
@@ -410,7 +450,9 @@ impl<K: Hash + Eq + Clone> RateLimiter<K> {
         Self { max, window, lockout, state: Mutex::new(HashMap::new()) }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<K, (u32, Instant, Option<Instant>)>> {
+    fn lock(
+        &self,
+    ) -> std::sync::MutexGuard<'_, HashMap<K, (u32, Instant, Option<Instant>)>> {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
@@ -432,7 +474,8 @@ impl<K: Hash + Eq + Clone> RateLimiter<K> {
         // Bound memory: a flood of distinct keys must not grow this forever.
         if g.len() > 50_000 {
             g.retain(|_, (_, start, until)| {
-                now.duration_since(*start) < self.window || until.map_or(false, |u| u > now)
+                now.duration_since(*start) < self.window
+                    || until.map_or(false, |u| u > now)
             });
         }
         let e = g.entry(key.clone()).or_insert((0, now, None));
@@ -470,7 +513,11 @@ pub(crate) struct TokenBucket<K> {
 
 impl<K: Hash + Eq + Clone> TokenBucket<K> {
     pub(crate) fn new(per_min: u32, burst: u32) -> Self {
-        Self { per_sec: per_min as f64 / 60.0, burst: burst.max(1) as f64, state: Mutex::new(HashMap::new()) }
+        Self {
+            per_sec: per_min as f64 / 60.0,
+            burst: burst.max(1) as f64,
+            state: Mutex::new(HashMap::new()),
+        }
     }
 
     /// Take one token for `key`. `Err(wait)` when there is none: how long
@@ -484,13 +531,16 @@ impl<K: Hash + Eq + Clone> TokenBucket<K> {
             g.retain(|_, (_, at)| now.duration_since(*at) < full);
         }
         let (tokens, at) = g.entry(key.clone()).or_insert((self.burst, now));
-        *tokens = (*tokens + now.duration_since(*at).as_secs_f64() * self.per_sec).min(self.burst);
+        *tokens = (*tokens + now.duration_since(*at).as_secs_f64() * self.per_sec)
+            .min(self.burst);
         *at = now;
         if *tokens >= 1.0 {
             *tokens -= 1.0;
             Ok(())
         } else {
-            Err(Duration::from_secs_f64(((1.0 - *tokens) / self.per_sec.max(1e-9)).max(1.0)))
+            Err(Duration::from_secs_f64(
+                ((1.0 - *tokens) / self.per_sec.max(1e-9)).max(1.0),
+            ))
         }
     }
 }
@@ -526,42 +576,54 @@ pub(crate) fn is_heavy_get(path: &str) -> bool {
 pub(crate) fn get_rate_guard(
     limits: GetLimits,
 ) -> impl Filter<Extract = (Response,), Error = warp::Rejection> + Clone {
-    let general: Arc<TokenBucket<IpAddr>> = Arc::new(TokenBucket::new(limits.per_min, (limits.per_min / 3).max(60)));
-    let heavy: Arc<TokenBucket<IpAddr>> = Arc::new(TokenBucket::new(limits.heavy_per_min, (limits.heavy_per_min / 3).max(10)));
+    let general: Arc<TokenBucket<IpAddr>> =
+        Arc::new(TokenBucket::new(limits.per_min, (limits.per_min / 3).max(60)));
+    let heavy: Arc<TokenBucket<IpAddr>> = Arc::new(TokenBucket::new(
+        limits.heavy_per_min,
+        (limits.heavy_per_min / 3).max(10),
+    ));
     warp::get()
         .and(warp::path::full())
         .and(with_client_ip())
         .and(warp::header::optional::<std::string::String>("cf-connecting-ip"))
-        .and_then(move |full: warp::path::FullPath, ip: IpAddr, cf: Option<std::string::String>| {
-            let (general, heavy) = (general.clone(), heavy.clone());
-            async move {
-                let path = full.as_str();
-                if !path.starts_with("/api/") || is_loopback(ip) {
-                    return Err(warp::reject::reject());
-                }
-                if cf.is_some() && !trusted_proxies().trusts_cloudflare() {
-                    return Err(warp::reject::reject());
-                }
-                let mut verdict = Ok(());
-                if limits.per_min > 0 {
-                    verdict = general.take(&ip);
-                }
-                if verdict.is_ok() && limits.heavy_per_min > 0 && is_heavy_get(path) {
-                    verdict = heavy.take(&ip);
-                }
-                match verdict {
-                    Ok(()) => Err(warp::reject::reject()),
-                    Err(wait) => {
-                        log::debug!("rate limited GET {path} from {ip}");
-                        let mut r = error_response(&too_many("too many requests -- slow down"));
-                        if let Ok(v) = HeaderValue::from_str(&wait.as_secs().max(1).to_string()) {
-                            r.headers_mut().insert("retry-after", v);
+        .and_then(
+            move |full: warp::path::FullPath,
+                  ip: IpAddr,
+                  cf: Option<std::string::String>| {
+                let (general, heavy) = (general.clone(), heavy.clone());
+                async move {
+                    let path = full.as_str();
+                    if !path.starts_with("/api/") || is_loopback(ip) {
+                        return Err(warp::reject::reject());
+                    }
+                    if cf.is_some() && !trusted_proxies().trusts_cloudflare() {
+                        return Err(warp::reject::reject());
+                    }
+                    let mut verdict = Ok(());
+                    if limits.per_min > 0 {
+                        verdict = general.take(&ip);
+                    }
+                    if verdict.is_ok() && limits.heavy_per_min > 0 && is_heavy_get(path) {
+                        verdict = heavy.take(&ip);
+                    }
+                    match verdict {
+                        Ok(()) => Err(warp::reject::reject()),
+                        Err(wait) => {
+                            log::debug!("rate limited GET {path} from {ip}");
+                            let mut r = error_response(&too_many(
+                                "too many requests -- slow down",
+                            ));
+                            if let Ok(v) =
+                                HeaderValue::from_str(&wait.as_secs().max(1).to_string())
+                            {
+                                r.headers_mut().insert("retry-after", v);
+                            }
+                            Ok(r)
                         }
-                        Ok(r)
                     }
                 }
-            }
-        })
+            },
+        )
 }
 
 // ── Cross-site request guard ─────────────────────────────────────────────────
@@ -641,7 +703,8 @@ pub(crate) fn csrf_verdict(
         return None;
     }
     let is_ws = upgrade.map_or(false, |u| u.eq_ignore_ascii_case("websocket"));
-    let unsafe_method = matches!(*method, Method::POST | Method::PUT | Method::PATCH | Method::DELETE);
+    let unsafe_method =
+        matches!(*method, Method::POST | Method::PUT | Method::PATCH | Method::DELETE);
     if !is_ws && !unsafe_method {
         return None;
     }
@@ -656,9 +719,13 @@ pub(crate) fn csrf_verdict(
             let ct = ct.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
             if matches!(
                 ct.as_str(),
-                "text/plain" | "application/x-www-form-urlencoded" | "multipart/form-data"
+                "text/plain"
+                    | "application/x-www-form-urlencoded"
+                    | "multipart/form-data"
             ) {
-                return Some("form-encoded requests are not accepted here; send application/json");
+                return Some(
+                    "form-encoded requests are not accepted here; send application/json",
+                );
             }
         }
     }
@@ -751,7 +818,8 @@ const SPA_CSP_STRICT: &str = "default-src 'self'; \
      frame-ancestors 'none'";
 
 /// (header name, value) for the dashboard page, set once in `main`.
-static SPA_CSP_HEADER: std::sync::OnceLock<(&'static str, HeaderValue)> = std::sync::OnceLock::new();
+static SPA_CSP_HEADER: std::sync::OnceLock<(&'static str, HeaderValue)> =
+    std::sync::OnceLock::new();
 
 /// Choose the dashboard's CSP: report-only and broad (the default), or
 /// enforced and tight (`--csp-enforce`), with `extra` sources appended.
@@ -761,7 +829,10 @@ pub(crate) fn set_spa_csp(enforce: bool, extra: &[std::string::String]) {
 
 fn spa_csp(enforce: bool, extra: &[std::string::String]) -> (&'static str, HeaderValue) {
     if !enforce {
-        return ("content-security-policy-report-only", HeaderValue::from_static(SPA_CSP));
+        return (
+            "content-security-policy-report-only",
+            HeaderValue::from_static(SPA_CSP),
+        );
     }
     let extra: std::string::String = extra
         .iter()
@@ -770,7 +841,8 @@ fn spa_csp(enforce: bool, extra: &[std::string::String]) -> (&'static str, Heade
         .map(|s| format!(" {s}"))
         .collect();
     let v = SPA_CSP_STRICT.replace("{EXTRA}", &extra);
-    let v = HeaderValue::from_str(&v).unwrap_or_else(|_| HeaderValue::from_static(SPA_CSP));
+    let v =
+        HeaderValue::from_str(&v).unwrap_or_else(|_| HeaderValue::from_static(SPA_CSP));
     ("content-security-policy", v)
 }
 
@@ -798,10 +870,10 @@ pub(crate) fn harden(mut r: Response) -> Response {
     default("x-frame-options", "DENY");
     default("referrer-policy", "strict-origin-when-cross-origin");
     if is_html {
-        let (name, value) = SPA_CSP_HEADER
-            .get()
-            .cloned()
-            .unwrap_or(("content-security-policy-report-only", HeaderValue::from_static(SPA_CSP)));
+        let (name, value) = SPA_CSP_HEADER.get().cloned().unwrap_or((
+            "content-security-policy-report-only",
+            HeaderValue::from_static(SPA_CSP),
+        ));
         if !h.contains_key(name) {
             h.insert(name, value);
         }
@@ -809,7 +881,10 @@ pub(crate) fn harden(mut r: Response) -> Response {
         // Nothing the API returns is meant to be rendered as a page. If a
         // browser is ever talked into doing so anyway, it gets no script, no
         // plugins and no framing.
-        default("content-security-policy", "default-src 'none'; frame-ancestors 'none'; sandbox");
+        default(
+            "content-security-policy",
+            "default-src 'none'; frame-ancestors 'none'; sandbox",
+        );
     }
     r
 }
@@ -829,8 +904,9 @@ struct RouteStats {
     count: u64,
 }
 
-static REQUESTS: std::sync::LazyLock<Mutex<HashMap<(std::string::String, &'static str), RouteStats>>> =
-    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+static REQUESTS: std::sync::LazyLock<
+    Mutex<HashMap<(std::string::String, &'static str), RouteStats>>,
+> = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// The label a path is counted under: its first two segments
 /// (`/api/stats`, `/api/pilot`, `/ws/tacmap`), so ids never become labels.
@@ -852,7 +928,12 @@ fn route_label(path: &str) -> std::string::String {
 }
 
 /// Count one answered request.
-pub(crate) fn record_request(method: &Method, path: &str, status: StatusCode, elapsed: Duration) {
+pub(crate) fn record_request(
+    method: &Method,
+    path: &str,
+    status: StatusCode,
+    elapsed: Duration,
+) {
     let method: &'static str = match *method {
         Method::GET => "GET",
         Method::POST => "POST",
@@ -862,7 +943,11 @@ pub(crate) fn record_request(method: &Method, path: &str, status: StatusCode, el
     let mut g = REQUESTS.lock().unwrap_or_else(|e| e.into_inner());
     let label = route_label(path);
     // a flood of made-up first segments must not grow this without bound
-    let key = if g.len() >= 2_000 && !g.contains_key(&(label.clone(), method)) { ("/other".into(), method) } else { (label, method) };
+    let key = if g.len() >= 2_000 && !g.contains_key(&(label.clone(), method)) {
+        ("/other".into(), method)
+    } else {
+        (label, method)
+    };
     let s = g.entry(key).or_default();
     s.by_class[(status.as_u16() / 100).min(5) as usize] += 1;
     let secs = elapsed.as_secs_f64();
@@ -899,11 +984,21 @@ pub(crate) fn write_request_metrics(out: &mut std::string::String) {
         let s = &g[k];
         let l = format!("route=\"{}\",method=\"{}\"", k.0, k.1);
         for (i, b) in LATENCY_BUCKETS.iter().enumerate() {
-            let _ = writeln!(out, "bfdb_http_request_duration_seconds_bucket{{{l},le=\"{b}\"}} {}", s.buckets[i]);
+            let _ = writeln!(
+                out,
+                "bfdb_http_request_duration_seconds_bucket{{{l},le=\"{b}\"}} {}",
+                s.buckets[i]
+            );
         }
-        let _ = writeln!(out, "bfdb_http_request_duration_seconds_bucket{{{l},le=\"+Inf\"}} {}", s.count);
-        let _ = writeln!(out, "bfdb_http_request_duration_seconds_sum{{{l}}} {}", s.sum_secs);
-        let _ = writeln!(out, "bfdb_http_request_duration_seconds_count{{{l}}} {}", s.count);
+        let _ = writeln!(
+            out,
+            "bfdb_http_request_duration_seconds_bucket{{{l},le=\"+Inf\"}} {}",
+            s.count
+        );
+        let _ =
+            writeln!(out, "bfdb_http_request_duration_seconds_sum{{{l}}} {}", s.sum_secs);
+        let _ =
+            writeln!(out, "bfdb_http_request_duration_seconds_count{{{l}}} {}", s.count);
     }
 }
 
@@ -935,7 +1030,10 @@ pub(crate) fn serve_upload(bytes: Vec<u8>, cache_control: &'static str) -> Respo
     h.insert("content-type", HeaderValue::from_static(ctype));
     h.insert("cache-control", HeaderValue::from_static(cache_control));
     h.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
-    h.insert("content-security-policy", HeaderValue::from_static("default-src 'none'; sandbox"));
+    h.insert(
+        "content-security-policy",
+        HeaderValue::from_static("default-src 'none'; sandbox"),
+    );
     if ctype == "application/octet-stream" {
         h.insert("content-disposition", HeaderValue::from_static("attachment"));
     }
@@ -970,7 +1068,12 @@ impl<T: Clone + Send + Sync + 'static> Cached<T> {
     /// `f` is blocking (a sled scan) and runs on the blocking pool, never on
     /// a request's worker thread: a full scan of a big tree used to hold an
     /// executor thread for its whole length on every refresh.
-    pub(crate) async fn get_swr<F>(self: Arc<Self>, ttl: Duration, max_stale: Duration, f: F) -> anyhow::Result<T>
+    pub(crate) async fn get_swr<F>(
+        self: Arc<Self>,
+        ttl: Duration,
+        max_stale: Duration,
+        f: F,
+    ) -> anyhow::Result<T>
     where
         F: FnOnce() -> anyhow::Result<T> + Send + 'static,
     {
@@ -987,8 +1090,12 @@ impl<T: Clone + Send + Sync + 'static> Cached<T> {
                     let me = self.clone();
                     tokio::spawn(async move {
                         match tokio::task::spawn_blocking(f).await {
-                            Ok(Ok(new)) => *me.slot.lock().await = Some((Instant::now(), new)),
-                            Ok(Err(e)) => log::warn!("background cache refresh failed: {e:#}"),
+                            Ok(Ok(new)) => {
+                                *me.slot.lock().await = Some((Instant::now(), new))
+                            }
+                            Ok(Err(e)) => {
+                                log::warn!("background cache refresh failed: {e:#}")
+                            }
                             Err(e) => log::warn!("background cache refresh died: {e}"),
                         }
                         me.refreshing.store(false, Ordering::SeqCst);
@@ -1007,10 +1114,17 @@ impl<T: Clone + Send + Sync + 'static> Cached<T> {
 
 impl<T: Clone> Cached<T> {
     pub(crate) fn new() -> Self {
-        Self { slot: tokio::sync::Mutex::new(None), refreshing: std::sync::atomic::AtomicBool::new(false) }
+        Self {
+            slot: tokio::sync::Mutex::new(None),
+            refreshing: std::sync::atomic::AtomicBool::new(false),
+        }
     }
 
-    pub(crate) async fn get_or_refresh<F, Fut, E>(&self, ttl: Duration, f: F) -> Result<T, E>
+    pub(crate) async fn get_or_refresh<F, Fut, E>(
+        &self,
+        ttl: Duration,
+        f: F,
+    ) -> Result<T, E>
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<T, E>>,
@@ -1052,7 +1166,9 @@ impl<K: Hash + Eq + Clone, T: Clone> CacheMap<K, T> {
         // recently used: clearing the lot, as this once did, threw away every
         // hot dashboard answer whenever someone walked through old rounds.
         if g.len() >= CACHE_MAP_KEYS {
-            if let Some(oldest) = g.iter().min_by_key(|(_, (_, used))| *used).map(|(k, _)| k.clone()) {
+            if let Some(oldest) =
+                g.iter().min_by_key(|(_, (_, used))| *used).map(|(k, _)| k.clone())
+            {
                 g.remove(&oldest);
             }
         }
@@ -1073,9 +1189,17 @@ mod tests {
 
     #[test]
     fn sha256_vectors() {
-        let hex = |b: [u8; 32]| b.iter().map(|x| format!("{x:02x}")).collect::<std::string::String>();
-        assert_eq!(hex(sha256(b"")), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
-        assert_eq!(hex(sha256(b"abc")), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        let hex = |b: [u8; 32]| {
+            b.iter().map(|x| format!("{x:02x}")).collect::<std::string::String>()
+        };
+        assert_eq!(
+            hex(sha256(b"")),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            hex(sha256(b"abc")),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
         assert_eq!(
             hex(sha256(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")),
             "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
@@ -1103,8 +1227,14 @@ mod tests {
     fn client_ip_trusts_xff_only_from_loopback() {
         let lo: SocketAddr = "127.0.0.1:5000".parse().unwrap();
         let ext: SocketAddr = "203.0.113.9:5000".parse().unwrap();
-        assert_eq!(client_ip(Some(lo), Some("1.1.1.1, 198.51.100.7")), "198.51.100.7".parse::<IpAddr>().unwrap());
-        assert_eq!(client_ip(Some(ext), Some("1.1.1.1")), "203.0.113.9".parse::<IpAddr>().unwrap());
+        assert_eq!(
+            client_ip(Some(lo), Some("1.1.1.1, 198.51.100.7")),
+            "198.51.100.7".parse::<IpAddr>().unwrap()
+        );
+        assert_eq!(
+            client_ip(Some(ext), Some("1.1.1.1")),
+            "203.0.113.9".parse::<IpAddr>().unwrap()
+        );
         assert_eq!(client_ip(Some(lo), None), "127.0.0.1".parse::<IpAddr>().unwrap());
     }
 
@@ -1114,44 +1244,150 @@ mod tests {
         let ip = |s: &str| s.parse::<IpAddr>().unwrap();
         let cdn = TrustedProxies::new(vec!["173.245.48.0/20".parse().unwrap()], false);
         // the CDN's own hop is skipped; the visitor is the one it forwarded
-        assert_eq!(client_ip_via(&cdn, Some(lo), Some("198.51.100.7, 173.245.48.9"), None), ip("198.51.100.7"));
+        assert_eq!(
+            client_ip_via(&cdn, Some(lo), Some("198.51.100.7, 173.245.48.9"), None),
+            ip("198.51.100.7")
+        );
         // a forged entry left of the visitor's is never reached
-        assert_eq!(client_ip_via(&cdn, Some(lo), Some("6.6.6.6, 198.51.100.7, 173.245.48.9"), None), ip("198.51.100.7"));
+        assert_eq!(
+            client_ip_via(
+                &cdn,
+                Some(lo),
+                Some("6.6.6.6, 198.51.100.7, 173.245.48.9"),
+                None
+            ),
+            ip("198.51.100.7")
+        );
         // not through the CDN: same as without the flag
-        assert_eq!(client_ip_via(&cdn, Some(lo), Some("6.6.6.6, 203.0.113.1"), None), ip("203.0.113.1"));
+        assert_eq!(
+            client_ip_via(&cdn, Some(lo), Some("6.6.6.6, 203.0.113.1"), None),
+            ip("203.0.113.1")
+        );
         let cf = TrustedProxies::new(vec!["173.245.48.0/20".parse().unwrap()], true);
-        assert_eq!(client_ip_via(&cf, Some(lo), Some("173.245.48.9"), Some("198.51.100.8")), ip("198.51.100.8"));
+        assert_eq!(
+            client_ip_via(&cf, Some(lo), Some("173.245.48.9"), Some("198.51.100.8")),
+            ip("198.51.100.8")
+        );
         // CF-Connecting-IP from a client that did not come through Cloudflare is ignored
-        assert_eq!(client_ip_via(&cf, Some(lo), Some("203.0.113.1"), Some("1.2.3.4")), ip("203.0.113.1"));
+        assert_eq!(
+            client_ip_via(&cf, Some(lo), Some("203.0.113.1"), Some("1.2.3.4")),
+            ip("203.0.113.1")
+        );
         // and a direct, non-proxied peer is always itself
         let ext: SocketAddr = "203.0.113.9:5000".parse().unwrap();
-        assert_eq!(client_ip_via(&cf, Some(ext), Some("1.1.1.1"), Some("1.2.3.4")), ip("203.0.113.9"));
+        assert_eq!(
+            client_ip_via(&cf, Some(ext), Some("1.1.1.1"), Some("1.2.3.4")),
+            ip("203.0.113.9")
+        );
     }
 
     #[test]
     fn csrf() {
-        let p = OriginPolicy::new(["https://dashboard.example.org", "https://api.example.org"]);
+        let p = OriginPolicy::new([
+            "https://dashboard.example.org",
+            "https://api.example.org",
+        ]);
         let cookie = Some("session=abc");
         let post = Method::POST;
         let json = Some("application/json");
         // allowed origin
-        assert!(csrf_verdict(&p, &post, None, cookie, Some("https://dashboard.example.org"), None, None, json).is_none());
+        assert!(csrf_verdict(
+            &p,
+            &post,
+            None,
+            cookie,
+            Some("https://dashboard.example.org"),
+            None,
+            None,
+            json
+        )
+        .is_none());
         // hostile origin
-        assert!(csrf_verdict(&p, &post, None, cookie, Some("https://evil.example"), None, None, json).is_some());
+        assert!(csrf_verdict(
+            &p,
+            &post,
+            None,
+            cookie,
+            Some("https://evil.example"),
+            None,
+            None,
+            json
+        )
+        .is_some());
         // hostile referer, no origin
-        assert!(csrf_verdict(&p, &post, None, cookie, None, Some("https://evil.example/x"), None, json).is_some());
+        assert!(csrf_verdict(
+            &p,
+            &post,
+            None,
+            cookie,
+            None,
+            Some("https://evil.example/x"),
+            None,
+            json
+        )
+        .is_some());
         // no origin, no referer: a bot, not a browser
         assert!(csrf_verdict(&p, &post, None, cookie, None, None, None, json).is_none());
         // no cookie: nothing to steal
-        assert!(csrf_verdict(&p, &post, None, None, Some("https://evil.example"), None, None, json).is_none());
+        assert!(csrf_verdict(
+            &p,
+            &post,
+            None,
+            None,
+            Some("https://evil.example"),
+            None,
+            None,
+            json
+        )
+        .is_none());
         // same-origin by Host
-        assert!(csrf_verdict(&p, &post, None, cookie, Some("http://localhost:8880"), None, Some("localhost:8880"), json).is_none());
+        assert!(csrf_verdict(
+            &p,
+            &post,
+            None,
+            cookie,
+            Some("http://localhost:8880"),
+            None,
+            Some("localhost:8880"),
+            json
+        )
+        .is_none());
         // form content type
-        assert!(csrf_verdict(&p, &post, None, cookie, None, None, None, Some("text/plain;charset=UTF-8")).is_some());
+        assert!(csrf_verdict(
+            &p,
+            &post,
+            None,
+            cookie,
+            None,
+            None,
+            None,
+            Some("text/plain;charset=UTF-8")
+        )
+        .is_some());
         // websocket upgrade from a hostile page
-        assert!(csrf_verdict(&p, &Method::GET, Some("websocket"), cookie, Some("https://evil.example"), None, None, None).is_some());
+        assert!(csrf_verdict(
+            &p,
+            &Method::GET,
+            Some("websocket"),
+            cookie,
+            Some("https://evil.example"),
+            None,
+            None,
+            None
+        )
+        .is_some());
         // plain GET is not checked
-        assert!(csrf_verdict(&p, &Method::GET, None, cookie, Some("https://evil.example"), None, None, None).is_none());
+        assert!(csrf_verdict(
+            &p,
+            &Method::GET,
+            None,
+            cookie,
+            Some("https://evil.example"),
+            None,
+            None,
+            None
+        )
+        .is_none());
     }
 
     #[test]
@@ -1201,7 +1437,10 @@ mod tests {
         let (n, v) = spa_csp(false, &[]);
         assert_eq!(n, "content-security-policy-report-only");
         assert!(v.to_str().unwrap().contains("connect-src 'self' https: wss: ws:"));
-        let (n, v) = spa_csp(true, &["https://tiles.example.org".into(), "evil; script-src *".into()]);
+        let (n, v) = spa_csp(
+            true,
+            &["https://tiles.example.org".into(), "evil; script-src *".into()],
+        );
         assert_eq!(n, "content-security-policy");
         let v = v.to_str().unwrap();
         assert!(v.contains("connect-src 'self' https://server.arcgisonline.com https://s3.amazonaws.com https://tiles.example.org;"));
@@ -1233,8 +1472,18 @@ mod tests {
         assert_eq!(route_label("/ws/tacmap"), "/ws/tacmap");
         assert_eq!(route_label("/map"), "page");
         assert_eq!(route_label("/api/x\"y"), "/api/xy");
-        record_request(&Method::GET, "/api/metrics-test", StatusCode::OK, Duration::from_millis(30));
-        record_request(&Method::GET, "/api/metrics-test", StatusCode::INTERNAL_SERVER_ERROR, Duration::from_secs(3));
+        record_request(
+            &Method::GET,
+            "/api/metrics-test",
+            StatusCode::OK,
+            Duration::from_millis(30),
+        );
+        record_request(
+            &Method::GET,
+            "/api/metrics-test",
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Duration::from_secs(3),
+        );
         let mut out = std::string::String::new();
         write_request_metrics(&mut out);
         assert!(out.contains("bfdb_http_requests_total{route=\"/api/metrics-test\",method=\"GET\",status=\"2xx\"} 1"));
@@ -1255,7 +1504,8 @@ mod tests {
 
     #[test]
     fn limiter() {
-        let l: RateLimiter<u8> = RateLimiter::new(2, Duration::from_secs(60), Duration::from_secs(60));
+        let l: RateLimiter<u8> =
+            RateLimiter::new(2, Duration::from_secs(60), Duration::from_secs(60));
         assert!(l.hit(&1));
         assert!(l.hit(&1));
         assert!(!l.hit(&1));

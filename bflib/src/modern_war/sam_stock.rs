@@ -24,7 +24,7 @@ for more details.
 //! and is not under attack. Saturation raids now wear a defence down.
 
 use super::home_objective;
-use crate::{airlife::alive, Context};
+use crate::{Context, airlife::alive};
 use bfprotocols::{
     cfg::{SamStockCfg, UnitTag},
     db::group::GroupId,
@@ -32,9 +32,9 @@ use bfprotocols::{
 use chrono::prelude::*;
 use compact_str::format_compact;
 use dcso3::{
+    MizLua,
     controller::{AiOption, GroundOption, GroundRoe},
     group::Group,
-    MizLua,
 };
 use fxhash::FxHashMap;
 use log::info;
@@ -65,7 +65,13 @@ impl SamStock {
 
     /// Spend `n` interceptors from `gid` (raid interceptions resolved by the
     /// engine rather than by a DCS Shot event).
-    pub(crate) fn spend(&mut self, ctx_db: &crate::db::Db, cfg: &SamStockCfg, gid: GroupId, n: u32) {
+    pub(crate) fn spend(
+        &mut self,
+        ctx_db: &crate::db::Db,
+        cfg: &SamStockCfg,
+        gid: GroupId,
+        n: u32,
+    ) {
         let max = magazine_size(ctx_db, cfg, &gid);
         let m = self.groups.entry(gid).or_insert(Magazine {
             remaining: max,
@@ -86,13 +92,17 @@ fn magazine_size(db: &crate::db::Db, cfg: &SamStockCfg, gid: &GroupId) -> u32 {
             g.units
                 .into_iter()
                 .filter_map(|uid| db.persisted.units.get(uid))
-                .filter(|u| u.tags.contains(UnitTag::Launcher) && u.tags.contains(UnitTag::SAM))
+                .filter(|u| {
+                    u.tags.contains(UnitTag::Launcher) && u.tags.contains(UnitTag::SAM)
+                })
                 .count()
         })
         .unwrap_or(0)
         .max(1);
-    ((launchers as f32) * cfg.missiles_per_launcher as f32 * cfg.reload_multiplier.max(1.)).round()
-        as u32
+    ((launchers as f32)
+        * cfg.missiles_per_launcher as f32
+        * cfg.reload_multiplier.max(1.))
+    .round() as u32
 }
 
 fn site_name(ctx: &Context, gid: &GroupId) -> dcso3::String {
@@ -112,7 +122,12 @@ fn set_roe(lua: MizLua, ctx: &Context, gid: &GroupId, roe: GroundRoe) -> bool {
         .is_ok()
 }
 
-pub(crate) fn on_shot(ctx: &mut Context, cfg: &SamStockCfg, gid: GroupId, _now: DateTime<Utc>) {
+pub(crate) fn on_shot(
+    ctx: &mut Context,
+    cfg: &SamStockCfg,
+    gid: GroupId,
+    _now: DateTime<Utc>,
+) {
     let max = magazine_size(&ctx.db, cfg, &gid);
     let m = ctx.modern_war.sam.groups.entry(gid).or_insert(Magazine {
         remaining: max,
@@ -143,16 +158,15 @@ pub(crate) fn on_shot(ctx: &mut Context, cfg: &SamStockCfg, gid: GroupId, _now: 
     }
 }
 
-pub(crate) fn tick(lua: MizLua, ctx: &mut Context, cfg: &SamStockCfg, now: DateTime<Utc>) {
+pub(crate) fn tick(
+    lua: MizLua,
+    ctx: &mut Context,
+    cfg: &SamStockCfg,
+    now: DateTime<Utc>,
+) {
     // Forget groups that are gone.
-    let gone: Vec<GroupId> = ctx
-        .modern_war
-        .sam
-        .groups
-        .keys()
-        .filter(|g| !alive(ctx, g))
-        .copied()
-        .collect();
+    let gone: Vec<GroupId> =
+        ctx.modern_war.sam.groups.keys().filter(|g| !alive(ctx, g)).copied().collect();
     for g in gone {
         ctx.modern_war.sam.groups.remove(&g);
     }
@@ -164,7 +178,9 @@ pub(crate) fn tick(lua: MizLua, ctx: &mut Context, cfg: &SamStockCfg, now: DateT
         .iter()
         .filter(|(_, m)| {
             m.winchester
-                && m.last_applied.map(|t| (now - t).num_seconds() >= REAPPLY_SECS).unwrap_or(true)
+                && m.last_applied
+                    .map(|t| (now - t).num_seconds() >= REAPPLY_SECS)
+                    .unwrap_or(true)
         })
         .map(|(g, _)| *g)
         .collect();
@@ -197,7 +213,9 @@ pub(crate) fn tick(lua: MizLua, ctx: &mut Context, cfg: &SamStockCfg, now: DateT
     for g in short {
         let supplied = home_objective(ctx, &g)
             .and_then(|o| ctx.db.persisted.objectives.get(&o))
-            .map(|o| (o.unlimited_supply() || o.supply() >= cfg.min_supply) && !o.threatened())
+            .map(|o| {
+                (o.unlimited_supply() || o.supply() >= cfg.min_supply) && !o.threatened()
+            })
             .unwrap_or(false);
         if !supplied {
             continue;

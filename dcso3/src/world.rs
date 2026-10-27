@@ -29,24 +29,10 @@ use std::ops::Deref;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum SearchVolume {
-    Segment {
-        from: LuaVec3,
-        to: LuaVec3,
-    },
-    Box {
-        min: LuaVec3,
-        max: LuaVec3,
-    },
-    Sphere {
-        point: LuaVec3,
-        radius: f64,
-    },
-    Pyramid {
-        pos: Position3,
-        length: f32,
-        half_angle_hor: f32,
-        half_angle_ver: f32,
-    },
+    Segment { from: LuaVec3, to: LuaVec3 },
+    Box { min: LuaVec3, max: LuaVec3 },
+    Sphere { point: LuaVec3, radius: f64 },
+    Pyramid { pos: Position3, length: f32, half_angle_hor: f32, half_angle_ver: f32 },
 }
 
 impl IntoLua for SearchVolume {
@@ -69,12 +55,7 @@ impl IntoLua for SearchVolume {
                 params.raw_set("point", point)?;
                 params.raw_set("radius", radius)?;
             }
-            Self::Pyramid {
-                pos,
-                length,
-                half_angle_hor,
-                half_angle_ver,
-            } => {
+            Self::Pyramid { pos, length, half_angle_hor, half_angle_ver } => {
                 tbl.raw_set("id", 3)?;
                 params.raw_set("pos", pos)?;
                 params.raw_set("length", length)?;
@@ -149,16 +130,15 @@ impl World {
         let tbl = self.lua.create_table()?;
         tbl.set(
             "onEvent",
-            self.lua
-                .create_function(move |lua, (_, ev): (Value, Value)| {
-                    match Event::from_lua(ev, lua) {
-                        Ok(ev) => wrap_f("event handler", MizLua(lua), |lua| f(lua, ev)),
-                        Err(e) => {
-                            warn!("error translating event: {:?}", e);
-                            Ok(())
-                        }
+            self.lua.create_function(move |lua, (_, ev): (Value, Value)| {
+                match Event::from_lua(ev, lua) {
+                    Ok(ev) => wrap_f("event handler", MizLua(lua), |lua| f(lua, ev)),
+                    Err(e) => {
+                        warn!("error translating event: {:?}", e);
+                        Ok(())
                     }
-                })?,
+                }
+            })?,
         )?;
         self.t.call_function::<()>("addEventHandler", tbl.clone())?;
         globals.raw_set(id.key(), tbl)?;
@@ -194,14 +174,10 @@ impl World {
         T: IntoLua + FromLua,
         F: Fn(MizLua, Object, T) -> Result<bool> + 'static,
     {
-        let f = self
-            .lua
-            .create_function(move |lua, (o, arg): (Object, T)| {
-                wrap_f("searchObjects", MizLua(lua), |lua| f(lua, o, arg))
-            })?;
-        Ok(self
-            .t
-            .call_function("searchObjects", (category, volume, f, arg))?)
+        let f = self.lua.create_function(move |lua, (o, arg): (Object, T)| {
+            wrap_f("searchObjects", MizLua(lua), |lua| f(lua, o, arg))
+        })?;
+        Ok(self.t.call_function("searchObjects", (category, volume, f, arg))?)
     }
 
     pub fn remove_junk(&self, volume: SearchVolume) -> Result<i64> {

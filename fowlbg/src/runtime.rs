@@ -7,7 +7,9 @@
 //! ([`Handler`]); this owns the thread, the tokio runtime on it, the logger
 //! that feeds it, and (opt-in) keeping it alive through panics.
 
-use crate::log::{LogHandle, Quiet, QUEUED, fallback_log, level_from_env, panic_msg, set_fallback};
+use crate::log::{
+    LogHandle, QUEUED, Quiet, fallback_log, level_from_env, panic_msg, set_fallback,
+};
 use bytes::Bytes;
 use futures::FutureExt;
 use log::error;
@@ -187,7 +189,10 @@ where
         let rt = match b.enable_all().build() {
             Ok(rt) => rt,
             Err(e) if opts.supervise => {
-                fallback_log(format!("{}: could not start the async runtime {e:?}\n", opts.name).as_bytes());
+                fallback_log(
+                    format!("{}: could not start the async runtime {e:?}\n", opts.name)
+                        .as_bytes(),
+                );
                 thread::sleep(Duration::from_secs(5));
                 continue;
             }
@@ -202,7 +207,11 @@ where
                 restarts = restarts.saturating_add(1);
                 let m = panic_msg(&e);
                 fallback_log(
-                    format!("{}: background loop died ({m}), restart #{restarts}\n", opts.name).as_bytes(),
+                    format!(
+                        "{}: background loop died ({m}), restart #{restarts}\n",
+                        opts.name
+                    )
+                    .as_bytes(),
                 );
                 drop(rt);
                 thread::sleep(Duration::from_secs(1));
@@ -235,7 +244,10 @@ async fn run_loop<H, F, Fut>(
         if opts.supervise {
             if let Err(e) = AssertUnwindSafe(h.handle(task)).catch_unwind().await {
                 let m = panic_msg(&e);
-                fallback_log(format!("{}: background task {kind} panicked: {m}\n", opts.name).as_bytes());
+                fallback_log(
+                    format!("{}: background task {kind} panicked: {m}\n", opts.name)
+                        .as_bytes(),
+                );
                 error!("background task {kind} panicked: {m}")
             }
         } else {
@@ -294,7 +306,9 @@ mod tests {
         type Task = T;
         async fn handle(&mut self, t: T) {
             match t {
-                T::Log(l) => self.1.lock().unwrap().push(String::from_utf8_lossy(&l).into()),
+                T::Log(l) => {
+                    self.1.lock().unwrap().push(String::from_utf8_lossy(&l).into())
+                }
                 T::Do(s) => self.1.lock().unwrap().push(format!("{}:{s}", self.0)),
                 T::Boom => panic!("boom"),
                 T::Last => self.1.lock().unwrap().push("last".into()),
@@ -365,7 +379,8 @@ mod tests {
 
     #[test]
     fn log_lines_reach_the_handler() {
-        let out = run(supervised(), vec![T::log_line(Bytes::from_static(b"hello\n"))], false);
+        let out =
+            run(supervised(), vec![T::log_line(Bytes::from_static(b"hello\n"))], false);
         assert_eq!(out, ["start 0", "hello\n", "stop"]);
     }
 }

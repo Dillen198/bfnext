@@ -37,15 +37,17 @@ use bfprotocols::{
 };
 use chrono::prelude::*;
 use compact_str::{CompactString, format_compact};
-use enumflags2::BitFlags;
 use dcso3::{
-    MizLua, Position3, Vector2, Vector3, azumith2d_to, azumith3d, azumith3d_to, coalition::Side,
-    land::Land, net::Ucid, radians_to_degrees,
+    MizLua, Position3, Vector2, Vector3, azumith2d_to, azumith3d, azumith3d_to,
+    coalition::Side,
+    land::Land,
+    net::Ucid,
     object::{DcsObject, DcsOid},
+    radians_to_degrees,
     unit::Unit,
     weapon::{ClassWeapon, Weapon},
-
 };
+use enumflags2::BitFlags;
 use fxhash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
 use std::fmt;
@@ -76,7 +78,7 @@ impl DetectedBy {
         match self.0 {
             0b01 => "[G]",
             0b10 => "[A]",
-            _    => "[GA]",
+            _ => "[GA]",
         }
     }
 }
@@ -97,7 +99,12 @@ impl Aspect {
     /// Compute aspect from the contact's heading and the bearing from player to contact.
     /// `bearing_to_contact` and `contact_heading` are both in degrees (0–360, north-up).
     /// `pos` is the player's 2D position, `cpos` is the contact's 2D position (DCS XZ plane).
-    fn compute(bearing_to_contact: f64, contact_heading: f64, pos: Vector2, cpos: Vector2) -> Self {
+    fn compute(
+        bearing_to_contact: f64,
+        contact_heading: f64,
+        pos: Vector2,
+        cpos: Vector2,
+    ) -> Self {
         // Reciprocal: direction FROM contact TO player
         let reciprocal = (bearing_to_contact + 180.0) % 360.0;
         // Angular difference between contact heading and the line back to the player (0–180°)
@@ -120,22 +127,41 @@ impl Aspect {
         let cross = h_e * d_n - h_n * d_e;
         let left = cross > 0.0;
         match diff as u32 {
-            0..=30   => Aspect::Hot,
-            31..=60  => if left { Aspect::FlankLeft  } else { Aspect::FlankRight  },
-            61..=120 => if left { Aspect::BeamLeft   } else { Aspect::BeamRight   },
-            _        => if diff >= 150.0 { Aspect::Cold }
-                        else if left { Aspect::FlankLeft } else { Aspect::FlankRight },
+            0..=30 => Aspect::Hot,
+            31..=60 => {
+                if left {
+                    Aspect::FlankLeft
+                } else {
+                    Aspect::FlankRight
+                }
+            }
+            61..=120 => {
+                if left {
+                    Aspect::BeamLeft
+                } else {
+                    Aspect::BeamRight
+                }
+            }
+            _ => {
+                if diff >= 150.0 {
+                    Aspect::Cold
+                } else if left {
+                    Aspect::FlankLeft
+                } else {
+                    Aspect::FlankRight
+                }
+            }
         }
     }
 
     fn label(self) -> &'static str {
         match self {
-            Aspect::Hot        => "HOT      ",
-            Aspect::FlankLeft  => "FLANK L  ",
+            Aspect::Hot => "HOT      ",
+            Aspect::FlankLeft => "FLANK L  ",
             Aspect::FlankRight => "FLANK R  ",
-            Aspect::BeamLeft   => "BEAM  L  ",
-            Aspect::BeamRight  => "BEAM  R  ",
-            Aspect::Cold       => "COLD     ",
+            Aspect::BeamLeft => "BEAM  L  ",
+            Aspect::BeamRight => "BEAM  R  ",
+            Aspect::Cold => "COLD     ",
         }
     }
 }
@@ -182,24 +208,74 @@ impl ThreatClass {
         let any = |names: &[&str]| names.iter().any(|n| t.contains(n));
         // Helicopters before support: "ka-50" contains "a-50" (Mainstay).
         if tags.contains(UnitTag::Helicopter)
-            || any(&["ka-", "mi-", "ah-", "uh-", "ch-", "oh-", "oh58", "mh-", "sh-60", "sa342"])
+            || any(&[
+                "ka-", "mi-", "ah-", "uh-", "ch-", "oh-", "oh58", "mh-", "sh-60", "sa342",
+            ])
         {
             ThreatClass::Helicopter
         } else if tags.contains(UnitTag::AWACS)
             || tags.contains(UnitTag::Unarmed)
             || any(&[
-                "kc-", "kc130", "kc135", "il-78", "tanker", "e-3", "e-2", "a-50", "kj-2000",
-                "c-130", "c-17", "c-47", "il-76", "an-12", "an-26", "an-30", "yak-40", "mq-",
-                "rq-", "wingloong", "predator", "reaper", "drone", "uav",
+                "kc-",
+                "kc130",
+                "kc135",
+                "il-78",
+                "tanker",
+                "e-3",
+                "e-2",
+                "a-50",
+                "kj-2000",
+                "c-130",
+                "c-17",
+                "c-47",
+                "il-76",
+                "an-12",
+                "an-26",
+                "an-30",
+                "yak-40",
+                "mq-",
+                "rq-",
+                "wingloong",
+                "predator",
+                "reaper",
+                "drone",
+                "uav",
             ])
         {
             ThreatClass::Support
         } else if tags.contains(UnitTag::CAP)
             || any(&[
-                "f-14", "f-15", "f-16", "fa-18", "f/a-18", "f-18", "f-4", "f-5", "f-86", "f-35",
-                "mig-15", "mig-19", "mig-21", "mig-23", "mig-25", "mig-29", "mig-31", "su-27",
-                "su-30", "su-33", "su-35", "su-57", "j-11", "j-10", "jf-17", "m-2000", "mirage",
-                "jas39", "gripen", "eurofighter", "rafale",
+                "f-14",
+                "f-15",
+                "f-16",
+                "fa-18",
+                "f/a-18",
+                "f-18",
+                "f-4",
+                "f-5",
+                "f-86",
+                "f-35",
+                "mig-15",
+                "mig-19",
+                "mig-21",
+                "mig-23",
+                "mig-25",
+                "mig-29",
+                "mig-31",
+                "su-27",
+                "su-30",
+                "su-33",
+                "su-35",
+                "su-57",
+                "j-11",
+                "j-10",
+                "jf-17",
+                "m-2000",
+                "mirage",
+                "jas39",
+                "gripen",
+                "eurofighter",
+                "rafale",
             ])
         {
             ThreatClass::Fighter
@@ -263,18 +339,23 @@ impl GibBraa {
         match unit {
             EwrUnits::Metric => {
                 self.range = self.range / 1000;
-                self.speed = ((((self.speed as f64) * 3.6) / 100.0).round() * 100.0) as u16;
+                self.speed =
+                    ((((self.speed as f64) * 3.6) / 100.0).round() * 100.0) as u16;
                 if self.altitude < 1000 {
-                    self.altitude = ((self.altitude as f64 / 100.0).round() * 100.0) as u32;
+                    self.altitude =
+                        ((self.altitude as f64 / 100.0).round() * 100.0) as u32;
                 } else {
-                    self.altitude = ((self.altitude as f64 / 1000.0).round() * 1000.0) as u32;
+                    self.altitude =
+                        ((self.altitude as f64 / 1000.0).round() * 1000.0) as u32;
                 }
             }
             EwrUnits::Imperial => {
                 self.range = self.range / 1852;
-                self.speed = ((((self.speed as f64) * 1.94384) / 100.0).round() * 100.0) as u16;
+                self.speed =
+                    ((((self.speed as f64) * 1.94384) / 100.0).round() * 100.0) as u16;
                 // Feet to the nearest hundred, shown as angels ("A23.8").
-                self.altitude = ((self.altitude as f64 * 3.28084 / 100.0).round() * 100.0) as u32;
+                self.altitude =
+                    ((self.altitude as f64 * 3.28084 / 100.0).round() * 100.0) as u32;
             }
         }
         self.units = unit;
@@ -476,18 +557,18 @@ fn compute_detection_probability(
     // VHF/UHF radars operate near the Rayleigh scattering regime for aircraft-sized
     // targets — aspect and shaping matter much less, making stealth less effective.
     let base_rcs = match aspect {
-        Aspect::Hot                             => cfg.rcs_hot,
-        Aspect::FlankLeft | Aspect::FlankRight  => cfg.rcs_flank,
-        Aspect::BeamLeft  | Aspect::BeamRight   => cfg.rcs_beam,
-        Aspect::Cold                            => cfg.rcs_cold,
+        Aspect::Hot => cfg.rcs_hot,
+        Aspect::FlankLeft | Aspect::FlankRight => cfg.rcs_flank,
+        Aspect::BeamLeft | Aspect::BeamRight => cfg.rcs_beam,
+        Aspect::Cold => cfg.rcs_cold,
     };
     // band_sharpness: 1.0 = full aspect variation (X-band), lower = compressed toward 1.0
     let band_sharpness = match frequency_band {
-        RadarBand::Vhf           => 0.3,
-        RadarBand::Uhf           => 0.5,
-        RadarBand::Lband         => 0.7,
-        RadarBand::Sband         => 0.85,
-        RadarBand::Cband         => 0.95,
+        RadarBand::Vhf => 0.3,
+        RadarBand::Uhf => 0.5,
+        RadarBand::Lband => 0.7,
+        RadarBand::Sband => 0.85,
+        RadarBand::Cband => 0.95,
         RadarBand::Xband | RadarBand::Kuband => 1.0,
     };
     let rcs_factor = 1.0 - (1.0 - base_rcs) * band_sharpness;
@@ -497,15 +578,15 @@ fn compute_detection_probability(
     let notch_factor = if pulse_doppler
         && matches!(aspect, Aspect::BeamLeft | Aspect::BeamRight)
     {
-        let to_donor_dir = (donor_pos.coords - nalgebra::Vector3::new(
-            contact_velocity.x, contact_velocity.y, contact_velocity.z,
-        )).normalize();
+        let to_donor_dir = (donor_pos.coords
+            - nalgebra::Vector3::new(
+                contact_velocity.x,
+                contact_velocity.y,
+                contact_velocity.z,
+            ))
+        .normalize();
         let closure = contact_velocity.dot(&to_donor_dir).abs() as f32;
-        if closure < cfg.notch_closure_threshold_ms {
-            cfg.notch_attenuation
-        } else {
-            1.0
-        }
+        if closure < cfg.notch_closure_threshold_ms { cfg.notch_attenuation } else { 1.0 }
     } else {
         1.0
     };
@@ -539,10 +620,12 @@ fn compute_detection_probability(
         }
         SensorType::GroundEwr | SensorType::SamSearchRadar => {
             if look_down_capable {
-                (contact_alt_agl_m as f32 / cfg.ground_radar_low_alt_threshold_m).clamp(0.1, 1.0)
+                (contact_alt_agl_m as f32 / cfg.ground_radar_low_alt_threshold_m)
+                    .clamp(0.1, 1.0)
             } else {
                 // Non-look-down ground radar: near-zero below 3× threshold.
-                (contact_alt_agl_m as f32 / (cfg.ground_radar_low_alt_threshold_m * 3.0)).clamp(0.0, 1.0)
+                (contact_alt_agl_m as f32 / (cfg.ground_radar_low_alt_threshold_m * 3.0))
+                    .clamp(0.0, 1.0)
             }
         }
     };
@@ -707,17 +790,11 @@ impl Ewr {
         let mut rng = rand::thread_rng();
         let land = Land::singleton(lua)?;
         let aircraft: SmallVec<[(EnId, Side, Position3, Vector3); 128]> = {
-            let players = db
-                .instanced_players()
-                .filter(|(_, _, inst)| inst.in_air)
-                .map(|(ucid, player, inst)| {
-                    (
-                        EnId::Player(*ucid),
-                        player.side,
-                        inst.position,
-                        inst.velocity,
-                    )
-                });
+            let players = db.instanced_players().filter(|(_, _, inst)| inst.in_air).map(
+                |(ucid, player, inst)| {
+                    (EnId::Player(*ucid), player.side, inst.position, inst.velocity)
+                },
+            );
             // Action groups (player-deployed AWACS, drones, etc.) — use stored airborne_velocity.
             let actions = db
                 .persisted
@@ -780,26 +857,25 @@ impl Ewr {
         // position per side, once per tick, reused by every donor below
         // (jamming_factor_for_donor only cares about the nearest enemy
         // jammer to a given donor, not per-contact).
-        let jammer_positions: FxHashMap<Side, SmallVec<[Vector3; 8]>> = if iadn_cfg
-            .as_ref()
-            .map(|c| c.jamming_enabled)
-            .unwrap_or(false)
-        {
-            let mut m: FxHashMap<Side, SmallVec<[Vector3; 8]>> = FxHashMap::default();
-            for (id, side, pos, _vel) in &aircraft {
-                if Self::is_jammer(id, db) {
-                    m.entry(*side).or_default().push(pos.p.0);
+        let jammer_positions: FxHashMap<Side, SmallVec<[Vector3; 8]>> =
+            if iadn_cfg.as_ref().map(|c| c.jamming_enabled).unwrap_or(false) {
+                let mut m: FxHashMap<Side, SmallVec<[Vector3; 8]>> = FxHashMap::default();
+                for (id, side, pos, _vel) in &aircraft {
+                    if Self::is_jammer(id, db) {
+                        m.entry(*side).or_default().push(pos.p.0);
+                    }
                 }
-            }
-            m
-        } else {
-            FxHashMap::default()
-        };
+                m
+            } else {
+                FxHashMap::default()
+            };
 
         // Accumulate per-sensor contributions for IADN fusion this tick.
         // Maps (donor_side, EnId) -> Vec<(snr, pos, velocity, sensor_type, detected_by)>
-        let mut fusion_contributions: FxHashMap<(Side, EnId), SmallVec<[(f32, Position3, Vector3, SensorType, DetectedBy); 4]>> =
-            FxHashMap::default();
+        let mut fusion_contributions: FxHashMap<
+            (Side, EnId),
+            SmallVec<[(f32, Position3, Vector3, SensorType, DetectedBy); 4]>,
+        > = FxHashMap::default();
 
         for donor in &self.donor_snapshot {
             let range_sq = (donor.range as f64).powi(2);
@@ -809,13 +885,17 @@ impl Ewr {
             let jamming_factor = iadn_cfg
                 .as_ref()
                 .filter(|c| c.jamming_enabled)
-                .map(|c| Self::jamming_factor_for_donor(donor, donor_pos, &jammer_positions, c))
+                .map(|c| {
+                    Self::jamming_factor_for_donor(donor, donor_pos, &jammer_positions, c)
+                })
                 .unwrap_or(1.0);
-            let sensor = if donor.airborne { DetectedBy::AIRBORNE } else { DetectedBy::GROUND };
+            let sensor =
+                if donor.airborne { DetectedBy::AIRBORNE } else { DetectedBy::GROUND };
             for (id, obj_side, pos, velocity) in &aircraft {
                 let track = tracks.entry(*id).or_default();
                 if track.last != now {
-                    let dist_sq = na::distance_squared(&donor_pos.into(), &pos.p.0.into());
+                    let dist_sq =
+                        na::distance_squared(&donor_pos.into(), &pos.p.0.into());
                     if dist_sq <= range_sq {
                         let in_cone = match donor.aspect_half_angle {
                             None => true,
@@ -829,22 +909,36 @@ impl Ewr {
                                 diff <= (half_deg as f64).to_radians()
                             }
                         };
-                        if in_cone && landcache.is_visible(&land, dist_sq.sqrt(), donor_pos, pos.p.0)? {
+                        if in_cone
+                            && landcache.is_visible(
+                                &land,
+                                dist_sq.sqrt(),
+                                donor_pos,
+                                pos.p.0,
+                            )?
+                        {
                             // Scan interval gate: slow-rotating radars only refresh tracks
                             // every scan_interval_secs. Between sweeps the track position is
                             // held but the contact is still considered detected (track memory).
                             let scan_due = donor.scan_interval_secs == 0
-                                || (now - track.last_update).num_seconds() >= donor.scan_interval_secs as i64
+                                || (now - track.last_update).num_seconds()
+                                    >= donor.scan_interval_secs as i64
                                 || track.last_update == DateTime::<Utc>::UNIX_EPOCH;
 
                             // Probabilistic detection gate: with radar_physics config we roll
                             // against the computed probability; without it we use legacy binary.
                             let detected = if let Some(rp) = &radar_physics {
-                                let bearing = radians_to_degrees(azumith3d_to(donor_pos, pos.p.0));
-                                let heading  = radians_to_degrees(azumith3d(pos.x.0));
+                                let bearing =
+                                    radians_to_degrees(azumith3d_to(donor_pos, pos.p.0));
+                                let heading = radians_to_degrees(azumith3d(pos.x.0));
                                 let contact_pos2 = Vector2::new(pos.p.x, pos.p.z);
-                                let donor_pos2   = Vector2::new(donor_pos.x, donor_pos.z);
-                                let aspect = Aspect::compute(bearing, heading, donor_pos2, contact_pos2);
+                                let donor_pos2 = Vector2::new(donor_pos.x, donor_pos.z);
+                                let aspect = Aspect::compute(
+                                    bearing,
+                                    heading,
+                                    donor_pos2,
+                                    contact_pos2,
+                                );
                                 let alt_agl = pos.p.y;
                                 let prob = compute_detection_probability(
                                     donor.range,
@@ -864,7 +958,13 @@ impl Ewr {
                                     fusion_contributions
                                         .entry((donor.side, *id))
                                         .or_default()
-                                        .push((prob, *pos, *velocity, donor.sensor_type, sensor));
+                                        .push((
+                                            prob,
+                                            *pos,
+                                            *velocity,
+                                            donor.sensor_type,
+                                            sensor,
+                                        ));
                                 }
                                 rand::Rng::r#gen::<f32>(&mut rng) < prob
                             } else {
@@ -877,32 +977,38 @@ impl Ewr {
                                 // between sweeps but position is only updated each rotation.
                                 if scan_due {
                                     match ewr_mode {
-                                    EwrMode::Original => {
-                                        if let Some(rp) = &radar_physics {
-                                            let a = rp.track_smoothing_alpha as f64;
-                                            let op = track.pos.p.0;
-                                            let np = pos.p.0;
-                                            let sp = nalgebra::Vector3::new(
-                                                op.x * (1.0 - a) + np.x * a,
-                                                op.y * (1.0 - a) + np.y * a,
-                                                op.z * (1.0 - a) + np.z * a,
-                                            );
-                                            track.pos.p.0 = sp;
-                                            track.velocity = track.velocity * (1.0 - a) + velocity * a;
-                                        } else {
-                                            track.pos = *pos;
-                                            track.velocity = *velocity;
-                                        }
-                                        track.last_update = now;
-                                    }
-                                    EwrMode::Delayed => {
-                                        let time_since_update = (now - track.last_update).num_seconds();
-                                        if time_since_update >= ewr_delay as i64 || track.last_update == DateTime::<Utc>::UNIX_EPOCH {
-                                            track.pos = *pos;
-                                            track.velocity = *velocity;
+                                        EwrMode::Original => {
+                                            if let Some(rp) = &radar_physics {
+                                                let a = rp.track_smoothing_alpha as f64;
+                                                let op = track.pos.p.0;
+                                                let np = pos.p.0;
+                                                let sp = nalgebra::Vector3::new(
+                                                    op.x * (1.0 - a) + np.x * a,
+                                                    op.y * (1.0 - a) + np.y * a,
+                                                    op.z * (1.0 - a) + np.z * a,
+                                                );
+                                                track.pos.p.0 = sp;
+                                                track.velocity = track.velocity
+                                                    * (1.0 - a)
+                                                    + velocity * a;
+                                            } else {
+                                                track.pos = *pos;
+                                                track.velocity = *velocity;
+                                            }
                                             track.last_update = now;
                                         }
-                                    }
+                                        EwrMode::Delayed => {
+                                            let time_since_update =
+                                                (now - track.last_update).num_seconds();
+                                            if time_since_update >= ewr_delay as i64
+                                                || track.last_update
+                                                    == DateTime::<Utc>::UNIX_EPOCH
+                                            {
+                                                track.pos = *pos;
+                                                track.velocity = *velocity;
+                                                track.last_update = now;
+                                            }
+                                        }
                                     } // end scan_due
                                 }
                                 track.last = now;
@@ -1009,7 +1115,9 @@ impl Ewr {
                         .persisted
                         .objectives_by_group
                         .get(&gid)
-                        .and_then(|sam_oid| db.persisted.sam_command_center_link.get(sam_oid))
+                        .and_then(|sam_oid| {
+                            db.persisted.sam_command_center_link.get(sam_oid)
+                        })
                         .and_then(|cc_oid| db.persisted.objectives.get(cc_oid))
                         .map(|cc| cc.owner == donor.side && cc.health() > 0)
                         .unwrap_or(false);
@@ -1027,11 +1135,20 @@ impl Ewr {
                         self.sam_emcon.remove(&gid);
                         dcso3::controller::AlarmState::Auto
                     } else {
-                        let cues = self.sam_cue_targets(donor.side, sam_pos, donor.range as f64, iadn);
+                        let cues = self.sam_cue_targets(
+                            donor.side,
+                            sam_pos,
+                            donor.range as f64,
+                            iadn,
+                        );
                         nearest_cue_dist = cues
                             .iter()
-                            .map(|(_, pos, _)| na::distance(&sam_pos.into(), &(*pos).into()))
-                            .fold(None, |acc: Option<f64>, d| Some(acc.map_or(d, |a| a.min(d))));
+                            .map(|(_, pos, _)| {
+                                na::distance(&sam_pos.into(), &(*pos).into())
+                            })
+                            .fold(None, |acc: Option<f64>, d| {
+                                Some(acc.map_or(d, |a| a.min(d)))
+                            });
                         self.decide_hot_state(gid, !cues.is_empty(), now, iadn)
                     };
                     let group_name = group.name.clone();
@@ -1044,7 +1161,9 @@ impl Ewr {
                             // own; it follows the site's drill too, or every
                             // site would still drop for every HARM.
                             let _ = con.set_option(dcso3::controller::AiOption::Ground(
-                                dcso3::controller::GroundOption::EvasionOfArm(site_drilled(gid, iadn)),
+                                dcso3::controller::GroundOption::EvasionOfArm(
+                                    site_drilled(gid, iadn),
+                                ),
                             ));
                         }
                     }
@@ -1057,9 +1176,19 @@ impl Ewr {
                     // radar's own range, mirroring real layered SAM systems
                     // (SA-10, Patriot) that keep the higher-exposure
                     // engagement radar dark until close to actually firing.
-                    let hot = matches!(desired, dcso3::controller::AlarmState::Auto | dcso3::controller::AlarmState::Red);
+                    let hot = matches!(
+                        desired,
+                        dcso3::controller::AlarmState::Auto
+                            | dcso3::controller::AlarmState::Red
+                    );
                     self.apply_layered_radar_emission(
-                        lua, db, gid, hot, nearest_cue_dist, donor.range as f64, iadn,
+                        lua,
+                        db,
+                        gid,
+                        hot,
+                        nearest_cue_dist,
+                        donor.range as f64,
+                        iadn,
                     );
                     // IADN jamming: degrade this donor's effective detection
                     // range against airborne contacts near a UnitTag::Jammer
@@ -1101,7 +1230,8 @@ impl Ewr {
             .collect();
         // (side, gid, group_name, sam_pos) for every blinded-but-networked SAM
         // group, gathered before we touch &mut self.
-        let mut blinded: SmallVec<[(Side, GroupId, CompactString, Vector2); 16]> = smallvec![];
+        let mut blinded: SmallVec<[(Side, GroupId, CompactString, Vector2); 16]> =
+            smallvec![];
         for (sam_oid, cc_oid) in &db.persisted.sam_command_center_link {
             let Some(sam) = db.persisted.objectives.get(sam_oid) else {
                 continue;
@@ -1154,16 +1284,23 @@ impl Ewr {
                     }
                 }
                 if is_sam && !live_search && live_shooter {
-                    blinded.push((side, *gid, CompactString::from(group.name.as_str()), sam_pos));
+                    blinded.push((
+                        side,
+                        *gid,
+                        CompactString::from(group.name.as_str()),
+                        sam_pos,
+                    ));
                 }
             }
         }
         for (side, gid, group_name, sam_pos) in blinded {
-            let cues = self.sam_cue_targets(side, sam_pos, cfg.sam_offboard_cue_range_m, cfg);
+            let cues =
+                self.sam_cue_targets(side, sam_pos, cfg.sam_offboard_cue_range_m, cfg);
             let desired = self.decide_hot_state(gid, !cues.is_empty(), now, cfg);
             if let Ok(live) = dcso3::group::Group::get_by_name(lua, group_name.as_str()) {
                 if let Ok(con) = live.get_controller() {
-                    let _ = con.set_option(AiOption::Ground(GroundOption::AlarmState(desired)));
+                    let _ = con
+                        .set_option(AiOption::Ground(GroundOption::AlarmState(desired)));
                 }
             }
             let hot = matches!(desired, AlarmState::Auto | AlarmState::Red);
@@ -1228,7 +1365,9 @@ impl Ewr {
                 }
             }
         }
-        let effect = worst_proximity * cfg.jamming_detection_penalty as f64 * donor.ecm_susceptibility as f64;
+        let effect = worst_proximity
+            * cfg.jamming_detection_penalty as f64
+            * donor.ecm_susceptibility as f64;
         (1.0 - effect).clamp(0.0, 1.0) as f32
     }
 
@@ -1241,11 +1380,7 @@ impl Ewr {
                 .and_then(|p| p.current_slot.as_ref())
                 .and_then(|(_, inst)| inst.as_ref())
                 .map(|inst| inst.typ.clone()),
-            EnId::Unit(uid) => db
-                .persisted
-                .units
-                .get(uid)
-                .map(|u| u.typ.clone()),
+            EnId::Unit(uid) => db.persisted.units.get(uid).map(|u| u.typ.clone()),
         }
     }
 
@@ -1272,7 +1407,11 @@ impl Ewr {
         let tags = typ.as_ref().and_then(|t| db.ephemeral.cfg.unit_classification.get(t));
         match tags {
             Some(tags) if tags.contains(UnitTag::Helicopter) => ContactClass::Helicopter,
-            Some(tags) if tags.contains(UnitTag::Aircraft) && tags.contains(UnitTag::AWACS) => ContactClass::Bomber,
+            Some(tags)
+                if tags.contains(UnitTag::Aircraft) && tags.contains(UnitTag::AWACS) =>
+            {
+                ContactClass::Bomber
+            }
             Some(tags) if tags.contains(UnitTag::Aircraft) => ContactClass::Fighter,
             _ => ContactClass::Unknown,
         }
@@ -1280,7 +1419,10 @@ impl Ewr {
 
     fn fuse_tracks(
         &mut self,
-        contributions: &FxHashMap<(Side, EnId), SmallVec<[(f32, Position3, Vector3, SensorType, DetectedBy); 4]>>,
+        contributions: &FxHashMap<
+            (Side, EnId),
+            SmallVec<[(f32, Position3, Vector3, SensorType, DetectedBy); 4]>,
+        >,
         cfg: &IadnConfig,
         db: &Db,
         now: DateTime<Utc>,
@@ -1300,21 +1442,19 @@ impl Ewr {
             let contact_class = Self::classify_contact(id, db);
             let mut fused_pos = Position3::default();
             let mut fused_vel = Vector3::zeros();
-            let mut fused_db  = DetectedBy::default();
+            let mut fused_db = DetectedBy::default();
             for (snr, pos, vel, _, db) in sensor_hits {
                 let w = snr / total_snr;
                 fused_pos.p.0 += pos.p.0 * w as f64;
-                fused_vel     += vel * w as f64;
-                fused_db       = fused_db.with(*db);
+                fused_vel += vel * w as f64;
+                fused_db = fused_db.with(*db);
             }
             let fused_2d = Vector2::new(fused_pos.p.x, fused_pos.p.z);
             let tracks = self.fused_tracks.entry(*side).or_default();
 
             // Find the closest existing track within association radius.
-            let existing = tracks
-                .iter_mut()
-                .filter(|t| t.iff == IffState::Hostile)
-                .find(|t| {
+            let existing =
+                tracks.iter_mut().filter(|t| t.iff == IffState::Hostile).find(|t| {
                     let t2d = Vector2::new(t.pos.p.x, t.pos.p.z);
                     na::distance_squared(&fused_2d.into(), &t2d.into()) <= assoc_sq
                 });
@@ -1332,14 +1472,16 @@ impl Ewr {
                 track.velocity = track.velocity * 0.7 + fused_vel * 0.3;
                 track.confidence = (track.confidence + confidence_gain).clamp(0.0, 1.0);
                 let n = sensor_hits.len() as u8;
-                track.pos_uncertainty_m = (track.pos_uncertainty_m * 0.8)
-                    .max(1000.0 / (n as f32 + 1.0));
+                track.pos_uncertainty_m =
+                    (track.pos_uncertainty_m * 0.8).max(1000.0 / (n as f32 + 1.0));
                 track.detected_by = track.detected_by.with(fused_db);
                 track.sensor_count = sensor_hits.len() as u8;
                 track.last_detection = now;
                 track.last_update = now;
                 // Refine classification when we get a better identification.
-                if track.classification == ContactClass::Unknown && contact_class != ContactClass::Unknown {
+                if track.classification == ContactClass::Unknown
+                    && contact_class != ContactClass::Unknown
+                {
                     track.classification = contact_class;
                 }
             } else {
@@ -1436,11 +1578,15 @@ impl Ewr {
             if (now - a.launched).num_seconds() > MAX_ARM_FLIGHT_SECS {
                 return false;
             }
-            let Ok(obj) = Weapon::get_instance(lua, &a.oid).and_then(|w| w.as_object()) else {
+            let Ok(obj) = Weapon::get_instance(lua, &a.oid).and_then(|w| w.as_object())
+            else {
                 return false; // impacted or otherwise gone
             };
             let Ok(p) = obj.get_point() else { return false };
-            let v = obj.get_velocity().map(|v| Vector2::new(v.0.x, v.0.z)).unwrap_or_default();
+            let v = obj
+                .get_velocity()
+                .map(|v| Vector2::new(v.0.x, v.0.z))
+                .unwrap_or_default();
             live.push((idx, Vector2::new(p.x, p.z), v));
             true
         });
@@ -1467,7 +1613,9 @@ impl Ewr {
                 continue;
             }
             for donor in donor_snapshot.iter() {
-                if donor.side != arm.side || !matches!(donor.sensor_type, SensorType::SamSearchRadar) {
+                if donor.side != arm.side
+                    || !matches!(donor.sensor_type, SensorType::SamSearchRadar)
+                {
                     continue;
                 }
                 let Some(gid) = donor.gid else { continue };
@@ -1534,9 +1682,12 @@ impl Ewr {
             match state.pending_hot_at {
                 None => {
                     let mut rng = rand::thread_rng();
-                    let delay_secs =
-                        rand::Rng::gen_range(&mut rng, 0..=cfg.reaction_delay_max_secs.max(1));
-                    state.pending_hot_at = Some(now + chrono::Duration::seconds(delay_secs as i64));
+                    let delay_secs = rand::Rng::gen_range(
+                        &mut rng,
+                        0..=cfg.reaction_delay_max_secs.max(1),
+                    );
+                    state.pending_hot_at =
+                        Some(now + chrono::Duration::seconds(delay_secs as i64));
                     AlarmState::Green
                 }
                 Some(t) if now >= t => {
@@ -1652,7 +1803,10 @@ impl Ewr {
         };
         let range_sq = sam_range_m.powi(2);
         for track in tracks {
-            if track.side != side || track.iff != IffState::Hostile || track.confidence < cfg.sam_cue_confidence_threshold {
+            if track.side != side
+                || track.iff != IffState::Hostile
+                || track.confidence < cfg.sam_cue_confidence_threshold
+            {
                 continue;
             }
             let t2d = Vector2::new(track.pos.p.x, track.pos.p.z);
@@ -1662,20 +1816,26 @@ impl Ewr {
             }
             // Priority: high confidence × close × fighter bonus.
             let class_bonus = match track.classification {
-                ContactClass::Fighter  => 1.5,
-                ContactClass::Bomber   => 1.2,
+                ContactClass::Fighter => 1.5,
+                ContactClass::Bomber => 1.2,
                 ContactClass::Helicopter => 0.8,
-                ContactClass::Unknown  => 1.0,
+                ContactClass::Unknown => 1.0,
             };
-            let priority = track.confidence * class_bonus * (sam_range_m as f32 / dist_sq.sqrt() as f32);
+            let priority = track.confidence
+                * class_bonus
+                * (sam_range_m as f32 / dist_sq.sqrt() as f32);
             if result.len() < 3 {
                 result.push((track.id, t2d, priority));
-                result.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+                result.sort_by(|a, b| {
+                    b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal)
+                });
             } else if let Some(last) = result.last() {
                 if priority > last.2 {
                     result.pop();
                     result.push((track.id, t2d, priority));
-                    result.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+                    result.sort_by(|a, b| {
+                        b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal)
+                    });
                 }
             }
         }
@@ -1724,10 +1884,9 @@ impl Ewr {
         let st = self.player_state.entry(ucid.clone()).or_default();
         // The same friendly, still live: only re-warn on a first shot or
         // after 30s of holding the lock.
-        let same = st
-            .buddy
-            .as_ref()
-            .filter(|b| b.key == key && (now - b.last).num_seconds() <= BUDDY_LOCK_FRESH_SECS);
+        let same = st.buddy.as_ref().filter(|b| {
+            b.key == key && (now - b.last).num_seconds() <= BUDDY_LOCK_FRESH_SECS
+        });
         let (warn, was_shot, last_warned) = match same {
             Some(b) => {
                 let warn = (shot && !b.shot) || (now - b.last_warned).num_seconds() >= 30;
@@ -1758,7 +1917,12 @@ impl Ewr {
 
     /// The text warning for this player's current buddy lock, in their EWR
     /// units with a magnetic bearing, from their own position `own`.
-    pub fn buddy_warning(&self, ucid: &Ucid, own: Vector2, now: DateTime<Utc>) -> Option<CompactString> {
+    pub fn buddy_warning(
+        &self,
+        ucid: &Ucid,
+        own: Vector2,
+        now: DateTime<Utc>,
+    ) -> Option<CompactString> {
         let b = self.buddy_lock(ucid, now)?;
         let tpos = Vector2::new(b.pos.x, b.pos.z);
         let range = na::distance(&own.into(), &tpos.into());
@@ -1867,7 +2031,12 @@ impl Ewr {
     }
 
     /// Live voice GCI: record a hostile air kill for "splash" calls.
-    pub fn record_air_kill(&mut self, pos: Vector2, victim_side: Side, now: DateTime<Utc>) {
+    pub fn record_air_kill(
+        &mut self,
+        pos: Vector2,
+        victim_side: Side,
+        now: DateTime<Utc>,
+    ) {
         self.air_kills.retain(|(_, _, t)| (now - *t).num_seconds() < 30);
         self.air_kills.push((pos, victim_side, now));
     }
@@ -1885,13 +2054,22 @@ impl Ewr {
     }
 
     /// Live voice GCI: record an ejection for "chute observed" calls.
-    pub fn record_ejection(&mut self, pos: Vector2, pilot_side: Side, now: DateTime<Utc>) {
+    pub fn record_ejection(
+        &mut self,
+        pos: Vector2,
+        pilot_side: Side,
+        now: DateTime<Utc>,
+    ) {
         self.ejections.retain(|(_, _, t)| (now - *t).num_seconds() < 90);
         self.ejections.push((pos, pilot_side, now));
     }
 
     /// Live voice GCI: friendly ejections in the last 60s.
-    pub fn recent_ejections(&self, side: Side, now: DateTime<Utc>) -> SmallVec<[Vector2; 4]> {
+    pub fn recent_ejections(
+        &self,
+        side: Side,
+        now: DateTime<Utc>,
+    ) -> SmallVec<[Vector2; 4]> {
         self.ejections
             .iter()
             .filter(|(_, s, t)| *s == side && (now - *t).num_seconds() <= 60)
@@ -1927,8 +2105,9 @@ impl Ewr {
     ) -> SmallVec<[(GibBraa, ContactClass, Option<CompactString>, i16); 16]> {
         let side = player.side;
         let pos = Vector2::new(inst.position.p.x, inst.position.p.z);
-        let mut reports: SmallVec<[(GibBraa, ContactClass, Option<CompactString>, i16); 16]> =
-            smallvec![];
+        let mut reports: SmallVec<
+            [(GibBraa, ContactClass, Option<CompactString>, i16); 16],
+        > = smallvec![];
         let Some(tracks) = self.tracks.get(&side) else {
             return reports;
         };
@@ -2041,7 +2220,8 @@ impl Ewr {
         };
         tracks.retain(|tucid, track| {
             let age = (now - track.last).num_seconds();
-            let include = (friendly && track.side == side) || (!friendly && track.side != side);
+            let include =
+                (friendly && track.side == side) || (!friendly && track.side != side);
             if include && age <= DROP_AGE_SECS && tucid != &ownship {
                 let cpos = Vector2::new(track.pos.p.x, track.pos.p.z);
                 let range = na::distance(&pos.into(), &cpos.into());
@@ -2063,7 +2243,8 @@ impl Ewr {
                     stale: age >= STALE_AGE_SECS,
                     detected_by: track.detected_by,
                     threat: Self::threat_class(tucid, typ.as_deref(), db),
-                    typ: typ.map(|t| CompactString::from(bfprotocols::gci::type_label(&t))),
+                    typ: typ
+                        .map(|t| CompactString::from(bfprotocols::gci::type_label(&t))),
                     converted: false,
                 })
             }
@@ -2156,7 +2337,8 @@ impl Ewr {
             }
             if diff <= (half_angle as f64).to_radians() {
                 spiked = true;
-                let label = if donor.airborne { "airborne radar" } else { "ground radar" };
+                let label =
+                    if donor.airborne { "airborne radar" } else { "ground radar" };
                 warnings.push(format_compact!("SPIKE: enemy {label} has you in cone"));
             }
         }
@@ -2230,7 +2412,11 @@ impl Ewr {
                     friendly,
                     class: Self::classify_contact(id, db),
                     typ: Self::contact_typ(id, db),
-                    player_name: if friendly { Self::contact_player_name(id, db) } else { None },
+                    player_name: if friendly {
+                        Self::contact_player_name(id, db)
+                    } else {
+                        None
+                    },
                     age_s: age.max(0) as u32,
                     stale: age >= STALE_AGE_SECS,
                     detected_by: t.detected_by,
@@ -2255,16 +2441,18 @@ impl Ewr {
             return lines;
         }
         for contact in contacts {
-            let bearing = radians_to_degrees(azumith2d_to(player_pos, contact.pos)) as u16;
-            let range_km = (na::distance(&player_pos.into(), &contact.pos.into()) / 1000.0) as u32;
+            let bearing =
+                radians_to_degrees(azumith2d_to(player_pos, contact.pos)) as u16;
+            let range_km =
+                (na::distance(&player_pos.into(), &contact.pos.into()) / 1000.0) as u32;
             let class_str = match contact.unit_class {
-                crate::db::intel::IntelUnitClass::Armor      => "ARMOR",
+                crate::db::intel::IntelUnitClass::Armor => "ARMOR",
                 crate::db::intel::IntelUnitClass::AirDefense => "ADS",
-                crate::db::intel::IntelUnitClass::Artillery  => "ARTY",
-                crate::db::intel::IntelUnitClass::Infantry   => "INF",
-                crate::db::intel::IntelUnitClass::AirBase    => "AIRBASE",
-                crate::db::intel::IntelUnitClass::Naval      => "NAVAL",
-                crate::db::intel::IntelUnitClass::Unknown    => "UNK",
+                crate::db::intel::IntelUnitClass::Artillery => "ARTY",
+                crate::db::intel::IntelUnitClass::Infantry => "INF",
+                crate::db::intel::IntelUnitClass::AirBase => "AIRBASE",
+                crate::db::intel::IntelUnitClass::Naval => "NAVAL",
+                crate::db::intel::IntelUnitClass::Unknown => "UNK",
             };
             let conf_str = if contact.confidence >= 0.8 {
                 "HIGH"
@@ -2330,12 +2518,7 @@ impl Ewr {
                     .get(ucid)
                     .and_then(|p| p.current_slot.as_ref())
                     .and_then(|(_, inst)| inst.as_ref())
-                    .and_then(|inst| {
-                        db.ephemeral
-                            .cfg
-                            .unit_classification
-                            .get(&inst.typ)
-                    });
+                    .and_then(|inst| db.ephemeral.cfg.unit_classification.get(&inst.typ));
                 match tags {
                     Some(tags) => {
                         if rotary {

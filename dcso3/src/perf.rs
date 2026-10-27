@@ -43,4 +43,3 @@ macro_rules! record_perf {
         $e
     };
 }
-

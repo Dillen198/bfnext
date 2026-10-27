@@ -101,7 +101,8 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("fowlbg-jsonl-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir()
+            .join(format!("fowlbg-jsonl-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -143,7 +144,8 @@ mod tests {
         s.rotate_if_over(11).unwrap();
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 1, "11 bytes is not over 11");
         s.rotate_if_over(10).unwrap();
-        let names: Vec<_> = fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+        let names: Vec<_> =
+            fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert_eq!(names.len(), 2, "{names:?}");
         assert_eq!(fs::metadata(&p).unwrap().len(), 0, "a fresh feed");
         s.append_line(b"x".to_vec()).unwrap();

@@ -12,9 +12,9 @@ FITNESS FOR A PARTICULAR PURPOSE.
 */
 
 use crate::String;
-use std::{hash::Hash, marker::PhantomData};
 use core::fmt;
 use serde_derive::{Deserialize, Serialize};
+use std::{hash::Hash, marker::PhantomData};
 
 /// The id of a live DCS object plus its Lua class name. `T` says what kind
 /// of object it names (`ClassUnit`, `ClassWeapon`, ...).
@@ -33,11 +33,7 @@ pub struct DcsOid<T> {
 
 impl<T> DcsOid<T> {
     pub fn erased(&self) -> DcsOid<ClassObject> {
-        DcsOid {
-            id: self.id,
-            class: self.class.clone(),
-            t: PhantomData,
-        }
+        DcsOid { id: self.id, class: self.class.clone(), t: PhantomData }
     }
 }
 impl<T> fmt::Debug for DcsOid<T> {

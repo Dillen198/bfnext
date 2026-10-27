@@ -57,7 +57,8 @@ const DEFAULT_URL: &str = "https://api.openai.com/v1/images/generations";
 const DEFAULT_MODEL: &str = "gpt-image-1";
 /// Cloudflare Workers AI: `{account}` is filled in. FLUX.1 schnell is ~40
 /// neurons an image against a free 10,000 a day.
-const CF_URL: &str = "https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{model}";
+const CF_URL: &str =
+    "https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{model}";
 const CF_MODEL: &str = "@cf/black-forest-labs/flux-1-schnell";
 /// Workers AI's FLUX schnell takes 1..=8 diffusion steps.
 const CF_DEFAULT_STEPS: u32 = 6;
@@ -228,25 +229,31 @@ impl ImageCfg {
     /// the way the writer does: a paid provider is switched on by name only.
     pub fn resolve(a: ImageArgs) -> Result<Option<Self>> {
         let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
-        let nonempty = |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        let nonempty =
+            |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
         let url = nonempty(a.url).or_else(|| env("BFDB_NEWS_IMAGE_URL"));
         let key = nonempty(a.key).or_else(|| env("BFDB_NEWS_IMAGE_KEY"));
         let model = nonempty(a.model).or_else(|| env("BFDB_NEWS_IMAGE_MODEL"));
-        let account = nonempty(a.cf_account_id).or_else(|| env("BFDB_NEWS_IMAGE_CF_ACCOUNT_ID"));
-        let provider = match nonempty(a.provider).or_else(|| env("BFDB_NEWS_IMAGE_PROVIDER")) {
-            Some(p) => match Provider::parse(&p)? {
-                Some(p) => p,
+        let account =
+            nonempty(a.cf_account_id).or_else(|| env("BFDB_NEWS_IMAGE_CF_ACCOUNT_ID"));
+        let provider =
+            match nonempty(a.provider).or_else(|| env("BFDB_NEWS_IMAGE_PROVIDER")) {
+                Some(p) => match Provider::parse(&p)? {
+                    Some(p) => p,
+                    None => return Ok(None),
+                },
+                None if account.is_some() => Provider::Cloudflare,
+                None if url.is_some() || key.is_some() => Provider::OpenAi,
                 None => return Ok(None),
-            },
-            None if account.is_some() => Provider::Cloudflare,
-            None if url.is_some() || key.is_some() => Provider::OpenAi,
-            None => return Ok(None),
-        };
+            };
         let fallback = match nonempty(a.fallback) {
             Some(f) => match Provider::parse(&f)? {
                 None => None,
                 Some(Provider::Pollinations) => Some(Provider::Pollinations),
-                Some(p) => bail!("news image fallback can only be pollinations, not {}", p.name()),
+                Some(p) => bail!(
+                    "news image fallback can only be pollinations, not {}",
+                    p.name()
+                ),
             },
             None => None,
         }
@@ -281,7 +288,8 @@ impl ImageCfg {
             }
             Provider::Pollinations => {
                 let keyed = key.is_some();
-                let default_url = if keyed { POLLINATIONS_KEYED_URL } else { POLLINATIONS_URL };
+                let default_url =
+                    if keyed { POLLINATIONS_KEYED_URL } else { POLLINATIONS_URL };
                 let default_model = if keyed { "" } else { POLLINATIONS_MODEL };
                 (
                     url.unwrap_or_else(|| default_url.to_string()),
@@ -291,9 +299,12 @@ impl ImageCfg {
             }
         };
         let min_interval = if provider == Provider::Pollinations && key.is_some() {
-            Duration::from_secs(a.min_interval_secs.unwrap_or(POLLINATIONS_KEYED_SPACING_SECS) as u64)
+            Duration::from_secs(
+                a.min_interval_secs.unwrap_or(POLLINATIONS_KEYED_SPACING_SECS) as u64,
+            )
         } else {
-            POLLINATIONS_ANON_SPACING.max(Duration::from_secs(a.min_interval_secs.unwrap_or(0) as u64))
+            POLLINATIONS_ANON_SPACING
+                .max(Duration::from_secs(a.min_interval_secs.unwrap_or(0) as u64))
         };
         Ok(Some(Self {
             provider,
@@ -458,7 +469,10 @@ const LAND_GEORGIA: Land = Land {
         "a Soviet-built military airfield with concrete aircraft shelters",
         "a long concrete runway in a green valley with mountains behind",
     ],
-    coast: &["the Black Sea coast with green hills behind", "a Black Sea harbour with cranes"],
+    coast: &[
+        "the Black Sea coast with green hills behind",
+        "a Black Sea harbour with cranes",
+    ],
     weather: &[
         "hazy summer air",
         "towering afternoon thunderclouds over the mountains",
@@ -492,7 +506,10 @@ const LAND_LEVANT: Land = Land {
         "a desert airbase with hardened aircraft shelters and sand-coloured taxiways",
         "a long runway on a dusty plain",
     ],
-    coast: &["the eastern Mediterranean coast with a port town behind", "a rocky Mediterranean shoreline"],
+    coast: &[
+        "the eastern Mediterranean coast with a port town behind",
+        "a rocky Mediterranean shoreline",
+    ],
     weather: &[
         "heat shimmer",
         "a dust haze turning the sky pale",
@@ -514,13 +531,26 @@ const LAND_DESERT: Land = Land {
         "a dusty track across open desert",
         "a road through a rocky wadi",
     ],
-    open: &["open desert with low rocky ridges", "a gravel plain under bare mountains", "sand dunes and scrub"],
+    open: &[
+        "open desert with low rocky ridges",
+        "a gravel plain under bare mountains",
+        "sand dunes and scrub",
+    ],
     airfields: &[
         "a desert airbase with hardened aircraft shelters",
         "a long runway on a sun-baked plain",
     ],
-    coast: &["a flat desert coastline with a port behind", "a hazy shoreline with oil terminals"],
-    weather: &["heat shimmer", "a dust haze", "a hard clear sky", "a sandstorm building on the horizon", "drifting smoke"],
+    coast: &[
+        "a flat desert coastline with a port behind",
+        "a hazy shoreline with oil terminals",
+    ],
+    weather: &[
+        "heat shimmer",
+        "a dust haze",
+        "a hard clear sky",
+        "a sandstorm building on the horizon",
+        "drifting smoke",
+    ],
 };
 
 const LAND_NORMANDY: Land = Land {
@@ -528,16 +558,33 @@ const LAND_NORMANDY: Land = Land {
         "a Norman stone village with a church steeple",
         "a small market town of grey stone houses",
     ],
-    roads: &["a sunken lane between high hedgerows", "a straight road lined with plane trees"],
+    roads: &[
+        "a sunken lane between high hedgerows",
+        "a straight road lined with plane trees",
+    ],
     open: &["bocage country of small fields and hedgerows", "apple orchards and pasture"],
     airfields: &["a temporary airstrip of steel matting laid in a field"],
     coast: &["a wide beach with bluffs behind", "a small Channel harbour"],
-    weather: &["low grey cloud", "summer haze", "drizzle", "broken cloud and bright sun", "drifting smoke"],
+    weather: &[
+        "low grey cloud",
+        "summer haze",
+        "drizzle",
+        "broken cloud and bright sun",
+        "drifting smoke",
+    ],
 };
 
 const LAND_TEMPERATE: Land = Land {
-    towns: &["a small town of low houses", "the edge of a small town", "a village of pitched-roof houses"],
-    roads: &["a two-lane country road", "a straight road across open country", "a forest road"],
+    towns: &[
+        "a small town of low houses",
+        "the edge of a small town",
+        "a village of pitched-roof houses",
+    ],
+    roads: &[
+        "a two-lane country road",
+        "a straight road across open country",
+        "a forest road",
+    ],
     open: &["open farmland", "rolling wooded hills", "a wide river valley"],
     airfields: &["a military airfield with hardened aircraft shelters"],
     coast: &["a rocky coastline", "a grey harbour"],
@@ -585,7 +632,9 @@ pub fn campaign_setting(cfg: &InstanceCfg, theatre: &str) -> Setting {
     .to_lowercase();
     let rgw = hay.contains("rgw") || hay.contains("2008");
     let land = land_for(theatre, rgw);
-    if let Some(s) = cfg.news_image_setting.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(s) =
+        cfg.news_image_setting.as_deref().map(str::trim).filter(|s| !s.is_empty())
+    {
         return Setting { text: clip(s, SETTING_CHARS), era: Era::Custom, land };
     }
     let (text, era) = if rgw {
@@ -689,53 +738,107 @@ impl Kit {
 
 const KIT_GEO_RU: Kit = Kit {
     tank: &["T-72B main battle tank", "T-62M tank"],
-    ifv: &["BMP-2 infantry fighting vehicle", "BTR-80 armoured personnel carrier", "BMD-2 airborne fighting vehicle"],
+    ifv: &[
+        "BMP-2 infantry fighting vehicle",
+        "BTR-80 armoured personnel carrier",
+        "BMD-2 airborne fighting vehicle",
+    ],
     truck: &["Ural-4320 army truck", "KamAZ army truck"],
     jet: &["Su-25 attack jet", "Su-24 strike bomber"],
     fighter: &["Su-27 fighter", "MiG-29 fighter"],
     thelo: &["Mi-8 transport helicopter"],
     ahelo: &["Mi-24 helicopter gunship"],
-    sam: &["Buk (SA-11) missile launcher", "Tor (SA-15) missile vehicle", "Osa (SA-8) missile vehicle"],
-    arty: &["BM-21 Grad rocket launcher", "2S3 Akatsiya self-propelled howitzer", "2S1 Gvozdika self-propelled howitzer"],
+    sam: &[
+        "Buk (SA-11) missile launcher",
+        "Tor (SA-15) missile vehicle",
+        "Osa (SA-8) missile vehicle",
+    ],
+    arty: &[
+        "BM-21 Grad rocket launcher",
+        "2S3 Akatsiya self-propelled howitzer",
+        "2S1 Gvozdika self-propelled howitzer",
+    ],
     ship: &["Black Sea Fleet missile boat", "Russian navy patrol ship"],
 };
 
 const KIT_GEO_GE: Kit = Kit {
     tank: &["T-72 main battle tank"],
-    ifv: &["BMP-2 infantry fighting vehicle", "BMP-1 infantry fighting vehicle", "BTR-80 armoured personnel carrier"],
+    ifv: &[
+        "BMP-2 infantry fighting vehicle",
+        "BMP-1 infantry fighting vehicle",
+        "BTR-80 armoured personnel carrier",
+    ],
     truck: &["KrAZ army truck", "Ural-4320 army truck"],
     jet: &["Su-25 attack jet"],
     fighter: &["Su-25 attack jet"],
     thelo: &["Mi-8 transport helicopter", "UH-1H Huey helicopter"],
     ahelo: &["Mi-24 helicopter gunship"],
     sam: &["Buk (SA-11) missile launcher", "Osa (SA-8) missile vehicle"],
-    arty: &["BM-21 Grad rocket launcher", "DANA self-propelled howitzer", "2S7 Pion self-propelled gun"],
+    arty: &[
+        "BM-21 Grad rocket launcher",
+        "DANA self-propelled howitzer",
+        "2S7 Pion self-propelled gun",
+    ],
     ship: &["coastguard patrol boat"],
 };
 
 const KIT_WEST: Kit = Kit {
     tank: &["M1A2 Abrams tank", "Leopard 2A4 tank"],
-    ifv: &["M2 Bradley fighting vehicle", "Stryker armoured vehicle", "M113 armoured personnel carrier"],
+    ifv: &[
+        "M2 Bradley fighting vehicle",
+        "Stryker armoured vehicle",
+        "M113 armoured personnel carrier",
+    ],
     truck: &["HEMTT army truck", "M939 army truck"],
-    jet: &["A-10C attack jet", "F-16C fighter-bomber", "F/A-18C Hornet", "F-15E Strike Eagle"],
+    jet: &[
+        "A-10C attack jet",
+        "F-16C fighter-bomber",
+        "F/A-18C Hornet",
+        "F-15E Strike Eagle",
+    ],
     fighter: &["F-15C Eagle", "F-16C fighter"],
     thelo: &["UH-60 Black Hawk helicopter", "CH-47 Chinook helicopter"],
     ahelo: &["AH-64D Apache helicopter", "AH-1W Cobra helicopter"],
-    sam: &["Patriot missile launcher", "NASAMS missile launcher", "Hawk missile launcher"],
-    arty: &["M109 self-propelled howitzer", "M142 HIMARS rocket launcher", "M270 MLRS rocket launcher"],
+    sam: &[
+        "Patriot missile launcher",
+        "NASAMS missile launcher",
+        "Hawk missile launcher",
+    ],
+    arty: &[
+        "M109 self-propelled howitzer",
+        "M142 HIMARS rocket launcher",
+        "M270 MLRS rocket launcher",
+    ],
     ship: &["Arleigh Burke-class destroyer", "Oliver Hazard Perry-class frigate"],
 };
 
 const KIT_EAST: Kit = Kit {
     tank: &["T-72B3 tank", "T-90A tank", "T-55 tank"],
-    ifv: &["BMP-2 infantry fighting vehicle", "BTR-82A armoured personnel carrier", "BMP-3 infantry fighting vehicle"],
+    ifv: &[
+        "BMP-2 infantry fighting vehicle",
+        "BTR-82A armoured personnel carrier",
+        "BMP-3 infantry fighting vehicle",
+    ],
     truck: &["KamAZ army truck", "Ural-4320 army truck"],
     jet: &["Su-25 attack jet", "Su-24 strike bomber", "Su-34 strike fighter"],
     fighter: &["MiG-29 fighter", "Su-27 fighter", "Su-30 fighter"],
     thelo: &["Mi-8 transport helicopter"],
-    ahelo: &["Mi-24 helicopter gunship", "Ka-52 attack helicopter", "Mi-28 attack helicopter"],
-    sam: &["Pantsir-S1 air-defence vehicle", "S-300 missile launcher", "Buk-M2 missile launcher", "Kub (SA-6) missile launcher"],
-    arty: &["BM-21 Grad rocket launcher", "2S19 Msta self-propelled howitzer", "D-30 towed howitzer"],
+    ahelo: &[
+        "Mi-24 helicopter gunship",
+        "Ka-52 attack helicopter",
+        "Mi-28 attack helicopter",
+    ],
+    sam: &[
+        "Pantsir-S1 air-defence vehicle",
+        "S-300 missile launcher",
+        "Buk-M2 missile launcher",
+        "Kub (SA-6) missile launcher",
+    ],
+    arty: &[
+        "BM-21 Grad rocket launcher",
+        "2S19 Msta self-propelled howitzer",
+        "D-30 towed howitzer",
+    ],
     ship: &["missile corvette", "Russian navy frigate"],
 };
 
@@ -802,7 +905,16 @@ fn kit_for(era: Era, side: &str, f: &Factions) -> &'static Kit {
         Era::Modern => {
             if any(&["russia", "syria", "iran", "soviet"]) {
                 &KIT_EAST
-            } else if any(&["nato", "coalition", "united states", "america", "israel", "turkey", "jordan"]) || blue {
+            } else if any(&[
+                "nato",
+                "coalition",
+                "united states",
+                "america",
+                "israel",
+                "turkey",
+                "jordan",
+            ]) || blue
+            {
                 &KIT_WEST
             } else {
                 &KIT_EAST
@@ -918,7 +1030,8 @@ fn mentions(hay: &str, pat: &str) -> bool {
     while let Some(off) = hay[from..].find(pat) {
         let i = from + off;
         let j = i + pat.len();
-        let before_ok = hay[..i].chars().next_back().map_or(true, |c| !c.is_alphanumeric());
+        let before_ok =
+            hay[..i].chars().next_back().map_or(true, |c| !c.is_alphanumeric());
         let after = hay[j..].chars().next();
         let after_ok = match after {
             None => true,
@@ -1085,17 +1198,29 @@ fn variants(k: SceneKind) -> &'static [Variant] {
 
 /// Camera position and framing, with the lens that goes with it.
 const SHOTS_GROUND: &[(&str, &str)] = &[
-    ("photographed from a hillside far away, telephoto compression and heat haze", "400mm telephoto lens"),
+    (
+        "photographed from a hillside far away, telephoto compression and heat haze",
+        "400mm telephoto lens",
+    ),
     ("wide view from a helicopter door, looking down at an angle", "wide-angle lens"),
     ("ground-level view from beside the road, low angle", "35mm lens"),
-    ("long-lens view across a valley, the subject small in the frame", "300mm telephoto lens"),
-    ("wide establishing shot under a big sky, the action small in the frame", "24mm lens"),
+    (
+        "long-lens view across a valley, the subject small in the frame",
+        "300mm telephoto lens",
+    ),
+    (
+        "wide establishing shot under a big sky, the action small in the frame",
+        "24mm lens",
+    ),
     ("handheld frame taken on the move, slight motion blur", "35mm lens"),
     ("tight telephoto framing, background compressed and soft", "200mm lens"),
     ("high vantage point from a rooftop", "50mm lens"),
 ];
 const SHOTS_AIR: &[(&str, &str)] = &[
-    ("photographed from the ground with a long telephoto lens, heat shimmer", "600mm telephoto lens"),
+    (
+        "photographed from the ground with a long telephoto lens, heat shimmer",
+        "600mm telephoto lens",
+    ),
     ("air-to-air view from a chase aircraft", "70-200mm lens"),
     ("wide view with the aircraft small against a huge sky", "24mm lens"),
     ("panning shot, the background streaked with motion blur", "300mm lens"),
@@ -1117,7 +1242,11 @@ const LIGHT: &[&str] = &[
     "at night, lit only by fires and flares",
     "in the blue hour before dawn",
 ];
-const NIGHT_WEATHER: &[&str] = &["smoke drifting through the firelight", "a clear dark sky", "low cloud lit from below"];
+const NIGHT_WEATHER: &[&str] = &[
+    "smoke drifting through the firelight",
+    "a clear dark sky",
+    "low cloud lit from below",
+];
 
 /// How a dispatch will be pictured: subject, camera, light.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1279,9 +1408,8 @@ fn angle_scene(angle: &str) -> Option<SceneKind> {
         "front_stalled" | "static_front" | "quiet" => SceneKind::Stalemate,
         "sead" => SceneKind::AirDefence,
         "logistics_struck" => SceneKind::Convoy,
-        "air_war" | "air_war_lopsided" | "pilot_standout" | "top_gun" | "weapon_of_the_day" => {
-            SceneKind::AirCombat
-        }
+        "air_war" | "air_war_lopsided" | "pilot_standout" | "top_gun"
+        | "weapon_of_the_day" => SceneKind::AirCombat,
         _ => return None,
     })
 }
@@ -1328,9 +1456,15 @@ fn other(side: &str) -> &'static str {
 fn side_key(d: &NewsDigest, name: &str) -> Option<&'static str> {
     let n = name.trim();
     let f = &d.factions;
-    if n.eq_ignore_ascii_case(&f.blue) || n.eq_ignore_ascii_case(&f.blue_adj) || n.eq_ignore_ascii_case("Blue") {
+    if n.eq_ignore_ascii_case(&f.blue)
+        || n.eq_ignore_ascii_case(&f.blue_adj)
+        || n.eq_ignore_ascii_case("Blue")
+    {
         Some("Blue")
-    } else if n.eq_ignore_ascii_case(&f.red) || n.eq_ignore_ascii_case(&f.red_adj) || n.eq_ignore_ascii_case("Red") {
+    } else if n.eq_ignore_ascii_case(&f.red)
+        || n.eq_ignore_ascii_case(&f.red_adj)
+        || n.eq_ignore_ascii_case("Red")
+    {
         Some("Red")
     } else {
         None
@@ -1358,7 +1492,9 @@ fn has_words(hay: &str, cue: &str) -> bool {
 
 fn looks_like_airfield(s: &str) -> bool {
     let s = s.to_lowercase();
-    ["airfield", "airbase", "air base", "airport", "aerodrome", "heliport"].iter().any(|w| s.contains(w))
+    ["airfield", "airbase", "air base", "airport", "aerodrome", "heliport"]
+        .iter()
+        .any(|w| s.contains(w))
         || has_words(&s, "ab")
 }
 
@@ -1370,7 +1506,7 @@ fn nameable_place(s: &str) -> Option<String> {
         && s.chars().count() <= 32
         && !s.chars().any(|c| c.is_ascii_digit())
         && !s.starts_with("the "))
-        .then(|| s.to_string())
+    .then(|| s.to_string())
 }
 
 /// "a" before a word said with a vowel sound becomes "an". Equipment names
@@ -1384,7 +1520,9 @@ fn fix_articles(s: &str) -> String {
             return false;
         }
         let spelled = c0.is_ascii_uppercase()
-            && c1.map_or(true, |c| c == '-' || c.is_ascii_digit() || c.is_ascii_uppercase());
+            && c1.map_or(true, |c| {
+                c == '-' || c.is_ascii_digit() || c.is_ascii_uppercase()
+            });
         if spelled {
             return "AEFHILMNORSX".contains(c0);
         }
@@ -1451,11 +1589,14 @@ fn fill_scene(
                         // The story's own equipment first, once, on the side
                         // the story is about; then the side's period kit.
                         let name = match named.iter().find(|(nr, _)| *nr == r) {
-                            Some((_, n)) if !used.contains(&r) && (who == "v") == named_victim => {
+                            Some((_, n))
+                                if !used.contains(&r) && (who == "v") == named_victim =>
+                            {
                                 used.push(r);
                                 *n
                             }
-                            _ => *dice.pick((if who == "v" { victim } else { actor }).get(r)),
+                            _ => *dice
+                                .pick((if who == "v" { victim } else { actor }).get(r)),
                         };
                         if plural {
                             format!("{name}s")
@@ -1507,28 +1648,43 @@ pub fn plan_scene(d: &NewsDigest, instance: &str, setting: &Setting) -> ScenePla
     // The kind: the headline if it says, else the lead angle, else the day's
     // losses.
     let lead = d.items.iter().find(|it| angle_scene(&it.angle).is_some());
-    let top_is_tally = d.items.first().map_or(true, |it| angle_scene(&it.angle).is_none());
-    let from_headline = HEADLINE_CUES.iter().find(|(cue, _)| has_words(&headline_cues, cue)).map(|(_, k)| *k);
+    let top_is_tally =
+        d.items.first().map_or(true, |it| angle_scene(&it.angle).is_none());
+    let from_headline = HEADLINE_CUES
+        .iter()
+        .find(|(cue, _)| has_words(&headline_cues, cue))
+        .map(|(_, k)| *k);
     let loss = dominant_loss(d);
     let mut kind = match (from_headline, lead) {
         (Some(k), _) => k,
         (None, Some(it)) if !top_is_tally => angle_scene(&it.angle).unwrap(),
         (None, _) => match loss {
             Some((cat, _)) => loss_scene(cat),
-            None => lead.and_then(|it| angle_scene(&it.angle)).unwrap_or(SceneKind::Stalemate),
+            None => {
+                lead.and_then(|it| angle_scene(&it.angle)).unwrap_or(SceneKind::Stalemate)
+            }
         },
     };
     // Which item the picture is about, for its place and its sides.
     let about = d
         .items
         .iter()
-        .find(|it| angle_scene(&it.angle).map_or(false, |k| k == kind || (kind == SceneKind::CaptureAirfield && k == SceneKind::Capture)))
+        .find(|it| {
+            angle_scene(&it.angle).map_or(false, |k| {
+                k == kind
+                    || (kind == SceneKind::CaptureAirfield && k == SceneKind::Capture)
+            })
+        })
         .or(lead);
     let place = about
         .filter(|it| {
             matches!(
                 it.angle.as_str(),
-                "objective_taken" | "objective_taken_by" | "objective_traded" | "pressure" | "axis_activity"
+                "objective_taken"
+                    | "objective_taken_by"
+                    | "objective_traded"
+                    | "pressure"
+                    | "axis_activity"
             )
         })
         .and_then(|it| nameable_place(&sanitise(&it.subject, &names)));
@@ -1618,8 +1774,12 @@ fn private_names(d: &NewsDigest) -> Vec<String> {
         .items
         .iter()
         .flat_map(|it| {
-            let mut v: Vec<String> =
-                it.vars.iter().filter(|(k, _)| k.contains("pilot")).map(|(_, v)| v.clone()).collect();
+            let mut v: Vec<String> = it
+                .vars
+                .iter()
+                .filter(|(k, _)| k.contains("pilot"))
+                .map(|(_, v)| v.clone())
+                .collect();
             if it.angle.contains("pilot") || it.angle == "top_gun" {
                 v.push(it.subject.clone());
             }
@@ -1723,7 +1883,12 @@ fn era_clause(era: Era) -> &'static str {
 /// The prompt for one dispatch: a planned scene (subject, camera, light),
 /// the setting, a line of the story (sanitised), the look, what to avoid and
 /// the rules.
-pub fn build_prompt(d: &NewsDigest, instance: &str, setting: &Setting, style: Option<&str>) -> String {
+pub fn build_prompt(
+    d: &NewsDigest,
+    instance: &str,
+    setting: &Setting,
+    style: Option<&str>,
+) -> String {
     let plan = plan_scene(d, instance, setting);
     let names = private_names(d);
     // The headline is upper case wire style; a model reads that as text to
@@ -1733,9 +1898,18 @@ pub fn build_prompt(d: &NewsDigest, instance: &str, setting: &Setting, style: Op
     let proper = d
         .items
         .iter()
-        .filter(|it| !it.angle.contains("pilot") && it.angle != "top_gun" && !it.subject.starts_with("the "))
+        .filter(|it| {
+            !it.angle.contains("pilot")
+                && it.angle != "top_gun"
+                && !it.subject.starts_with("the ")
+        })
         .map(|it| it.subject.as_str())
-        .chain([d.factions.blue.as_str(), d.factions.red.as_str(), d.factions.blue_adj.as_str(), d.factions.red_adj.as_str()]);
+        .chain([
+            d.factions.blue.as_str(),
+            d.factions.red.as_str(),
+            d.factions.blue_adj.as_str(),
+            d.factions.red_adj.as_str(),
+        ]);
     for p in proper {
         let p = p.trim();
         if p.chars().count() >= 3 && p.chars().next().map_or(false, char::is_uppercase) {
@@ -1749,7 +1923,8 @@ pub fn build_prompt(d: &NewsDigest, instance: &str, setting: &Setting, style: Op
         .cloned()
         .or_else(|| d.items.first().map(|i| i.text.clone()))
         .unwrap_or_default();
-    let style = style.map(str::trim).filter(|s| !s.is_empty()).map(|s| clip(s, STYLE_CHARS));
+    let style =
+        style.map(str::trim).filter(|s| !s.is_empty()).map(|s| clip(s, STYLE_CHARS));
     let look = match &style {
         Some(s) => format!("Style: {s}"),
         None => format!(
@@ -1800,12 +1975,15 @@ fn parse_reply(v: &serde_json::Value) -> Result<Returned> {
         .and_then(|d| d.as_array())
         .and_then(|a| a.first())
         .ok_or_else(|| anyhow!("no data[] in reply"))?;
-    if let Some(b) = first.get("b64_json").and_then(|b| b.as_str()).filter(|b| !b.is_empty()) {
+    if let Some(b) =
+        first.get("b64_json").and_then(|b| b.as_str()).filter(|b| !b.is_empty())
+    {
         return Ok(Returned::Bytes(decode_b64(b)?));
     }
     if let Some(u) = first.get("url").and_then(|u| u.as_str()).filter(|u| !u.is_empty()) {
         if let Some(rest) = u.strip_prefix("data:") {
-            let (_, b64) = rest.split_once(',').ok_or_else(|| anyhow!("malformed data: URL"))?;
+            let (_, b64) =
+                rest.split_once(',').ok_or_else(|| anyhow!("malformed data: URL"))?;
             return Ok(Returned::Bytes(decode_b64(b64)?));
         }
         if !(u.starts_with("https://") || u.starts_with("http://")) {
@@ -1828,10 +2006,12 @@ fn cf_error(v: &serde_json::Value) -> Option<String> {
         .and_then(|e| e.as_array())
         .map(|a| {
             a.iter()
-                .map(|e| match (e.get("code"), e.get("message").and_then(|m| m.as_str())) {
-                    (Some(c), Some(m)) => format!("{c}: {m}"),
-                    (_, Some(m)) => m.to_string(),
-                    _ => e.to_string(),
+                .map(|e| {
+                    match (e.get("code"), e.get("message").and_then(|m| m.as_str())) {
+                        (Some(c), Some(m)) => format!("{c}: {m}"),
+                        (_, Some(m)) => m.to_string(),
+                        _ => e.to_string(),
+                    }
                 })
                 .collect()
         })
@@ -1876,7 +2056,8 @@ pub fn validate(bytes: &[u8]) -> Result<&'static str> {
     if bytes.len() > MAX_IMAGE_BYTES {
         bail!("image is {} bytes, over the {MAX_IMAGE_BYTES} cap", bytes.len());
     }
-    crate::websec::sniff_image(bytes).ok_or_else(|| anyhow!("reply is not a PNG, JPEG or WebP"))
+    crate::websec::sniff_image(bytes)
+        .ok_or_else(|| anyhow!("reply is not a PNG, JPEG or WebP"))
 }
 
 /// Why a call did not produce an image.
@@ -1984,8 +2165,9 @@ fn generate_openai(
             rate_limited: status == reqwest::StatusCode::TOO_MANY_REQUESTS,
         });
     }
-    let v: serde_json::Value =
-        res.json().map_err(|e| fail(format!("unreadable reply: {}", e.without_url()), true))?;
+    let v: serde_json::Value = res
+        .json()
+        .map_err(|e| fail(format!("unreadable reply: {}", e.without_url()), true))?;
     match parse_reply(&v).map_err(|e| fail(e.to_string(), true))? {
         Returned::Bytes(b) => Ok(b),
         Returned::Url(u) => download(client, &u).map_err(|e| fail(e.to_string(), true)),
@@ -2003,9 +2185,9 @@ fn generate_cf(
     }
     let res = req.send().map_err(send_failed)?;
     let status = res.status();
-    let text = res
-        .text()
-        .map_err(|e| fail(format!("unreadable reply: {}", e.without_url()), status.is_success()))?;
+    let text = res.text().map_err(|e| {
+        fail(format!("unreadable reply: {}", e.without_url()), status.is_success())
+    })?;
     // Errors come back as the same JSON envelope, with the reason in errors[].
     let v: Option<serde_json::Value> = serde_json::from_str(&text).ok();
     if !status.is_success() {
@@ -2016,7 +2198,9 @@ fn generate_cf(
             billed: false,
         });
     }
-    let v = v.ok_or_else(|| fail(format!("cloudflare: not JSON: {}", one_line(&text, 160)), true))?;
+    let v = v.ok_or_else(|| {
+        fail(format!("cloudflare: not JSON: {}", one_line(&text, 160)), true)
+    })?;
     parse_cf_reply(&v).map_err(|e| {
         let msg = e.to_string();
         GenError { rate_limited: cf_quota(200, &msg), msg, billed: true }
@@ -2092,15 +2276,24 @@ fn generate_with_fallback(
 
 /// One picture from this process's provider, and its fallback: (bytes, who
 /// drew it). What the worker runs for bfdb.
-pub(crate) fn draw(cfg: &ImageCfg, prompt: &str) -> std::result::Result<(Vec<u8>, String), GenError> {
+pub(crate) fn draw(
+    cfg: &ImageCfg,
+    prompt: &str,
+) -> std::result::Result<(Vec<u8>, String), GenError> {
     match generate(cfg, prompt) {
         Ok(b) => Ok((b, cfg.label())),
         Err(e) => {
             let Some(fb) = cfg.fallback_cfg() else { return Err(e) };
-            log::info!("news image: {} failed ({e}); trying {}", cfg.provider.name(), fb.label());
+            log::info!(
+                "news image: {} failed ({e}); trying {}",
+                cfg.provider.name(),
+                fb.label()
+            );
             match generate(&fb, prompt) {
                 Ok(b) => Ok((b, fb.label())),
-                Err(fe) => Err(GenError { msg: format!("{}; fallback: {}", e.msg, fe.msg), ..e }),
+                Err(fe) => {
+                    Err(GenError { msg: format!("{}; fallback: {}", e.msg, fe.msg), ..e })
+                }
             }
         }
     }
@@ -2176,7 +2369,12 @@ impl Drop for FlightGuard {
 const GLOBAL_SCOPE: &str = "*";
 
 /// Whether today's caps leave room for one more call for `inst`.
-fn under_caps(db: &StatsDb, cfg: &ImageCfg, inst: &str, today: &str) -> Result<Option<String>> {
+fn under_caps(
+    db: &StatsDb,
+    cfg: &ImageCfg,
+    inst: &str,
+    today: &str,
+) -> Result<Option<String>> {
     let mine = db.news_image_count(inst, today)?;
     if mine >= cfg.per_instance_daily {
         return Ok(Some(format!(
@@ -2186,7 +2384,10 @@ fn under_caps(db: &StatsDb, cfg: &ImageCfg, inst: &str, today: &str) -> Result<O
     }
     let all = db.news_image_count(GLOBAL_SCOPE, today)?;
     if all >= cfg.global_daily {
-        return Ok(Some(format!("global daily cap reached ({all}/{})", cfg.global_daily)));
+        return Ok(Some(format!(
+            "global daily cap reached ({all}/{})",
+            cfg.global_daily
+        )));
     }
     Ok(None)
 }
@@ -2206,7 +2407,10 @@ fn count_call(db: &StatsDb, inst: &str, today: &str) -> Result<()> {
 /// Is this day ready to be illustrated? Filed, and -- with a writer on --
 /// either written or long enough past filing that it is not going to be.
 pub fn eligible(d: &NewsDigest, writer_on: bool, now: DateTime<Utc>) -> bool {
-    d.final_ && (!writer_on || !d.body.is_empty() || now.signed_duration_since(d.generated) >= WRITER_GRACE)
+    d.final_
+        && (!writer_on
+            || !d.body.is_empty()
+            || now.signed_duration_since(d.generated) >= WRITER_GRACE)
 }
 
 /// Is the running day ready for its early-edition picture? Old enough to
@@ -2220,7 +2424,9 @@ pub fn early_eligible(d: &NewsDigest, writer_on: bool, now: DateTime<Utc>) -> bo
         return false;
     };
     let age = now.signed_duration_since(start);
-    !d.final_ && age >= EARLY_AFTER && (!writer_on || !d.body.is_empty() || age >= EARLY_AFTER * 2)
+    !d.final_
+        && age >= EARLY_AFTER
+        && (!writer_on || !d.body.is_empty() || age >= EARLY_AFTER * 2)
 }
 
 /// Which kind of picture a call is for.
@@ -2271,7 +2477,8 @@ pub fn illustrate(
         meta.next_try = None;
     }
     let style = inst.news_image_style.as_deref().or(cfg.style.as_deref());
-    let prompt = build_prompt(d, &inst.id, &campaign_setting(inst, &d.facts.theatre), style);
+    let prompt =
+        build_prompt(d, &inst.id, &campaign_setting(inst, &d.facts.theatre), style);
     match generate_with_fallback(cfg, &prompt) {
         Ok((bytes, drawn_by)) => {
             count_call(db, &inst.id, &today)?;
@@ -2304,8 +2511,11 @@ pub fn illustrate(
                 meta.next_try = Some(now + ChronoDuration::hours(1));
             } else {
                 meta.attempts = meta.attempts.saturating_add(1);
-                meta.next_try =
-                    Some(now + ChronoDuration::minutes(30 * (1i64 << (meta.attempts - 1).min(4))));
+                meta.next_try = Some(
+                    now + ChronoDuration::minutes(
+                        30 * (1i64 << (meta.attempts - 1).min(4)),
+                    ),
+                );
                 if meta.attempts >= MAX_ATTEMPTS && !meta.gave_up {
                     meta.gave_up = true;
                     meta.next_try = Some(now + GIVE_UP_RETRY);
@@ -2336,7 +2546,8 @@ pub fn tick(
     writer_on: bool,
 ) -> Result<bool> {
     let now = Utc::now();
-    let oldest = (now - ChronoDuration::days(BACKFILL_DAYS)).format("%Y-%m-%d").to_string();
+    let oldest =
+        (now - ChronoDuration::days(BACKFILL_DAYS)).format("%Y-%m-%d").to_string();
     let history = db.news_history(rid, (BACKFILL_DAYS + 2) as usize)?;
     for d in &history {
         if d.day < oldest || !eligible(d, writer_on, now) {
@@ -2344,7 +2555,9 @@ pub fn tick(
         }
         let meta = db.news_image_meta(&inst.id, rid, &d.day)?.unwrap_or_default();
         // `next_try` also covers a give-up: it is set `GIVE_UP_RETRY` ahead.
-        if (meta.has_image && !meta.provisional) || meta.next_try.map(|t| now < t).unwrap_or(false) {
+        if (meta.has_image && !meta.provisional)
+            || meta.next_try.map(|t| now < t).unwrap_or(false)
+        {
             continue;
         }
         return run(db, inst, rid, d, cfg, Draw::Filed);
@@ -2363,7 +2576,14 @@ pub fn tick(
 }
 
 /// One generator call, logged. Returns whether a call was made.
-fn run(db: &StatsDb, inst: &InstanceCfg, rid: RoundId, d: &NewsDigest, cfg: &ImageCfg, kind: Draw) -> Result<bool> {
+fn run(
+    db: &StatsDb,
+    inst: &InstanceCfg,
+    rid: RoundId,
+    d: &NewsDigest,
+    cfg: &ImageCfg,
+    kind: Draw,
+) -> Result<bool> {
     let what = if kind == Draw::Early { "early picture" } else { "picture" };
     match illustrate(db, inst, rid, d, cfg, kind)? {
         Outcome::Stored { .. } => {
@@ -2376,7 +2596,10 @@ fn run(db: &StatsDb, inst: &InstanceCfg, rid: RoundId, d: &NewsDigest, cfg: &Ima
             Ok(false)
         }
         Outcome::Failed(e) => {
-            let gave_up = db.news_image_meta(&inst.id, rid, &d.day)?.map(|m| m.gave_up).unwrap_or(false);
+            let gave_up = db
+                .news_image_meta(&inst.id, rid, &d.day)?
+                .map(|m| m.gave_up)
+                .unwrap_or(false);
             if kind == Draw::Early {
                 log::info!(
                     "[{}] news image: {what} for {} failed (waiting for the day to be filed): {e}",
@@ -2384,7 +2607,11 @@ fn run(db: &StatsDb, inst: &InstanceCfg, rid: RoundId, d: &NewsDigest, cfg: &Ima
                     d.day
                 );
             } else if !gave_up {
-                log::info!("[{}] news image: {what} for {} failed (will retry): {e}", inst.id, d.day);
+                log::info!(
+                    "[{}] news image: {what} for {} failed (will retry): {e}",
+                    inst.id,
+                    d.day
+                );
             }
             Ok(true)
         }
@@ -2405,7 +2632,13 @@ pub struct ApiImage {
 }
 
 /// The `/api/news` fields for one day.
-pub fn api_fields(db: &StatsDb, inst: &str, rid: RoundId, d: &NewsDigest, enabled: bool) -> Result<ApiImage> {
+pub fn api_fields(
+    db: &StatsDb,
+    inst: &str,
+    rid: RoundId,
+    d: &NewsDigest,
+    enabled: bool,
+) -> Result<ApiImage> {
     let meta = db.news_image_meta(inst, rid, &d.day)?.unwrap_or_default();
     let url = meta.has_image.then(|| {
         format!(
@@ -2416,7 +2649,8 @@ pub fn api_fields(db: &StatsDb, inst: &str, rid: RoundId, d: &NewsDigest, enable
         )
     });
     let provisional = url.is_some() && meta.provisional;
-    let oldest = (Utc::now() - ChronoDuration::days(BACKFILL_DAYS)).format("%Y-%m-%d").to_string();
+    let oldest =
+        (Utc::now() - ChronoDuration::days(BACKFILL_DAYS)).format("%Y-%m-%d").to_string();
     let pending = enabled
         && if d.final_ {
             d.day >= oldest && !meta.gave_up && (url.is_none() || provisional)
@@ -2429,7 +2663,13 @@ pub fn api_fields(db: &StatsDb, inst: &str, rid: RoundId, d: &NewsDigest, enable
 /// A dispatch id as the routes take it: `YYYY-MM-DD`.
 pub fn valid_day(s: &str) -> bool {
     s.len() == 10
-        && s.bytes().enumerate().all(|(i, b)| if i == 4 || i == 7 { b == b'-' } else { b.is_ascii_digit() })
+        && s.bytes().enumerate().all(|(i, b)| {
+            if i == 4 || i == 7 {
+                b == b'-'
+            } else {
+                b.is_ascii_digit()
+            }
+        })
 }
 
 #[cfg(test)]
@@ -2480,7 +2720,13 @@ mod tests {
         }
     }
 
-    fn story(day: &str, headline: &str, items: Vec<NewsItem>, theatre: &str, factions: Factions) -> NewsDigest {
+    fn story(
+        day: &str,
+        headline: &str,
+        items: Vec<NewsItem>,
+        theatre: &str,
+        factions: Factions,
+    ) -> NewsDigest {
         NewsDigest {
             day: day.into(),
             generated: Utc::now(),
@@ -2497,11 +2743,19 @@ mod tests {
     }
 
     fn rgw() -> Setting {
-        campaign_setting(&inst(serde_json::json!({"id": "vs2", "engine_config": "C:\\x\\RGW2008_CFG"})), "Caucasus")
+        campaign_setting(
+            &inst(
+                serde_json::json!({"id": "vs2", "engine_config": "C:\\x\\RGW2008_CFG"}),
+            ),
+            "Caucasus",
+        )
     }
 
     fn syria() -> Setting {
-        campaign_setting(&inst(serde_json::json!({"id": "vs1", "engine_config": "C:\\x\\ODFv2_CFG"})), "Syria")
+        campaign_setting(
+            &inst(serde_json::json!({"id": "vs1", "engine_config": "C:\\x\\ODFv2_CFG"})),
+            "Syria",
+        )
     }
 
     fn georgia_russia() -> Factions {
@@ -2509,14 +2763,30 @@ mod tests {
     }
 
     fn coalition_syria() -> Factions {
-        Factions::new(Some("the Coalition"), Some("Syria"), Some("coalition"), Some("Syrian"))
+        Factions::new(
+            Some("the Coalition"),
+            Some("Syria"),
+            Some("coalition"),
+            Some("Syrian"),
+        )
     }
 
-    fn capture(day: &str, town: &str, side: &str, f: Factions, theatre: &str) -> NewsDigest {
+    fn capture(
+        day: &str,
+        town: &str,
+        side: &str,
+        f: Factions,
+        theatre: &str,
+    ) -> NewsDigest {
         story(
             day,
             &format!("{} FALLS", town.to_uppercase()),
-            vec![item("objective_taken", town, 55, &[("side", side), ("side_adj", side)])],
+            vec![item(
+                "objective_taken",
+                town,
+                55,
+                &[("side", side), ("side_adj", side)],
+            )],
             theatre,
             f,
         )
@@ -2555,7 +2825,11 @@ mod tests {
                 "objective_taken_by",
                 "Gori",
                 60,
-                &[("side", "Russia"), ("side_adj", "Russian"), ("pilot", "Wolf 2 | Alice")],
+                &[
+                    ("side", "Russia"),
+                    ("side_adj", "Russian"),
+                    ("pilot", "Wolf 2 | Alice"),
+                ],
             )],
             "Caucasus",
             georgia_russia(),
@@ -2584,7 +2858,10 @@ mod tests {
         assert!(p.chars().count() <= PROMPT_MAX, "{}", p.chars().count());
         assert!(p.ends_with(RULES), "{p}");
         // And the whole thing is a sane Pollinations URL.
-        let c = cfg(ImageArgs { provider: Some("pollinations".into()), ..Default::default() });
+        let c = cfg(ImageArgs {
+            provider: Some("pollinations".into()),
+            ..Default::default()
+        });
         assert!(c.pollinations_url(&p, 1).len() < 8000);
     }
 
@@ -2597,7 +2874,18 @@ mod tests {
         assert!(p.contains(COMPOSITION));
         // The default look is a wire photo and says what it is not.
         let p = build_prompt(&d, "x", &rgw(), None);
-        for w in ["photojournalism", "film grain", "muted colours", "natural light", "3D render", "CGI", "video game", "painting", "toy-like", "oversaturated"] {
+        for w in [
+            "photojournalism",
+            "film grain",
+            "muted colours",
+            "natural light",
+            "3D render",
+            "CGI",
+            "video game",
+            "painting",
+            "toy-like",
+            "oversaturated",
+        ] {
             assert!(p.contains(w), "{w} missing: {p}");
         }
     }
@@ -2610,13 +2898,18 @@ mod tests {
         assert!(s.text.contains("Syria") && s.era == Era::Modern);
         let plain = inst(serde_json::json!({"id": "vs3"}));
         assert!(campaign_setting(&plain, "").text.contains("present-day"));
-        let over = inst(serde_json::json!({"id": "vs1", "news_image_setting": "Falklands 1982"}));
+        let over = inst(
+            serde_json::json!({"id": "vs1", "news_image_setting": "Falklands 1982"}),
+        );
         let o = campaign_setting(&over, "Syria");
         assert_eq!((o.text.as_str(), o.era), ("Falklands 1982", Era::Custom));
         // No equipment list in the setting: that is what put tanks and two
         // helicopters in every picture.
         for t in [&r.text, &s.text] {
-            assert!(!t.contains("helicopter") && !t.contains("armour") && !t.contains("jets"), "{t}");
+            assert!(
+                !t.contains("helicopter") && !t.contains("armour") && !t.contains("jets"),
+                "{t}"
+            );
         }
     }
 
@@ -2624,7 +2917,10 @@ mod tests {
     fn the_same_dispatch_plans_the_same_scene() {
         let d = capture("2026-09-21", "Gori", "Russia", georgia_russia(), "Caucasus");
         assert_eq!(plan_scene(&d, "vs2", &rgw()), plan_scene(&d, "vs2", &rgw()));
-        assert_eq!(build_prompt(&d, "vs2", &rgw(), None), build_prompt(&d, "vs2", &rgw(), None));
+        assert_eq!(
+            build_prompt(&d, "vs2", &rgw(), None),
+            build_prompt(&d, "vs2", &rgw(), None)
+        );
     }
 
     #[test]
@@ -2633,8 +2929,16 @@ mod tests {
         let mut all = HashSet::new();
         let mut differ_across_servers = 0;
         for day in &days {
-            let a = plan_scene(&capture(day, "Gori", "Russia", georgia_russia(), "Caucasus"), "vs1", &rgw());
-            let b = plan_scene(&capture(day, "Gori", "Russia", georgia_russia(), "Caucasus"), "vs2", &rgw());
+            let a = plan_scene(
+                &capture(day, "Gori", "Russia", georgia_russia(), "Caucasus"),
+                "vs1",
+                &rgw(),
+            );
+            let b = plan_scene(
+                &capture(day, "Gori", "Russia", georgia_russia(), "Caucasus"),
+                "vs2",
+                &rgw(),
+            );
             if a != b {
                 differ_across_servers += 1;
             }
@@ -2645,14 +2949,28 @@ mod tests {
         assert!(all.len() >= 18, "only {} distinct scenes of 24", all.len());
         // Same server and day, different story.
         let d1 = capture("2026-09-21", "Gori", "Russia", georgia_russia(), "Caucasus");
-        let d2 = capture("2026-09-21", "Tskhinvali", "Russia", georgia_russia(), "Caucasus");
+        let d2 =
+            capture("2026-09-21", "Tskhinvali", "Russia", georgia_russia(), "Caucasus");
         assert_ne!(plan_scene(&d1, "vs2", &rgw()), plan_scene(&d2, "vs2", &rgw()));
         // And every subject variant of a kind is reachable.
         let subjects: HashSet<String> = (0..60)
             .map(|n| {
-                let d = capture(&format!("2026-{:02}-{:02}", 1 + n / 28, 1 + n % 28), "Gori", "Russia", georgia_russia(), "Caucasus");
+                let d = capture(
+                    &format!("2026-{:02}-{:02}", 1 + n / 28, 1 + n % 28),
+                    "Gori",
+                    "Russia",
+                    georgia_russia(),
+                    "Caucasus",
+                );
                 let p = plan_scene(&d, "vs2", &rgw());
-                p.subject.split(',').next().unwrap().split(' ').take(3).collect::<Vec<_>>().join(" ")
+                p.subject
+                    .split(',')
+                    .next()
+                    .unwrap()
+                    .split(' ')
+                    .take(3)
+                    .collect::<Vec<_>>()
+                    .join(" ")
             })
             .collect();
         assert!(subjects.len() >= 3, "{subjects:?}");
@@ -2673,11 +2991,22 @@ mod tests {
         ];
         for (i, h) in headlines.iter().enumerate() {
             for inst in ["vs1", "vs2"] {
-                for (setting, f, t) in [(rgw(), georgia_russia(), "Caucasus"), (syria(), coalition_syria(), "Syria")] {
+                for (setting, f, t) in [
+                    (rgw(), georgia_russia(), "Caucasus"),
+                    (syria(), coalition_syria(), "Syria"),
+                ] {
                     let d = story(&format!("2026-08-{:02}", i + 1), h, vec![], t, f);
                     let p = build_prompt(&d, inst, &setting, None);
                     let pos = positive(&p).to_lowercase();
-                    for bad in ["shoulder", "from behind", "foreground", "cinematic", "in a row", "line-up", "parked"] {
+                    for bad in [
+                        "shoulder",
+                        "from behind",
+                        "foreground",
+                        "cinematic",
+                        "in a row",
+                        "line-up",
+                        "parked",
+                    ] {
                         assert!(!pos.contains(bad), "{bad}: {p}");
                     }
                     assert!(!p.contains("seen from behind"), "{p}");
@@ -2690,26 +3019,39 @@ mod tests {
 
     #[test]
     fn a_capture_story_pictures_a_capture_with_the_captors_kit() {
-        for day in ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05"] {
+        for day in ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05"]
+        {
             let d = capture(day, "Gori", "Russia", georgia_russia(), "Caucasus");
             let plan = plan_scene(&d, "vs2", &rgw());
             assert_eq!(plan.kind, SceneKind::Capture);
             assert!(plan.subject.contains("Gori"), "{plan:?}");
-            let russian = KIT_GEO_RU.tank.iter().chain(KIT_GEO_RU.ifv).any(|k| plan.subject.contains(k));
+            let russian = KIT_GEO_RU
+                .tank
+                .iter()
+                .chain(KIT_GEO_RU.ifv)
+                .any(|k| plan.subject.contains(k));
             assert!(russian, "{plan:?}");
             let p = build_prompt(&d, "vs2", &rgw(), None);
             assert!(p.contains("2008") && !p.contains("present-day"), "{p}");
             assert!(p.contains("Report: Gori falls."), "{p}");
         }
         // An airfield is taken on the runway, not in a town square.
-        let d = capture("2026-09-06", "Senaki Airbase", "Russia", georgia_russia(), "Caucasus");
+        let d = capture(
+            "2026-09-06",
+            "Senaki Airbase",
+            "Russia",
+            georgia_russia(),
+            "Caucasus",
+        );
         let plan = plan_scene(&d, "vs2", &rgw());
         assert_eq!(plan.kind, SceneKind::CaptureAirfield);
         assert!(plan.subject.contains("Senaki Airbase"), "{plan:?}");
         // Syria: the Coalition takes a town with western kit, on Levant ground.
-        let d = capture("2026-09-06", "Palmyra", "the Coalition", coalition_syria(), "Syria");
+        let d =
+            capture("2026-09-06", "Palmyra", "the Coalition", coalition_syria(), "Syria");
         let plan = plan_scene(&d, "vs1", &syria());
-        let west = KIT_WEST.tank.iter().chain(KIT_WEST.ifv).any(|k| plan.subject.contains(k));
+        let west =
+            KIT_WEST.tank.iter().chain(KIT_WEST.ifv).any(|k| plan.subject.contains(k));
         assert!(west && plan.subject.contains("Palmyra"), "{plan:?}");
     }
 
@@ -2725,8 +3067,14 @@ mod tests {
         );
         let plan = plan_scene(&convoy, "vs2", &rgw());
         assert_eq!(plan.kind, SceneKind::Convoy);
-        assert!(plan.subject.contains("burn") || plan.subject.contains("wreck") || plan.subject.contains("strike"), "{plan:?}");
-        let air = story("2026-09-10", "ONE-SIDED DAY IN THE AIR", vec![], "Caucasus", f());
+        assert!(
+            plan.subject.contains("burn")
+                || plan.subject.contains("wreck")
+                || plan.subject.contains("strike"),
+            "{plan:?}"
+        );
+        let air =
+            story("2026-09-10", "ONE-SIDED DAY IN THE AIR", vec![], "Caucasus", f());
         assert_eq!(plan_scene(&air, "vs2", &rgw()).kind, SceneKind::AirCombat);
         let sead = story(
             "2026-09-10",
@@ -2744,16 +3092,31 @@ mod tests {
             "Caucasus",
             f(),
         );
-        tally.facts.losses.insert("LOGISTICS".into(), crate::news::LossTally { blue: 1, red: 9 });
-        tally.facts.losses.insert("ARMOR".into(), crate::news::LossTally { blue: 2, red: 1 });
+        tally
+            .facts
+            .losses
+            .insert("LOGISTICS".into(), crate::news::LossTally { blue: 1, red: 9 });
+        tally
+            .facts
+            .losses
+            .insert("ARMOR".into(), crate::news::LossTally { blue: 2, red: 1 });
         let plan = plan_scene(&tally, "vs2", &rgw());
         assert_eq!(plan.kind, SceneKind::Convoy);
         // Red lost the trucks, so any trucks pictured are Russian.
         if plan.subject.contains("army truck") {
-            assert!(plan.subject.contains("Ural") || plan.subject.contains("KamAZ"), "{plan:?}");
+            assert!(
+                plan.subject.contains("Ural") || plan.subject.contains("KamAZ"),
+                "{plan:?}"
+            );
         }
         // No carriers in 2008.
-        let cv = story("2026-09-10", "AIRCRAFT CARRIER GROUP MOVES UP", vec![], "Caucasus", f());
+        let cv = story(
+            "2026-09-10",
+            "AIRCRAFT CARRIER GROUP MOVES UP",
+            vec![],
+            "Caucasus",
+            f(),
+        );
         assert_eq!(plan_scene(&cv, "vs2", &rgw()).kind, SceneKind::Naval);
         assert_eq!(plan_scene(&cv, "vs1", &syria()).kind, SceneKind::Carrier);
     }
@@ -2765,15 +3128,30 @@ mod tests {
              A tornado of fire swept the sector behind the lines.",
         );
         let names: Vec<&str> = named.iter().map(|(_, n)| *n).collect();
-        for want in ["Su-25 attack jet", "F-16C fighter", "Mi-8 transport helicopter", "T-72B main battle tank"] {
+        for want in [
+            "Su-25 attack jet",
+            "F-16C fighter",
+            "Mi-8 transport helicopter",
+            "T-72B main battle tank",
+        ] {
             assert!(names.contains(&want), "{want} missing from {names:?}");
         }
-        assert!(!names.iter().any(|n| n.starts_with("Tor (") || n.contains("Mi-24")), "{names:?}");
+        assert!(
+            !names.iter().any(|n| n.starts_with("Tor (") || n.contains("Mi-24")),
+            "{names:?}"
+        );
         // A story's own aircraft appear in the picture, by their real name.
         let mut seen = false;
         for n in 1..=20 {
-            let mut d = story(&format!("2026-07-{n:02}"), "ONE-SIDED DAY IN THE AIR", vec![], "Caucasus", georgia_russia());
-            d.body = vec!["Russian Su-25T strike aircraft ranged over the valley.".into()];
+            let mut d = story(
+                &format!("2026-07-{n:02}"),
+                "ONE-SIDED DAY IN THE AIR",
+                vec![],
+                "Caucasus",
+                georgia_russia(),
+            );
+            d.body =
+                vec!["Russian Su-25T strike aircraft ranged over the valley.".into()];
             let plan = plan_scene(&d, "vs2", &rgw());
             assert!(!plan.subject.contains("Su-25T"), "{plan:?}");
             seen |= plan.subject.contains("Su-25 attack jet");
@@ -2783,9 +3161,18 @@ mod tests {
 
     #[test]
     fn articles_follow_the_sound() {
-        assert_eq!(fix_articles("a M1A2 Abrams tank and a F-16C"), "an M1A2 Abrams tank and an F-16C");
-        assert_eq!(fix_articles("a BMP-2 and a HEMTT truck"), "a BMP-2 and a HEMTT truck");
-        assert_eq!(fix_articles("a S-300 near a Osa and a Ural-4320"), "an S-300 near an Osa and a Ural-4320");
+        assert_eq!(
+            fix_articles("a M1A2 Abrams tank and a F-16C"),
+            "an M1A2 Abrams tank and an F-16C"
+        );
+        assert_eq!(
+            fix_articles("a BMP-2 and a HEMTT truck"),
+            "a BMP-2 and a HEMTT truck"
+        );
+        assert_eq!(
+            fix_articles("a S-300 near a Osa and a Ural-4320"),
+            "an S-300 near an Osa and a Ural-4320"
+        );
         assert_eq!(fix_articles("a infantry section"), "an infantry section");
     }
 
@@ -2795,13 +3182,19 @@ mod tests {
         let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
         let r = parse_reply(&serde_json::json!({"data": [{"b64_json": b64}]})).unwrap();
         assert_eq!(r, Returned::Bytes(png.clone()));
-        let r = parse_reply(&serde_json::json!({"data": [{"url": "https://cdn.example/x.png"}]})).unwrap();
+        let r = parse_reply(
+            &serde_json::json!({"data": [{"url": "https://cdn.example/x.png"}]}),
+        )
+        .unwrap();
         assert_eq!(r, Returned::Url("https://cdn.example/x.png".into()));
         let r = parse_reply(&serde_json::json!({"data": [{"url": format!("data:image/png;base64,{b64}")}]}))
             .unwrap();
         assert_eq!(r, Returned::Bytes(png));
         assert!(parse_reply(&serde_json::json!({"data": []})).is_err());
-        assert!(parse_reply(&serde_json::json!({"data": [{"url": "file:///etc/passwd"}]})).is_err());
+        assert!(parse_reply(
+            &serde_json::json!({"data": [{"url": "file:///etc/passwd"}]})
+        )
+        .is_err());
         assert!(parse_reply(&serde_json::json!({"error": {"message": "nope"}})).is_err());
     }
 
@@ -2845,12 +3238,18 @@ mod tests {
         assert!(ImageCfg::resolve(ImageArgs::default()).unwrap().is_none());
         let blank = ImageArgs { key: Some(" ".into()), ..Default::default() };
         assert!(ImageCfg::resolve(blank).unwrap().is_none());
-        let off = ImageArgs { provider: Some("off".into()), key: Some("k".into()), ..Default::default() };
+        let off = ImageArgs {
+            provider: Some("off".into()),
+            key: Some("k".into()),
+            ..Default::default()
+        };
         assert!(ImageCfg::resolve(off).unwrap().is_none());
     }
 
     fn cfg(a: ImageArgs) -> ImageCfg {
-        ImageCfg::resolve(ImageArgs { per_instance_daily: 10, global_daily: 10, ..a }).unwrap().unwrap()
+        ImageCfg::resolve(ImageArgs { per_instance_daily: 10, global_daily: 10, ..a })
+            .unwrap()
+            .unwrap()
     }
 
     #[test]
@@ -2866,19 +3265,43 @@ mod tests {
             c.url,
             "https://api.cloudflare.com/client/v4/accounts/acc123/ai/run/@cf/black-forest-labs/flux-1-schnell"
         );
-        assert_eq!((c.steps, c.label().as_str()), (6, "cloudflare:@cf/black-forest-labs/flux-1-schnell"));
+        assert_eq!(
+            (c.steps, c.label().as_str()),
+            (6, "cloudflare:@cf/black-forest-labs/flux-1-schnell")
+        );
         // A url or key alone is OpenAI, as before.
-        assert_eq!(cfg(ImageArgs { key: Some("k".into()), ..Default::default() }).provider, Provider::OpenAi);
+        assert_eq!(
+            cfg(ImageArgs { key: Some("k".into()), ..Default::default() }).provider,
+            Provider::OpenAi
+        );
         // Pollinations only when named -- it needs nothing, so it is never guessed.
-        let p = cfg(ImageArgs { provider: Some("pollinations".into()), ..Default::default() });
-        assert_eq!((p.provider, p.key.as_deref(), p.size.as_str()), (Provider::Pollinations, None, "1024x576"));
+        let p = cfg(ImageArgs {
+            provider: Some("pollinations".into()),
+            ..Default::default()
+        });
+        assert_eq!(
+            (p.provider, p.key.as_deref(), p.size.as_str()),
+            (Provider::Pollinations, None, "1024x576")
+        );
         // Named but incomplete, or unknown: a clear error, not a silent guess.
         for bad in [
-            ImageArgs { provider: Some("cloudflare".into()), key: Some("t".into()), ..Default::default() },
-            ImageArgs { provider: Some("cloudflare".into()), cf_account_id: Some("a".into()), ..Default::default() },
+            ImageArgs {
+                provider: Some("cloudflare".into()),
+                key: Some("t".into()),
+                ..Default::default()
+            },
+            ImageArgs {
+                provider: Some("cloudflare".into()),
+                cf_account_id: Some("a".into()),
+                ..Default::default()
+            },
             ImageArgs { provider: Some("openai".into()), ..Default::default() },
             ImageArgs { provider: Some("midjourney".into()), ..Default::default() },
-            ImageArgs { key: Some("k".into()), fallback: Some("openai".into()), ..Default::default() },
+            ImageArgs {
+                key: Some("k".into()),
+                fallback: Some("openai".into()),
+                ..Default::default()
+            },
         ] {
             assert!(ImageCfg::resolve(bad).is_err());
         }
@@ -2906,7 +3329,11 @@ mod tests {
         assert!(fb.key.is_none(), "the Cloudflare token must never go to Pollinations");
         assert!(fb.fallback_cfg().is_none());
         // Default off; and a provider never falls back to itself.
-        let plain = ImageArgs { cf_account_id: Some("a".into()), key: Some("t".into()), ..Default::default() };
+        let plain = ImageArgs {
+            cf_account_id: Some("a".into()),
+            key: Some("t".into()),
+            ..Default::default()
+        };
         assert!(cfg(plain).fallback_cfg().is_none());
         let p = ImageArgs {
             provider: Some("pollinations".into()),
@@ -2918,7 +3345,11 @@ mod tests {
 
     #[test]
     fn cloudflare_request_and_replies() {
-        let c = cfg(ImageArgs { cf_account_id: Some("a".into()), key: Some("t".into()), ..Default::default() });
+        let c = cfg(ImageArgs {
+            cf_account_id: Some("a".into()),
+            key: Some("t".into()),
+            ..Default::default()
+        });
         let b = c.cf_body(&"x".repeat(5000), 42);
         assert_eq!(b["prompt"].as_str().unwrap().len(), CF_PROMPT_MAX);
         assert_eq!((b["steps"].as_u64(), b["seed"].as_u64()), (Some(6), Some(42)));
@@ -2935,7 +3366,9 @@ mod tests {
         assert!(e.contains("3036") && e.contains("neurons"), "{e}");
         assert!(cf_quota(200, &e) && cf_quota(429, "") && !cf_quota(400, "bad prompt"));
         assert!(parse_cf_reply(&serde_json::json!({"success": false})).is_err());
-        assert!(parse_cf_reply(&serde_json::json!({"success": true, "result": {}})).is_err());
+        assert!(
+            parse_cf_reply(&serde_json::json!({"success": true, "result": {}})).is_err()
+        );
     }
 
     #[test]
@@ -2949,7 +3382,15 @@ mod tests {
         assert_eq!(c.min_interval, Duration::from_secs(16));
         let u = c.pollinations_url("tanks at dawn, no text & no flags?", 7);
         assert!(u.starts_with("https://image.pollinations.ai/prompt/tanks%20at%20dawn%2C%20no%20text%20%26%20no%20flags%3F?"), "{u}");
-        for q in ["width=1024", "height=576", "model=flux", "seed=7", "nologo=true", "private=true", "safe=true"] {
+        for q in [
+            "width=1024",
+            "height=576",
+            "model=flux",
+            "seed=7",
+            "nologo=true",
+            "private=true",
+            "safe=true",
+        ] {
             assert!(u.contains(q), "{u} lacks {q}");
         }
         // With a key: the current API, the service's own default model, 3 s
@@ -2959,10 +3400,21 @@ mod tests {
             key: Some("sk_test_not_real".into()),
             ..Default::default()
         });
-        assert_eq!((k.min_interval, k.label().as_str()), (Duration::from_secs(3), "pollinations:default"));
+        assert_eq!(
+            (k.min_interval, k.label().as_str()),
+            (Duration::from_secs(3), "pollinations:default")
+        );
         let u = k.pollinations_url("p", 1);
-        assert!(u.starts_with("https://gen.pollinations.ai/image/p?width=1024&height=576&seed=1"), "{u}");
-        assert!(!u.contains("model=") && !u.contains("sk_") && !u.contains("key="), "{u}");
+        assert!(
+            u.starts_with(
+                "https://gen.pollinations.ai/image/p?width=1024&height=576&seed=1"
+            ),
+            "{u}"
+        );
+        assert!(
+            !u.contains("model=") && !u.contains("sk_") && !u.contains("key="),
+            "{u}"
+        );
         let k = cfg(ImageArgs {
             provider: Some("pollinations".into()),
             key: Some("sk_test_not_real".into()),
@@ -2971,16 +3423,25 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(k.min_interval, Duration::from_secs(10));
-        assert!(k.pollinations_url("p", 1).contains("&model=black-forest-labs%2Fflux.1-schnell&"));
+        assert!(k
+            .pollinations_url("p", 1)
+            .contains("&model=black-forest-labs%2Fflux.1-schnell&"));
     }
 
     #[test]
     fn keys_never_reach_an_error_message() {
-        assert_eq!(redact("bad key sk_abc123 given", Some("sk_abc123")), "bad key *** given");
+        assert_eq!(
+            redact("bad key sk_abc123 given", Some("sk_abc123")),
+            "bad key *** given"
+        );
         assert_eq!(redact("nothing", None), "nothing");
         // A provider that echoes the key back in its error body.
-        let (url, h) = stub(1, "401 Unauthorized", "application/json",
-            br#"{"error":"invalid key sk_test_echoed_back"}"#.to_vec());
+        let (url, h) = stub(
+            1,
+            "401 Unauthorized",
+            "application/json",
+            br#"{"error":"invalid key sk_test_echoed_back"}"#.to_vec(),
+        );
         let c = cfg(ImageArgs {
             provider: Some("pollinations".into()),
             url: Some(format!("{url}/image/")),
@@ -2988,11 +3449,16 @@ mod tests {
             ..Default::default()
         });
         let e = generate(&c, "p").unwrap_err();
-        assert!(!e.msg.contains("sk_test_echoed_back") && e.msg.contains("401"), "{}", e.msg);
+        assert!(
+            !e.msg.contains("sk_test_echoed_back") && e.msg.contains("401"),
+            "{}",
+            e.msg
+        );
         assert!(!e.rate_limited, "a bad key is not a quota");
         h.join().unwrap();
         // A spent pollen budget is.
-        let (url, h) = stub(1, "402 Payment Required", "application/json", b"{}".to_vec());
+        let (url, h) =
+            stub(1, "402 Payment Required", "application/json", b"{}".to_vec());
         let c = cfg(ImageArgs {
             provider: Some("pollinations".into()),
             url: Some(format!("{url}/image/")),
@@ -3028,8 +3494,12 @@ mod tests {
     /// A one-shot local HTTP server answering `n` requests with a fixed reply,
     /// and handing back each request's head+body -- the providers' stand-in.
     /// Nothing leaves the machine.
-    fn stub(n: usize, status: &'static str, ctype: &'static str, body: Vec<u8>)
-        -> (String, std::thread::JoinHandle<Vec<String>>) {
+    fn stub(
+        n: usize,
+        status: &'static str,
+        ctype: &'static str,
+        body: Vec<u8>,
+    ) -> (String, std::thread::JoinHandle<Vec<String>>) {
         use std::io::Write;
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", l.local_addr().unwrap());
@@ -3045,12 +3515,18 @@ mod tests {
                     let k = s.read(&mut buf).unwrap_or(0);
                     got.extend_from_slice(&buf[..k]);
                     let text = String::from_utf8_lossy(&got).to_string();
-                    if let Some(i) = text.find("
+                    if let Some(i) = text.find(
+                        "
 
-") {
+",
+                    ) {
                         let len = text[..i]
                             .lines()
-                            .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0)))
+                            .find_map(|l| {
+                                l.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .map(|v| v.trim().parse::<usize>().unwrap_or(0))
+                            })
                             .unwrap_or(0);
                         if got.len() >= i + 4 + len || k == 0 {
                             break;
@@ -3081,17 +3557,23 @@ Connection: close
     fn cloudflare_end_to_end_against_a_stub() {
         let jpg = vec![0xFF, 0xD8, 0xFF, 0xE0, 9, 9];
         let b64 = base64::engine::general_purpose::STANDARD.encode(&jpg);
-        let reply = serde_json::json!({"result": {"image": b64}, "success": true, "errors": []});
-        let (url, h) = stub(1, "200 OK", "application/json", reply.to_string().into_bytes());
+        let reply =
+            serde_json::json!({"result": {"image": b64}, "success": true, "errors": []});
+        let (url, h) =
+            stub(1, "200 OK", "application/json", reply.to_string().into_bytes());
         let c = cfg(ImageArgs {
             provider: Some("cloudflare".into()),
-            url: Some(format!("{url}/client/v4/accounts/a/ai/run/@cf/black-forest-labs/flux-1-schnell")),
+            url: Some(format!(
+                "{url}/client/v4/accounts/a/ai/run/@cf/black-forest-labs/flux-1-schnell"
+            )),
             key: Some("cf-token".into()),
             ..Default::default()
         });
         assert_eq!(generate(&c, "a prompt").unwrap(), jpg);
         let req = h.join().unwrap().remove(0);
-        assert!(req.starts_with("POST /client/v4/accounts/a/ai/run/@cf/black-forest-labs/flux-1-schnell"));
+        assert!(req.starts_with(
+            "POST /client/v4/accounts/a/ai/run/@cf/black-forest-labs/flux-1-schnell"
+        ));
         assert!(req.to_ascii_lowercase().contains("authorization: bearer cf-token"));
         assert!(req.contains("\"prompt\":\"a prompt\"") && req.contains("\"steps\":6"));
     }
@@ -3100,7 +3582,12 @@ Connection: close
     fn cloudflare_quota_is_not_an_attempt_and_pollinations_takes_over() {
         let quota = serde_json::json!({"success": false, "result": null,
             "errors": [{"code": 3036, "message": "you have used up your daily free allocation of 10,000 neurons"}]});
-        let (cf_url, cf_h) = stub(2, "429 Too Many Requests", "application/json", quota.to_string().into_bytes());
+        let (cf_url, cf_h) = stub(
+            2,
+            "429 Too Many Requests",
+            "application/json",
+            quota.to_string().into_bytes(),
+        );
         let png = b"\x89PNG\r\n\x1a\nfake-png-body".to_vec();
         let (pl_url, pl_h) = stub(1, "200 OK", "image/png", png.clone());
         let mut c = cfg(ImageArgs {
@@ -3119,7 +3606,12 @@ Connection: close
         assert_eq!((bytes, by.as_str()), (png, "pollinations:flux"));
         cf_h.join().unwrap();
         let req = pl_h.join().unwrap().remove(0);
-        assert!(req.starts_with("GET /prompt/tanks%20at%20dawn?width=1024&height=576&model=flux"), "{req}");
+        assert!(
+            req.starts_with(
+                "GET /prompt/tanks%20at%20dawn?width=1024&height=576&model=flux"
+            ),
+            "{req}"
+        );
         assert!(!req.to_ascii_lowercase().contains("authorization"), "{req}");
     }
 
@@ -3135,7 +3627,9 @@ Connection: close
         let e = generate(&c, "p").unwrap_err();
         assert!(e.billed && !e.rate_limited && e.msg.contains("not a PNG"), "{}", e.msg);
         // Its own account token, when it is the provider, is sent.
-        assert!(h.join().unwrap()[0].to_ascii_lowercase().contains("authorization: bearer pl-token"));
+        assert!(h.join().unwrap()[0]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer pl-token"));
     }
 
     #[test]
@@ -3161,10 +3655,17 @@ Connection: close
         let mut d = digest("X", &[], None);
         d.day = "2026-10-17".into();
         let at = |h: u32| {
-            chrono::NaiveDate::from_ymd_opt(2026, 10, 17).unwrap().and_hms_opt(h, 0, 0).unwrap().and_utc()
+            chrono::NaiveDate::from_ymd_opt(2026, 10, 17)
+                .unwrap()
+                .and_hms_opt(h, 0, 0)
+                .unwrap()
+                .and_utc()
         };
         d.final_ = true;
-        assert!(!early_eligible(&d, false, at(12)), "a filed day is not an early edition");
+        assert!(
+            !early_eligible(&d, false, at(12)),
+            "a filed day is not an early edition"
+        );
         d.final_ = false;
         assert!(!early_eligible(&d, false, at(2)));
         assert!(early_eligible(&d, false, at(3)));
@@ -3186,8 +3687,10 @@ Connection: close
     }
 
     fn temp_db() -> StatsDb {
-        let dir = std::env::temp_dir().join(format!("bfdb-newsimg-{}", uuid::Uuid::new_v4()));
-        let reg = crate::instance::Registry::single(inst(serde_json::json!({"id": "vs1"})));
+        let dir =
+            std::env::temp_dir().join(format!("bfdb-newsimg-{}", uuid::Uuid::new_v4()));
+        let reg =
+            crate::instance::Registry::single(inst(serde_json::json!({"id": "vs1"})));
         StatsDb::new(&std::collections::HashMap::new(), dir, reg).unwrap()
     }
 
@@ -3206,7 +3709,10 @@ Connection: close
         assert!(under_caps(&db, &cfg, "vs1", day).unwrap().is_none());
         count_call(&db, "vs1", day).unwrap();
         count_call(&db, "vs1", day).unwrap();
-        assert!(under_caps(&db, &cfg, "vs1", day).unwrap().unwrap().contains("this instance"));
+        assert!(under_caps(&db, &cfg, "vs1", day)
+            .unwrap()
+            .unwrap()
+            .contains("this instance"));
         // vs2 has its own allowance but shares the global one (2 of 3 used).
         assert!(under_caps(&db, &cfg, "vs2", day).unwrap().is_none());
         count_call(&db, "vs2", day).unwrap();
@@ -3226,7 +3732,12 @@ Connection: close
         assert!(!api_fields(&db, "vs1", rid, &d, false).unwrap().pending);
         // An early-edition picture on a filed day: shown, and the final one
         // still expected.
-        let meta = ImageMeta { has_image: true, version: 1, provisional: true, ..Default::default() };
+        let meta = ImageMeta {
+            has_image: true,
+            version: 1,
+            provisional: true,
+            ..Default::default()
+        };
         db.news_image_put("vs1", rid, &d.day, b"\x89PNG\r\n\x1a\n", &meta).unwrap();
         let a = api_fields(&db, "vs1", rid, &d, true).unwrap();
         assert!(a.url.is_some() && a.pending && a.provisional);
@@ -3240,7 +3751,10 @@ Connection: close
         let a = api_fields(&db, "vs1", rid, &d, true).unwrap();
         assert_eq!(a.url.unwrap(), format!("/api/news/image/{}?instance=vs1&v=2", d.day));
         assert!(!a.pending && !a.provisional);
-        assert_eq!(db.news_image_get("vs1", rid, &d.day).unwrap().unwrap(), b"\x89PNG\r\n\x1a\n");
+        assert_eq!(
+            db.news_image_get("vs1", rid, &d.day).unwrap().unwrap(),
+            b"\x89PNG\r\n\x1a\n"
+        );
         assert!(db.news_image_get("vs2", rid, &d.day).unwrap().is_none());
     }
 
@@ -3250,13 +3764,20 @@ Connection: close
     #[tokio::test(flavor = "multi_thread")]
     async fn failures_back_off_then_give_up() {
         let db = temp_db();
-        let cfg = cfg(ImageArgs { url: Some("http://127.0.0.1:9/v1/images".into()), ..Default::default() });
+        let cfg = cfg(ImageArgs {
+            url: Some("http://127.0.0.1:9/v1/images".into()),
+            ..Default::default()
+        });
         let ic = inst(serde_json::json!({"id": "vs1"}));
         let rid = RoundId(3);
         let d = digest("X", &["y"], None);
         // The real callers run this off the runtime (block_in_place /
         // spawn_blocking); the blocking HTTP client insists on the same.
-        let run = |kind| tokio::task::block_in_place(|| illustrate(&db, &ic, rid, &d, &cfg, kind).unwrap());
+        let run = |kind| {
+            tokio::task::block_in_place(|| {
+                illustrate(&db, &ic, rid, &d, &cfg, kind).unwrap()
+            })
+        };
         for n in 1..=MAX_ATTEMPTS {
             assert!(matches!(run(Draw::Filed), Outcome::Failed(_)));
             let m = db.news_image_meta("vs1", rid, &d.day).unwrap().unwrap();
@@ -3276,7 +3797,11 @@ Connection: close
         }
         assert!(db.news_image_meta("vs1", rid, &d.day).unwrap().unwrap().gave_up);
         // A connection failure is not billed, so it did not eat the caps.
-        assert_eq!(db.news_image_count("vs1", &Utc::now().format("%Y-%m-%d").to_string()).unwrap(), 0);
+        assert_eq!(
+            db.news_image_count("vs1", &Utc::now().format("%Y-%m-%d").to_string())
+                .unwrap(),
+            0
+        );
         // A forced retry clears the give-up (and fails again here).
         run(Draw::Forced);
         let m = db.news_image_meta("vs1", rid, &d.day).unwrap().unwrap();
@@ -3288,12 +3813,17 @@ Connection: close
     #[tokio::test(flavor = "multi_thread")]
     async fn an_early_picture_is_tried_once() {
         let db = temp_db();
-        let cfg = cfg(ImageArgs { url: Some("http://127.0.0.1:9/v1/images".into()), ..Default::default() });
+        let cfg = cfg(ImageArgs {
+            url: Some("http://127.0.0.1:9/v1/images".into()),
+            ..Default::default()
+        });
         let ic = inst(serde_json::json!({"id": "vs1"}));
         let rid = RoundId(4);
         let mut d = digest("X", &["y"], None);
         d.final_ = false;
-        let out = tokio::task::block_in_place(|| illustrate(&db, &ic, rid, &d, &cfg, Draw::Early).unwrap());
+        let out = tokio::task::block_in_place(|| {
+            illustrate(&db, &ic, rid, &d, &cfg, Draw::Early).unwrap()
+        });
         assert!(matches!(out, Outcome::Failed(_)));
         let m = db.news_image_meta("vs1", rid, &d.day).unwrap().unwrap();
         assert!(m.early_failed && m.attempts == 0 && !m.gave_up && m.next_try.is_none());

@@ -17,24 +17,28 @@ use crate::*;
 
 /// How long a verified (instance, playerid, key) stays trusted without asking
 /// the engine again. Short: a key dies with its connection.
-pub(crate) const COCKPIT_ID_CACHE: std::time::Duration = std::time::Duration::from_secs(30);
+pub(crate) const COCKPIT_ID_CACHE: std::time::Duration =
+    std::time::Duration::from_secs(30);
 
 pub(crate) type CockpitIdKey = (InstanceId, i64, std::string::String);
 
 pub(crate) static COCKPIT_IDS: std::sync::LazyLock<
-    Mutex<std::collections::HashMap<CockpitIdKey, (dcso3::net::Ucid, std::time::Instant)>>,
+    Mutex<
+        std::collections::HashMap<CockpitIdKey, (dcso3::net::Ucid, std::time::Instant)>,
+    >,
 > = std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
 
 /// Wrong cockpit keys per client IP. Twenty in ten minutes is far past any
 /// honest reload loop and makes guessing a 40-character key pointless.
-pub(crate) static COCKPIT_FAILS: std::sync::LazyLock<websec::RateLimiter<std::net::IpAddr>> =
-    std::sync::LazyLock::new(|| {
-        websec::RateLimiter::new(
-            20,
-            std::time::Duration::from_secs(600),
-            std::time::Duration::from_secs(600),
-        )
-    });
+pub(crate) static COCKPIT_FAILS: std::sync::LazyLock<
+    websec::RateLimiter<std::net::IpAddr>,
+> = std::sync::LazyLock::new(|| {
+    websec::RateLimiter::new(
+        20,
+        std::time::Duration::from_secs(600),
+        std::time::Duration::from_secs(600),
+    )
+});
 
 pub(crate) async fn resolve_by_player_id(
     id: i64,
@@ -71,9 +75,9 @@ pub(crate) async fn resolve_by_player_id(
         Err(Error(e)) => {
             // The engine refusing the key (or the id) is a failed guess; the
             // engine being down is not the caller's fault.
-            let refused = e
-                .downcast_ref::<websec::ApiError>()
-                .map_or(false, |a| a.status == warp::http::StatusCode::UNPROCESSABLE_ENTITY);
+            let refused = e.downcast_ref::<websec::ApiError>().map_or(false, |a| {
+                a.status == warp::http::StatusCode::UNPROCESSABLE_ENTITY
+            });
             if refused {
                 COCKPIT_FAILS.hit(&ip);
                 return Err(websec::unauthorized(format!(
@@ -98,13 +102,21 @@ pub(crate) async fn resolve_by_player_id(
 /// `X-Cockpit-Key` header when it is sent there -- a header stays out of
 /// proxy and browser history logs, where `?ckey=` lands. `?ckey=` still
 /// works: every overlay released so far sends it.
-pub(crate) fn cockpit_query(
-) -> impl Filter<Extract = (std::collections::HashMap<std::string::String, std::string::String>,), Error = warp::Rejection> + Clone {
+pub(crate) fn cockpit_query() -> impl Filter<
+    Extract = (std::collections::HashMap<std::string::String, std::string::String>,),
+    Error = warp::Rejection,
+> + Clone {
     warp::query::<std::collections::HashMap<std::string::String, std::string::String>>()
         .and(warp::header::optional::<std::string::String>("x-cockpit-key"))
         .map(
-            |mut q: std::collections::HashMap<std::string::String, std::string::String>, key: Option<std::string::String>| {
-                if let Some(k) = key.map(|k| k.trim().to_string()).filter(|k| !k.is_empty()) {
+            |mut q: std::collections::HashMap<
+                std::string::String,
+                std::string::String,
+            >,
+             key: Option<std::string::String>| {
+                if let Some(k) =
+                    key.map(|k| k.trim().to_string()).filter(|k| !k.is_empty())
+                {
                     q.insert("ckey".into(), k);
                 }
                 q
@@ -116,12 +128,27 @@ pub(crate) fn cockpit_query(
 /// last time, per version. Shown in `/api/metrics`; a version's first
 /// appearance is logged.
 pub(crate) static COCKPIT_PLUGINS: std::sync::LazyLock<
-    Mutex<std::collections::HashMap<std::string::String, (u64, chrono::DateTime<chrono::Utc>)>>,
+    Mutex<
+        std::collections::HashMap<
+            std::string::String,
+            (u64, chrono::DateTime<chrono::Utc>),
+        >,
+    >,
 > = std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
 
-pub(crate) fn note_cockpit_plugin(query: &std::collections::HashMap<std::string::String, std::string::String>) {
+pub(crate) fn note_cockpit_plugin(
+    query: &std::collections::HashMap<std::string::String, std::string::String>,
+) {
     let v = match query.get("plugin").map(|s| s.trim()) {
-        Some(v) if !v.is_empty() && v.len() <= 32 && v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')) => v,
+        Some(v)
+            if !v.is_empty()
+                && v.len() <= 32
+                && v.chars().all(|c| {
+                    c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')
+                }) =>
+        {
+            v
+        }
         Some(_) => "invalid",
         None => "none",
     };
@@ -176,13 +203,20 @@ pub(crate) async fn api_cockpit_ewr_report(
     inst: Inst,
     ip: std::net::IpAddr,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip)
+        .await?;
     let friendly = query.get("friendly").map(|s| s == "true").unwrap_or(false);
     use netidx::publisher::Value;
-    let report = call_engine_rpc_str(&db, &inst, "ewr-report", vec![
-        ("ucid", Value::from(ucid.to_string())),
-        ("friendly", Value::from(friendly)),
-    ]).await?;
+    let report = call_engine_rpc_str(
+        &db,
+        &inst,
+        "ewr-report",
+        vec![
+            ("ucid", Value::from(ucid.to_string())),
+            ("friendly", Value::from(friendly)),
+        ],
+    )
+    .await?;
     Ok(warp::reply::json(&serde_json::json!({ "report": report })))
 }
 
@@ -194,11 +228,16 @@ pub(crate) async fn api_cockpit_ewr_toggle(
     inst: Inst,
     ip: std::net::IpAddr,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip)
+        .await?;
     use netidx::publisher::Value;
-    let state = call_engine_rpc_str(&db, &inst, "ewr-toggle", vec![
-        ("ucid", Value::from(ucid.to_string())),
-    ]).await?;
+    let state = call_engine_rpc_str(
+        &db,
+        &inst,
+        "ewr-toggle",
+        vec![("ucid", Value::from(ucid.to_string()))],
+    )
+    .await?;
     Ok(warp::reply::json(&serde_json::json!({ "state": state })))
 }
 
@@ -216,12 +255,19 @@ pub(crate) async fn api_cockpit_ewr_units(
     inst: Inst,
     ip: std::net::IpAddr,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip)
+        .await?;
     use netidx::publisher::Value;
-    let units = call_engine_rpc_str(&db, &inst, "ewr-set-units", vec![
-        ("ucid", Value::from(ucid.to_string())),
-        ("imperial", Value::from(body.imperial)),
-    ]).await?;
+    let units = call_engine_rpc_str(
+        &db,
+        &inst,
+        "ewr-set-units",
+        vec![
+            ("ucid", Value::from(ucid.to_string())),
+            ("imperial", Value::from(body.imperial)),
+        ],
+    )
+    .await?;
     Ok(warp::reply::json(&serde_json::json!({ "units": units })))
 }
 
@@ -233,11 +279,16 @@ pub(crate) async fn api_cockpit_ewr_intel(
     inst: Inst,
     ip: std::net::IpAddr,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip)
+        .await?;
     use netidx::publisher::Value;
-    let report = call_engine_rpc_str(&db, &inst, "ewr-ground-intel", vec![
-        ("ucid", Value::from(ucid.to_string())),
-    ]).await?;
+    let report = call_engine_rpc_str(
+        &db,
+        &inst,
+        "ewr-ground-intel",
+        vec![("ucid", Value::from(ucid.to_string()))],
+    )
+    .await?;
     Ok(warp::reply::json(&serde_json::json!({ "report": report })))
 }
 
@@ -252,17 +303,26 @@ pub(crate) async fn api_cockpit_carp_solve(
     inst: Inst,
     ip: std::net::IpAddr,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip).await?;
-    let key = query.get("key").cloned().ok_or_else(|| websec::bad_request("missing key"))?;
-    let alt_ft: f64 = query.get("altft")
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip)
+        .await?;
+    let key =
+        query.get("key").cloned().ok_or_else(|| websec::bad_request("missing key"))?;
+    let alt_ft: f64 = query
+        .get("altft")
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| websec::bad_request("missing or invalid altft"))?;
     use netidx::publisher::Value;
-    let json = call_engine_rpc_str(&db, &inst, "carp-solve", vec![
-        ("ucid", Value::from(ucid.to_string())),
-        ("mark_key", Value::from(key)),
-        ("drop_altitude_agl_ft", Value::from(alt_ft)),
-    ]).await?;
+    let json = call_engine_rpc_str(
+        &db,
+        &inst,
+        "carp-solve",
+        vec![
+            ("ucid", Value::from(ucid.to_string())),
+            ("mark_key", Value::from(key)),
+            ("drop_altitude_agl_ft", Value::from(alt_ft)),
+        ],
+    )
+    .await?;
     let solution: serde_json::Value = serde_json::from_str(&json)
         .map_err(|e| anyhow::anyhow!("bad carp solution from engine: {e:?}"))?;
     Ok(warp::reply::json(&solution))
@@ -279,23 +339,33 @@ pub(crate) async fn api_cockpit_carp_solve_latlon(
     inst: Inst,
     ip: std::net::IpAddr,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip).await?;
-    let lat: f64 = query.get("lat")
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip)
+        .await?;
+    let lat: f64 = query
+        .get("lat")
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| websec::bad_request("missing or invalid lat"))?;
-    let lon: f64 = query.get("lon")
+    let lon: f64 = query
+        .get("lon")
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| websec::bad_request("missing or invalid lon"))?;
-    let alt_ft: f64 = query.get("altft")
+    let alt_ft: f64 = query
+        .get("altft")
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| websec::bad_request("missing or invalid altft"))?;
     use netidx::publisher::Value;
-    let json = call_engine_rpc_str(&db, &inst, "carp-solve-latlon", vec![
-        ("ucid", Value::from(ucid.to_string())),
-        ("lat", Value::from(lat)),
-        ("lon", Value::from(lon)),
-        ("drop_altitude_agl_ft", Value::from(alt_ft)),
-    ]).await?;
+    let json = call_engine_rpc_str(
+        &db,
+        &inst,
+        "carp-solve-latlon",
+        vec![
+            ("ucid", Value::from(ucid.to_string())),
+            ("lat", Value::from(lat)),
+            ("lon", Value::from(lon)),
+            ("drop_altitude_agl_ft", Value::from(alt_ft)),
+        ],
+    )
+    .await?;
     let solution: serde_json::Value = serde_json::from_str(&json)
         .map_err(|e| anyhow::anyhow!("bad carp solution from engine: {e:?}"))?;
     Ok(warp::reply::json(&solution))
@@ -321,17 +391,24 @@ pub(crate) async fn api_cockpit_cargo_spawn(
     inst: Inst,
     ip: std::net::IpAddr,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip)
+        .await?;
     if body.qty < 1 {
         return Err(websec::bad_request("qty must be at least 1").into());
     }
     use netidx::publisher::Value;
-    let msg = call_engine_rpc_str(&db, &inst, "cargo-spawn-crate", vec![
-        ("ucid", Value::from(ucid.to_string())),
-        ("crate_name", Value::from(body.crate_name)),
-        ("qty", Value::from(body.qty as i64)),
-        ("c130", Value::from(body.c130)),
-    ]).await?;
+    let msg = call_engine_rpc_str(
+        &db,
+        &inst,
+        "cargo-spawn-crate",
+        vec![
+            ("ucid", Value::from(ucid.to_string())),
+            ("crate_name", Value::from(body.crate_name)),
+            ("qty", Value::from(body.qty as i64)),
+            ("c130", Value::from(body.c130)),
+        ],
+    )
+    .await?;
     Ok(warp::reply::json(&serde_json::json!({ "message": msg })))
 }
 
@@ -361,16 +438,20 @@ pub(crate) fn cockpit_plugin_version() -> &'static str {
 
 /// `--cockpit-plugin-version`: advertise this overlay version as is, with no
 /// release check. Set once in `main`.
-pub(crate) static COCKPIT_VERSION_OVERRIDE: std::sync::OnceLock<std::string::String> = std::sync::OnceLock::new();
+pub(crate) static COCKPIT_VERSION_OVERRIDE: std::sync::OnceLock<std::string::String> =
+    std::sync::OnceLock::new();
 
 /// Whether the installer for the bundled overlay version is published, as
 /// last checked, and when.
-pub(crate) static COCKPIT_RELEASE: std::sync::LazyLock<Mutex<(Option<(std::time::Instant, bool)>, bool)>> =
-    std::sync::LazyLock::new(|| Mutex::new((None, false)));
+pub(crate) static COCKPIT_RELEASE: std::sync::LazyLock<
+    Mutex<(Option<(std::time::Instant, bool)>, bool)>,
+> = std::sync::LazyLock::new(|| Mutex::new((None, false)));
 
 /// Re-check a confirmed release this often, a missing one sooner.
-pub(crate) const COCKPIT_RELEASE_RECHECK_OK: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
-pub(crate) const COCKPIT_RELEASE_RECHECK_MISSING: std::time::Duration = std::time::Duration::from_secs(600);
+pub(crate) const COCKPIT_RELEASE_RECHECK_OK: std::time::Duration =
+    std::time::Duration::from_secs(6 * 3600);
+pub(crate) const COCKPIT_RELEASE_RECHECK_MISSING: std::time::Duration =
+    std::time::Duration::from_secs(600);
 
 /// The overlay version to advertise. The one bfdb was built with is only
 /// offered once its `cockpit-v<version>` release asset is confirmed on
@@ -386,7 +467,12 @@ pub(crate) fn advertised_cockpit_version() -> std::string::String {
     let (known, start) = {
         let mut g = COCKPIT_RELEASE.lock().unwrap_or_else(|e| e.into_inner());
         let fresh = g.0.map_or(false, |(at, ok)| {
-            at.elapsed() < if ok { COCKPIT_RELEASE_RECHECK_OK } else { COCKPIT_RELEASE_RECHECK_MISSING }
+            at.elapsed()
+                < if ok {
+                    COCKPIT_RELEASE_RECHECK_OK
+                } else {
+                    COCKPIT_RELEASE_RECHECK_MISSING
+                }
         });
         let start = !fresh && !g.1;
         if start {
@@ -395,9 +481,14 @@ pub(crate) fn advertised_cockpit_version() -> std::string::String {
         (g.0.map(|(_, ok)| ok), start)
     };
     if start && built != "unknown" {
-        let url = format!("{COCKPIT_RELEASES}/cockpit-v{built}/{COCKPIT_INSTALLER_ASSET}");
+        let url =
+            format!("{COCKPIT_RELEASES}/cockpit-v{built}/{COCKPIT_INSTALLER_ASSET}");
         tokio::spawn(async move {
-            let ok = http_client().head(&url).send().await.map_or(false, |r| r.status().is_success());
+            let ok = http_client()
+                .head(&url)
+                .send()
+                .await
+                .map_or(false, |r| r.status().is_success());
             let mut g = COCKPIT_RELEASE.lock().unwrap_or_else(|e| e.into_inner());
             if !ok && g.0.map_or(true, |(_, was)| was) {
                 log::warn!("cockpit: no published installer at {url} yet -- advertising overlay version \"unknown\" until there is");
@@ -429,15 +520,21 @@ pub(crate) async fn api_cockpit_plugin_version(
 /// Where the installer for each plugin version is published: a GitHub release
 /// tagged `cockpit-v<version>` (outside the `engine-` / `manager-v` prefixes,
 /// so neither updater mistakes it for one of theirs).
-pub(crate) const COCKPIT_RELEASES: &str = "https://github.com/Dillen198/bfnext/releases/download";
+pub(crate) const COCKPIT_RELEASES: &str =
+    "https://github.com/Dillen198/bfnext/releases/download";
 pub(crate) const COCKPIT_INSTALLER_ASSET: &str = "VectorStrike-Cockpit-Install.exe";
 
 /// GET /api/cockpit/plugin/installer — the installer for the version this bfdb
 /// ships, so the wiki and dashboard have one link that is never out of date.
-pub(crate) async fn api_cockpit_plugin_installer() -> std::result::Result<impl warp::Reply, Error> {
+pub(crate) async fn api_cockpit_plugin_installer(
+) -> std::result::Result<impl warp::Reply, Error> {
     // The newest published one; the bundled version's until that is known.
     let advertised = advertised_cockpit_version();
-    let version = if advertised == "unknown" { cockpit_plugin_version().to_string() } else { advertised };
+    let version = if advertised == "unknown" {
+        cockpit_plugin_version().to_string()
+    } else {
+        advertised
+    };
     let url = format!("{COCKPIT_RELEASES}/cockpit-v{version}/{COCKPIT_INSTALLER_ASSET}");
     Ok(warp::redirect::temporary(url.parse::<warp::http::Uri>().unwrap()))
 }
@@ -446,7 +543,8 @@ pub(crate) async fn api_cockpit_plugin_installer() -> std::result::Result<impl w
 ///
 /// Since 2.0 the script needs bfcockpit_net.dll beside it, which only the
 /// installer ships; a script fetched on its own says so on its panel.
-pub(crate) async fn api_cockpit_plugin_download() -> std::result::Result<impl warp::Reply, Error> {
+pub(crate) async fn api_cockpit_plugin_download(
+) -> std::result::Result<impl warp::Reply, Error> {
     Ok(warp::reply::with_header(
         warp::reply::with_header(
             COCKPIT_PLUGIN_LUA,
@@ -472,11 +570,16 @@ pub(crate) async fn api_cockpit_context(
     inst: Inst,
     ip: std::net::IpAddr,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip)
+        .await?;
     use netidx::publisher::Value;
-    let json = call_engine_rpc_str(&db, &inst, "cockpit-context", vec![
-        ("ucid", Value::from(ucid.to_string())),
-    ]).await?;
+    let json = call_engine_rpc_str(
+        &db,
+        &inst,
+        "cockpit-context",
+        vec![("ucid", Value::from(ucid.to_string()))],
+    )
+    .await?;
     Ok(json_response(json))
 }
 
@@ -494,11 +597,16 @@ pub(crate) async fn api_cockpit_menu(
     inst: Inst,
     ip: std::net::IpAddr,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip)
+        .await?;
     use netidx::publisher::Value;
-    let json = call_engine_rpc_str(&db, &inst, "cockpit-menu", vec![
-        ("ucid", Value::from(ucid.to_string())),
-    ]).await?;
+    let json = call_engine_rpc_str(
+        &db,
+        &inst,
+        "cockpit-menu",
+        vec![("ucid", Value::from(ucid.to_string()))],
+    )
+    .await?;
     Ok(json_response(json))
 }
 
@@ -516,13 +624,18 @@ pub(crate) async fn api_cockpit_messages(
     inst: Inst,
     ip: std::net::IpAddr,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip).await?;
-    let since = query.get("since").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0).max(0);
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip)
+        .await?;
+    let since =
+        query.get("since").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0).max(0);
     use netidx::publisher::Value;
-    let json = call_engine_rpc_str(&db, &inst, "cockpit-messages", vec![
-        ("ucid", Value::from(ucid.to_string())),
-        ("since", Value::from(since)),
-    ]).await?;
+    let json = call_engine_rpc_str(
+        &db,
+        &inst,
+        "cockpit-messages",
+        vec![("ucid", Value::from(ucid.to_string())), ("since", Value::from(since))],
+    )
+    .await?;
     Ok(json_response(json))
 }
 
@@ -537,11 +650,16 @@ pub(crate) async fn api_cockpit_cargo(
     inst: Inst,
     ip: std::net::IpAddr,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip)
+        .await?;
     use netidx::publisher::Value;
-    let json = call_engine_rpc_str(&db, &inst, "cockpit-cargo", vec![
-        ("ucid", Value::from(ucid.to_string())),
-    ]).await?;
+    let json = call_engine_rpc_str(
+        &db,
+        &inst,
+        "cockpit-cargo",
+        vec![("ucid", Value::from(ucid.to_string()))],
+    )
+    .await?;
     Ok(json_response(json))
 }
 
@@ -564,14 +682,26 @@ pub(crate) async fn api_cockpit_menu_invoke(
     inst: Inst,
     ip: std::net::IpAddr,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip)
+        .await?;
     if body.path.is_empty() {
         return Err(websec::bad_request("path must not be empty").into());
     }
     use netidx::publisher::Value;
-    let msg = call_engine_rpc_str(&db, &inst, "cockpit-menu-invoke", vec![
-        ("ucid", Value::from(ucid.to_string())),
-        ("path", Value::from(serde_json::to_string(&body.path).map_err(anyhow::Error::from)?)),
-    ]).await?;
+    let msg = call_engine_rpc_str(
+        &db,
+        &inst,
+        "cockpit-menu-invoke",
+        vec![
+            ("ucid", Value::from(ucid.to_string())),
+            (
+                "path",
+                Value::from(
+                    serde_json::to_string(&body.path).map_err(anyhow::Error::from)?,
+                ),
+            ),
+        ],
+    )
+    .await?;
     Ok(warp::reply::json(&serde_json::json!({ "message": msg })))
 }

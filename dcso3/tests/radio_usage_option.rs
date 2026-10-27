@@ -68,10 +68,7 @@ fn several_attributes_parse() {
     let lua = Lua::new();
     let mut got = parse_contact(&lua, "Air Defence;Tanks;");
     got.sort_by_key(|(a, _)| format!("{a:?}"));
-    assert_eq!(
-        got,
-        vec![(Attribute::AirDefence, true), (Attribute::Tanks, true)]
-    );
+    assert_eq!(got, vec![(Attribute::AirDefence, true), (Attribute::Tanks, true)]);
 }
 
 #[test]

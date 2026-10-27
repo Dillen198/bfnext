@@ -11,8 +11,8 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
-use crate::object::DcsOidExt;
 use super::{as_tbl, object::Object};
+use crate::object::DcsOidExt;
 use crate::{
     object::{DcsObject, DcsOid},
     wrapped_table, LuaEnv, LuaVec3, MizLua,
@@ -79,20 +79,13 @@ impl DcsObject for Spot {
         let t = lua.inner().create_table()?;
         t.set_metatable(Some(lua.inner().globals().raw_get(&**id.class)?));
         t.raw_set("id_", id.id)?;
-        let t = Self {
-            t,
-            lua: lua.inner().clone(),
-        };
+        let t = Self { t, lua: lua.inner().clone() };
         Ok(t)
     }
 
     fn get_instance_dyn<T>(lua: MizLua, id: &DcsOid<T>) -> Result<Self> {
         id.check_implements(lua, "Spot")?;
-        let id = DcsOid {
-            id: id.id,
-            class: id.class.clone(),
-            t: PhantomData,
-        };
+        let id = DcsOid { id: id.id, class: id.class.clone(), t: PhantomData };
         Self::get_instance(lua, &id)
     }
 

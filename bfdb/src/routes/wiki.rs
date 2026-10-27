@@ -5,16 +5,22 @@ use crate::*;
 /// GET /api/wiki/pages  — list all pages (slug/title/section/order only, no
 /// content) for building the sidebar. Public -- reading the wiki needs no
 /// login, only editing does.
-pub(crate) async fn api_wiki_list(db: StatsDb, q: Q) -> std::result::Result<impl warp::Reply, Error> {
+pub(crate) async fn api_wiki_list(
+    db: StatsDb,
+    q: Q,
+) -> std::result::Result<impl warp::Reply, Error> {
     let pages = task::block_in_place(|| db.wiki_list_pages())?;
-    let entries: Vec<_> = pages.iter().map(|(slug, p)| {
-        serde_json::json!({
-            "slug": slug,
-            "title": p.title,
-            "section": p.section,
-            "order": p.order,
+    let entries: Vec<_> = pages
+        .iter()
+        .map(|(slug, p)| {
+            serde_json::json!({
+                "slug": slug,
+                "title": p.title,
+                "section": p.section,
+                "order": p.order,
+            })
         })
-    }).collect();
+        .collect();
     Ok(paged_response(page_json(entries, &q, WIKI_LIST_CAP)?))
 }
 
@@ -27,7 +33,9 @@ pub(crate) fn valid_wiki_slug(slug: &str) -> bool {
         && slug.split('/').all(|seg| {
             !seg.is_empty()
                 && seg.chars().any(|c| c != '.')
-                && seg.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+                && seg
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
         })
 }
 
@@ -255,8 +263,11 @@ pub(crate) async fn api_admin_news_regenerate_image(
         return Err(websec::bad_request("day must be YYYY-MM-DD").into());
     }
     let (rid, digest) = task::block_in_place(|| -> Result<_> {
-        let rid = news_round(&db, &inst)?.ok_or_else(|| websec::not_found("no round for this instance"))?;
-        let d = db.news_get(rid, &day)?.ok_or_else(|| websec::not_found("no dispatch for that day"))?;
+        let rid = news_round(&db, &inst)?
+            .ok_or_else(|| websec::not_found("no round for this instance"))?;
+        let d = db
+            .news_get(rid, &day)?
+            .ok_or_else(|| websec::not_found("no dispatch for that day"))?;
         if let Some(why) = news_image::capped(&db, &cfg, &inst.id)? {
             return Err(websec::too_many(why));
         }
@@ -273,12 +284,23 @@ pub(crate) async fn api_admin_news_regenerate_image(
     let inst_id = inst.id.clone();
     let day2 = day.clone();
     tokio::task::spawn_blocking(move || {
-        match news_image::illustrate(&db, &inst_cfg, rid, &digest, &cfg, news_image::Draw::Forced) {
+        match news_image::illustrate(
+            &db,
+            &inst_cfg,
+            rid,
+            &digest,
+            &cfg,
+            news_image::Draw::Forced,
+        ) {
             Ok(news_image::Outcome::Stored { version }) => {
-                log::info!("ADMIN: [{inst_id}] news image for {day2} regenerated (v{version})")
+                log::info!(
+                    "ADMIN: [{inst_id}] news image for {day2} regenerated (v{version})"
+                )
             }
             Ok(other) => {
-                log::warn!("ADMIN: [{inst_id}] news image for {day2} not regenerated: {other:?}")
+                log::warn!(
+                    "ADMIN: [{inst_id}] news image for {day2} not regenerated: {other:?}"
+                )
             }
             Err(e) => log::warn!("ADMIN: [{inst_id}] news image for {day2}: {e}"),
         }
@@ -309,18 +331,23 @@ pub(crate) async fn api_admin_news_regenerate_image(
 /// for what that means it may and may not contain. An instance with no
 /// `engine_config` configured returns an empty fact set rather than an error,
 /// so placeholders fall back to the defaults written into the page.
-pub(crate) async fn api_wiki_facts(_db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
+pub(crate) async fn api_wiki_facts(
+    _db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
     let mut facts = serde_json::Map::new();
     let mut source: Option<chrono::DateTime<chrono::Utc>> = None;
     if let Some(path) = inst.cfg.engine_config.clone() {
-        let read = task::block_in_place(|| -> Option<(std::string::String, Option<chrono::DateTime<chrono::Utc>>)> {
-            let text = std::fs::read_to_string(&path).ok()?;
-            let mtime = std::fs::metadata(&path)
-                .and_then(|m| m.modified())
-                .ok()
-                .map(chrono::DateTime::<chrono::Utc>::from);
-            Some((text, mtime))
-        });
+        let read = task::block_in_place(
+            || -> Option<(std::string::String, Option<chrono::DateTime<chrono::Utc>>)> {
+                let text = std::fs::read_to_string(&path).ok()?;
+                let mtime = std::fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .map(chrono::DateTime::<chrono::Utc>::from);
+                Some((text, mtime))
+            },
+        );
         match read {
             None => log::warn!(
                 "wiki facts: cannot read engine config {:?} for instance {}",
@@ -370,9 +397,9 @@ pub(crate) async fn api_wiki_facts(_db: StatsDb, inst: Inst) -> std::result::Res
 
 #[derive(Deserialize)]
 pub(crate) struct SaveWikiPageBody {
-    pub(crate) title:   std::string::String,
+    pub(crate) title: std::string::String,
     pub(crate) section: std::string::String,
-    pub(crate) order:   i32,
+    pub(crate) order: i32,
     pub(crate) content: std::string::String,
 }
 
@@ -392,10 +419,10 @@ pub(crate) async fn api_wiki_save(
         .into());
     }
     let page = WikiPage {
-        title:      body.title,
-        section:    body.section,
-        order:      body.order,
-        content:    body.content,
+        title: body.title,
+        section: body.section,
+        order: body.order,
+        content: body.content,
         updated_at: chrono::Utc::now(),
         updated_by: session.discord_id.clone(),
     };

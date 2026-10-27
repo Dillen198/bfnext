@@ -31,11 +31,11 @@
 //! intercept vectoring after a commit, coalition-wide group naming, and ID
 //! ripening (bogey → bandit → hostile).
 
-use crate::worker::host::EngineHost;
 use crate::voice::{radios_from, srs, stt, tts, FreqSpec, Radio};
+use crate::worker::host::EngineHost;
 use bfprotocols::gci::{
-    reporting_name, tidy_type, GciAspect, GciBuddySpike, GciContact, GciControlPicture, GciFlight,
-    GciRef, GciSamThreat, GciUnits,
+    reporting_name, tidy_type, GciAspect, GciBuddySpike, GciContact, GciControlPicture,
+    GciFlight, GciRef, GciSamThreat, GciUnits,
 };
 use dcso3::coalition::Side;
 use serde::Deserialize;
@@ -292,7 +292,9 @@ impl GciConfig {
         n.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("bullseye")
     }
     fn default_reference(&self) -> GciRef {
-        if self.reference.eq_ignore_ascii_case("bullseye") || self.reference.eq_ignore_ascii_case("bulls") {
+        if self.reference.eq_ignore_ascii_case("bullseye")
+            || self.reference.eq_ignore_ascii_case("bulls")
+        {
             GciRef::Bullseye
         } else {
             GciRef::Braa
@@ -409,7 +411,8 @@ pub(crate) async fn run(
     } else {
         (None, None)
     };
-    let (commit_tx, mut commit_rx) = tokio::sync::mpsc::unbounded_channel::<(Side, String)>();
+    let (commit_tx, mut commit_rx) =
+        tokio::sync::mpsc::unbounded_channel::<(Side, String)>();
     if stt.is_none() {
         log::info!(
             "gci: speech recognition disabled (set whisperExe + whisperModel to let players call '{}' / '{}'); outbound calls still work",
@@ -482,7 +485,8 @@ pub(crate) async fn run(
             }
             let be = picture.bullseye;
             let named = name_side_groups(&picture);
-            let seen: Vec<&str> = picture.flights.iter().map(|f| f.ucid.as_str()).collect();
+            let seen: Vec<&str> =
+                picture.flights.iter().map(|f| f.ucid.as_str()).collect();
             total_flights += picture.flights.len();
             let mut nonurgent_this_side = 0u8;
             for flight in &picture.flights {
@@ -491,12 +495,14 @@ pub(crate) async fn run(
                     let summary = flight
                         .contacts
                         .iter()
-                        .map(|c| format!(
-                            "{}nm {}x {}",
-                            c.rng_m / 1852,
-                            c.group_size,
-                            c.type_name.as_deref().unwrap_or("unknown-type")
-                        ))
+                        .map(|c| {
+                            format!(
+                                "{}nm {}x {}",
+                                c.rng_m / 1852,
+                                c.group_size,
+                                c.type_name.as_deref().unwrap_or("unknown-type")
+                            )
+                        })
                         .collect::<Vec<_>>()
                         .join(", ");
                     // Compare on what the picture *is*, not on the ranges --
@@ -505,11 +511,13 @@ pub(crate) async fn run(
                     let shape = flight
                         .contacts
                         .iter()
-                        .map(|c| format!(
-                            "{}x{}",
-                            c.group_size,
-                            c.type_name.as_deref().unwrap_or("unknown-type")
-                        ))
+                        .map(|c| {
+                            format!(
+                                "{}x{}",
+                                c.group_size,
+                                c.type_name.as_deref().unwrap_or("unknown-type")
+                            )
+                        })
                         .collect::<Vec<_>>()
                         .join(",");
                     let changed = last_seen_log
@@ -785,7 +793,11 @@ fn coalition_calls(
         match picture.bullseye {
             Some((blat, blon)) => {
                 let (b, d) = bearing_range(blat, blon, lat, lon);
-                format!("{bname} {} {}", digit_string(b as u16), range_phrase(d as u32, units))
+                format!(
+                    "{bname} {} {}",
+                    digit_string(b as u16),
+                    range_phrase(d as u32, units)
+                )
             }
             None => format!("{bname} unknown"),
         }
@@ -793,7 +805,10 @@ fn coalition_calls(
 
     // TUMBLEWEED — radar net just went down.
     if cfg.tumbleweed_calls && ss.initialized {
-        if ss.radar_up && !picture.radar_up && tick.wrapping_sub(ss.last_tumbleweed_tick) > 24 {
+        if ss.radar_up
+            && !picture.radar_up
+            && tick.wrapping_sub(ss.last_tumbleweed_tick) > 24
+        {
             ss.last_tumbleweed_tick = tick;
             out.push((false, format!("all players, {ctrl}, tumbleweed, negative radar")));
         }
@@ -806,7 +821,13 @@ fn coalition_calls(
         for (elat, elon) in &picture.ejections {
             let k = ((elat * 50.0) as i64, (elon * 50.0) as i64);
             if ss.ejections.insert(k, tick).is_none() {
-                out.push((false, format!("all players, {ctrl}, chute observed, {}", bulls(*elat, *elon))));
+                out.push((
+                    false,
+                    format!(
+                        "all players, {ctrl}, chute observed, {}",
+                        bulls(*elat, *elon)
+                    ),
+                ));
             }
         }
     }
@@ -821,7 +842,11 @@ fn coalition_calls(
             let mut s = format!("all players, {ctrl}, support.");
             for a in picture.support.iter().take(3) {
                 let cs = a.callsign.as_deref().unwrap_or_else(|| {
-                    if a.kind == "tanker" { "tanker" } else { "AWACS" }
+                    if a.kind == "tanker" {
+                        "tanker"
+                    } else {
+                        "AWACS"
+                    }
                 });
                 s.push_str(&format!(
                     " {}, {}, {}.",
@@ -900,7 +925,8 @@ fn name_side_groups(picture: &GciControlPicture) -> Vec<NamedGroup> {
         })
         .collect();
     // Name along the dominant separation axis.
-    let (mut min_la, mut max_la, mut min_lo, mut max_lo) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
+    let (mut min_la, mut max_la, mut min_lo, mut max_lo) =
+        (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
     for c in &cents {
         min_la = min_la.min(c.0);
         max_la = max_la.max(c.0);
@@ -1022,10 +1048,12 @@ fn decide(
                 let went_cold = t.threat
                     && c.aspect == GciAspect::Cold
                     && t.aspect != GciAspect::Cold;
-                let fillin_changed = t.size >= 1 && c.group_size >= 2 && c.group_size != t.size;
+                let fillin_changed =
+                    t.size >= 1 && c.group_size >= 2 && c.group_size != t.size;
                 // "bogey" that has now ripened to "bandit" — re-declare once.
-                let ripened = Maturity::from_secs(tick.wrapping_sub(t.first_tick).saturating_sub(1) * poll)
-                    == Maturity::Bogey
+                let ripened = Maturity::from_secs(
+                    tick.wrapping_sub(t.first_tick).saturating_sub(1) * poll,
+                ) == Maturity::Bogey
                     && mat != Maturity::Bogey;
                 if now_threat && !t.threat {
                     consider(
@@ -1082,7 +1110,11 @@ fn decide(
         let fresh = !pg.launches.contains_key(&lkey);
         pg.launches.insert(lkey, tick);
         if fresh {
-            consider(&mut best, Prio::SamLaunch, sam_launch_call(controller, who, s, &rc));
+            consider(
+                &mut best,
+                Prio::SamLaunch,
+                sam_launch_call(controller, who, s, &rc),
+            );
         }
     }
 
@@ -1112,7 +1144,8 @@ fn decide(
 
     // SPLIT / CONVERGING (clustered-contact count changed).
     let n_now = flight.contacts.len();
-    if best.is_none() && pg.prev_contacts >= 1 && n_now >= 1 && n_now != pg.prev_contacts {
+    if best.is_none() && pg.prev_contacts >= 1 && n_now >= 1 && n_now != pg.prev_contacts
+    {
         if n_now > pg.prev_contacts {
             consider(
                 &mut best,
@@ -1138,14 +1171,19 @@ fn decide(
     if let Some(mut ic) = pg.intercept.take() {
         let target = flight.contacts.iter().find(|c| {
             let k = group_key(c);
-            (k.0 as i32 - ic.key.0 as i32).abs() <= 1 && (k.1 as i32 - ic.key.1 as i32).abs() <= 3
+            (k.0 as i32 - ic.key.0 as i32).abs() <= 1
+                && (k.1 as i32 - ic.key.1 as i32).abs() <= 3
         });
         match target {
             None => {
                 consider(
                     &mut best,
                     Prio::Vector,
-                    format!("{}, {}, clean, resume CAP", spoken_callsign(who), controller),
+                    format!(
+                        "{}, {}, clean, resume CAP",
+                        spoken_callsign(who),
+                        controller
+                    ),
                 );
                 // intercept ends (ic dropped)
             }
@@ -1162,14 +1200,16 @@ fn decide(
                 consider(
                     &mut best,
                     Prio::Vector,
-                    format!("{}, {}, clean, resume CAP", spoken_callsign(who), controller),
+                    format!(
+                        "{}, {}, clean, resume CAP",
+                        spoken_callsign(who),
+                        controller
+                    ),
                 );
             }
             Some(c) => {
                 ic.key = group_key(c);
-                let due = ic
-                    .last_vector
-                    .map_or(true, |t| t.elapsed().as_secs() >= 10);
+                let due = ic.last_vector.map_or(true, |t| t.elapsed().as_secs() >= 10);
                 if due {
                     if let Some(dh) = intercept_heading(flight, c) {
                         ic.last_vector = Some(Instant::now());
@@ -1237,7 +1277,11 @@ fn decide(
         pg.last_tx = Some(Instant::now());
         return Some((
             true,
-            format!("{}, {}, you are being jammed, comms degraded", spoken_callsign(who), controller),
+            format!(
+                "{}, {}, you are being jammed, comms degraded",
+                spoken_callsign(who),
+                controller
+            ),
         ));
     }
     if let Some((key, shot, mut text)) = buddy {
@@ -1468,7 +1512,9 @@ fn range_phrase(m: u32, units: GciUnits) -> String {
             let n = nm(m);
             format!("{n} mile{}", if n == 1 { "" } else { "s" })
         }
-        GciUnits::Metric => format!("{} kilometers", ((m as f64) / 1000.0).round().max(1.0) as u32),
+        GciUnits::Metric => {
+            format!("{} kilometers", ((m as f64) / 1000.0).round().max(1.0) as u32)
+        }
     }
 }
 
@@ -1513,7 +1559,8 @@ impl RCtx<'_> {
         if self.groups.is_empty() {
             return None;
         }
-        let (glat, glon) = project(self.flight.lat, self.flight.lon, brg as f64, rng_m as f64);
+        let (glat, glon) =
+            project(self.flight.lat, self.flight.lon, brg as f64, rng_m as f64);
         self.groups
             .iter()
             .map(|g| {
@@ -1543,8 +1590,12 @@ impl RCtx<'_> {
         match self.refm {
             GciRef::Bullseye => {
                 if let Some(b) = self.be {
-                    let (glat, glon) =
-                        project(self.flight.lat, self.flight.lon, brg as f64, rng_m as f64);
+                    let (glat, glon) = project(
+                        self.flight.lat,
+                        self.flight.lon,
+                        brg as f64,
+                        rng_m as f64,
+                    );
                     let (bbrg, bdist) = bearing_range(b.0, b.1, glat, glon);
                     return format!(
                         "{} {} {}",
@@ -1703,7 +1754,12 @@ fn faded_call(callsign: &str, t: &Tracked, rc: &RCtx) -> String {
 }
 
 /// SAM launch — an enemy SAM missile is in the air near this flight.
-fn sam_launch_call(controller: &str, callsign: &str, s: &GciSamThreat, rc: &RCtx) -> String {
+fn sam_launch_call(
+    controller: &str,
+    callsign: &str,
+    s: &GciSamThreat,
+    rc: &RCtx,
+) -> String {
     format!(
         "{}, {}, S-A-M launch, {}, defend, defend",
         spoken_callsign(callsign),
@@ -1899,16 +1955,28 @@ struct QueuedCall {
 
 /// Each running instance's GCI call queue, so a human controller on the
 /// dashboard can transmit through the same voice (`human_call`).
-static HUMAN_TX: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<std::string::String, mpsc::Sender<QueuedCall>>>> =
-    std::sync::LazyLock::new(Default::default);
+static HUMAN_TX: std::sync::LazyLock<
+    std::sync::Mutex<
+        std::collections::HashMap<std::string::String, mpsc::Sender<QueuedCall>>,
+    >,
+> = std::sync::LazyLock::new(Default::default);
 
 /// Speak `text` on `side`'s GCI frequency on `instance`, ahead of the
 /// automatic calls. Errs when GCI voice isn't running there or is backed up.
-pub(crate) fn human_call(instance: &str, side: Side, text: &str) -> Result<(), &'static str> {
+pub(crate) fn human_call(
+    instance: &str,
+    side: Side,
+    text: &str,
+) -> Result<(), &'static str> {
     let g = HUMAN_TX.lock().unwrap();
     let tx = g.get(instance).ok_or("GCI voice is not running on this server")?;
-    tx.try_send(QueuedCall { queued: Instant::now(), side, urgent: true, text: text.into() })
-        .map_err(|_| "the GCI radio is busy -- try again in a moment")
+    tx.try_send(QueuedCall {
+        queued: Instant::now(),
+        side,
+        urgent: true,
+        text: text.into(),
+    })
+    .map_err(|_| "the GCI radio is busy -- try again in a moment")
 }
 
 /// The two persistent SRS clients plus a per-side TTS engine (so red can use a
@@ -1974,7 +2042,9 @@ impl DiscordRoute {
     fn log(&self) {
         match (&self.blue, &self.red) {
             (None, None) => {}
-            (b, r) if b == r => log::info!("gci: Discord transcript enabled (one channel)"),
+            (b, r) if b == r => {
+                log::info!("gci: Discord transcript enabled (one channel)")
+            }
             (Some(_), Some(_)) => {
                 log::info!("gci: Discord transcript enabled (separate blue/red channels)")
             }
@@ -2002,7 +2072,9 @@ async fn post_discord(
         "content": format!("{prefix}{tag} {text}"),
         "allowed_mentions": { "parse": [] }
     });
-    match tokio::time::timeout(Duration::from_secs(5), http.post(url).json(&body).send()).await {
+    match tokio::time::timeout(Duration::from_secs(5), http.post(url).json(&body).send())
+        .await
+    {
         Ok(Ok(r)) if r.status().is_success() || r.status().as_u16() == 204 => {}
         Ok(Ok(r)) => log::debug!("gci: Discord webhook returned {}", r.status()),
         Ok(Err(e)) => log::debug!("gci: Discord webhook error: {e}"),
@@ -2013,9 +2085,7 @@ async fn post_discord(
 /// Treat an empty string in an optional path field as "not set" — JSON
 /// `""` deserializes to `Some(PathBuf::new())`, not `None`.
 fn nonempty_path(p: &Option<PathBuf>) -> Option<PathBuf> {
-    p.as_ref()
-        .filter(|p| !p.as_os_str().is_empty())
-        .map(|p| p.to_path_buf())
+    p.as_ref().filter(|p| !p.as_os_str().is_empty()).map(|p| p.to_path_buf())
 }
 
 fn build_voice(
@@ -2033,11 +2103,7 @@ fn build_voice(
     };
     let tts_blue = side_tts(&cfg.blue_piper_model, &cfg.blue_tts_voice);
     let tts_red = side_tts(&cfg.red_piper_model, &cfg.red_tts_voice);
-    log::info!(
-        "gci: TTS — blue: {}, red: {}",
-        tts_blue.describe(),
-        tts_red.describe()
-    );
+    log::info!("gci: TTS — blue: {}, red: {}", tts_blue.describe(), tts_red.describe());
 
     let opus_dll = nonempty_path(&cfg.opus_dll_path);
     let opus = match srs::Opus::load(opus_dll.as_deref()) {
@@ -2051,7 +2117,11 @@ fn build_voice(
         }
     };
 
-    let mk = |coalition: u8, name: &str, radios: Vec<Radio>, pw: &str| -> Option<srs::SrsClient> {
+    let mk = |coalition: u8,
+              name: &str,
+              radios: Vec<Radio>,
+              pw: &str|
+     -> Option<srs::SrsClient> {
         if radios.is_empty() {
             log::error!(
                 "gci: no frequency configured for '{name}' — set freqs (or the legacy freqMhz) in gci.json; this side will not transmit"
@@ -2142,7 +2212,8 @@ async fn transmit_worker(
         // Global inter-call gap: hold the frequency quiet for a while between
         // GCI transmissions so players can make their own calls. Urgent calls
         // (threat / SAM) wait half as long.
-        let gap = Duration::from_secs(if call.urgent { gap_secs.max(1) / 2 } else { gap_secs });
+        let gap =
+            Duration::from_secs(if call.urgent { gap_secs.max(1) / 2 } else { gap_secs });
         if let Some(end) = last_tx_end {
             let since = end.elapsed();
             if since < gap {
@@ -2213,11 +2284,8 @@ async fn stt_worker(
     mut rx: tokio::sync::mpsc::UnboundedReceiver<srs::Transmission>,
 ) {
     while let Some(mut tr) = rx.recv().await {
-        let (side, side_str) = if tr.coalition == 1 {
-            (Side::Red, "red")
-        } else {
-            (Side::Blue, "blue")
-        };
+        let (side, side_str) =
+            if tr.coalition == 1 { (Side::Red, "red") } else { (Side::Blue, "blue") };
         let wake = cfg.controller(side).to_lowercase();
         let s = stt.clone();
         // The audio moves into the blocking transcribe task; everything else
@@ -2246,7 +2314,9 @@ async fn stt_worker(
             (None, Some(stt::Reject::NotAddressed)) => {
                 // Not our callsign — someone talking to another agency, or to
                 // another player. Staying off the air is the right answer.
-                log::info!("gci[{side:?}] ignoring \"{text}\": not addressed to '{wake}'");
+                log::info!(
+                    "gci[{side:?}] ignoring \"{text}\": not addressed to '{wake}'"
+                );
                 continue;
             }
             (None, _) => {
@@ -2295,20 +2365,23 @@ async fn stt_worker(
         // A request we understood always gets an answer on the air, even when
         // we can't build the real one — an unanswered call is indistinguishable
         // from a dead system.
-        let answer = build_answer(&cfg, side, &req, flight, picture.as_ref()).unwrap_or_else(|| {
-            let ctrl = cfg.controller(side);
-            match flight {
-                Some(f) => {
-                    let w = if f.player_name.is_empty() {
-                        &f.callsign
-                    } else {
-                        &f.player_name
-                    };
-                    format!("{}, {ctrl}, unable", spoken_callsign(w))
+        let answer = build_answer(&cfg, side, &req, flight, picture.as_ref())
+            .unwrap_or_else(|| {
+                let ctrl = cfg.controller(side);
+                match flight {
+                    Some(f) => {
+                        let w = if f.player_name.is_empty() {
+                            &f.callsign
+                        } else {
+                            &f.player_name
+                        };
+                        format!("{}, {ctrl}, unable", spoken_callsign(w))
+                    }
+                    None => format!(
+                        "station calling {ctrl}, no radar contact, say your position"
+                    ),
                 }
-                None => format!("station calling {ctrl}, no radar contact, say your position"),
-            }
-        });
+            });
         log::info!("gci[{side:?}] answering {req:?}: {answer}");
         let _ = tx.try_send(QueuedCall {
             queued: Instant::now(),
@@ -2404,10 +2477,7 @@ fn spoken_callsign_in(heard: &str, f: &GciFlight) -> bool {
 /// so a shared significant word counts as a match too.
 fn name_matches(srs_name: &str, f: &GciFlight) -> bool {
     let norm = |s: &str| {
-        s.chars()
-            .filter(|c| c.is_alphanumeric())
-            .collect::<String>()
-            .to_lowercase()
+        s.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase()
     };
     // Words of 4+ letters, ignoring the clan tags and squadron numbers that
     // tend to differ between the two names.
@@ -2524,7 +2594,8 @@ fn build_answer(
             // hostile tracks, so: hostile if a group is near, else clean.
             let near = match (be_point, picture.and_then(|p| p.bullseye)) {
                 (Some((pb, pr)), Some(b)) => {
-                    let (plat, plon) = project(b.0, b.1, *pb as f64, (*pr as f64) * 1852.0);
+                    let (plat, plon) =
+                        project(b.0, b.1, *pb as f64, (*pr as f64) * 1852.0);
                     f.contacts.iter().any(|c| {
                         let (glat, glon) =
                             project(f.lat, f.lon, c.brg as f64, c.rng_m as f64);
@@ -2535,11 +2606,7 @@ fn build_answer(
                 _ => !f.contacts.is_empty(),
             };
             let _ = units;
-            Some(format!(
-                "{}, {}",
-                addr(who),
-                if near { "hostile" } else { "clean" }
-            ))
+            Some(format!("{}, {}", addr(who), if near { "hostile" } else { "clean" }))
         }
     }
 }
@@ -2556,9 +2623,13 @@ mod tests {
     #[test]
     fn sample_config_parses() {
         let raw = include_str!("../../gci.sample.json");
-        let cfg: GciConfig = serde_json::from_str(raw).expect("gci.sample.json must parse");
+        let cfg: GciConfig =
+            serde_json::from_str(raw).expect("gci.sample.json must parse");
         assert_eq!(cfg.blue_freqs.len(), 3, "sample should show the multi-band form");
-        assert!(cfg.blue_freqs.iter().any(|f| f.mhz < 108.0), "sample should include an FM net");
+        assert!(
+            cfg.blue_freqs.iter().any(|f| f.mhz < 108.0),
+            "sample should include an FM net"
+        );
         let atc = cfg.atc.expect("sample should carry an atc block");
         assert!(atc.tower_base_mhz > 0.0);
         assert!(

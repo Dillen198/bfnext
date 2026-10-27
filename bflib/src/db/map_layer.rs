@@ -36,19 +36,22 @@ for more details.
 use super::{
     group::DeployKind,
     intel::{IntelContact, IntelDatabase},
-    logistics::{AirLogisticsRoute, ConvoyId, LogiRouteId, SeaLogisticsRoute, SupplyConvoy},
+    logistics::{
+        AirLogisticsRoute, ConvoyId, LogiRouteId, SeaLogisticsRoute, SupplyConvoy,
+    },
     persisted::Persisted,
     tasks::TaskId,
 };
-use bfprotocols::db::objective::ObjectiveId;
 use bfprotocols::db::group::GroupId;
+use bfprotocols::db::objective::ObjectiveId;
 use chrono::{DateTime, Duration, Utc};
 use compact_str::format_compact;
 use dcso3::{
     Color, LuaVec3, Vector2, Vector3,
     coalition::Side,
     trigger::{
-        ArrowSpec, CircleSpec, LineSpec, LineType, MarkId, QuadSpec, RectSpec, SideFilter, TextSpec,
+        ArrowSpec, CircleSpec, LineSpec, LineType, MarkId, QuadSpec, RectSpec,
+        SideFilter, TextSpec,
     },
 };
 use fxhash::{FxHashMap, FxHashSet};
@@ -81,11 +84,16 @@ fn side_filter(side: Side) -> SideFilter {
 /// Every status shape here is a single mark, so a symbol costs one MarkId
 /// however many vertices it has. Shapes are drawn on the ground, so they
 /// shrink as you zoom out and fade at theatre zoom -- that IS the declutter.
-fn poly(c: Vector2, offsets: &[(f64, f64)], outline: Color, fill: Color, to: SideFilter, msgs: &mut MsgQ) -> MarkId {
-    let points: Vec<LuaVec3> = offsets
-        .iter()
-        .map(|&(n, e)| v3(c.x + n, c.y + e))
-        .collect();
+fn poly(
+    c: Vector2,
+    offsets: &[(f64, f64)],
+    outline: Color,
+    fill: Color,
+    to: SideFilter,
+    msgs: &mut MsgQ,
+) -> MarkId {
+    let points: Vec<LuaVec3> =
+        offsets.iter().map(|&(n, e)| v3(c.x + n, c.y + e)).collect();
     let id = MarkId::new();
     msgs.freeform_to_all(
         to,
@@ -103,7 +111,16 @@ fn poly(c: Vector2, offsets: &[(f64, f64)], outline: Color, fill: Color, to: Sid
 }
 
 /// Regular n-gon; `rot_deg` turns the first vertex off north.
-fn ngon(c: Vector2, r: f64, n: usize, rot_deg: f64, outline: Color, fill: Color, to: SideFilter, msgs: &mut MsgQ) -> MarkId {
+fn ngon(
+    c: Vector2,
+    r: f64,
+    n: usize,
+    rot_deg: f64,
+    outline: Color,
+    fill: Color,
+    to: SideFilter,
+    msgs: &mut MsgQ,
+) -> MarkId {
     let mut offs: Vec<(f64, f64)> = (0..n)
         .map(|i| {
             let a = (360. * i as f64 / n as f64 + rot_deg).to_radians();
@@ -124,7 +141,15 @@ fn ngon(c: Vector2, r: f64, n: usize, rot_deg: f64, outline: Color, fill: Color,
 }
 
 /// A pointed burst: `spikes` points alternating between `r` and 0.42r.
-fn burst(c: Vector2, r: f64, spikes: usize, outline: Color, fill: Color, to: SideFilter, msgs: &mut MsgQ) -> MarkId {
+fn burst(
+    c: Vector2,
+    r: f64,
+    spikes: usize,
+    outline: Color,
+    fill: Color,
+    to: SideFilter,
+    msgs: &mut MsgQ,
+) -> MarkId {
     let offs: Vec<(f64, f64)> = (0..spikes * 2)
         .map(|i| {
             let rad = if i % 2 == 0 { r } else { r * 0.42 };
@@ -136,12 +161,25 @@ fn burst(c: Vector2, r: f64, spikes: usize, outline: Color, fill: Color, to: Sid
 }
 
 /// An arrowhead pointing along `heading_deg`, for direction of travel.
-fn chevron(c: Vector2, r: f64, heading_deg: f64, outline: Color, fill: Color, to: SideFilter, msgs: &mut MsgQ) -> MarkId {
+fn chevron(
+    c: Vector2,
+    r: f64,
+    heading_deg: f64,
+    outline: Color,
+    fill: Color,
+    to: SideFilter,
+    msgs: &mut MsgQ,
+) -> MarkId {
     let h = heading_deg.to_radians();
     let (sn, cs) = (h.sin(), h.cos());
     let body = [
-        (1.0, 0.0), (-0.2, 0.9), (-0.2, 0.35), (-1.0, 0.35),
-        (-1.0, -0.35), (-0.2, -0.35), (-0.2, -0.9),
+        (1.0, 0.0),
+        (-0.2, 0.9),
+        (-0.2, 0.35),
+        (-1.0, 0.35),
+        (-1.0, -0.35),
+        (-0.2, -0.35),
+        (-0.2, -0.9),
     ];
     let offs: Vec<(f64, f64)> = body
         .iter()
@@ -194,13 +232,15 @@ fn v3(x: f64, y: f64) -> LuaVec3 {
     LuaVec3(Vector3::new(x, 0., y))
 }
 
-
 /// Build a 2-D cardinal "box" around a midpoint to approximate a racetrack
 /// orbit.  `half_len` is the half-length along the major axis, `half_wid`
 /// the half-width.  Returns (p0, p1, p2, p3) clockwise.
-fn racetrack_quad(center: Vector2, heading_deg: f64, half_len: f64, half_wid: f64)
-    -> (Vector2, Vector2, Vector2, Vector2)
-{
+fn racetrack_quad(
+    center: Vector2,
+    heading_deg: f64,
+    half_len: f64,
+    half_wid: f64,
+) -> (Vector2, Vector2, Vector2, Vector2) {
     let hdg = heading_deg.to_radians();
     let fwd = Vector2::new(hdg.sin(), hdg.cos());
     let right = Vector2::new(hdg.cos(), -hdg.sin());
@@ -216,7 +256,12 @@ fn racetrack_quad(center: Vector2, heading_deg: f64, half_len: f64, half_wid: f6
 /// An arrow `len_m` long centred on `pos`, pointing from `from` toward `to`,
 /// as (start, end) for `ArrowSpec`. DCS draws the head at `start`, so that is
 /// the forward end.
-fn direction_arrow(pos: Vector2, from: Vector2, to: Vector2, len_m: f64) -> (Vector2, Vector2) {
+fn direction_arrow(
+    pos: Vector2,
+    from: Vector2,
+    to: Vector2,
+    len_m: f64,
+) -> (Vector2, Vector2) {
     let d = to - from;
     let n = d.norm();
     let dir = if n > 1. { d / n } else { Vector2::new(1., 0.) };
@@ -277,7 +322,13 @@ impl ConvoyMarks {
     /// Call when the convoy moves. Re-drops the pin at the new position, but
     /// only once the convoy has moved far enough to matter -- a map pin can't
     /// be repositioned in place, so each move is a delete + re-add.
-    fn on_move(&mut self, new_pos: Vector2, heading_deg: f64, side: Side, msgs: &mut MsgQ) {
+    fn on_move(
+        &mut self,
+        new_pos: Vector2,
+        heading_deg: f64,
+        side: Side,
+        msgs: &mut MsgQ,
+    ) {
         if (new_pos - self.last_pos).norm() < 3_000. {
             return;
         }
@@ -387,7 +438,6 @@ impl AirRouteMarks {
 
         Self { transit_line, orbit_rect, coverage, label }
     }
-
 }
 
 #[derive(Debug)]
@@ -555,9 +605,7 @@ impl FireOverlay {
             expires: now + Duration::seconds(FIRE_MARK_TTL),
         }
     }
-
 }
-
 
 #[derive(Debug)]
 struct CsarMarks {
@@ -666,7 +714,6 @@ impl CsarMarks {
         msgs.delete_mark(self.label);
         self.label = msgs.mark_to_side(side, pos, true, text);
     }
-
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -949,9 +996,8 @@ impl MapLayer {
         now: DateTime<Utc>,
         msgs: &mut MsgQ,
     ) {
-        let overlay = FireOverlay::new(
-            gun_pos, target_pos, radius_m, gun_count, side, now, msgs,
-        );
+        let overlay =
+            FireOverlay::new(gun_pos, target_pos, radius_m, gun_count, side, now, msgs);
         self.fire_marks.push(overlay);
     }
 
@@ -973,7 +1019,13 @@ impl MapLayer {
             old.remove(msgs);
         }
         let marks = JtacLayerMarks::new(
-            jtac_pos, target_pos, lase_range_m, side, nine_line_text, laser_code, msgs,
+            jtac_pos,
+            target_pos,
+            lase_range_m,
+            side,
+            nine_line_text,
+            laser_code,
+            msgs,
         );
         self.jtac_marks.insert(gid, marks);
     }
@@ -1035,7 +1087,7 @@ impl MapLayer {
             rect,
             RectSpec {
                 start: v3(target_pos.x - h, target_pos.y - h),
-                end:   v3(target_pos.x + h, target_pos.y + h),
+                end: v3(target_pos.x + h, target_pos.y + h),
                 color: col,
                 fill_color: Color::new(1., 1., 0., 0.04),
                 line_type: LineType::Dotted,
@@ -1085,7 +1137,8 @@ impl MapLayer {
             msgs.delete_mark(id);
         }
         let moved = (contact.pos - contact.mark_pos).norm() > INTEL_PIN_MOVE_M;
-        let faded = (contact.confidence - contact.mark_confidence).abs() > INTEL_PIN_CONF_STEP;
+        let faded =
+            (contact.confidence - contact.mark_confidence).abs() > INTEL_PIN_CONF_STEP;
         if contact.map_mark_label.is_some() && !moved && !faded {
             return;
         }
@@ -1114,7 +1167,6 @@ impl MapLayer {
             msgs.delete_mark(id);
         }
     }
-
 
     /// "ENEMY CONTACT" label at an objective that just became threatened.
     /// Previously also drew a fixed-bearing "axis of advance" arrow into the
@@ -1169,8 +1221,6 @@ impl MapLayer {
         );
         self.timed_marks.push(TimedMark::one(ring, ttl_secs, now));
     }
-
-
 
     /// "X captured by Y" pin at a freshly captured objective.
     ///
@@ -1370,8 +1420,7 @@ impl MapLayer {
                     .unwrap_or("unknown")
             );
             // Use 0 coverage for cargo aircraft (not AWACS)
-            let marks =
-                AirRouteMarks::new(origin_pos, dst_pos, side, 0., label, msgs);
+            let marks = AirRouteMarks::new(origin_pos, dst_pos, side, 0., label, msgs);
             self.air_route_marks.insert(id.clone(), marks);
         }
 
@@ -1466,11 +1515,8 @@ impl MapLayer {
             };
             live_pilots.insert(*gid);
 
-            let spawn_time = persisted
-                .downed_pilot_spawn_times
-                .get(gid)
-                .copied()
-                .unwrap_or(now);
+            let spawn_time =
+                persisted.downed_pilot_spawn_times.get(gid).copied().unwrap_or(now);
             let elapsed_secs = (now - spawn_time).num_seconds().max(0);
 
             let (label, urgency) = if capture_secs > 0 {
@@ -1488,11 +1534,8 @@ impl MapLayer {
                 } else {
                     UrgencyLevel::Low
                 };
-                let lbl = format_compact!(
-                    "CSAR\n{}\nCapture in ~{}m",
-                    name,
-                    remaining_mins
-                );
+                let lbl =
+                    format_compact!("CSAR\n{}\nCapture in ~{}m", name, remaining_mins);
                 (lbl, urgency)
             } else {
                 (format_compact!("CSAR\n{}\nAwaiting rescue", name), UrgencyLevel::Low)
@@ -1501,7 +1544,9 @@ impl MapLayer {
             // Position of the downed pilot: first unit of the group, O(1).
             // Hoisted out of the else-branch because the update path now
             // needs it too -- a pin has to be re-dropped to change its text.
-            let pos = group.units.into_iter()
+            let pos = group
+                .units
+                .into_iter()
                 .next()
                 .and_then(|uid| persisted.units.get(uid))
                 .map(|u| u.pos)
@@ -1616,4 +1661,3 @@ impl MapLayer {
         }
     }
 }
-

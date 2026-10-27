@@ -28,7 +28,9 @@
 
 use super::{discord, forms, sheets};
 use anyhow::{anyhow, Result};
-use bfprotocols::range::{BombQuality, PrecisionQuality, RangeRecord, RangeResult, StrafeQuality};
+use bfprotocols::range::{
+    BombQuality, PrecisionQuality, RangeRecord, RangeResult, StrafeQuality,
+};
 use resvg::{tiny_skia, usvg, usvg::fontdb};
 use std::{
     fmt::Write,
@@ -170,7 +172,16 @@ impl Svg {
         );
     }
 
-    pub(crate) fn rect(&mut self, x: f64, y: f64, w: f64, h: f64, fill: &str, stroke: Option<(&str, f64)>, rx: f64) {
+    pub(crate) fn rect(
+        &mut self,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        fill: &str,
+        stroke: Option<(&str, f64)>,
+        rx: f64,
+    ) {
         let st = stroke
             .map(|(c, w)| format!(r#" stroke="{c}" stroke-width="{w}""#))
             .unwrap_or_default();
@@ -184,7 +195,16 @@ impl Svg {
         );
     }
 
-    pub(crate) fn line(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, stroke: &str, w: f64, dash: Option<&str>) {
+    pub(crate) fn line(
+        &mut self,
+        x1: f64,
+        y1: f64,
+        x2: f64,
+        y2: f64,
+        stroke: &str,
+        w: f64,
+        dash: Option<&str>,
+    ) {
         let d = dash.map(|d| format!(r#" stroke-dasharray="{d}""#)).unwrap_or_default();
         let _ = write!(
             self.b,
@@ -196,7 +216,14 @@ impl Svg {
         );
     }
 
-    pub(crate) fn polyline(&mut self, pts: &[(f64, f64)], stroke: &str, w: f64, dash: Option<&str>, clip: Option<&str>) {
+    pub(crate) fn polyline(
+        &mut self,
+        pts: &[(f64, f64)],
+        stroke: &str,
+        w: f64,
+        dash: Option<&str>,
+        clip: Option<&str>,
+    ) {
         if pts.len() < 2 {
             return;
         }
@@ -213,7 +240,13 @@ impl Svg {
         );
     }
 
-    pub(crate) fn polygon(&mut self, pts: &[(f64, f64)], fill: &str, stroke: Option<(&str, f64)>, clip: Option<&str>) {
+    pub(crate) fn polygon(
+        &mut self,
+        pts: &[(f64, f64)],
+        fill: &str,
+        stroke: Option<(&str, f64)>,
+        clip: Option<&str>,
+    ) {
         let mut p = String::new();
         for (x, y) in pts {
             let _ = write!(p, "{:.1},{:.1} ", n(*x), n(*y));
@@ -222,10 +255,22 @@ impl Svg {
             .map(|(c, w)| format!(r#" stroke="{c}" stroke-width="{w}""#))
             .unwrap_or_default();
         let c = clip.map(|c| format!(r#" clip-path="url(#{c})""#)).unwrap_or_default();
-        let _ = write!(self.b, r#"<polygon points="{}" fill="{fill}"{st}{c}/>"#, p.trim_end());
+        let _ = write!(
+            self.b,
+            r#"<polygon points="{}" fill="{fill}"{st}{c}/>"#,
+            p.trim_end()
+        );
     }
 
-    pub(crate) fn circle(&mut self, cx: f64, cy: f64, r: f64, fill: &str, stroke: Option<(&str, f64)>, dash: Option<&str>) {
+    pub(crate) fn circle(
+        &mut self,
+        cx: f64,
+        cy: f64,
+        r: f64,
+        fill: &str,
+        stroke: Option<(&str, f64)>,
+        dash: Option<&str>,
+    ) {
         let st = stroke
             .map(|(c, w)| format!(r#" stroke="{c}" stroke-width="{w}""#))
             .unwrap_or_default();
@@ -239,7 +284,16 @@ impl Svg {
         );
     }
 
-    pub(crate) fn text(&mut self, x: f64, y: f64, s: &str, size: f64, fill: &str, anchor: Anchor, bold: bool) {
+    pub(crate) fn text(
+        &mut self,
+        x: f64,
+        y: f64,
+        s: &str,
+        size: f64,
+        fill: &str,
+        anchor: Anchor,
+        bold: bool,
+    ) {
         let a = match anchor {
             Anchor::Start => "start",
             Anchor::Middle => "middle",
@@ -256,7 +310,15 @@ impl Svg {
     }
 
     /// An arrow from (x1,y1) to (x2,y2) with a head at the end.
-    pub(crate) fn arrow(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, stroke: &str, w: f64) {
+    pub(crate) fn arrow(
+        &mut self,
+        x1: f64,
+        y1: f64,
+        x2: f64,
+        y2: f64,
+        stroke: &str,
+        w: f64,
+    ) {
         self.line(x1, y1, x2, y2, stroke, w, None);
         let a = (y2 - y1).atan2(x2 - x1);
         let hl = 6. + w * 2.;
@@ -272,7 +334,6 @@ impl Svg {
 }
 
 // ── shared bits ────────────────────────────────────────────────────────
-
 
 pub(crate) fn bomb_color(q: BombQuality) -> &'static str {
     match q {
@@ -365,7 +426,14 @@ pub(crate) fn render_svg(rec: &RangeRecord) -> String {
         RangeResult::Bomb(b) => forms::bomb_form(rec, b),
         RangeResult::FieldLanding(f) => forms::field_form(rec, f),
         // every other discipline: its own form on the shared layout
-        _ => sheets::sheet(rec).unwrap_or_else(|| forms::frame(generic_card(rec), rec, "TRAINING EVENT RECORD", "VSR FORM 11-1 (REV 10-26)")),
+        _ => sheets::sheet(rec).unwrap_or_else(|| {
+            forms::frame(
+                generic_card(rec),
+                rec,
+                "TRAINING EVENT RECORD",
+                "VSR FORM 11-1 (REV 10-26)",
+            )
+        }),
     }
 }
 
@@ -374,7 +442,15 @@ pub(crate) fn unknown_svg(pilot: &str, unit_type: &str, kind: &str, ts: &str) ->
     let mut s = Svg::new(800., 220.);
     s.text(24., 48., &format!("Range result: {kind}"), 26., TEXT, Anchor::Start, true);
     s.text(24., 84., &format!("{pilot} | {unit_type}"), 17., MUTED, Anchor::Start, false);
-    s.text(24., 130., "This result was recorded by a newer range engine.", 15., MUTED, Anchor::Start, false);
+    s.text(
+        24.,
+        130.,
+        "This result was recorded by a newer range engine.",
+        15.,
+        MUTED,
+        Anchor::Start,
+        false,
+    );
     s.text(776., 204., ts, 13., MUTED, Anchor::End, false);
     s.finish()
 }
@@ -384,13 +460,22 @@ pub(crate) fn unknown_svg(pilot: &str, unit_type: &str, kind: &str, ts: &str) ->
 fn generic_card(rec: &RangeRecord) -> Svg {
     let fields = discord::fields(rec);
     // short fields in two columns, long ones (calls, kill lists) full width
-    let (short, long): (Vec<_>, Vec<_>) = fields.into_iter().partition(|(_, _, inline)| *inline);
+    let (short, long): (Vec<_>, Vec<_>) =
+        fields.into_iter().partition(|(_, _, inline)| *inline);
     let rows = short.len().div_ceil(2) as f64 + long.len() as f64;
     let h = (180. + rows * 30.).max(260.);
     let mut s = Svg::new(800., h);
     let (title, _) = discord::title_and_color(rec);
     s.text(24., 42., &title, 26., TEXT, Anchor::Start, true);
-    s.text(24., 72., &format!("{} | {}", rec.pilot.name, rec.unit_type), 16., MUTED, Anchor::Start, false);
+    s.text(
+        24.,
+        72.,
+        &format!("{} | {}", rec.pilot.name, rec.unit_type),
+        16.,
+        MUTED,
+        Anchor::Start,
+        false,
+    );
     s.text(24., 104., &trunc(&rec.headline(), 90), 15., TEXT, Anchor::Start, false);
     let clean = |v: &str| v.replace("**", "").replace('\n', "  ·  ");
     for (i, (k, v, _)) in short.iter().enumerate() {
@@ -437,7 +522,12 @@ pub(crate) mod tests {
         }
         for k in 0..12 {
             let th = (k as f64 + 0.5) / 12. * std::f64::consts::PI;
-            push(900. + th.sin() * 400., -(1. - th.cos()) * 1.2 * nm / 2., 1500. - k as f64 * 40., 250.);
+            push(
+                900. + th.sin() * 400.,
+                -(1. - th.cos()) * 1.2 * nm / 2.,
+                1500. - k as f64 * 40.,
+                250.,
+            );
         }
         let mut a = 900.;
         while a > -1200. {
@@ -446,15 +536,29 @@ pub(crate) mod tests {
         }
         for k in 0..10 {
             let th = (k as f64 + 0.5) / 10. * std::f64::consts::PI;
-            push(-1200. - th.sin() * 350., -1.2 * nm * th.cos().max(0.).max((1. - th / std::f64::consts::PI) * 0.6), 900. - k as f64 * 30., 140.);
+            push(
+                -1200. - th.sin() * 350.,
+                -1.2 * nm * th.cos().max(0.).max((1. - th / std::f64::consts::PI) * 0.6),
+                900. - k as f64 * 30.,
+                140.,
+            );
         }
         let mut a = -0.6 * nm;
         while a < 480. {
-            push(a, if a > 0. { -4.2 * a / 480. } else { 2. }, (-(a - 300.)).max(0.) * 0.0524 * 3.28084, 135.);
+            push(
+                a,
+                if a > 0. { -4.2 * a / 480. } else { 2. },
+                (-(a - 300.)).max(0.) * 0.0524 * 3.28084,
+                135.,
+            );
             a += 60.;
         }
         let n = p.len() as f64;
-        let pattern: Vec<TrackPt> = p.iter().enumerate().map(|(i, q)| pt(i as f64 - n + 1., q.0, q.1, q.2, q.3)).collect();
+        let pattern: Vec<TrackPt> = p
+            .iter()
+            .enumerate()
+            .map(|(i, q)| pt(i as f64 - n + 1., q.0, q.1, q.2, q.3))
+            .collect();
         // rollout, a turn off at 1580 m, a taxi with a stop, parked
         let mut taxi = vec![];
         let (mut t, mut along, mut gs) = (0., 480., 135.);
@@ -465,11 +569,30 @@ pub(crate) mod tests {
             t += 1.;
         }
         for k in 0..60 {
-            let (c, g) = (-(k as f64) * 9. - 25., if (8..14).contains(&k) { 38. } else if (30..36).contains(&k) { 0. } else { 15. });
-            taxi.push(pt(t, along + if k > 40 { (k - 40) as f64 * 9. } else { 0. }, c.max(-380.), 0., g));
+            let (c, g) = (
+                -(k as f64) * 9. - 25.,
+                if (8..14).contains(&k) {
+                    38.
+                } else if (30..36).contains(&k) {
+                    0.
+                } else {
+                    15.
+                },
+            );
+            taxi.push(pt(
+                t,
+                along + if k > 40 { (k - 40) as f64 * 9. } else { 0. },
+                c.max(-380.),
+                0.,
+                g,
+            ));
             t += 1.;
         }
-        Track::Path { paths: [("pattern".to_string(), pattern), ("taxi".to_string(), taxi)].into_iter().collect() }
+        Track::Path {
+            paths: [("pattern".to_string(), pattern), ("taxi".to_string(), taxi)]
+                .into_iter()
+                .collect(),
+        }
     }
 
     pub(crate) fn base(result: RangeResult, track: Option<Track>) -> RangeRecord {
@@ -626,7 +749,14 @@ pub(crate) mod tests {
                 fuel_kg: 3000.,
                 fuel_lbs: 6614.,
                 onload_rate_lbs_min: 3600.,
-                stability: Stability { fore_aft_sd_m: 1.2, lateral_sd_m: 0.6, vertical_sd_m: 0.9, mean_fwd_m: -20., mean_right_m: 0., mean_up_m: -8. },
+                stability: Stability {
+                    fore_aft_sd_m: 1.2,
+                    lateral_sd_m: 0.6,
+                    vertical_sd_m: 0.9,
+                    mean_fwd_m: -20.,
+                    mean_right_m: 0.,
+                    mean_up_m: -8.,
+                },
                 precontact_closure_kts: Some(3.),
                 overshoot: false,
                 alt_ft: 22000.,
@@ -637,7 +767,13 @@ pub(crate) mod tests {
             }),
             Some(Track::Aar { samples: aar_samples }),
         );
-        let pt = |t: f64, lat: f64, lon: f64| TrackPt { t, lat, lon, alt_m: 8000., speed_kts: 900. };
+        let pt = |t: f64, lat: f64, lon: f64| TrackPt {
+            t,
+            lat,
+            lon,
+            alt_m: 8000.,
+            speed_kts: 900.,
+        };
         let missile = base(
             RangeResult::Missile(MissileResult {
                 weapon: "AIM_120C".into(),
@@ -647,7 +783,11 @@ pub(crate) mod tests {
                 target: PilotRef { ucid: None, name: "MiG-29".into() },
                 target_type: "MiG-29A".into(),
                 outcome: MissileOutcome::Kill,
-                launch: LaunchGeom { range_m: 30000., aspect_deg: 10., ..Default::default() },
+                launch: LaunchGeom {
+                    range_m: 30000.,
+                    aspect_deg: 10.,
+                    ..Default::default()
+                },
                 min_distance_m: 8.,
                 time_of_flight_s: 40.,
                 kill_radius_m: 15.,
@@ -655,8 +795,12 @@ pub(crate) mod tests {
                 perspective: "shooter".into(),
             }),
             Some(Track::Intercept {
-                missile: (0..40).map(|i| pt(i as f64, 42. + i as f64 * 0.005, 41.)).collect(),
-                target: (0..40).map(|i| pt(i as f64, 42.3 - i as f64 * 0.002, 41.02)).collect(),
+                missile: (0..40)
+                    .map(|i| pt(i as f64, 42. + i as f64 * 0.005, 41.))
+                    .collect(),
+                target: (0..40)
+                    .map(|i| pt(i as f64, 42.3 - i as f64 * 0.002, 41.02))
+                    .collect(),
             }),
         );
         let sling = base(
@@ -692,10 +836,34 @@ pub(crate) mod tests {
             alt_m: alt,
             speed_kts: 400.,
         };
-        let geo = |e: f64, n: f64| GeoPt { lat: lat0 + n / 111_320., lon: lon0 + e / (111_320. * lat0.to_radians().cos()), alt_m: 0. };
+        let geo = |e: f64, n: f64| GeoPt {
+            lat: lat0 + n / 111_320.,
+            lon: lon0 + e / (111_320. * lat0.to_radians().cos()),
+            alt_m: 0.,
+        };
         // two fighters turning round each other
-        let me: Vec<TrackPt> = (0..90).map(|i| { let a = i as f64 * 0.09; at(a.cos() * 2500., a.sin() * 2500. - 4000. + i as f64 * 20., 6000. - i as f64 * 25., i as f64) }).collect();
-        let bandit: Vec<TrackPt> = (0..90).map(|i| { let a = i as f64 * 0.09 + 2.4; at(a.cos() * 2300., a.sin() * 2300. - 3800. + i as f64 * 20., 5800. - i as f64 * 22., i as f64) }).collect();
+        let me: Vec<TrackPt> = (0..90)
+            .map(|i| {
+                let a = i as f64 * 0.09;
+                at(
+                    a.cos() * 2500.,
+                    a.sin() * 2500. - 4000. + i as f64 * 20.,
+                    6000. - i as f64 * 25.,
+                    i as f64,
+                )
+            })
+            .collect();
+        let bandit: Vec<TrackPt> = (0..90)
+            .map(|i| {
+                let a = i as f64 * 0.09 + 2.4;
+                at(
+                    a.cos() * 2300.,
+                    a.sin() * 2300. - 3800. + i as f64 * 20.,
+                    5800. - i as f64 * 22.,
+                    i as f64,
+                )
+            })
+            .collect();
         let bfm = base(
             RangeResult::Engagement(EngagementResult {
                 setup: "Neutral merge".into(),
@@ -707,12 +875,32 @@ pub(crate) mod tests {
                 shots_fired: 3,
                 trainer_kills: 1,
                 gun_hits: 12,
-                notes: vec!["Rate fight won in the second circle".into(), "Gun kill at 600 m".into()],
+                notes: vec![
+                    "Rate fight won in the second circle".into(),
+                    "Gun kill at 600 m".into(),
+                ],
             }),
-            Some(Track::Path { paths: [("Casper <&> 1".to_string(), me), ("MiG-29S".to_string(), bandit)].into_iter().collect() }),
+            Some(Track::Path {
+                paths: [
+                    ("Casper <&> 1".to_string(), me),
+                    ("MiG-29S".to_string(), bandit),
+                ]
+                .into_iter()
+                .collect(),
+            }),
         );
         // a sea-skimmer from 40 nm
-        let wpn: Vec<TrackPt> = (0..60).map(|i| { let f = i as f64 / 59.; at(-70_000. * (1. - f), 15_000. * (1. - f), if f < 0.1 { 3000. * (1. - f * 10.) + 30. } else { 15. }, i as f64 * 4.) }).collect();
+        let wpn: Vec<TrackPt> = (0..60)
+            .map(|i| {
+                let f = i as f64 / 59.;
+                at(
+                    -70_000. * (1. - f),
+                    15_000. * (1. - f),
+                    if f < 0.1 { 3000. * (1. - f * 10.) + 30. } else { 15. },
+                    i as f64 * 4.,
+                )
+            })
+            .collect();
         let antiship = base(
             RangeResult::AntiShip(AntiShipResult {
                 ship: "Molniya 3".into(),
@@ -731,11 +919,26 @@ pub(crate) mod tests {
             Some(Track::Weapon { points: wpn }),
         );
         let troops = base(
-            RangeResult::Troops(TroopResult { lz: "LZ Tango".into(), troops: 10, load_time_s: 95., total_time_s: 540., landing_distance_m: 15., quality: PrecisionQuality::Excellent }),
+            RangeResult::Troops(TroopResult {
+                lz: "LZ Tango".into(),
+                troops: 10,
+                load_time_s: 95.,
+                total_time_s: 540.,
+                landing_distance_m: 15.,
+                quality: PrecisionQuality::Excellent,
+            }),
             None,
         );
         let gunnery = base(
-            RangeResult::Gunnery(GunneryResult { lane: "Lane 3".into(), targets_total: 12, targets_killed: 9, shots: 21, hits: 11, time_s: 248., first_round_hits: 6 }),
+            RangeResult::Gunnery(GunneryResult {
+                lane: "Lane 3".into(),
+                targets_total: 12,
+                targets_killed: 9,
+                shots: 21,
+                hits: 11,
+                time_s: 248.,
+                first_round_hits: 6,
+            }),
             None,
         );
         let cas = base(
@@ -766,7 +969,14 @@ pub(crate) mod tests {
                     cross_m: Some(50.),
                     quality: PrecisionQuality::Excellent,
                     damage: 0.,
-                    release: Some(AirdropRelease { pos: geo(-900., -480.), alt_agl_ft: 650., alt_msl_ft: 1180., gs_kts: 132., heading_deg: 62., to_dz_m: Some(1020.) }),
+                    release: Some(AirdropRelease {
+                        pos: geo(-900., -480.),
+                        alt_agl_ft: 650.,
+                        alt_msl_ft: 1180.,
+                        gs_kts: 132.,
+                        heading_deg: 62.,
+                        to_dz_m: Some(1020.),
+                    }),
                     fall_s: Some(31.),
                     drift_m: Some(1105.),
                     flight_s: 1840.,
@@ -807,7 +1017,13 @@ pub(crate) mod tests {
                 time_in_zone_s: 1260.,
                 air_kills: 2,
                 ground_kills: 3,
-                kills: vec!["MiG-29S".into(), "Su-27".into(), "T-72B".into(), "ZSU-23-4 Shilka".into(), "Ural-375".into()],
+                kills: vec![
+                    "MiG-29S".into(),
+                    "Su-27".into(),
+                    "T-72B".into(),
+                    "ZSU-23-4 Shilka".into(),
+                    "Ural-375".into(),
+                ],
                 shots_fired: 9,
                 missiles_defeated: 3,
                 trainer_deaths: 0,

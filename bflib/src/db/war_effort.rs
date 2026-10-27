@@ -126,7 +126,9 @@ impl Db {
         let after = (we.tier(Side::Blue), we.tier(Side::Red));
         let blue_value = we.value;
         self.ephemeral.dirty();
-        for (side, b, a) in [(Side::Blue, before.0, after.0), (Side::Red, before.1, after.1)] {
+        for (side, b, a) in
+            [(Side::Blue, before.0, after.0), (Side::Red, before.1, after.1)]
+        {
             if a > b {
                 let v = if side == Side::Blue { blue_value } else { 100. - blue_value };
                 self.ephemeral.msgs().panel_to_side(

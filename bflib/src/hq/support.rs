@@ -30,11 +30,10 @@ for more details.
 //!   such tanker is marked for relief instead.
 
 use super::{
-    dist,
+    Handle, OpStatus, dist,
     picture::{self, Picture, Station, StationRules, SupportFlight},
-    Handle, OpStatus,
 };
-use crate::{db::group::DeployKind, spawnctx::SpawnCtx, Context};
+use crate::{Context, db::group::DeployKind, spawnctx::SpawnCtx};
 use bfprotocols::{
     cfg::{ActionKind, HqCfg},
     db::group::GroupId,
@@ -42,8 +41,8 @@ use bfprotocols::{
     range::RefuelMethod,
 };
 use chrono::prelude::*;
-use compact_str::{format_compact, CompactString};
-use dcso3::{coalition::Side, controller::Task, group::Group, MizLua, Vector2};
+use compact_str::{CompactString, format_compact};
+use dcso3::{MizLua, Vector2, coalition::Side, controller::Task, group::Group};
 use fxhash::FxHashSet;
 use log::{debug, info, warn};
 
@@ -75,7 +74,10 @@ pub(super) fn refresh_front(ctx: &mut Context) {
     if ctx.hq.front.as_ref().map_or(false, |(old, _)| *old == hash) {
         return;
     }
-    let fl = bfprotocols::frontline::compute(&objs, &bfprotocols::frontline::Params::default());
+    let fl = bfprotocols::frontline::compute(
+        &objs,
+        &bfprotocols::frontline::Params::default(),
+    );
     let mut segs = vec![];
     for line in fl.mid.iter() {
         let mut last: Option<Vector2> = None;
@@ -101,37 +103,61 @@ pub(super) fn refresh_front(ctx: &mut Context) {
 // ---------------------------------------------------------------------------
 
 fn label(kind: OpKind) -> &'static str {
-    if kind == OpKind::Tanker {
-        "tanker"
-    } else {
-        "AWACS"
-    }
+    if kind == OpKind::Tanker { "tanker" } else { "AWACS" }
 }
 
 /// End `f`'s HQ operation, if it has one.
-fn end_op(lua: MizLua, ctx: &mut Context, side: Side, gid: GroupId, status: OpStatus, detail: &str, now: DateTime<Utc>) {
-    let i = ctx
-        .hq
-        .side(side)
-        .ops
-        .iter()
-        .position(|o| o.status == OpStatus::Active && matches!(o.handle, Handle::Group(g) if g == gid));
+fn end_op(
+    lua: MizLua,
+    ctx: &mut Context,
+    side: Side,
+    gid: GroupId,
+    status: OpStatus,
+    detail: &str,
+    now: DateTime<Utc>,
+) {
+    let i = ctx.hq.side(side).ops.iter().position(|o| {
+        o.status == OpStatus::Active && matches!(o.handle, Handle::Group(g) if g == gid)
+    });
     if let Some(i) = i {
         super::finish(lua, ctx, side, i, status, detail.into(), now);
     }
 }
 
-fn stand_down(lua: MizLua, ctx: &mut Context, side: Side, f: &SupportFlight, status: OpStatus, why: CompactString, now: DateTime<Utc>) {
+fn stand_down(
+    lua: MizLua,
+    ctx: &mut Context,
+    side: Side,
+    f: &SupportFlight,
+    status: OpStatus,
+    why: CompactString,
+    now: DateTime<Utc>,
+) {
     info!("hq: {side:?} sending {} {} ({}) home: {why}", label(f.kind), f.name, f.typ);
     crate::airlife::send_home(lua, ctx, f.gid, now);
-    ctx.hq.side(side).note(now, format_compact!("HQ: {} {} sent home: {why}", label(f.kind), f.name));
+    ctx.hq
+        .side(side)
+        .note(now, format_compact!("HQ: {} {} sent home: {why}", label(f.kind), f.name));
     end_op(lua, ctx, side, f.gid, status, &why, now);
 }
 
-fn restation(lua: MizLua, ctx: &mut Context, side: Side, f: &SupportFlight, st: &Station, why: CompactString, now: DateTime<Utc>) {
-    let res = SpawnCtx::new(lua).and_then(|spctx| ctx.db.restation_air(&spctx, f.gid, st.pos));
+fn restation(
+    lua: MizLua,
+    ctx: &mut Context,
+    side: Side,
+    f: &SupportFlight,
+    st: &Station,
+    why: CompactString,
+    now: DateTime<Utc>,
+) {
+    let res =
+        SpawnCtx::new(lua).and_then(|spctx| ctx.db.restation_air(&spctx, f.gid, st.pos));
     match res {
-        Err(e) => warn!("hq: {side:?} could not move {} {} to a new station: {e:?}", label(f.kind), f.name),
+        Err(e) => warn!(
+            "hq: {side:?} could not move {} {} to a new station: {e:?}",
+            label(f.kind),
+            f.name
+        ),
         Ok(()) => {
             info!(
                 "hq: {side:?} moving {} {} ({}) {:.0} km to a new station {:.0} km behind the front \
@@ -145,7 +171,14 @@ fn restation(lua: MizLua, ctx: &mut Context, side: Side, f: &SupportFlight, st: 
             );
             let rt = ctx.hq.side(side);
             rt.restationed.insert(f.gid, now);
-            rt.note(now, format_compact!("HQ: {} {} moved to a new station: {why}", label(f.kind), f.name));
+            rt.note(
+                now,
+                format_compact!(
+                    "HQ: {} {} moved to a new station: {why}",
+                    label(f.kind),
+                    f.name
+                ),
+            );
             for o in rt.ops.iter_mut().filter(|o| o.status == OpStatus::Active) {
                 if matches!(o.handle, Handle::Group(g) if g == f.gid) {
                     o.pos = st.pos;
@@ -159,7 +192,14 @@ fn restation(lua: MizLua, ctx: &mut Context, side: Side, f: &SupportFlight, st: 
 /// the front has moved up to. Runs on each planning pass, before the
 /// planner, which reads the same picture: what is sent home here isn't
 /// replaced until the next pass.
-pub(super) fn manage(lua: MizLua, ctx: &mut Context, cfg: &HqCfg, side: Side, pic: &Picture, now: DateTime<Utc>) {
+pub(super) fn manage(
+    lua: MizLua,
+    ctx: &mut Context,
+    cfg: &HqCfg,
+    side: Side,
+    pic: &Picture,
+    now: DateTime<Utc>,
+) {
     let s = &cfg.support;
     let lead = s.relief_secs;
     let near = ctx
@@ -173,7 +213,8 @@ pub(super) fn manage(lua: MizLua, ctx: &mut Context, cfg: &HqCfg, side: Side, pi
         .or_else(|| pic.front_point());
     for kind in [OpKind::Awacs, OpKind::Tanker] {
         let rules = StationRules::of(cfg, kind);
-        let limit = if kind == OpKind::Tanker { cfg.limits.tanker } else { cfg.limits.awacs };
+        let limit =
+            if kind == OpKind::Tanker { cfg.limits.tanker } else { cfg.limits.awacs };
         let mut flights: Vec<SupportFlight> = pic.support_of(kind).cloned().collect();
         flights.sort_by_key(|f| f.launched);
         let mut gone: Vec<GroupId> = vec![];
@@ -184,7 +225,9 @@ pub(super) fn manage(lua: MizLua, ctx: &mut Context, cfg: &HqCfg, side: Side, pi
                     continue;
                 }
                 // A boom and a drogue tanker serve different jets.
-                if kind == OpKind::Tanker && tanker_method(&a.typ) != tanker_method(&b.typ) {
+                if kind == OpKind::Tanker
+                    && tanker_method(&a.typ) != tanker_method(&b.typ)
+                {
                     continue;
                 }
                 if dist(a.station, b.station) > s.same_station_m {
@@ -225,17 +268,22 @@ pub(super) fn manage(lua: MizLua, ctx: &mut Context, cfg: &HqCfg, side: Side, pi
                     .map(|f| (f.station, 2. * s.same_station_m))
                     .collect();
                 let elsewhere = if limit >= 2 {
-                    pic.support_station(&rules, near, &others).filter(|st| st.clearance >= 0.)
+                    pic.support_station(&rules, near, &others)
+                        .filter(|st| st.clearance >= 0.)
                 } else {
                     None
                 };
                 match elsewhere {
                     Some(st) => {
-                        let why = format_compact!("{} already holds its station; covering a second one", keep.name);
+                        let why = format_compact!(
+                            "{} already holds its station; covering a second one",
+                            keep.name
+                        );
                         restation(lua, ctx, side, spare, &st, why, now);
                     }
                     None => {
-                        let why = format_compact!("{} already holds that station", keep.name);
+                        let why =
+                            format_compact!("{} already holds that station", keep.name);
                         stand_down(lua, ctx, side, spare, OpStatus::Cancelled, why, now);
                         gone.push(spare.gid);
                     }
@@ -253,8 +301,14 @@ pub(super) fn manage(lua: MizLua, ctx: &mut Context, cfg: &HqCfg, side: Side, pi
                 .filter(|f| !gone.contains(&f.gid) && !f.relief_due(now, lead))
                 .collect();
             let mut extra = up.len().saturating_sub(limit.max(1) as usize);
-            let keep = up.iter().find(|f| f.player).or(up.first()).map(|f| f.name.clone()).unwrap_or_default();
-            let spares: Vec<SupportFlight> = up.iter().rev().filter(|f| !f.player).map(|f| (*f).clone()).collect();
+            let keep = up
+                .iter()
+                .find(|f| f.player)
+                .or(up.first())
+                .map(|f| f.name.clone())
+                .unwrap_or_default();
+            let spares: Vec<SupportFlight> =
+                up.iter().rev().filter(|f| !f.player).map(|f| (*f).clone()).collect();
             for f in spares {
                 if extra == 0 {
                     break;
@@ -262,7 +316,9 @@ pub(super) fn manage(lua: MizLua, ctx: &mut Context, cfg: &HqCfg, side: Side, pi
                 if f.name == keep {
                     continue;
                 }
-                let why = format_compact!("the side keeps {limit} AWACS up and {keep} is on station");
+                let why = format_compact!(
+                    "the side keeps {limit} AWACS up and {keep} is on station"
+                );
                 stand_down(lua, ctx, side, &f, OpStatus::Cancelled, why, now);
                 gone.push(f.gid);
                 extra -= 1;
@@ -293,10 +349,15 @@ pub(super) fn manage(lua: MizLua, ctx: &mut Context, cfg: &HqCfg, side: Side, pi
                 .map(|o| (o.station, s.same_station_m))
                 .collect();
             let Some(st) = pic.support_station(&rules, near, &others) else { continue };
-            if st.clearance <= here + RESTATION_INSIDE_M || dist(st.pos, f.station) < 20_000. {
+            if st.clearance <= here + RESTATION_INSIDE_M
+                || dist(st.pos, f.station) < 20_000.
+            {
                 continue;
             }
-            let why = format_compact!("its station is {:.0} km inside a threat ring", -here / 1000.);
+            let why = format_compact!(
+                "its station is {:.0} km inside a threat ring",
+                -here / 1000.
+            );
             restation(lua, ctx, side, f, &st, why, now);
         }
     }
@@ -316,13 +377,48 @@ pub(crate) fn tanker_method(typ: &str) -> Option<RefuelMethod> {
 /// for the boom, or a probe for the drogue. None if it can't.
 pub(crate) fn receiver_method(typ: &str) -> Option<RefuelMethod> {
     const BOOM: &[&str] = &[
-        "E-3A", "F-15C", "F-15E", "F-15ESE", "F-16A", "F-16A MLU", "F-16C_50", "F-16C bl.50", "F-16C bl.52d",
-        "A-10A", "A-10C", "A-10C_2", "F-117A", "B-1B", "B-52H", "C-17A", "F-4E", "F-4E-45MC",
+        "E-3A",
+        "F-15C",
+        "F-15E",
+        "F-15ESE",
+        "F-16A",
+        "F-16A MLU",
+        "F-16C_50",
+        "F-16C bl.50",
+        "F-16C bl.52d",
+        "A-10A",
+        "A-10C",
+        "A-10C_2",
+        "F-117A",
+        "B-1B",
+        "B-52H",
+        "C-17A",
+        "F-4E",
+        "F-4E-45MC",
     ];
     const DROGUE: &[&str] = &[
-        "A-50", "FA-18C_hornet", "F/A-18A", "F/A-18C", "F-14A", "F-14A-135-GR", "F-14B", "AV8BNA", "S-3B",
-        "Su-24M", "Su-24MR", "Su-33", "Su-34", "MiG-31", "Tu-95MS", "Tu-142", "Tu-160", "M-2000C",
-        "Mirage 2000-5", "JF-17", "Tornado IDS", "Tornado GR4",
+        "A-50",
+        "FA-18C_hornet",
+        "F/A-18A",
+        "F/A-18C",
+        "F-14A",
+        "F-14A-135-GR",
+        "F-14B",
+        "AV8BNA",
+        "S-3B",
+        "Su-24M",
+        "Su-24MR",
+        "Su-33",
+        "Su-34",
+        "MiG-31",
+        "Tu-95MS",
+        "Tu-142",
+        "Tu-160",
+        "M-2000C",
+        "Mirage 2000-5",
+        "JF-17",
+        "Tornado IDS",
+        "Tornado GR4",
     ];
     if BOOM.contains(&typ) {
         Some(RefuelMethod::Boom)
@@ -354,14 +450,21 @@ struct Thirsty {
 /// back to the flight's mission when it is full. Many of the engine's
 /// missions set unlimited fuel; their fuel never drops and this never fires
 /// for them.
-pub(super) fn fuel_watch(lua: MizLua, ctx: &mut Context, cfg: &HqCfg, side: Side, now: DateTime<Utc>) {
+pub(super) fn fuel_watch(
+    lua: MizLua,
+    ctx: &mut Context,
+    cfg: &HqCfg,
+    side: Side,
+    now: DateTime<Utc>,
+) {
     let s = &cfg.support;
     if s.refuel_below <= 0. {
         return;
     }
     {
         let rt = ctx.hq.side(side);
-        if rt.last_fuel_check.map_or(false, |t| (now - t).num_seconds() < FUEL_CHECK_SECS) {
+        if rt.last_fuel_check.map_or(false, |t| (now - t).num_seconds() < FUEL_CHECK_SECS)
+        {
             return;
         }
         rt.last_fuel_check = Some(now);
@@ -426,10 +529,17 @@ pub(super) fn fuel_watch(lua: MizLua, ctx: &mut Context, cfg: &HqCfg, side: Side
             continue;
         }
         if !refuelable {
-            debug!("hq: {side:?} {} ({}) is low but DCS says it can't refuel in the air", f.name, f.typ);
+            debug!(
+                "hq: {side:?} {} ({}) is low but DCS says it can't refuel in the air",
+                f.name, f.typ
+            );
             continue;
         }
-        if rt.refuel_sent.get(&f.gid).map_or(false, |t| (now - *t).num_seconds() < REFUEL_RETRY_SECS) {
+        if rt
+            .refuel_sent
+            .get(&f.gid)
+            .map_or(false, |t| (now - *t).num_seconds() < REFUEL_RETRY_SECS)
+        {
             continue;
         }
         let tanker = tankers
@@ -442,7 +552,10 @@ pub(super) fn fuel_watch(lua: MizLua, ctx: &mut Context, cfg: &HqCfg, side: Side
             if f.awacs {
                 low_awacs.insert(f.gid);
             }
-            let said = rt.refuel_none.get(&f.gid).map_or(false, |t| (now - *t).num_seconds() < REFUEL_RETRY_SECS);
+            let said = rt
+                .refuel_none
+                .get(&f.gid)
+                .map_or(false, |t| (now - *t).num_seconds() < REFUEL_RETRY_SECS);
             if !said {
                 rt.refuel_none.insert(f.gid, now);
                 info!(
@@ -472,7 +585,14 @@ pub(super) fn fuel_watch(lua: MizLua, ctx: &mut Context, cfg: &HqCfg, side: Side
                 );
                 let rt = ctx.hq.side(side);
                 rt.refuel_sent.insert(f.gid, now);
-                rt.note(now, format_compact!("HQ: {} sent to the tanker {} to refuel", f.name, t.name));
+                rt.note(
+                    now,
+                    format_compact!(
+                        "HQ: {} sent to the tanker {} to refuel",
+                        f.name,
+                        t.name
+                    ),
+                );
             }
             Err(e) => warn!("hq: {side:?} could not send {} to refuel: {e:?}", f.name),
         }

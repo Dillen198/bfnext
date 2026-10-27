@@ -12,7 +12,7 @@ FITNESS FOR A PARTICULAR PURPOSE.
 */
 
 use super::{as_tbl, String};
-use crate::{wrapped_table, string_enum};
+use crate::{string_enum, wrapped_table};
 use anyhow::Result;
 use mlua::{prelude::*, Value};
 use serde_derive::Serialize;
@@ -131,10 +131,7 @@ wrapped_table!(Attributes, None);
 
 impl Attributes {
     pub fn new(lua: &Lua) -> Result<Self> {
-        Ok(Self {
-            t: lua.create_table()?,
-            lua: lua.clone(),
-        })
+        Ok(Self { t: lua.create_table()?, lua: lua.clone() })
     }
 
     pub fn get(&self, attr: Attribute) -> Result<bool> {

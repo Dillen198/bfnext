@@ -55,10 +55,18 @@ pub(crate) struct Transmission {
 /// streaming it on (the range site's live ATC feed) while they talk.
 pub(crate) enum LiveVoice {
     /// They keyed up on `label`'s frequency.
-    On { label: String, name: String },
+    On {
+        label: String,
+        name: String,
+    },
     /// 16 kHz mono PCM, one SRS frame (40 ms) at a time.
-    Audio { label: String, pcm: Vec<i16> },
-    Off { label: String },
+    Audio {
+        label: String,
+        pcm: Vec<i16>,
+    },
+    Off {
+        label: String,
+    },
 }
 
 pub(crate) type LiveTap = Arc<dyn Fn(LiveVoice) + Send + Sync>;
@@ -113,8 +121,21 @@ struct StreamDecoder {
 impl StreamDecoder {
     fn decode(&mut self, frame: &[u8]) -> Vec<i16> {
         let mut out = [0i16; FRAME_SAMPLES * 6];
-        let n = unsafe { (self.opus.decode)(self.dec, frame.as_ptr(), frame.len() as i32, out.as_mut_ptr(), out.len() as i32, 0) };
-        if n > 0 { out[..n as usize].to_vec() } else { vec![] }
+        let n = unsafe {
+            (self.opus.decode)(
+                self.dec,
+                frame.as_ptr(),
+                frame.len() as i32,
+                out.as_mut_ptr(),
+                out.len() as i32,
+                0,
+            )
+        };
+        if n > 0 {
+            out[..n as usize].to_vec()
+        } else {
+            vec![]
+        }
     }
 }
 
@@ -134,7 +155,8 @@ struct OpusDecoder {
 }
 
 type OpusCreate = unsafe extern "C" fn(i32, i32, i32, *mut i32) -> *mut OpusEncoder;
-type OpusEncode = unsafe extern "C" fn(*mut OpusEncoder, *const i16, i32, *mut u8, i32) -> i32;
+type OpusEncode =
+    unsafe extern "C" fn(*mut OpusEncoder, *const i16, i32, *mut u8, i32) -> i32;
 type OpusDestroy = unsafe extern "C" fn(*mut OpusEncoder);
 type OpusDecCreate = unsafe extern "C" fn(i32, i32, *mut i32) -> *mut OpusDecoder;
 type OpusDecode =
@@ -160,23 +182,35 @@ impl Opus {
     pub(crate) fn load(explicit: Option<&Path>) -> Result<Self> {
         let lib: &'static Library = Box::leak(Box::new(unsafe {
             match explicit {
-                Some(p) => Library::new(p).with_context(|| format!("loading {}", p.display()))?,
+                Some(p) => {
+                    Library::new(p).with_context(|| format!("loading {}", p.display()))?
+                }
                 None => {
                     let name = if cfg!(windows) { "opus.dll" } else { "libopus.so.0" };
                     Library::new(name).with_context(|| {
-                        format!("loading {name} (put it next to bfdb.exe or set opusDllPath)")
+                        format!(
+                            "loading {name} (put it next to bfdb.exe or set opusDllPath)"
+                        )
                     })?
                 }
             }
         }));
         unsafe {
             Ok(Self {
-                create: lib.get(b"opus_encoder_create\0").context("opus_encoder_create")?,
+                create: lib
+                    .get(b"opus_encoder_create\0")
+                    .context("opus_encoder_create")?,
                 encode: lib.get(b"opus_encode\0").context("opus_encode")?,
-                destroy: lib.get(b"opus_encoder_destroy\0").context("opus_encoder_destroy")?,
-                dec_create: lib.get(b"opus_decoder_create\0").context("opus_decoder_create")?,
+                destroy: lib
+                    .get(b"opus_encoder_destroy\0")
+                    .context("opus_encoder_destroy")?,
+                dec_create: lib
+                    .get(b"opus_decoder_create\0")
+                    .context("opus_decoder_create")?,
                 decode: lib.get(b"opus_decode\0").context("opus_decode")?,
-                dec_destroy: lib.get(b"opus_decoder_destroy\0").context("opus_decoder_destroy")?,
+                dec_destroy: lib
+                    .get(b"opus_decoder_destroy\0")
+                    .context("opus_decoder_destroy")?,
             })
         }
     }
@@ -217,14 +251,17 @@ impl Opus {
     fn stream(self: &Arc<Self>) -> Option<StreamDecoder> {
         let mut err = 0i32;
         let dec = unsafe { (self.dec_create)(16_000, 1, &mut err) };
-        (!dec.is_null() && err == 0).then(|| StreamDecoder { dec, opus: Arc::clone(self) })
+        (!dec.is_null() && err == 0)
+            .then(|| StreamDecoder { dec, opus: Arc::clone(self) })
     }
 
     /// Encode one full transmission of 16 kHz mono `i16` PCM into a sequence of
     /// Opus frame byte-buffers (one per 40 ms).
     fn encode_transmission(&self, pcm: &[i16]) -> Result<Vec<Vec<u8>>> {
         let mut err = 0i32;
-        let enc = unsafe { (self.create)(16_000, 1, 2048 /* OPUS_APPLICATION_VOIP */, &mut err) };
+        let enc = unsafe {
+            (self.create)(16_000, 1, 2048 /* OPUS_APPLICATION_VOIP */, &mut err)
+        };
         if enc.is_null() || err != 0 {
             anyhow::bail!("opus_encoder_create failed ({err})");
         }
@@ -386,14 +423,7 @@ impl SrsClient {
     /// Is someone else transmitting on `freq_hz` right now?
     pub(crate) fn channel_busy(&self, freq_hz: f64) -> bool {
         let key = freq_hz.max(0.0) as u64;
-        let last = self
-            .0
-            .last_voice_rx
-            .lock()
-            .unwrap()
-            .get(&key)
-            .copied()
-            .unwrap_or(0);
+        let last = self.0.last_voice_rx.lock().unwrap().get(&key).copied().unwrap_or(0);
         last != 0 && now_millis().saturating_sub(last) < 400
     }
 
@@ -438,7 +468,8 @@ impl SrsClient {
             // Pace: send frame i at start + i*40ms - 20ms (half a frame early),
             // matching the SRS reference client so the server doesn't skip audio.
             let target = start + Duration::from_millis(i as u64 * FRAME_MS);
-            let target = target.checked_sub(Duration::from_millis(FRAME_MS / 2)).unwrap_or(target);
+            let target =
+                target.checked_sub(Duration::from_millis(FRAME_MS / 2)).unwrap_or(target);
             let now = Instant::now();
             if target > now {
                 std::thread::sleep(target - now);
@@ -539,7 +570,12 @@ impl Inner {
     /// Serialize a UDP voice packet per the SRS UDPVoicePacket layout. The
     /// frequency segment is a repeated 10-byte record, so one packet can be
     /// heard on several radios at once.
-    fn encode_voice_packet(&self, opus_frame: &[u8], packet_id: u64, freqs: &[Radio]) -> Vec<u8> {
+    fn encode_voice_packet(
+        &self,
+        opus_frame: &[u8],
+        packet_id: u64,
+        freqs: &[Radio],
+    ) -> Vec<u8> {
         let audio_len = opus_frame.len();
         let freq_len = 10usize * freqs.len();
         let fixed_len = 4 + 8 + 1 + GUID_LEN + GUID_LEN; // 57
@@ -665,10 +701,7 @@ fn udp_rx_loop(c: Arc<Inner>) {
         let Some((freq_hz, label)) = hit else {
             continue;
         };
-        c.last_voice_rx
-            .lock()
-            .unwrap()
-            .insert(freq_hz.max(0.0) as u64, now_millis());
+        c.last_voice_rx.lock().unwrap().insert(freq_hz.max(0.0) as u64, now_millis());
 
         // Another of this process's own controllers (Red ATC's ATIS heard by
         // Blue ATC on a shared 340.000): it still counts as a busy channel
@@ -690,7 +723,13 @@ fn udp_rx_loop(c: Arc<Inner>) {
                 Some(_) => false,
                 None => {
                     let guid = std::str::from_utf8(&who).unwrap_or("").to_string();
-                    let name = c.clients.lock().unwrap().get(&guid).map(|i| i.name.clone()).unwrap_or_default();
+                    let name = c
+                        .clients
+                        .lock()
+                        .unwrap()
+                        .get(&guid)
+                        .map(|i| i.name.clone())
+                        .unwrap_or_default();
                     tap(LiveVoice::On { label: label.clone(), name });
                     live = Some((who, label.clone(), opus.stream(), quiet));
                     true
@@ -724,7 +763,9 @@ fn udp_rx_loop(c: Arc<Inner>) {
                 // Resuming after a think-pause? Carry the earlier audio over so
                 // the whole call is transcribed as one utterance.
                 let carried = match tail.take() {
-                    Some(t) if t.who == who && (t.freq_hz - freq_hz).abs() <= 500.0 => t.frames,
+                    Some(t) if t.who == who && (t.freq_hz - freq_hz).abs() <= 500.0 => {
+                        t.frames
+                    }
                     other => {
                         tail = other;
                         Vec::new()
@@ -732,13 +773,7 @@ fn udp_rx_loop(c: Arc<Inner>) {
                 };
                 let mut frames = carried;
                 frames.push((pid, opus));
-                rxb = Some(RxBuf {
-                    who,
-                    freq_hz,
-                    label,
-                    frames,
-                    deadline: dl,
-                });
+                rxb = Some(RxBuf { who, freq_hz, label, frames, deadline: dl });
             }
         }
     }
@@ -841,13 +876,7 @@ fn learn_clients(c: &Inner, v: &serde_json::Value) {
                 .and_then(|r| r.get("unitId"))
                 .and_then(|u| u.as_u64())
                 .filter(|u| *u > 0 && *u != UNIT_ID as u64);
-            map.insert(
-                g.to_string(),
-                ClientInfo {
-                    name: nm.to_string(),
-                    unit_id,
-                },
-            );
+            map.insert(g.to_string(), ClientInfo { name: nm.to_string(), unit_id });
         }
     };
     if let Some(cl) = v.get("Client") {
@@ -866,7 +895,8 @@ fn learn_clients(c: &Inner, v: &serde_json::Value) {
 /// the server is resetting every session, "connected" is not news, so it is
 /// logged at debug and announced once the session has actually held.
 fn serve_once(c: &Inner, failures: u32) -> Result<()> {
-    let mut tcp = TcpStream::connect(&c.addr).with_context(|| format!("connecting TCP to {}", c.addr))?;
+    let mut tcp = TcpStream::connect(&c.addr)
+        .with_context(|| format!("connecting TCP to {}", c.addr))?;
     tcp.set_nodelay(true).ok();
     tcp.set_read_timeout(Some(Duration::from_secs(1))).ok();
 
@@ -941,9 +971,12 @@ fn serve_once(c: &Inner, failures: u32) -> Result<()> {
                 linebuf.extend_from_slice(&rd[..n]);
                 while let Some(p) = linebuf.iter().position(|&b| b == b'\n') {
                     let line: Vec<u8> = linebuf.drain(..=p).collect();
-                    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&line[..line.len() - 1])
-                    {
-                        if v.get("MsgType").and_then(|t| t.as_i64()) == Some(MSG_VERSION_MISMATCH) {
+                    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(
+                        &line[..line.len() - 1],
+                    ) {
+                        if v.get("MsgType").and_then(|t| t.as_i64())
+                            == Some(MSG_VERSION_MISMATCH)
+                        {
                             anyhow::bail!("SRS server reported a version mismatch");
                         }
                         learn_clients(c, &v);
@@ -1072,11 +1105,7 @@ fn register_own_guid(old: Option<[u8; GUID_LEN]>, new: [u8; GUID_LEN]) {
 }
 
 fn is_own_guid(who: &[u8]) -> bool {
-    OWN_GUIDS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .iter()
-        .any(|g| g[..] == *who)
+    OWN_GUIDS.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|g| g[..] == *who)
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────

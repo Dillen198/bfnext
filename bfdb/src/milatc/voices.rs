@@ -89,10 +89,30 @@ const STYLE_PILOT: &str = "You are a military pilot talking on the radio from th
 
 /// Voices of each service, controllers' first: the busiest positions get the
 /// most natural ones.
-const OPENAI_VOICES: [&str; 13] = ["ash", "onyx", "echo", "verse", "ballad", "sage", "alloy", "cedar", "coral", "fable", "marin", "nova", "shimmer"];
+const OPENAI_VOICES: [&str; 13] = [
+    "ash", "onyx", "echo", "verse", "ballad", "sage", "alloy", "cedar", "coral", "fable",
+    "marin", "nova", "shimmer",
+];
 const KOKORO_VOICES: [&str; 19] = [
-    "am_michael", "am_adam", "bm_george", "am_eric", "am_liam", "af_heart", "bf_emma", "am_onyx", "am_puck", "bm_lewis", "af_sarah",
-    "am_fenrir", "bm_daniel", "am_echo", "af_bella", "bm_fable", "af_nicole", "af_sky", "bf_isabella",
+    "am_michael",
+    "am_adam",
+    "bm_george",
+    "am_eric",
+    "am_liam",
+    "af_heart",
+    "bf_emma",
+    "am_onyx",
+    "am_puck",
+    "bm_lewis",
+    "af_sarah",
+    "am_fenrir",
+    "bm_daniel",
+    "am_echo",
+    "af_bella",
+    "bm_fable",
+    "af_nicole",
+    "af_sky",
+    "bf_isabella",
 ];
 
 /// The speech service, set up: its voices, and whether it speaks whatever
@@ -116,35 +136,60 @@ fn service(cfg: &NeuralCfg) -> Option<Service> {
     let engine = cfg.engine.trim().to_lowercase();
     let (api, url, model, cloud) = match engine.as_str() {
         "openai" => (Api::OpenAi, "https://api.openai.com", "gpt-4o-mini-tts", true),
-        "elevenlabs" | "eleven" => (Api::ElevenLabs, "https://api.elevenlabs.io", "eleven_flash_v2_5", true),
+        "elevenlabs" | "eleven" => {
+            (Api::ElevenLabs, "https://api.elevenlabs.io", "eleven_flash_v2_5", true)
+        }
         "kokoro" | "local" => (Api::OpenAi, "http://127.0.0.1:8880", "kokoro", false),
         "" | "none" | "off" => return None,
         other => {
-            log::warn!("range ATC: unknown tts engine {other:?} (openai, elevenlabs or kokoro)");
+            log::warn!(
+                "range ATC: unknown tts engine {other:?} (openai, elevenlabs or kokoro)"
+            );
             return None;
         }
     };
-    let url = cfg.url.clone().filter(|u| !u.trim().is_empty()).unwrap_or_else(|| url.to_string());
-    let model = cfg.model.clone().filter(|m| !m.trim().is_empty()).unwrap_or_else(|| model.to_string());
-    let key = cfg.key.clone().filter(|k| !k.trim().is_empty()).or_else(|| env("BFDB_ATC_TTS_KEY")).or_else(|| match api {
-        Api::OpenAi if cloud => env("OPENAI_API_KEY"),
-        Api::ElevenLabs => env("ELEVENLABS_API_KEY"),
-        _ => None,
-    });
+    let url = cfg
+        .url
+        .clone()
+        .filter(|u| !u.trim().is_empty())
+        .unwrap_or_else(|| url.to_string());
+    let model = cfg
+        .model
+        .clone()
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| model.to_string());
+    let key = cfg
+        .key
+        .clone()
+        .filter(|k| !k.trim().is_empty())
+        .or_else(|| env("BFDB_ATC_TTS_KEY"))
+        .or_else(|| match api {
+            Api::OpenAi if cloud => env("OPENAI_API_KEY"),
+            Api::ElevenLabs => env("ELEVENLABS_API_KEY"),
+            _ => None,
+        });
     if cloud && key.is_none() {
         log::warn!("range ATC: tts engine {engine} needs an API key (bfdb.atc_tts_key in the bot's YAML) -- using the local voices");
         return None;
     }
-    let mut voices: Vec<String> = cfg.voices.iter().filter(|v| !v.trim().is_empty()).cloned().collect();
+    let mut voices: Vec<String> =
+        cfg.voices.iter().filter(|v| !v.trim().is_empty()).cloned().collect();
     if voices.is_empty() {
         voices = match (engine.as_str(), api) {
-            (_, Api::ElevenLabs) => tts::elevenlabs_voices(&url, key.as_deref().unwrap_or_default()).into_iter().map(|(id, _)| id).collect(),
+            (_, Api::ElevenLabs) => {
+                tts::elevenlabs_voices(&url, key.as_deref().unwrap_or_default())
+                    .into_iter()
+                    .map(|(id, _)| id)
+                    .collect()
+            }
             ("openai", _) => OPENAI_VOICES.iter().map(|v| v.to_string()).collect(),
             _ => KOKORO_VOICES.iter().map(|v| v.to_string()).collect(),
         };
     }
     if voices.is_empty() {
-        log::warn!("range ATC: tts engine {engine} has no voices -- using the local voices");
+        log::warn!(
+            "range ATC: tts engine {engine} has no voices -- using the local voices"
+        );
         return None;
     }
     let always = match cfg.when.as_deref().map(|w| w.trim().to_lowercase()) {
@@ -184,7 +229,10 @@ fn piper_candidates(model: &std::path::Path) -> Vec<Candidate> {
         if let Ok(rd) = std::fs::read_dir(dir) {
             let mut more: Vec<PathBuf> = rd
                 .filter_map(|e| e.ok().map(|e| e.path()))
-                .filter(|p| p.extension().map_or(false, |x| x.eq_ignore_ascii_case("onnx")) && p != model)
+                .filter(|p| {
+                    p.extension().map_or(false, |x| x.eq_ignore_ascii_case("onnx"))
+                        && p != model
+                })
                 .collect();
             more.sort();
             models.extend(more);
@@ -211,13 +259,22 @@ fn piper_candidates(model: &std::path::Path) -> Vec<Candidate> {
 impl Cast {
     /// Blocking: reads model folders, asks Windows for its SAPI voices, or a
     /// speech service for its.
-    pub(crate) fn build(gci: &crate::gci::GciConfig, overrides: &HashMap<Pos, VoiceCfg>, neural: Option<&NeuralCfg>) -> Self {
+    pub(crate) fn build(
+        gci: &crate::gci::GciConfig,
+        overrides: &HashMap<Pos, VoiceCfg>,
+        neural: Option<&NeuralCfg>,
+    ) -> Self {
         let cands: Vec<Candidate> = match (&gci.piper_exe, &gci.piper_model) {
             (Some(_), Some(m)) => piper_candidates(m),
             _ => {
-                let mut v: Vec<Candidate> = tts::sapi_voices().into_iter().map(|n| Candidate::Sapi { voice: Some(n) }).collect();
+                let mut v: Vec<Candidate> = tts::sapi_voices()
+                    .into_iter()
+                    .map(|n| Candidate::Sapi { voice: Some(n) })
+                    .collect();
                 if let Some(pref) = &gci.tts_voice {
-                    v.retain(|c| !matches!(c, Candidate::Sapi { voice: Some(n) } if n == pref));
+                    v.retain(
+                        |c| !matches!(c, Candidate::Sapi { voice: Some(n) } if n == pref),
+                    );
                     v.insert(0, Candidate::Sapi { voice: Some(pref.clone()) });
                 }
                 if v.is_empty() {
@@ -246,12 +303,19 @@ impl Cast {
                     Tts::Piper { exe, model, speaker, length_scale } => Tts::Piper {
                         exe,
                         model: o.piper_model.clone().unwrap_or(model),
-                        speaker: o.speaker.or(if o.piper_model.is_some() { None } else { speaker }),
+                        speaker: o.speaker.or(if o.piper_model.is_some() {
+                            None
+                        } else {
+                            speaker
+                        }),
                         length_scale: o.speed.map(|s| 1. / s.max(0.3)).or(length_scale),
                     },
                     Tts::Sapi { voice, rate } => Tts::Sapi {
                         voice: o.tts_voice.clone().or(voice),
-                        rate: o.speed.map(|s| ((s - 1.) * 10.).round() as i32).unwrap_or(rate),
+                        rate: o
+                            .speed
+                            .map(|s| ((s - 1.) * 10.).round() as i32)
+                            .unwrap_or(rate),
                     },
                     // the local cast is never neural
                     n @ Tts::Neural { .. } => n,
@@ -272,7 +336,9 @@ impl Cast {
         }
         let distinct = n.min(ORDER.len());
         let summary = match cands.first() {
-            Some(Candidate::Piper { .. }) => format!("Piper, {n} voice(s) available, {distinct} distinct across the positions"),
+            Some(Candidate::Piper { .. }) => format!(
+                "Piper, {n} voice(s) available, {distinct} distinct across the positions"
+            ),
             _ => format!("Windows SAPI, {n} voice(s) installed, varied by rate"),
         };
         let Some(svc) = neural.and_then(service) else {
@@ -286,16 +352,30 @@ impl Cast {
         };
         // The service's voices over the local ones, which stay as the fallback.
         let wrap = |local: Tts, voice: &str, speed: f32, style: String| Tts::Neural {
-            voice: Arc::new(Neural::new(svc.api, &svc.url, svc.key.clone(), &svc.model, voice, speed, Some(style))),
+            voice: Arc::new(Neural::new(
+                svc.api,
+                &svc.url,
+                svc.key.clone(),
+                &svc.model,
+                voice,
+                speed,
+                Some(style),
+            )),
             fallback: Box::new(local),
         };
         let nv = svc.voices.len();
         for (i, pos) in ORDER.iter().enumerate() {
-            let local = controllers.remove(pos).unwrap_or(Tts::Sapi { voice: None, rate: 0 });
+            let local =
+                controllers.remove(pos).unwrap_or(Tts::Sapi { voice: None, rate: 0 });
             let o = overrides.get(pos);
-            let voice = o.and_then(|o| o.voice.clone()).unwrap_or_else(|| svc.voices[i % nv].clone());
+            let voice = o
+                .and_then(|o| o.voice.clone())
+                .unwrap_or_else(|| svc.voices[i % nv].clone());
             let speed = o.and_then(|o| o.speed).unwrap_or_else(|| 1. / pace(*pos).0);
-            controllers.insert(*pos, wrap(local, &voice, speed, format!("{STYLE_BASE} {}", style(*pos))));
+            controllers.insert(
+                *pos,
+                wrap(local, &voice, speed, format!("{STYLE_BASE} {}", style(*pos))),
+            );
         }
         if svc.pilots {
             pilots = pilots
@@ -304,14 +384,23 @@ impl Cast {
                 .map(|(j, local)| {
                     // the voices the controllers did not take first
                     let voice = svc.voices[(ORDER.len() + j) % nv].clone();
-                    wrap(local, &voice, 1.0 + 0.04 * (j % 3) as f32, STYLE_PILOT.to_string())
+                    wrap(
+                        local,
+                        &voice,
+                        1.0 + 0.04 * (j % 3) as f32,
+                        STYLE_PILOT.to_string(),
+                    )
                 })
                 .collect();
         }
         let summary = format!(
             "{} with {nv} voice(s){}{}; {summary} as the fallback",
             svc.model,
-            if svc.always { "" } else { ", only while someone is listening (a player on, or a listener on the site)" },
+            if svc.always {
+                ""
+            } else {
+                ", only while someone is listening (a player on, or a listener on the site)"
+            },
             if svc.pilots { ", AI pilots too" } else { "" }
         );
         Cast { controllers, pilots, summary, always_neural: svc.always }

@@ -24,10 +24,10 @@ use crate::{
 };
 use anyhow::Result;
 use bfprotocols::range::{
-    cfg::{awacs_callsign_id, AdversaryCfg, HotZoneCfg, HotZoneSiteCfg, RangeCfg},
     HotZoneOutcome, HotZoneResult, LiveHotZone, PilotRef, RangeResult,
+    cfg::{AdversaryCfg, HotZoneCfg, HotZoneSiteCfg, RangeCfg, awacs_callsign_id},
 };
-use dcso3::{coalition::Side, env::miz::GroupId, unit::Unit, MizLua};
+use dcso3::{MizLua, coalition::Side, env::miz::GroupId, unit::Unit};
 use fxhash::{FxHashMap, FxHashSet};
 use log::{info, warn};
 use serde_json::json;
@@ -35,19 +35,72 @@ use std::collections::BTreeMap;
 
 /// Ground compositions for hot-zone sites: (key, label, red kit, blue kit).
 pub const HOT_ZONE_COMPOSITIONS: &[(&str, &str, &[&str], &[&str])] = &[
-    ("armor", "Armour platoon", &["T-72B", "T-72B", "BMP-2", "BMP-2"], &["M-1 Abrams", "M-1 Abrams", "M-2 Bradley", "M-2 Bradley"]),
-    ("armor_modern", "Modern armour", &["CHAP_T90M", "CHAP_T90M", "CHAP_BMPT", "BMP-3"], &["Leopard-2", "Leopard-2", "Marder", "CHAP_M1130"]),
-    ("trucks", "Supply trucks", &["Ural-375", "Ural-375", "KAMAZ Truck", "GAZ-66"], &["M 818", "M 818", "M 818", "Hummer"]),
-    ("artillery", "Artillery battery", &["SAU Msta", "SAU Msta", "Grad-URAL", "Ural-375"], &["M-109", "M-109", "MLRS", "M 818"]),
-    ("aaa", "AAA", &["ZSU-23-4 Shilka", "Ural-375 ZU-23", "ZU-23 Emplacement"], &["Gepard", "Vulcan", "Vulcan"]),
-    ("shorad", "SHORAD", &["Strela-10M3", "2S6 Tunguska"], &["M1097 Avenger", "M6 Linebacker"]),
-    ("manpads", "MANPADS team", &["SA-18 Igla manpad", "SA-18 Igla comm", "Infantry AK"], &["Soldier stinger", "Stinger comm", "Soldier M4"]),
-    ("sam_short", "Short-range SAM", &["Tor 9A331", "2S6 Tunguska"], &["Roland ADS", "Roland Radar", "Gepard"]),
-    ("sam_modern", "Modern SHORAD", &["CHAP_PantsirS1", "CHAP_TorM2"], &["CHAP_IRISTSLM_STR", "CHAP_IRISTSLM_LN", "CHAP_IRISTSLM_CP"]),
-    ("hq", "Command post", &["BTR-80", "ZIL-131 KUNG", "Ural-375", "ZSU-23-4 Shilka"], &["M1043 HMMWV Armament", "Hummer", "M 818", "Vulcan"]),
+    (
+        "armor",
+        "Armour platoon",
+        &["T-72B", "T-72B", "BMP-2", "BMP-2"],
+        &["M-1 Abrams", "M-1 Abrams", "M-2 Bradley", "M-2 Bradley"],
+    ),
+    (
+        "armor_modern",
+        "Modern armour",
+        &["CHAP_T90M", "CHAP_T90M", "CHAP_BMPT", "BMP-3"],
+        &["Leopard-2", "Leopard-2", "Marder", "CHAP_M1130"],
+    ),
+    (
+        "trucks",
+        "Supply trucks",
+        &["Ural-375", "Ural-375", "KAMAZ Truck", "GAZ-66"],
+        &["M 818", "M 818", "M 818", "Hummer"],
+    ),
+    (
+        "artillery",
+        "Artillery battery",
+        &["SAU Msta", "SAU Msta", "Grad-URAL", "Ural-375"],
+        &["M-109", "M-109", "MLRS", "M 818"],
+    ),
+    (
+        "aaa",
+        "AAA",
+        &["ZSU-23-4 Shilka", "Ural-375 ZU-23", "ZU-23 Emplacement"],
+        &["Gepard", "Vulcan", "Vulcan"],
+    ),
+    (
+        "shorad",
+        "SHORAD",
+        &["Strela-10M3", "2S6 Tunguska"],
+        &["M1097 Avenger", "M6 Linebacker"],
+    ),
+    (
+        "manpads",
+        "MANPADS team",
+        &["SA-18 Igla manpad", "SA-18 Igla comm", "Infantry AK"],
+        &["Soldier stinger", "Stinger comm", "Soldier M4"],
+    ),
+    (
+        "sam_short",
+        "Short-range SAM",
+        &["Tor 9A331", "2S6 Tunguska"],
+        &["Roland ADS", "Roland Radar", "Gepard"],
+    ),
+    (
+        "sam_modern",
+        "Modern SHORAD",
+        &["CHAP_PantsirS1", "CHAP_TorM2"],
+        &["CHAP_IRISTSLM_STR", "CHAP_IRISTSLM_LN", "CHAP_IRISTSLM_CP"],
+    ),
+    (
+        "hq",
+        "Command post",
+        &["BTR-80", "ZIL-131 KUNG", "Ural-375", "ZSU-23-4 Shilka"],
+        &["M1043 HMMWV Armament", "Hummer", "M 818", "Vulcan"],
+    ),
 ];
 
-pub fn composition(key: &str, side: Side) -> Option<(&'static str, &'static [&'static str])> {
+pub fn composition(
+    key: &str,
+    side: Side,
+) -> Option<(&'static str, &'static [&'static str])> {
     HOT_ZONE_COMPOSITIONS
         .iter()
         .find(|(k, ..)| *k == key)
@@ -111,10 +164,18 @@ pub struct HotZones {
     seq: u64,
 }
 
-fn spawn_site(lua: MizLua, z: &HotZoneCfg, ai: Side, s: &mut Site, spawns: &mut Spawns, now: f64) -> Result<()> {
+fn spawn_site(
+    lua: MizLua,
+    z: &HotZoneCfg,
+    ai: Side,
+    s: &mut Site,
+    spawns: &mut Spawns,
+    now: f64,
+) -> Result<()> {
     let (_, types) = composition(&s.cfg.composition, ai)
         .ok_or_else(|| anyhow::anyhow!("unknown composition {:?}", s.cfg.composition))?;
-    let country = spawn::country_id(z.country.as_deref().unwrap_or(spawn::default_country(ai)))?;
+    let country =
+        spawn::country_id(z.country.as_deref().unwrap_or(spawn::default_country(ai)))?;
     let n = types.len().max(1);
     let units: Vec<(String, V3, f64)> = types
         .iter()
@@ -127,7 +188,12 @@ fn spawn_site(lua: MizLua, z: &HotZoneCfg, ai: Side, s: &mut Site, spawns: &mut 
             (t.to_string(), q, a)
         })
         .collect();
-    let g = spawn::surface_group(&s.group, &units, "Good", vec![spawn::ground_waypoint(s.pos, 0., false, vec![])]);
+    let g = spawn::surface_group(
+        &s.group,
+        &units,
+        "Good",
+        vec![spawn::ground_waypoint(s.pos, 0., false, vec![])],
+    );
     spawn::add_group(lua, country, spawn::GROUND, &g)?;
     s.typ.clear();
     s.alive.clear();
@@ -138,12 +204,24 @@ fn spawn_site(lua: MizLua, z: &HotZoneCfg, ai: Side, s: &mut Site, spawns: &mut 
     }
     s.dead_at = None;
     // weapons free, radars up
-    spawns.defer(now + 2., spawn::Pending::GroupOption { group: s.group.clone(), id: 0, value: json!(2) });
-    spawns.defer(now + 2., spawn::Pending::GroupOption { group: s.group.clone(), id: 9, value: json!(2) });
+    spawns.defer(
+        now + 2.,
+        spawn::Pending::GroupOption { group: s.group.clone(), id: 0, value: json!(2) },
+    );
+    spawns.defer(
+        now + 2.,
+        spawn::Pending::GroupOption { group: s.group.clone(), id: 9, value: json!(2) },
+    );
     Ok(())
 }
 
-fn spawn_awacs(lua: MizLua, z: &HotZoneCfg, side: Side, spawns: &mut Spawns, now: f64) -> Result<Option<String>> {
+fn spawn_awacs(
+    lua: MizLua,
+    z: &HotZoneCfg,
+    side: Side,
+    spawns: &mut Spawns,
+    now: f64,
+) -> Result<Option<String>> {
     let Some(a) = &z.awacs else { return Ok(None) };
     let start = ag::resolve(lua, &a.loc)?;
     let alt = a.alt_ft / util::M_TO_FT;
@@ -165,7 +243,11 @@ fn spawn_awacs(lua: MizLua, z: &HotZoneCfg, side: Side, spawns: &mut Spawns, now
         hdg: a.heading_deg,
         pylons: Default::default(),
         livery: None,
-        callsign: Some((awacs_callsign_id(&a.callsign), a.callsign_number as i64, a.callsign.clone())),
+        callsign: Some((
+            awacs_callsign_id(&a.callsign),
+            a.callsign_number as i64,
+            a.callsign.clone(),
+        )),
         freq_mhz: Some(a.freq_mhz),
         task: "AWACS".into(),
         route: vec![
@@ -175,7 +257,10 @@ fn spawn_awacs(lua: MizLua, z: &HotZoneCfg, side: Side, spawns: &mut Spawns, now
                 speed,
                 vec![
                     spawn::task_entry(1, json!({ "id": "AWACS", "params": {} })),
-                    spawn::wrapped(2, json!({ "id": "EPLRS", "params": { "value": true } })),
+                    spawn::wrapped(
+                        2,
+                        json!({ "id": "EPLRS", "params": { "value": true } }),
+                    ),
                     spawn::task_entry(3, orbit),
                 ],
             ),
@@ -184,12 +269,33 @@ fn spawn_awacs(lua: MizLua, z: &HotZoneCfg, side: Side, spawns: &mut Spawns, now
         fuel_kg: crate::harvest::max_fuel_kg(&a.typ),
         side,
     };
-    spawn::add_group(lua, spawn::country_id(spawn::default_country(side))?, spawn::AIRPLANE, &spawn::air_group(&spec))?;
-    for c in [spawn::bool_cmd("SetImmortal", true), spawn::bool_cmd("SetUnlimitedFuel", true), spawn::bool_cmd("SetInvisible", true)] {
-        spawns.defer(now + 2., spawn::Pending::GroupCommand { group: name.clone(), cmd: c });
+    spawn::add_group(
+        lua,
+        spawn::country_id(spawn::default_country(side))?,
+        spawn::AIRPLANE,
+        &spawn::air_group(&spec),
+    )?;
+    for c in [
+        spawn::bool_cmd("SetImmortal", true),
+        spawn::bool_cmd("SetUnlimitedFuel", true),
+        spawn::bool_cmd("SetInvisible", true),
+    ] {
+        spawns.defer(
+            now + 2.,
+            spawn::Pending::GroupCommand { group: name.clone(), cmd: c },
+        );
     }
-    spawns.defer(now + 2.5, spawn::Pending::GroupCommand { group: name.clone(), cmd: spawn::set_frequency_cmd(a.freq_mhz) });
-    info!("hot zone {}: AWACS {} {} up on {:.1} MHz", z.id, a.callsign, a.typ, a.freq_mhz);
+    spawns.defer(
+        now + 2.5,
+        spawn::Pending::GroupCommand {
+            group: name.clone(),
+            cmd: spawn::set_frequency_cmd(a.freq_mhz),
+        },
+    );
+    info!(
+        "hot zone {}: AWACS {} {} up on {:.1} MHz",
+        z.id, a.callsign, a.typ, a.freq_mhz
+    );
     Ok(Some(name))
 }
 
@@ -253,7 +359,14 @@ impl HotZones {
                 Ok(a) => z.awacs = a,
                 Err(e) => warn!("hot zone {} AWACS: {e:?}", zc.id),
             }
-            info!("hot zone {} ({}): {} ground sites, {} CAP flights of {}", zc.id, zc.name, z.sites.len(), zc.cap_flights, zc.flight_size);
+            info!(
+                "hot zone {} ({}): {} ground sites, {} CAP flights of {}",
+                zc.id,
+                zc.name,
+                z.sites.len(),
+                zc.cap_flights,
+                zc.flight_size
+            );
             self.zones.push(z);
         }
     }
@@ -274,7 +387,14 @@ impl HotZones {
         self.zone_of_unit(unit).is_some()
     }
 
-    fn launch(&mut self, lua: MizLua, zi: usize, spawns: &mut Spawns, toward: V3, now: f64) -> Result<()> {
+    fn launch(
+        &mut self,
+        lua: MizLua,
+        zi: usize,
+        spawns: &mut Spawns,
+        toward: V3,
+        now: f64,
+    ) -> Result<()> {
         self.seq += 1;
         let z = &self.zones[zi];
         let typ = z.cfg.cap_types[(self.seq as usize) % z.cfg.cap_types.len()].clone();
@@ -288,7 +408,11 @@ impl HotZones {
             label: typ.clone(),
             loadouts: BTreeMap::new(),
             side: records::side_str(z.ai).into(),
-            country: z.cfg.country.clone().unwrap_or_else(|| spawn::default_country(z.ai).into()),
+            country: z
+                .cfg
+                .country
+                .clone()
+                .unwrap_or_else(|| spawn::default_country(z.ai).into()),
             livery: None,
         };
         let pylons = aa::loadout(&adv, &z.cfg.cap_weapons);
@@ -328,21 +452,41 @@ impl HotZones {
                         spawn::task_entry(4, engage),
                     ],
                 ),
-                spawn::waypoint(z.centre, pos.y, speed, vec![spawn::task_entry(1, orbit)]),
+                spawn::waypoint(
+                    z.centre,
+                    pos.y,
+                    speed,
+                    vec![spawn::task_entry(1, orbit)],
+                ),
             ],
             fuel_kg: crate::harvest::max_fuel_kg(&typ),
             side: z.ai,
         };
-        let country = spawn::country_id(&adv.country).or_else(|_| spawn::country_id(spawn::default_country(z.ai)))?;
+        let country = spawn::country_id(&adv.country)
+            .or_else(|_| spawn::country_id(spawn::default_country(z.ai)))?;
         spawn::add_group(lua, country, spawn::AIRPLANE, &spawn::air_group(&spec))?;
-        spawns.defer(now + 1.5, spawn::Pending::GroupCommand { group: name.clone(), cmd: spawn::bool_cmd("SetUnlimitedFuel", true) });
+        spawns.defer(
+            now + 1.5,
+            spawn::Pending::GroupCommand {
+                group: name.clone(),
+                cmd: spawn::bool_cmd("SetUnlimitedFuel", true),
+            },
+        );
         info!("hot zone {}: CAP {} x{} launched", z.cfg.id, typ, spec.count);
         self.zones[zi].flights.push(Flight { group: name, typ });
         Ok(())
     }
 
     /// Occupancy, the CAP, rebuilding ground sites, finishing trips; every 2 s.
-    pub fn tick(&mut self, lua: MizLua, cfg: &RangeCfg, players: &Players, spawns: &mut Spawns, rec: &mut Recorder, now: f64) {
+    pub fn tick(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        players: &Players,
+        spawns: &mut Spawns,
+        rec: &mut Recorder,
+        now: f64,
+    ) {
         if now - self.last < 2. || self.zones.is_empty() {
             return;
         }
@@ -351,7 +495,8 @@ impl HotZones {
         let mut finished = vec![];
         for zi in 0..self.zones.len() {
             // who is inside
-            let (ai, centre, radius) = (self.zones[zi].ai, self.zones[zi].centre, self.zones[zi].radius);
+            let (ai, centre, radius) =
+                (self.zones[zi].ai, self.zones[zi].centre, self.zones[zi].radius);
             let mut inside: Vec<&Flying> = vec![];
             for f in players.flying.values().filter(|f| f.side != ai && !f.is_ground) {
                 let d = util::dist2(f.pos, centre);
@@ -408,7 +553,8 @@ impl HotZones {
                     if v.zone == zi && d > radius * 1.1 {
                         let since = *v.outside_since.get_or_insert(now);
                         if now - since > 60. {
-                            finished.push((f.unit_name.clone(), HotZoneOutcome::Egressed));
+                            finished
+                                .push((f.unit_name.clone(), HotZoneOutcome::Egressed));
                         }
                     }
                 }
@@ -425,15 +571,24 @@ impl HotZones {
             if z.flights.len() < before {
                 z.next_launch = z.next_launch.max(now + z.cfg.cap_respawn_s as f64);
             }
-            if !occupied && now - z.last_occupied > z.cfg.idle_despawn_s as f64 && !z.flights.is_empty() {
-                info!("hot zone {}: empty for {} s, CAP goes home", z.cfg.id, z.cfg.idle_despawn_s);
+            if !occupied
+                && now - z.last_occupied > z.cfg.idle_despawn_s as f64
+                && !z.flights.is_empty()
+            {
+                info!(
+                    "hot zone {}: empty for {} s, CAP goes home",
+                    z.cfg.id, z.cfg.idle_despawn_s
+                );
                 for f in z.flights.drain(..) {
                     spawn::destroy_group(lua, &f.group);
                 }
             }
             if let Some(t) = toward {
                 let z = &self.zones[zi];
-                if (z.flights.len() as u32) < z.cfg.cap_flights && now >= z.next_launch && !z.cfg.cap_types.is_empty() {
+                if (z.flights.len() as u32) < z.cfg.cap_flights
+                    && now >= z.next_launch
+                    && !z.cfg.cap_types.is_empty()
+                {
                     let gap = if z.flights.is_empty() { 60. } else { 120. };
                     if let Err(e) = self.launch(lua, zi, spawns, t, now) {
                         warn!("hot zone {} CAP launch: {e:?}", self.zones[zi].cfg.id)
@@ -457,7 +612,9 @@ impl HotZones {
                 }
             }
             // AWACS: put a new one up if it went away
-            if z.cfg.awacs.is_some() && z.awacs.as_ref().map(|g| !spawn::group_exists(lua, g)).unwrap_or(true) {
+            if z.cfg.awacs.is_some()
+                && z.awacs.as_ref().map(|g| !spawn::group_exists(lua, g)).unwrap_or(true)
+            {
                 let c = z.cfg.clone();
                 match spawn_awacs(lua, &c, z.ai.opposite(), spawns, now) {
                     Ok(a) => self.zones[zi].awacs = a,
@@ -470,7 +627,14 @@ impl HotZones {
         }
     }
 
-    fn finish(&mut self, lua: MizLua, cfg: &RangeCfg, rec: &mut Recorder, unit: &str, outcome: HotZoneOutcome) {
+    fn finish(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        rec: &mut Recorder,
+        unit: &str,
+        outcome: HotZoneOutcome,
+    ) {
         let Some(v) = self.visits.remove(unit) else { return };
         let kills = v.air_kills + v.ground_kills;
         if v.time_in < 30. && kills == 0 {
@@ -520,16 +684,38 @@ impl HotZones {
                 cfg.message_s,
             );
         }
-        rec.emit(lua, v.pilot, &v.typ, v.side, &v.callsign, score, RangeResult::HotZone(res), None);
+        rec.emit(
+            lua,
+            v.pilot,
+            &v.typ,
+            v.side,
+            &v.callsign,
+            score,
+            RangeResult::HotZone(res),
+            None,
+        );
     }
 
     /// The player's aircraft is gone: finish their trip.
-    pub fn player_out(&mut self, lua: MizLua, cfg: &RangeCfg, rec: &mut Recorder, unit: &str, died: bool) {
+    pub fn player_out(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        rec: &mut Recorder,
+        unit: &str,
+        died: bool,
+    ) {
         let o = if died { HotZoneOutcome::ShotDown } else { HotZoneOutcome::Left };
         self.finish(lua, cfg, rec, unit, o);
     }
 
-    pub fn landed(&mut self, lua: MizLua, cfg: &RangeCfg, rec: &mut Recorder, unit: &str) {
+    pub fn landed(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        rec: &mut Recorder,
+        unit: &str,
+    ) {
         if self.visits.contains_key(unit) {
             self.finish(lua, cfg, rec, unit, HotZoneOutcome::Landed);
         }
@@ -566,7 +752,13 @@ impl HotZones {
         }
     }
 
-    pub fn on_kill(&mut self, shooter_unit: Option<&str>, target_unit: &str, target_type: &str, now: f64) {
+    pub fn on_kill(
+        &mut self,
+        shooter_unit: Option<&str>,
+        target_unit: &str,
+        target_type: &str,
+        now: f64,
+    ) {
         let which = self.zone_of_unit(target_unit);
         self.unit_dead(target_unit, now);
         let (Some((_, air)), Some(s)) = (which, shooter_unit) else { return };
@@ -592,7 +784,9 @@ impl HotZones {
                 .cfg
                 .awacs
                 .as_ref()
-                .filter(|_| z.awacs.as_ref().map(|g| spawn::group_exists(lua, g)).unwrap_or(false))
+                .filter(|_| {
+                    z.awacs.as_ref().map(|g| spawn::group_exists(lua, g)).unwrap_or(false)
+                })
                 .map(|a| format!("{} {}", a.callsign, a.callsign_number));
             let Some(caller) = caller else {
                 out.push(format!("{}: no AWACS on station", z.cfg.name));
@@ -666,10 +860,17 @@ impl HotZones {
                 radius_m: z.radius,
                 ai_side: records::side_str(z.ai).into(),
                 bandits: z.flights.len() as u32 * z.cfg.flight_size,
-                players: self.visits.values().filter(|v| v.zone == zi).map(|v| v.pilot.name.clone()).collect(),
+                players: self
+                    .visits
+                    .values()
+                    .filter(|v| v.zone == zi)
+                    .map(|v| v.pilot.name.clone())
+                    .collect(),
                 ground_alive: z.sites.iter().map(|s| s.alive.len() as u32).sum(),
                 ground_total: z.sites.iter().map(|s| s.typ.len() as u32).sum(),
-                awacs: z.cfg.awacs.as_ref().map(|a| format!("{} {} {:.1} MHz", a.callsign, a.callsign_number, a.freq_mhz)),
+                awacs: z.cfg.awacs.as_ref().map(|a| {
+                    format!("{} {} {:.1} MHz", a.callsign, a.callsign_number, a.freq_mhz)
+                }),
             })
             .collect()
     }

@@ -11,14 +11,14 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
-use crate::object::DcsOidExt;
 use super::{as_tbl, coalition::Side, controller::Controller, unit::Unit, String};
+use crate::object::DcsOidExt;
 use crate::{
     env::miz::{GroupId, GroupKind},
     object::{DcsObject, DcsOid, Object},
     simple_enum, wrapped_table, LuaEnv, MizLua, Sequence,
 };
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use mlua::{prelude::*, Value};
 use serde_derive::Serialize;
 use std::{marker::PhantomData, ops::Deref};
@@ -140,10 +140,7 @@ impl DcsObject for Group {
         let t = lua.inner().create_table()?;
         t.set_metatable(Some(lua.inner().globals().raw_get(&**id.class)?));
         t.raw_set("id_", id.id)?;
-        let t = Group {
-            t,
-            lua: lua.inner().clone(),
-        };
+        let t = Group { t, lua: lua.inner().clone() };
         if !t.is_exist()? {
             bail!("{} is an invalid group", id.id)
         }
@@ -157,11 +154,7 @@ impl DcsObject for Group {
 
     fn get_instance_dyn<T>(lua: MizLua, id: &DcsOid<T>) -> Result<Self> {
         id.check_implements(lua, "Group")?;
-        let id = DcsOid {
-            id: id.id,
-            class: id.class.clone(),
-            t: PhantomData,
-        };
+        let id = DcsOid { id: id.id, class: id.class.clone(), t: PhantomData };
         Self::get_instance(lua, &id)
     }
 

@@ -14,23 +14,23 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
-use super::{
-    group::{SpawnedGroup, SpawnedUnit},
-    objective::Objective,
-    player::Player,
-    Map, MapM, MapS, Set, SetM, SetS,
-};
 use super::ground_insertion::GroundInsertion;
 use super::logistics::PendingCargo;
 use super::tasks::{Task, TaskId};
+use super::{
+    Map, MapM, MapS, Set, SetM, SetS,
+    group::{SpawnedGroup, SpawnedUnit},
+    objective::Objective,
+    player::Player,
+};
 use crate::navaids::Navaid;
-use compact_str::CompactString;
 use bfprotocols::db::{
     group::{GroupId, UnitId},
     objective::ObjectiveId,
 };
 use chrono::prelude::*;
-use dcso3::{coalition::Side, net::Ucid, String};
+use compact_str::CompactString;
+use dcso3::{String, coalition::Side, net::Ucid};
 use serde_derive::{Deserialize, Serialize};
 
 /// The save format this build writes. Bump it whenever a change to
@@ -228,7 +228,9 @@ impl Persisted {
 /// as raw JSON and convert best-effort — anything that doesn't parse is
 /// dropped, which is safe because `navaids::reallocate` regenerates the
 /// whole table on the next objective-set change anyway.
-fn de_navaids_compat<'de, D>(d: D) -> std::result::Result<MapS<ObjectiveId, Vec<Navaid>>, D::Error>
+fn de_navaids_compat<'de, D>(
+    d: D,
+) -> std::result::Result<MapS<ObjectiveId, Vec<Navaid>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -290,8 +292,12 @@ mod tests {
     fn the_clock_round_trips() {
         let mut p = Persisted::default();
         let wall = Utc.with_ymd_and_hms(2026, 10, 27, 12, 0, 0).unwrap();
-        p.clock = Some(crate::clock::SavedClock { campaign: wall - chrono::Duration::minutes(5), wall });
-        let back: Persisted = serde_json::from_value(serde_json::to_value(&p).unwrap()).unwrap();
+        p.clock = Some(crate::clock::SavedClock {
+            campaign: wall - chrono::Duration::minutes(5),
+            wall,
+        });
+        let back: Persisted =
+            serde_json::from_value(serde_json::to_value(&p).unwrap()).unwrap();
         assert_eq!(back.clock, p.clock);
     }
 
@@ -310,10 +316,16 @@ mod tests {
         assert_eq!((p.blue_treasury, p.red_treasury), (1000, 900));
         assert!(p.migrated_v0);
         let obj = p.objectives.get(&ObjectiveId::from(1)).unwrap();
-        assert_eq!((obj.name.as_str(), obj.owner, obj.points), ("Batumi", Side::Blue, 250));
+        assert_eq!(
+            (obj.name.as_str(), obj.owner, obj.points),
+            ("Batumi", Side::Blue, 250)
+        );
         let ucid: Ucid = "0123456789abcdef0123456789abcdef".parse().unwrap();
         let player = p.players.get(&ucid).unwrap();
-        assert_eq!((player.name.as_str(), player.points, player.sorties), ("Test Pilot", 42, 7));
+        assert_eq!(
+            (player.name.as_str(), player.points, player.sorties),
+            ("Test Pilot", 42, 7)
+        );
         assert_eq!(p.funds_seeded, vec![Side::Blue, Side::Red]);
     }
 
@@ -329,7 +341,9 @@ mod tests {
             match (want, got) {
                 (Value::Object(w), Value::Object(g)) => {
                     for (k, wv) in w {
-                        let gv = g.get(k).unwrap_or_else(|| panic!("{path}.{k} missing after round trip"));
+                        let gv = g.get(k).unwrap_or_else(|| {
+                            panic!("{path}.{k} missing after round trip")
+                        });
                         check(&format!("{path}.{k}"), wv, gv);
                     }
                 }

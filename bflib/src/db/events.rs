@@ -14,27 +14,27 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
+use crate::spawnctx::SpawnCtx;
 use anyhow::Result;
 use bfprotocols::{
     cfg::{CampaignEventsCfg, UnitTag},
     db::group::GroupId,
 };
 use chrono::{DateTime, Utc};
-use compact_str::{format_compact, CompactString};
+use compact_str::{CompactString, format_compact};
 use dcso3::{
+    LuaVec2, Vector2,
     coalition::Side,
     env::miz::MizIndex,
     land::{Land, RoadType},
     trigger::MarkId,
-    LuaVec2, Vector2,
 };
-use crate::spawnctx::SpawnCtx;
-use std::sync::Arc;
 use fxhash::FxHashMap;
 use log::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
+use std::sync::Arc;
 
 use super::Db;
 use bfprotocols::db::objective::ObjectiveId;
@@ -52,7 +52,6 @@ impl EventId {
 /// Types of dynamic campaign events
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CampaignEvent {
-
     /// Artillery/armor fire-support barrage against a contested position.
     Barrage {
         id: EventId,
@@ -151,7 +150,6 @@ pub enum CampaignEvent {
 impl CampaignEvent {
     pub fn id(&self) -> EventId {
         match self {
-
             Self::Barrage { id, .. } => *id,
             Self::MissileStrike { id, .. } => *id,
             Self::ConvoyAmbush { id, .. } => *id,
@@ -165,16 +163,21 @@ impl CampaignEvent {
         match self {
             Self::Barrage { side, .. } | Self::MissileStrike { side, .. } => *side,
             Self::ConvoyAmbush { ambush_side, .. } => *ambush_side,
-            Self::EnemyCap { cap_side, .. } | Self::CommanderCap { cap_side, .. } => *cap_side,
+            Self::EnemyCap { cap_side, .. } | Self::CommanderCap { cap_side, .. } => {
+                *cap_side
+            }
         }
     }
 
     pub fn description(&self) -> CompactString {
         match self {
-
             Self::Barrage { side, .. } => format_compact!("{:?} Barrage", side),
-            Self::MissileStrike { side, .. } => format_compact!("{:?} Missile Strike", side),
-            Self::ConvoyAmbush { ambush_side, .. } => format_compact!("{:?} Convoy Ambush", ambush_side),
+            Self::MissileStrike { side, .. } => {
+                format_compact!("{:?} Missile Strike", side)
+            }
+            Self::ConvoyAmbush { ambush_side, .. } => {
+                format_compact!("{:?} Convoy Ambush", ambush_side)
+            }
             Self::EnemyCap { cap_side, rotary, .. } => {
                 if *rotary {
                     format_compact!("{:?} Enemy Helo Patrol", cap_side)
@@ -182,7 +185,9 @@ impl CampaignEvent {
                     format_compact!("{:?} Enemy CAP", cap_side)
                 }
             }
-            Self::CommanderCap { cap_side, .. } => format_compact!("{:?} Commander CAP", cap_side),
+            Self::CommanderCap { cap_side, .. } => {
+                format_compact!("{:?} Commander CAP", cap_side)
+            }
         }
     }
 }
@@ -190,7 +195,6 @@ impl CampaignEvent {
 /// DCS-side effects that need to be executed after tick() returns.
 #[derive(Debug, Clone)]
 pub enum EventEffect {
-
     /// Issue FireAtPoint orders to armor/LR groups at `source_objective`.
     FireBarrage {
         event_id: EventId,
@@ -218,9 +222,7 @@ pub enum EventEffect {
         convoy_pos: Vector2,
     },
     /// Remove F10 marks associated with a finished event.
-    DeleteMarks {
-        ids: SmallVec<[MarkId; 4]>,
-    },
+    DeleteMarks { ids: SmallVec<[MarkId; 4]> },
     /// Spawn a CAP aircraft from a template at an objective for a defending side.
     SpawnCap {
         event_id: EventId,
@@ -243,10 +245,7 @@ pub enum EventEffect {
     },
 
     /// Despawn all groups registered to a convoy-ambush event.
-    DespawnAmbush {
-        event_id: EventId,
-    },
-
+    DespawnAmbush { event_id: EventId },
 }
 
 /// Ambush forces drive at this, and plan their drive with it.
@@ -278,7 +277,11 @@ fn convoy_speed(speed_mps: f64) -> f64 {
 /// now) that a force driving from `from` reaches and sets up at before the
 /// convoy gets there, and the estimated drive to it. `None` if there is no
 /// such point within driving range.
-pub(crate) fn intercept_on_path(path: &[Vector2], convoy_mps: f64, from: Vector2) -> Option<(Vector2, f64)> {
+pub(crate) fn intercept_on_path(
+    path: &[Vector2],
+    convoy_mps: f64,
+    from: Vector2,
+) -> Option<(Vector2, f64)> {
     let total: f64 = path.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
     let mut done = 0.;
     for w in path.windows(2) {
@@ -311,7 +314,9 @@ fn best_ambush_source<T: Copy>(
     ours: &[(T, Vector2)],
 ) -> Option<(T, Vector2, f64)> {
     ours.iter()
-        .filter_map(|(id, pos)| intercept_on_path(path, convoy_mps, *pos).map(|(p, d)| (*id, p, d)))
+        .filter_map(|(id, pos)| {
+            intercept_on_path(path, convoy_mps, *pos).map(|(p, d)| (*id, p, d))
+        })
         .min_by(|a, b| a.2.total_cmp(&b.2))
 }
 
@@ -352,7 +357,9 @@ impl Db {
         if let Some((pos, dest, speed)) = convoy {
             let road: Option<Vec<Vector2>> = Land::singleton(lua)
                 .ok()
-                .and_then(|l| l.find_path_on_roads(RoadType::Road, LuaVec2(pos), LuaVec2(dest)).ok())
+                .and_then(|l| {
+                    l.find_path_on_roads(RoadType::Road, LuaVec2(pos), LuaVec2(dest)).ok()
+                })
                 .map(|seq| seq.into_iter().filter_map(|p| p.ok()).map(|p| p.0).collect());
             if let Some(road) = road.filter(|r| r.len() >= 2) {
                 let mut path = Vec::with_capacity(road.len() + 1);
@@ -371,7 +378,9 @@ impl Db {
             }
         }
         let Some(plan) = self.plan_drive(lua, from, at, false) else {
-            info!("SpawnAmbush: no road from {source:?} to the intercept, ambush called off");
+            info!(
+                "SpawnAmbush: no road from {source:?} to the intercept, ambush called off"
+            );
             return Ok(None);
         };
         if plan.route_m > AMBUSH_MAX_ROAD_M {
@@ -409,15 +418,15 @@ pub(crate) fn bearing_to_compass(from: Vector2, to: Vector2) -> &'static str {
     let angle_rad = dy.atan2(dx);
     let deg = (90.0 - angle_rad.to_degrees()).rem_euclid(360.0);
     match deg as u32 {
-        0..=22   => "North",
-        23..=67  => "Northeast",
+        0..=22 => "North",
+        23..=67 => "Northeast",
         68..=112 => "East",
         113..=157 => "Southeast",
         158..=202 => "South",
         203..=247 => "Southwest",
         248..=292 => "West",
         293..=337 => "Northwest",
-        _         => "North",
+        _ => "North",
     }
 }
 
@@ -511,7 +520,6 @@ pub struct EventScheduler {
     #[serde(skip)]
     pub cap_hard_expiry: FxHashMap<EventId, DateTime<Utc>>,
 
-
     #[serde(skip)]
     pub ambush_groups: FxHashMap<EventId, GroupId>,
     #[serde(skip)]
@@ -567,7 +575,15 @@ impl EventScheduler {
                             && !o.kind().is_carrier_group()
                             && !o.kind().is_special_sam_site()
                     })
-                    .map(|(id, o)| (*id, o.owner(), o.pos(), dcso3::String::from(o.name.as_str()), o.supply()))
+                    .map(|(id, o)| {
+                        (
+                            *id,
+                            o.owner(),
+                            o.pos(),
+                            dcso3::String::from(o.name.as_str()),
+                            o.supply(),
+                        )
+                    })
                     .collect(),
             );
             self.owned_cache_dirty = false;
@@ -578,7 +594,6 @@ impl EventScheduler {
     pub fn register_mark(&mut self, event_id: EventId, mark_id: MarkId) {
         self.event_marks.entry(event_id).or_default().push(mark_id);
     }
-
 
     // -------------------------------------------------------------------------
     // Main tick
@@ -596,14 +611,19 @@ impl EventScheduler {
         let mut messages: Vec<CompactString> = Vec::new();
         let mut effects: Vec<EventEffect> = Vec::new();
 
-
-
         // ---- Process active events ----
         let mut expired_indices: Vec<usize> = Vec::new();
         for (i, event) in self.active_events.iter_mut().enumerate() {
             match event {
                 // -- Barrage --
-                CampaignEvent::Barrage { id, side, source_objective, target_pos, expires_at, fire_ordered } => {
+                CampaignEvent::Barrage {
+                    id,
+                    side,
+                    source_objective,
+                    target_pos,
+                    expires_at,
+                    fire_ordered,
+                } => {
                     if !*fire_ordered {
                         *fire_ordered = true;
                         effects.push(EventEffect::FireBarrage {
@@ -626,7 +646,14 @@ impl EventScheduler {
                 }
 
                 // -- Missile strike --
-                CampaignEvent::MissileStrike { id, side, shooter_gids, target_pos, expires_at, fire_ordered } => {
+                CampaignEvent::MissileStrike {
+                    id,
+                    side,
+                    shooter_gids,
+                    target_pos,
+                    expires_at,
+                    fire_ordered,
+                } => {
                     if !*fire_ordered {
                         *fire_ordered = true;
                         effects.push(EventEffect::FireMissileStrike {
@@ -649,7 +676,16 @@ impl EventScheduler {
                 }
 
                 // -- Convoy ambush --
-                CampaignEvent::ConvoyAmbush { id, ambush_side, spawn_pos, source_objective, expires_at, spawned, convoy_group_id, convoy_pos } => {
+                CampaignEvent::ConvoyAmbush {
+                    id,
+                    ambush_side,
+                    spawn_pos,
+                    source_objective,
+                    expires_at,
+                    spawned,
+                    convoy_group_id,
+                    convoy_pos,
+                } => {
                     if !*spawned {
                         *spawned = true;
                         effects.push(EventEffect::SpawnAmbush {
@@ -670,11 +706,23 @@ impl EventScheduler {
                     }
                 }
 
-                CampaignEvent::EnemyCap { id, cap_side, objective, expires_at, spawned, rotary, threat } => {
+                CampaignEvent::EnemyCap {
+                    id,
+                    cap_side,
+                    objective,
+                    expires_at,
+                    spawned,
+                    rotary,
+                    threat,
+                } => {
                     if !*spawned {
                         *spawned = true;
-                        let obj_pos = db.persisted.objectives.get(objective)
-                            .map(|o| o.pos()).unwrap_or_default();
+                        let obj_pos = db
+                            .persisted
+                            .objectives
+                            .get(objective)
+                            .map(|o| o.pos())
+                            .unwrap_or_default();
                         effects.push(EventEffect::SpawnCap {
                             event_id: *id,
                             cap_side: *cap_side,
@@ -685,7 +733,12 @@ impl EventScheduler {
                         });
                     }
                     if now >= *expires_at {
-                        effects.push(EventEffect::DespawnCap { event_id: *id, cap_side: *cap_side, objective: *objective, rotary: *rotary });
+                        effects.push(EventEffect::DespawnCap {
+                            event_id: *id,
+                            cap_side: *cap_side,
+                            objective: *objective,
+                            rotary: *rotary,
+                        });
                         if let Some(marks) = self.event_marks.remove(id) {
                             effects.push(EventEffect::DeleteMarks { ids: marks });
                         }
@@ -693,11 +746,21 @@ impl EventScheduler {
                     }
                 }
 
-                CampaignEvent::CommanderCap { id, cap_side, objective, expires_at, spawned } => {
+                CampaignEvent::CommanderCap {
+                    id,
+                    cap_side,
+                    objective,
+                    expires_at,
+                    spawned,
+                } => {
                     if !*spawned {
                         *spawned = true;
-                        let obj_pos = db.persisted.objectives.get(objective)
-                            .map(|o| o.pos()).unwrap_or_default();
+                        let obj_pos = db
+                            .persisted
+                            .objectives
+                            .get(objective)
+                            .map(|o| o.pos())
+                            .unwrap_or_default();
                         effects.push(EventEffect::SpawnCap {
                             event_id: *id,
                             cap_side: *cap_side,
@@ -708,7 +771,12 @@ impl EventScheduler {
                         });
                     }
                     if now >= *expires_at {
-                        effects.push(EventEffect::DespawnCap { event_id: *id, cap_side: *cap_side, objective: *objective, rotary: false });
+                        effects.push(EventEffect::DespawnCap {
+                            event_id: *id,
+                            cap_side: *cap_side,
+                            objective: *objective,
+                            rotary: false,
+                        });
                         if let Some(marks) = self.event_marks.remove(id) {
                             effects.push(EventEffect::DeleteMarks { ids: marks });
                         }
@@ -728,7 +796,6 @@ impl EventScheduler {
             let event = self.active_events.remove(i);
             info!("Campaign event expired: {}", event.description());
         }
-
 
         Ok((messages, effects))
     }
@@ -763,7 +830,8 @@ impl EventScheduler {
 
         messages.push(format_compact!(
             "INTEL: {:?} missile strike inbound — {} is the target!",
-            side, target_name
+            side,
+            target_name
         ));
 
         self.total_events_spawned += 1;
@@ -846,7 +914,8 @@ impl EventScheduler {
             .filter(|(_, s, ..)| *s == ambush_side)
             .map(|(oid, _, pos, _, _)| (*oid, *pos))
             .collect();
-        let mut options: SmallVec<[(usize, ObjectiveId, Vector2, f64); 8]> = SmallVec::new();
+        let mut options: SmallVec<[(usize, ObjectiveId, Vector2, f64); 8]> =
+            SmallVec::new();
         let convoys: Vec<_> = db
             .ephemeral
             .active_convoys
@@ -855,16 +924,21 @@ impl EventScheduler {
             .filter(|c| near.map_or(true, |p| (p - c.last_pos).norm() <= NEAR_M))
             .collect();
         for (i, convoy) in convoys.iter().enumerate() {
-            let Some(dest) = db.persisted.objectives.get(&convoy.destination).map(|o| o.pos())
+            let Some(dest) =
+                db.persisted.objectives.get(&convoy.destination).map(|o| o.pos())
             else {
                 continue;
             };
             let path = [convoy.last_pos, dest];
-            if let Some((oid, at, drive_m)) = best_ambush_source(&path, convoy_speed(convoy.speed_mps), &ours) {
+            if let Some((oid, at, drive_m)) =
+                best_ambush_source(&path, convoy_speed(convoy.speed_mps), &ours)
+            {
                 options.push((i, oid, at, drive_m));
             }
         }
-        if options.is_empty() { return false; }
+        if options.is_empty() {
+            return false;
+        }
         let pick = match near {
             Some(p) => options
                 .iter()
@@ -897,7 +971,6 @@ impl EventScheduler {
             convoy_group_id,
             convoy_pos,
         };
-
 
         self.total_events_spawned += 1;
         info!(
@@ -937,8 +1010,12 @@ impl EventScheduler {
 
         let obj_score = |obj: &crate::db::objective::Objective| -> u8 {
             let mut s = 0u8;
-            if obj.threatened() { s += 2; }
-            if obj.captureable() { s += 4; }
+            if obj.threatened() {
+                s += 2;
+            }
+            if obj.captureable() {
+                s += 4;
+            }
             s
         };
         // Find the most threatened objective to act as our "threat center"
@@ -987,7 +1064,6 @@ impl EventScheduler {
             spawned: false,
         };
 
-
         self.total_events_spawned += 1;
         info!("[Commander] Dispatched {:?} CAP over {}", cap_side, obj_name);
         self.active_events.push(event);
@@ -997,7 +1073,6 @@ impl EventScheduler {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
-
 }
 
 #[cfg(test)]
@@ -1030,9 +1105,10 @@ mod tests {
 
     #[test]
     fn nearest_source_wins() {
-        let ours = [(1, Vector2::new(40_000., 30_000.)), (2, Vector2::new(30_000., 5_000.))];
-        let (id, _, _) = best_ambush_source(&road(), 8., &ours).expect("someone can reach it");
+        let ours =
+            [(1, Vector2::new(40_000., 30_000.)), (2, Vector2::new(30_000., 5_000.))];
+        let (id, _, _) =
+            best_ambush_source(&road(), 8., &ours).expect("someone can reach it");
         assert_eq!(id, 2);
     }
 }
-

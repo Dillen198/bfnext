@@ -106,14 +106,8 @@ const STATICS: [StaticPart; 4] = [
 const CREW: [(f64, f64, f64); 2] = [(-70., -2., PI), (-70., 2., PI)];
 
 /// The guard detail around the helicopter; the last one is the MANPAD.
-const GUARDS: [(f64, f64); 6] = [
-    (-20., -5.),
-    (-20., 5.),
-    (5., 20.),
-    (-5., 20.),
-    (20., 10.),
-    (20., -10.),
-];
+const GUARDS: [(f64, f64); 6] =
+    [(-20., -5.), (-20., 5.), (5., 20.), (-5., 20.), (20., 10.), (20., -10.)];
 const MANPAD: (f64, f64) = (50., 0.);
 
 fn named(pattern: &str, letter: &str) -> String {
@@ -130,7 +124,8 @@ fn guard_name(letter: &str) -> String {
 
 /// The templates a `side` Fat Cow spawns besides its pad, in spawn order.
 pub fn part_templates(side: Side) -> Result<Vec<String>> {
-    let letter = side_letter(side).ok_or_else(|| anyhow!("neutral can't have a fat cow"))?;
+    let letter =
+        side_letter(side).ok_or_else(|| anyhow!("neutral can't have a fat cow"))?;
     let mut names: Vec<String> = STATICS.iter().map(|s| named(s.name, letter)).collect();
     names.push(crew_name(letter));
     names.push(guard_name(letter));
@@ -226,7 +221,15 @@ fn static_group(
 }
 
 fn pad_group(lua: &mlua::Lua, ids: &mut Ids, name: &str) -> Result<Table> {
-    let group = static_group(lua, ids, name, "Heliports", "Invisible FARP", Some("invisiblefarp"), (0., 0.))?;
+    let group = static_group(
+        lua,
+        ids,
+        name,
+        "Heliports",
+        "Invisible FARP",
+        Some("invisiblefarp"),
+        (0., 0.),
+    )?;
     let unit: Table = group.raw_get::<Table>("units")?.raw_get(1)?;
     unit.raw_set("heliport_callsign_id", 1)?;
     unit.raw_set("heliport_frequency", "127.5")?;
@@ -291,7 +294,12 @@ fn infantry_group(
 /// mission editor are kept; the layout names are reserved and must not be.
 /// Returns how many groups were added; the mission has to be re-indexed
 /// after any.
-pub fn inject_templates(lua: MizLua, miz: &Miz, idx: &MizIndex, cfg: &Cfg) -> Result<usize> {
+pub fn inject_templates(
+    lua: MizLua,
+    miz: &Miz,
+    idx: &MizIndex,
+    cfg: &Cfg,
+) -> Result<usize> {
     let lua = lua.inner();
     let mut ids = Ids { gid: idx.max_gid().inner(), uid: idx.max_uid().inner() };
     let mut added = 0;
@@ -303,16 +311,16 @@ pub fn inject_templates(lua: MizLua, miz: &Miz, idx: &MizIndex, cfg: &Cfg) -> Re
             .into_iter()
             .flatten()
             .filter_map(|d| match &d.kind {
-                DeployableKind::Objective(o) => o.fat_cow.as_ref().map(|fc| (&o.pad_templates, fc)),
+                DeployableKind::Objective(o) => {
+                    o.fat_cow.as_ref().map(|fc| (&o.pad_templates, fc))
+                }
                 DeployableKind::Group { .. } => None,
             })
             .collect();
         let Some((_, first)) = fat_cows.first() else { continue };
-        let country = miz
-            .coalition(side)?
-            .countries()?
-            .first()
-            .with_context(|| format_compact!("{side:?} has no country in the mission to own its fat cow"))?;
+        let country = miz.coalition(side)?.countries()?.first().with_context(|| {
+            format_compact!("{side:?} has no country in the mission to own its fat cow")
+        })?;
         let exists = |name: &str| -> Result<bool> {
             Ok(miz.get_group_by_name(idx, GroupKind::Any, side, name)?.is_some())
         };
@@ -336,7 +344,18 @@ pub fn inject_templates(lua: MizLua, miz: &Miz, idx: &MizIndex, cfg: &Cfg) -> Re
         }
         for part in &STATICS {
             let name = named(part.name, letter);
-            push(&statics, static_group(lua, &mut ids, &name, part.category, part.typ, part.shape, part.pos)?)?;
+            push(
+                &statics,
+                static_group(
+                    lua,
+                    &mut ids,
+                    &name,
+                    part.category,
+                    part.typ,
+                    part.shape,
+                    part.pos,
+                )?,
+            )?;
         }
         let (soldier, manpad) = soldiers(side, first);
         let crew: Vec<(&str, f64, f64, f64)> =
@@ -347,7 +366,10 @@ pub fn inject_templates(lua: MizLua, miz: &Miz, idx: &MizIndex, cfg: &Cfg) -> Re
         guards.push((manpad.as_str(), MANPAD.0, MANPAD.1, 0.));
         push(&vehicles, infantry_group(lua, &mut ids, &guard_name(letter), &guards)?)?;
         added += STATICS.len() + 2;
-        info!("[FAT_COW] {side:?}: generated the fat cow layout templates and {} pad(s)", pads.len());
+        info!(
+            "[FAT_COW] {side:?}: generated the fat cow layout templates and {} pad(s)",
+            pads.len()
+        );
     }
     Ok(added)
 }
@@ -359,7 +381,9 @@ pub fn inject_templates(lua: MizLua, miz: &Miz, idx: &MizIndex, cfg: &Cfg) -> Re
 
 use super::{
     Db,
-    logistics::{HeloMissionId, HeloMissionKind, HeloMissionState, HeloTo, plan_helo_route},
+    logistics::{
+        HeloMissionId, HeloMissionKind, HeloMissionState, HeloTo, plan_helo_route,
+    },
 };
 use crate::{objective, spawnctx::SpawnCtx};
 use bfprotocols::{
@@ -468,7 +492,10 @@ impl Db {
                 template: cfg.aircraft_template.clone(),
             }),
         )?;
-        info!("[FAT_COW] {id} launched from {origin_name} for {} minutes", cfg.duration_mins);
+        info!(
+            "[FAT_COW] {id} launched from {origin_name} for {} minutes",
+            cfg.duration_mins
+        );
         self.ephemeral.msgs().panel_to_side(
             15,
             false,
@@ -495,7 +522,12 @@ impl Db {
 
     /// Run the AI Fat Cows, and close the ones whose time ran out while
     /// nothing was there to pack them up (across a restart).
-    pub fn tick_fat_cow_missions(&mut self, lua: MizLua, idx: &MizIndex, now: DateTime<Utc>) -> Result<()> {
+    pub fn tick_fat_cow_missions(
+        &mut self,
+        lua: MizLua,
+        idx: &MizIndex,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
         if let Some(helo_cfg) = self.ephemeral.cfg.helo_insertion.clone() {
             let ids: Vec<HeloMissionId> = self
                 .ephemeral
@@ -526,7 +558,8 @@ impl Db {
 
     /// Empty a Fat Cow's pad and remove it.
     fn close_fat_cow(&mut self, lua: MizLua, oid: ObjectiveId) {
-        let owner = self.persisted.objectives.get(&oid).map(|o| (o.owner, o.name.clone()));
+        let owner =
+            self.persisted.objectives.get(&oid).map(|o| (o.owner, o.name.clone()));
         if let Err(e) = self.close_fat_cow_warehouse(lua, oid) {
             warn!("[FAT_COW] failed to empty {oid}'s pad: {e:?}");
         }
@@ -558,29 +591,39 @@ impl Db {
             return Ok(());
         }
         m.last_check = now;
-        let HeloMissionKind::FatCow { deployable, pos, duration_secs, farp, until, returning, .. } =
-            m.kind.clone()
+        let HeloMissionKind::FatCow {
+            deployable,
+            pos,
+            duration_secs,
+            farp,
+            until,
+            returning,
+            ..
+        } = m.kind.clone()
         else {
             return Ok(());
         };
         let st = OnStation { deployable, pos, duration_secs, farp, until, returning };
-        let (gid, side, player, cost, origin) = (m.group_id, m.side, m.player, m.cost, m.origin);
-        let Some(group_name) = self.persisted.groups.get(&gid).map(|g| g.name.clone()) else {
+        let (gid, side, player, cost, origin) =
+            (m.group_id, m.side, m.player, m.cost, m.origin);
+        let Some(group_name) = self.persisted.groups.get(&gid).map(|g| g.name.clone())
+        else {
             if let Some(oid) = st.farp {
                 self.close_fat_cow(lua, oid);
             }
             self.ephemeral.active_helo_missions.remove(id);
             return Ok(());
         };
-        let home = self.persisted.objectives.get(&origin).map(|o| o.pos()).unwrap_or(st.pos);
+        let home =
+            self.persisted.objectives.get(&origin).map(|o| o.pos()).unwrap_or(st.pos);
         let radius = helo_cfg.landing_radius_m;
         let Some(m) = self.ephemeral.active_helo_missions.get_mut(id) else {
             return Ok(());
         };
         let target = if st.returning { home } else { st.pos };
         let state = m.poll(lua, now, &group_name, target, radius);
-        let never_launched =
-            m.airborne_at.is_none() && (now - m.spawn_time).num_seconds() > FAT_COW_STARTUP_LIMIT_SECS;
+        let never_launched = m.airborne_at.is_none()
+            && (now - m.spawn_time).num_seconds() > FAT_COW_STARTUP_LIMIT_SECS;
         let overdue = m.deadline.is_some_and(|d| now > d);
         match (st.farp, st.returning, state) {
             (farp, returning, HeloMissionState::Destroyed) => {
@@ -588,19 +631,30 @@ impl Db {
                 match farp {
                     // The cow carries the fuel; the FARP goes with it.
                     Some(oid) => self.close_fat_cow(lua, oid),
-                    None if !returning => {
-                        self.refund_fat_cow(&player, cost, "your Fat Cow was lost before it was set up")
-                    }
+                    None if !returning => self.refund_fat_cow(
+                        &player,
+                        cost,
+                        "your Fat Cow was lost before it was set up",
+                    ),
                     None => (),
                 }
                 let _ = self.delete_group(&gid);
                 self.ephemeral.active_helo_missions.remove(id);
             }
             (None, false, HeloMissionState::Delivered) => {
-                match self.set_up_ai_fat_cow(lua, idx, &group_name, side, &player, &st, now) {
+                match self.set_up_ai_fat_cow(
+                    lua,
+                    idx,
+                    &group_name,
+                    side,
+                    &player,
+                    &st,
+                    now,
+                ) {
                     Ok((oid, until)) => {
                         if let Some(m) = self.ephemeral.active_helo_missions.get_mut(id)
-                            && let HeloMissionKind::FatCow { farp, until: u, .. } = &mut m.kind
+                            && let HeloMissionKind::FatCow { farp, until: u, .. } =
+                                &mut m.kind
                         {
                             *farp = Some(oid);
                             *u = Some(until);
@@ -608,8 +662,19 @@ impl Db {
                     }
                     Err(e) => {
                         warn!("[FAT_COW] {id} could not set up: {e:?}");
-                        self.refund_fat_cow(&player, cost, &format!("your Fat Cow could not set up: {e}"));
-                        self.send_fat_cow_home(lua, id, &group_name, home, helo_cfg, now)?;
+                        self.refund_fat_cow(
+                            &player,
+                            cost,
+                            &format!("your Fat Cow could not set up: {e}"),
+                        );
+                        self.send_fat_cow_home(
+                            lua,
+                            id,
+                            &group_name,
+                            home,
+                            helo_cfg,
+                            now,
+                        )?;
                     }
                 }
             }
@@ -659,8 +724,12 @@ impl Db {
             );
             self.adjust_points(player, cost, why);
         } else {
-            self.ephemeral
-                .panel_to_player(&self.persisted, 15, player, CompactString::from(why));
+            self.ephemeral.panel_to_player(
+                &self.persisted,
+                15,
+                player,
+                CompactString::from(why),
+            );
         }
     }
 
@@ -693,10 +762,23 @@ impl Db {
         if n >= spec.limit as usize {
             bail!("{side:?} already has {n} {} up", st.deployable)
         }
-        let oid = self.add_farp_facing(lua, &SpawnCtx::new(lua)?, idx, side, cow, heading, &spec, parts)?;
+        let oid = self.add_farp_facing(
+            lua,
+            &SpawnCtx::new(lua)?,
+            idx,
+            side,
+            cow,
+            heading,
+            &spec,
+            parts,
+        )?;
         let until = now + Duration::seconds(st.duration_secs);
         self.persisted.fat_cow_expiry.insert_cow(oid, until);
-        self.ephemeral.stat(Stat::DeployFarp { by: *player, oid, deployable: st.deployable.clone() });
+        self.ephemeral.stat(Stat::DeployFarp {
+            by: *player,
+            oid,
+            deployable: st.deployable.clone(),
+        });
         let name = objective!(self, &oid)?.name.clone();
         info!("[FAT_COW] set up {name} until {until}");
         self.ephemeral.msgs().panel_to_side(
@@ -730,7 +812,11 @@ impl Db {
         let land = dcso3::land::Land::singleton(lua)?;
         let plan = plan_helo_route(&land, from, home, helo_cfg, None);
         let speed = helo_cfg.speed_kph / 3.6;
-        let point = |typ: PointType, action: TurnMethod, pos: Vector2, alt: f64, stay: Option<i64>| {
+        let point = |typ: PointType,
+                     action: TurnMethod,
+                     pos: Vector2,
+                     alt: f64,
+                     stay: Option<i64>| {
             MissionPoint {
                 action: Some(ActionTyp::Air(action)),
                 airdrome_id: None,
@@ -757,7 +843,13 @@ impl Db {
             None,
         )];
         for (pos, alt) in plan.cruise.iter().copied() {
-            route.push(point(PointType::TurningPoint, TurnMethod::FlyOverPoint, pos, alt, None));
+            route.push(point(
+                PointType::TurningPoint,
+                TurnMethod::FlyOverPoint,
+                pos,
+                alt,
+                None,
+            ));
         }
         route.push(point(
             PointType::TurningPoint,
@@ -767,7 +859,13 @@ impl Db {
             None,
         ));
         let home_alt = land.get_height(LuaVec2(home)).unwrap_or(0.);
-        route.push(point(PointType::Land, TurnMethod::Landing, home, home_alt, Some(600)));
+        route.push(point(
+            PointType::Land,
+            TurnMethod::Landing,
+            home,
+            home_alt,
+            Some(600),
+        ));
         group.get_controller()?.set_task(Task::Mission { airborne: None, route })?;
         let flight_secs = (home - from).norm() / speed.max(1.) * 1.5;
         if let Some(m) = self.ephemeral.active_helo_missions.get_mut(id) {

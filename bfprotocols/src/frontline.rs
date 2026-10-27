@@ -168,10 +168,7 @@ pub fn compute_with_pressure(
     let objs: Vec<Obj> = objs
         .iter()
         .filter(|(_, _, s)| *s != 0.0)
-        .map(|&(x, y, s)| Obj {
-            pos: Vector2::new(x, y),
-            sign: s,
-        })
+        .map(|&(x, y, s)| Obj { pos: Vector2::new(x, y), sign: s })
         .collect();
     let blue_n = objs.iter().filter(|o| o.sign > 0.0).count();
     let red_n = objs.len() - blue_n;
@@ -447,7 +444,8 @@ pub fn compute_with_pressure(
                 }
                 // Keep the run only if it's mostly real front, not a coastline
                 // that merely grazes the enemy at a couple of points.
-                let contested_frac = flags[start..=end].iter().filter(|&&c| c).count() as f64
+                let contested_frac = flags[start..=end].iter().filter(|&&c| c).count()
+                    as f64
                     / (end - start + 1) as f64;
                 if contested_frac >= 0.3 {
                     runs.push(chain[start..=end].to_vec());
@@ -505,10 +503,7 @@ pub fn compute_with_pressure(
     };
 
     let to_ll = |lines: Vec<Vec<Vector2>>| -> Vec<Vec<[f64; 2]>> {
-        lines
-            .iter()
-            .map(|l| l.iter().map(|&v| [v.x, v.y]).collect())
-            .collect()
+        lines.iter().map(|l| l.iter().map(|&v| [v.x, v.y]).collect()).collect()
     };
     let lvl = p.edge_level.abs().max(0.01);
     let mid = to_ll(trace(0.0));

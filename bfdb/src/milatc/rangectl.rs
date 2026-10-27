@@ -107,11 +107,15 @@ impl Book {
     }
 
     fn of(&self, unit: u64) -> Option<(&str, &Booking)> {
-        self.by_station.iter().find_map(|(s, v)| v.iter().find(|b| b.unit == unit).map(|b| (s.as_str(), b)))
+        self.by_station
+            .iter()
+            .find_map(|(s, v)| v.iter().find(|b| b.unit == unit).map(|b| (s.as_str(), b)))
     }
 
     fn of_mut(&mut self, unit: u64) -> Option<(String, &mut Booking)> {
-        self.by_station.iter_mut().find_map(|(s, v)| v.iter_mut().find(|b| b.unit == unit).map(|b| (s.clone(), b)))
+        self.by_station.iter_mut().find_map(|(s, v)| {
+            v.iter_mut().find(|b| b.unit == unit).map(|b| (s.clone(), b))
+        })
     }
 
     fn release(&mut self, unit: u64) {
@@ -211,7 +215,11 @@ impl RangeControl {
         let mut best: Option<(usize, &LiveStation)> = None;
         for s in &self.stations {
             let mut score = 0;
-            for w in s.name.split(|c: char| !c.is_alphanumeric()).chain(s.id.split(|c: char| !c.is_alphanumeric())) {
+            for w in s
+                .name
+                .split(|c: char| !c.is_alphanumeric())
+                .chain(s.id.split(|c: char| !c.is_alphanumeric()))
+            {
                 if w.len() >= 3 && stt::mentions(&t, w) {
                     score += 2;
                 }
@@ -232,10 +240,9 @@ impl RangeControl {
 
     /// A station of the same kind that is free now, for "or ... is free".
     fn alternative(&self, kind: StationKind, not: &str) -> Option<&LiveStation> {
-        self.stations
-            .iter()
-            .filter(|s| s.kind == kind && s.id != not)
-            .find(|s| self.book.next_free(&s.id, self.now, self.slot_len()) <= self.now + 60.)
+        self.stations.iter().filter(|s| s.kind == kind && s.id != not).find(|s| {
+            self.book.next_free(&s.id, self.now, self.slot_len()) <= self.now + 60.
+        })
     }
 
     /// Book `a` onto a station, and say so.
@@ -245,17 +252,31 @@ impl RangeControl {
         let len = self.slot_len();
         let start = self.book.next_free(&s.id, self.now, len);
         let end = start + len;
-        self.book.book(&s.id, Booking { unit: a.id, call: call.to_string(), start, end, hot: false, warned: false });
+        self.book.book(
+            &s.id,
+            Booking {
+                unit: a.id,
+                call: call.to_string(),
+                start,
+                end,
+                hot: false,
+                warned: false,
+            },
+        );
         let me = self.me();
         let name = spoken_station(&s);
         let t = if start <= self.now + 60. {
-            let laser = s.laser_code.map(|c| format!(", laser code {c}")).unwrap_or_default();
+            let laser =
+                s.laser_code.map(|c| format!(", laser code {c}")).unwrap_or_default();
             format!(
                 "{call}, {me}, cleared into {name}, your slot until {}, range is cold{laser}, report IP inbound.",
                 self.clock.say_minute(end)
             )
         } else {
-            let alt = self.alternative(s.kind, &s.id).map(|x| format!(", or {} is free now", spoken_station(x))).unwrap_or_default();
+            let alt = self
+                .alternative(s.kind, &s.id)
+                .map(|x| format!(", or {} is free now", spoken_station(x)))
+                .unwrap_or_default();
             format!(
                 "{call}, {me}, {name} is in use, expect it at {}, hold clear of the range{alt}.",
                 self.clock.say_minute(start)
@@ -267,17 +288,36 @@ impl RangeControl {
         }
     }
 
-    fn handle(&mut self, a: &Air, intent: Intent, p: &Parsed, heard: &str, out: &mut Vec<Tx>) {
+    fn handle(
+        &mut self,
+        a: &Air,
+        intent: Intent,
+        p: &Parsed,
+        heard: &str,
+        out: &mut Vec<Tx>,
+    ) {
         let call = self.calls.of(a);
         let me = self.me();
         let now = self.now;
         match intent {
             Intent::RequestRange | Intent::CheckIn => {
-                let wanted = if p.destination.trim().is_empty() { heard.to_string() } else { p.destination.clone() };
+                let wanted = if p.destination.trim().is_empty() {
+                    heard.to_string()
+                } else {
+                    p.destination.clone()
+                };
                 let pick = self.named(&wanted).map(|s| s.id.clone()).or_else(|| {
                     // "request range time": the first range free now
                     (intent == Intent::RequestRange)
-                        .then(|| self.stations.iter().find(|s| self.book.next_free(&s.id, now, self.slot_len()) <= now + 60.).map(|s| s.id.clone()))
+                        .then(|| {
+                            self.stations
+                                .iter()
+                                .find(|s| {
+                                    self.book.next_free(&s.id, now, self.slot_len())
+                                        <= now + 60.
+                                })
+                                .map(|s| s.id.clone())
+                        })
                         .flatten()
                 });
                 match pick {
@@ -289,16 +329,24 @@ impl RangeControl {
                 }
             }
             Intent::IpInbound => {
-                let Some((sid, b)) = self.book.of(a.id).map(|(s, b)| (s.to_string(), b.clone())) else {
+                let Some((sid, b)) =
+                    self.book.of(a.id).map(|(s, b)| (s.to_string(), b.clone()))
+                else {
                     let t = format!("{call}, {me}, you have no slot, remain clear, say the range you want.");
                     return self.mouth.say(Pos::Range, None, a, &call, &me, t, now, out);
                 };
                 if b.start > now + 30. {
-                    let t = format!("{call}, {me}, negative, your slot starts at {}, hold clear.", self.clock.say_minute(b.start));
+                    let t = format!(
+                        "{call}, {me}, negative, your slot starts at {}, hold clear.",
+                        self.clock.say_minute(b.start)
+                    );
                     return self.mouth.say(Pos::Range, None, a, &call, &me, t, now, out);
                 }
                 if let Some(o) = self.book.hot_other(&sid, a.id) {
-                    let t = format!("{call}, {me}, continue, {} is still hot, report IP again.", o.call);
+                    let t = format!(
+                        "{call}, {me}, continue, {} is still hot, report IP again.",
+                        o.call
+                    );
                     return self.mouth.say(Pos::Range, None, a, &call, &me, t, now, out);
                 }
                 if let Some((_, b)) = self.book.of_mut(a.id) {
@@ -311,7 +359,14 @@ impl RangeControl {
                 if let Some((_, b)) = self.book.of_mut(a.id) {
                     b.hot = false;
                 }
-                let t = format!("{call}, {}", self.mouth.pick(&["copy off.", "roger, off.", "copy, cleared to reattack, report IP."]));
+                let t = format!(
+                    "{call}, {}",
+                    self.mouth.pick(&[
+                        "copy off.",
+                        "roger, off.",
+                        "copy, cleared to reattack, report IP."
+                    ])
+                );
                 self.mouth.say(Pos::Range, None, a, &call, &me, t, now, out);
             }
             Intent::DepartingRange => {
@@ -322,7 +377,11 @@ impl RangeControl {
                 }
                 let t = format!(
                     "{call}, {me}, cleared off the range{}",
-                    self.mouth.pick(&[", thanks for the business.", ", results are on the site.", ", good hits today."])
+                    self.mouth.pick(&[
+                        ", thanks for the business.",
+                        ", results are on the site.",
+                        ", good hits today."
+                    ])
                 );
                 self.mouth.say(Pos::Range, None, a, &call, &me, t, now, out);
             }
@@ -336,12 +395,9 @@ impl RangeControl {
     /// slot moved up to start now.
     fn call_next(&mut self, sid: &str, now: f64, out: &mut Vec<Tx>) {
         let me = self.me();
-        let Some(b) = self
-            .book
-            .by_station
-            .get_mut(sid)
-            .and_then(|v| v.iter_mut().filter(|b| !b.hot).min_by(|a, b| a.start.total_cmp(&b.start)))
-        else {
+        let Some(b) = self.book.by_station.get_mut(sid).and_then(|v| {
+            v.iter_mut().filter(|b| !b.hot).min_by(|a, b| a.start.total_cmp(&b.start))
+        }) else {
             return;
         };
         if b.start > now {
@@ -352,7 +408,8 @@ impl RangeControl {
         let (unit, call) = (b.unit, b.call.clone());
         if let Some(a) = self.air.iter().find(|a| a.id == unit).cloned() {
             let name = self.station(sid).map(spoken_station).unwrap_or_default();
-            let t = format!("{call}, {me}, {name} is yours, cleared in, report IP inbound.");
+            let t =
+                format!("{call}, {me}, {name} is yours, cleared in, report IP inbound.");
             self.mouth.say(Pos::Range, None, &a, &call, &me, t, now, out);
             self.mouth.command(&a, "resume", out);
         }
@@ -392,7 +449,8 @@ impl Facility for RangeControl {
         let mut out = vec![];
 
         // Answers after a "standby".
-        let (due, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.deferred).into_iter().partition(|d| d.0 <= now);
+        let (due, keep): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut self.deferred).into_iter().partition(|d| d.0 <= now);
         self.deferred = keep;
         for (_, id, p, heard) in due {
             if let Some(a) = self.air.iter().find(|a| a.id == id).cloned() {
@@ -436,7 +494,10 @@ impl Facility for RangeControl {
         let stations = self.stations.clone();
         for s in &stations {
             for name in &s.hot_by {
-                let Some(a) = self.air.iter().find(|a| !a.ai && &a.name == name).cloned() else { continue };
+                let Some(a) = self.air.iter().find(|a| !a.ai && &a.name == name).cloned()
+                else {
+                    continue;
+                };
                 if self.book.of(a.id).map_or(false, |(sid, _)| sid == s.id) {
                     continue;
                 }
@@ -448,7 +509,17 @@ impl Facility for RangeControl {
                 if self.book.next_free(&s.id, now, self.slot_len()) <= now + 60. {
                     self.book.release(a.id);
                     let end = now + self.slot_len();
-                    self.book.book(&s.id, Booking { unit: a.id, call: call.clone(), start: now, end, hot: true, warned: false });
+                    self.book.book(
+                        &s.id,
+                        Booking {
+                            unit: a.id,
+                            call: call.clone(),
+                            start: now,
+                            end,
+                            hot: true,
+                            warned: false,
+                        },
+                    );
                     let t = format!(
                         "{call}, {me}, you're working {} without a slot. It's free: you're booked until {}, call Range Control before you go in next time.",
                         spoken_station(s),
@@ -466,10 +537,24 @@ impl Facility for RangeControl {
         }
 
         // AI flights on a range sortie talk to us like anyone else.
-        let ai: Vec<Air> = self.air.iter().filter(|a| a.ai && a.ai_plan.as_deref().map_or(false, |p| p.starts_with("range:") && !p.ends_with(":home"))).cloned().collect();
+        let ai: Vec<Air> =
+            self.air
+                .iter()
+                .filter(|a| {
+                    a.ai && a.ai_plan.as_deref().map_or(false, |p| {
+                        p.starts_with("range:") && !p.ends_with(":home")
+                    })
+                })
+                .cloned()
+                .collect();
         self.ai.retain(|u, _| ai.iter().any(|a| a.id == *u));
         for a in ai {
-            let sid = a.ai_plan.as_deref().unwrap_or("").trim_start_matches("range:").to_string();
+            let sid = a
+                .ai_plan
+                .as_deref()
+                .unwrap_or("")
+                .trim_start_matches("range:")
+                .to_string();
             let Some(s) = self.station(&sid).cloned() else { continue };
             let (nm, _) = range_bearing(s.pos.lat, s.pos.lon, a.lat, a.lon);
             let call = self.calls.of(&a);
@@ -479,13 +564,20 @@ impl Facility for RangeControl {
             }
             match stage {
                 AiStage::Inbound if nm < 45. => {
-                    let t = format!("{me}, {call}{}, request {}.", super::controller::spoken_type(&a.typ), spoken_station(&s));
+                    let t = format!(
+                        "{me}, {call}{}, request {}.",
+                        super::controller::spoken_type(&a.typ),
+                        spoken_station(&s)
+                    );
                     self.mouth.pilot(Pos::Range, &a, &call, t, now, &mut out);
                     self.book_into(&a, &call, &s.id, &mut out);
                     self.ai.insert(a.id, AiStage::Booked);
                 }
                 AiStage::Booked if nm < 9. => {
-                    let mine = self.book.of(a.id).map_or(false, |(id, b)| id == s.id && b.start <= now + 30.);
+                    let mine = self
+                        .book
+                        .of(a.id)
+                        .map_or(false, |(id, b)| id == s.id && b.start <= now + 30.);
                     if mine && self.book.hot_other(&s.id, a.id).is_none() {
                         let t = format!("{me}, {call}, IP inbound.");
                         self.mouth.pilot(Pos::Range, &a, &call, t, now, &mut out);
@@ -507,13 +599,31 @@ impl Facility for RangeControl {
         out
     }
 
-    fn respond(&mut self, pos: Pos, who: &Caller, heard: &str, parsed: Option<Parsed>, now: f64) -> Vec<Tx> {
+    fn respond(
+        &mut self,
+        pos: Pos,
+        who: &Caller,
+        heard: &str,
+        parsed: Option<Parsed>,
+        now: f64,
+    ) -> Vec<Tx> {
         self.now = now;
         let mut out = vec![];
         let me = self.me();
-        let Some(a) = super::facility::locate(&self.air, who, parsed.as_ref(), &self.calls.0).cloned() else {
-            if parsed.as_ref().map_or(false, |p| p.intent != Intent::None && p.intent != Intent::Readback) {
-                self.mouth.broadcast(pos, None, format!("Station calling {me}, say again callsign."), now, &mut out);
+        let Some(a) =
+            super::facility::locate(&self.air, who, parsed.as_ref(), &self.calls.0)
+                .cloned()
+        else {
+            if parsed.as_ref().map_or(false, |p| {
+                p.intent != Intent::None && p.intent != Intent::Readback
+            }) {
+                self.mouth.broadcast(
+                    pos,
+                    None,
+                    format!("Station calling {me}, say again callsign."),
+                    now,
+                    &mut out,
+                );
             }
             return out;
         };
@@ -528,13 +638,25 @@ impl Facility for RangeControl {
             }
             Some(p) => match p.intent {
                 // Range Control checks the schedule before it answers, now and then.
-                Intent::RequestRange if !a.ai && {
-                    let odds = if now - self.last_req < 30. { 2. * self.standby_odds } else { self.standby_odds };
-                    self.last_req = now;
-                    self.mouth.rand() < odds
-                } =>
+                Intent::RequestRange
+                    if !a.ai && {
+                        let odds = if now - self.last_req < 30. {
+                            2. * self.standby_odds
+                        } else {
+                            self.standby_odds
+                        };
+                        self.last_req = now;
+                        self.mouth.rand() < odds
+                    } =>
                 {
-                    let t = format!("{call}, {me}, {}", self.mouth.pick(&["standby, checking the schedule.", "standby.", "copy, standby one."]));
+                    let t = format!(
+                        "{call}, {me}, {}",
+                        self.mouth.pick(&[
+                            "standby, checking the schedule.",
+                            "standby.",
+                            "copy, standby one."
+                        ])
+                    );
                     self.mouth.say(pos, None, &a, &call, &me, t, now, &mut out);
                     let due = now + self.mouth.between(5., 9.);
                     self.deferred.push((due, a.id, p, heard.to_string()));
@@ -543,7 +665,11 @@ impl Facility for RangeControl {
                     let t = format!("{call}, {me}, loud and clear.");
                     self.mouth.say(pos, None, &a, &call, &me, t, now, &mut out);
                 }
-                Intent::RequestRange | Intent::CheckIn | Intent::IpInbound | Intent::OffTarget | Intent::DepartingRange => {
+                Intent::RequestRange
+                | Intent::CheckIn
+                | Intent::IpInbound
+                | Intent::OffTarget
+                | Intent::DepartingRange => {
                     let i = p.intent;
                     self.handle(&a, i, &p, heard, &mut out);
                 }
@@ -557,7 +683,11 @@ impl Facility for RangeControl {
         out
     }
 
-    fn caller(&mut self, who: &Caller, parsed: Option<&Parsed>) -> (Option<String>, Option<String>) {
+    fn caller(
+        &mut self,
+        who: &Caller,
+        parsed: Option<&Parsed>,
+    ) -> (Option<String>, Option<String>) {
         match super::facility::locate(&self.air, who, parsed, &self.calls.0).cloned() {
             Some(a) => {
                 self.calls.learn(&a, parsed);
@@ -578,11 +708,22 @@ impl Facility for RangeControl {
             ),
             None => "no range slot".into(),
         };
-        llm::Context { position: self.facility(pos), situation, last_instruction: None, heard: heard.to_string() }
+        llm::Context {
+            position: self.facility(pos),
+            situation,
+            last_instruction: None,
+            heard: heard.to_string(),
+        }
     }
 
     fn vocabulary(&self) -> Vec<String> {
-        let mut v = vec![self.me(), "IP inbound".into(), "off safe".into(), "cleared hot".into(), "winchester".into()];
+        let mut v = vec![
+            self.me(),
+            "IP inbound".into(),
+            "off safe".into(),
+            "cleared hot".into(),
+            "winchester".into(),
+        ];
         v.extend(self.stations.iter().map(|s| s.name.clone()));
         v
     }
@@ -596,7 +737,13 @@ mod tests {
         range::{GeoPt, RangeLive},
     };
 
-    fn station(id: &str, name: &str, kind: StationKind, lat: f64, hot: &[&str]) -> LiveStation {
+    fn station(
+        id: &str,
+        name: &str,
+        kind: StationKind,
+        lat: f64,
+        hot: &[&str],
+    ) -> LiveStation {
         LiveStation {
             id: id.into(),
             name: name.into(),
@@ -647,82 +794,212 @@ mod tests {
         let mut rc = RangeControl::new(RangeControlCfg::default());
         rc.standby_odds = 0.;
         let stations = vec![
-            station("r7201-bomb", "R-7201 FDM - Bomb Circle", StationKind::BombCircle, 16.0, &[]),
-            station("tn2-easy", "TN-2 Tinian MLA - Easy", StationKind::BombCircle, 15.0, &[]),
-            station("r7201-strafe", "R-7201 FDM - Strafe Pit", StationKind::StrafePit, 16.0, &[]),
+            station(
+                "r7201-bomb",
+                "R-7201 FDM - Bomb Circle",
+                StationKind::BombCircle,
+                16.0,
+                &[],
+            ),
+            station(
+                "tn2-easy",
+                "TN-2 Tinian MLA - Easy",
+                StationKind::BombCircle,
+                15.0,
+                &[],
+            ),
+            station(
+                "r7201-strafe",
+                "R-7201 FDM - Strafe Pit",
+                StationKind::StrafePit,
+                16.0,
+                &[],
+            ),
         ];
         let mut atc = AtcPicture::default();
         atc.traffic = vec![plane(1, "alice", 15.5), plane(2, "bob", 15.5)];
-        let range = RangeLive { stations, mission_time: "10:00:00".into(), ..Default::default() };
-        let pic = Picture { atc: &atc, range: Some(&range), now: 0., mission_s: Some(36000.) };
+        let range =
+            RangeLive { stations, mission_time: "10:00:00".into(), ..Default::default() };
+        let pic =
+            Picture { atc: &atc, range: Some(&range), now: 0., mission_s: Some(36000.) };
         rc.update(&pic);
 
         let caller = |u| Caller { unit_id: Some(u), srs_name: String::new() };
         let req = |s: &str| super::super::intent::parse(s, "Range");
-        let r = rc.respond(Pos::Range, &caller(1), "Range Control, Viper 11, request R-7201 bomb circle", req("Range Control, Viper 11, request R-7201 bomb circle"), 0.);
-        assert!(texts(&r).contains("cleared into R-7201 FDM Bomb Circle, your slot until 2-0"), "{}", texts(&r));
+        let r = rc.respond(
+            Pos::Range,
+            &caller(1),
+            "Range Control, Viper 11, request R-7201 bomb circle",
+            req("Range Control, Viper 11, request R-7201 bomb circle"),
+            0.,
+        );
+        assert!(
+            texts(&r)
+                .contains("cleared into R-7201 FDM Bomb Circle, your slot until 2-0"),
+            "{}",
+            texts(&r)
+        );
         // the second flight is told when, and offered the other bomb circle
-        let r = rc.respond(Pos::Range, &caller(2), "Range Control, Enfield 21, request R-7201 bomb circle", req("Range Control, Enfield 21, request R-7201 bomb circle"), 10.);
+        let r = rc.respond(
+            Pos::Range,
+            &caller(2),
+            "Range Control, Enfield 21, request R-7201 bomb circle",
+            req("Range Control, Enfield 21, request R-7201 bomb circle"),
+            10.,
+        );
         let t = texts(&r);
-        assert!(t.contains("is in use, expect it at 2-0") && t.contains("TN-2 Tinian MLA Easy is free now"), "{t}");
+        assert!(
+            t.contains("is in use, expect it at 2-0")
+                && t.contains("TN-2 Tinian MLA Easy is free now"),
+            "{t}"
+        );
         // hot, one at a time
-        let r = rc.respond(Pos::Range, &caller(1), "Viper 11 IP inbound", req("Viper 11 IP inbound"), 20.);
+        let r = rc.respond(
+            Pos::Range,
+            &caller(1),
+            "Viper 11 IP inbound",
+            req("Viper 11 IP inbound"),
+            20.,
+        );
         assert!(texts(&r).contains("cleared hot"), "{}", texts(&r));
         // the slot runs out: warned, then cleared off, and the next flight is called in
-        let pic = Picture { atc: &atc, range: Some(&range), now: 19. * 60. , mission_s: Some(36000. + 19. * 60.) };
+        let pic = Picture {
+            atc: &atc,
+            range: Some(&range),
+            now: 19. * 60.,
+            mission_s: Some(36000. + 19. * 60.),
+        };
         let r = rc.update(&pic);
         assert!(texts(&r).contains("two minutes remaining"), "{}", texts(&r));
-        let pic = Picture { atc: &atc, range: Some(&range), now: 20. * 60. + 1., mission_s: Some(36000. + 20. * 60. + 1.) };
+        let pic = Picture {
+            atc: &atc,
+            range: Some(&range),
+            now: 20. * 60. + 1.,
+            mission_s: Some(36000. + 20. * 60. + 1.),
+        };
         let r = rc.update(&pic);
         let t = texts(&r);
-        assert!(t.contains("your time is up") && t.contains("Enfield 2-1, Range Control, R-7201 FDM Bomb Circle is yours"), "{t}");
+        assert!(
+            t.contains("your time is up")
+                && t.contains(
+                    "Enfield 2-1, Range Control, R-7201 FDM Bomb Circle is yours"
+                ),
+            "{t}"
+        );
     }
 
     #[test]
     fn leaving_early_calls_the_next_flight_in() {
         let mut rc = RangeControl::new(RangeControlCfg::default());
         rc.standby_odds = 0.;
-        let stations = vec![station("r7201-bomb", "R-7201 FDM - Bomb Circle", StationKind::BombCircle, 16.0, &[])];
+        let stations = vec![station(
+            "r7201-bomb",
+            "R-7201 FDM - Bomb Circle",
+            StationKind::BombCircle,
+            16.0,
+            &[],
+        )];
         let mut atc = AtcPicture::default();
         atc.traffic = vec![plane(1, "alice", 15.5), plane(2, "bob", 15.5)];
-        let range = RangeLive { stations, mission_time: "10:00:00".into(), ..Default::default() };
-        let pic = Picture { atc: &atc, range: Some(&range), now: 0., mission_s: Some(36000.) };
+        let range =
+            RangeLive { stations, mission_time: "10:00:00".into(), ..Default::default() };
+        let pic =
+            Picture { atc: &atc, range: Some(&range), now: 0., mission_s: Some(36000.) };
         rc.update(&pic);
         let caller = |u| Caller { unit_id: Some(u), srs_name: String::new() };
         let req = |s: &str| super::super::intent::parse(s, "Range");
-        rc.respond(Pos::Range, &caller(1), "Range Control, Viper 11, request R-7201 bomb circle", req("Range Control, Viper 11, request R-7201 bomb circle"), 0.);
-        rc.respond(Pos::Range, &caller(2), "Range Control, Enfield 21, request R-7201 bomb circle", req("Range Control, Enfield 21, request R-7201 bomb circle"), 10.);
-        let r = rc.respond(Pos::Range, &caller(1), "Range Control, Viper 11, departing the range", req("Range Control, Viper 11, departing the range"), 300.);
+        rc.respond(
+            Pos::Range,
+            &caller(1),
+            "Range Control, Viper 11, request R-7201 bomb circle",
+            req("Range Control, Viper 11, request R-7201 bomb circle"),
+            0.,
+        );
+        rc.respond(
+            Pos::Range,
+            &caller(2),
+            "Range Control, Enfield 21, request R-7201 bomb circle",
+            req("Range Control, Enfield 21, request R-7201 bomb circle"),
+            10.,
+        );
+        let r = rc.respond(
+            Pos::Range,
+            &caller(1),
+            "Range Control, Viper 11, departing the range",
+            req("Range Control, Viper 11, departing the range"),
+            300.,
+        );
         let t = texts(&r);
-        assert!(t.contains("cleared off the range") && t.contains("Enfield 2-1, Range Control, R-7201 FDM Bomb Circle is yours"), "{t}");
+        assert!(
+            t.contains("cleared off the range")
+                && t.contains(
+                    "Enfield 2-1, Range Control, R-7201 FDM Bomb Circle is yours"
+                ),
+            "{t}"
+        );
     }
 
     #[test]
     fn standby_then_the_booking() {
         let mut rc = RangeControl::new(RangeControlCfg::default());
         rc.standby_odds = 1.;
-        let stations = vec![station("r7201-bomb", "R-7201 FDM - Bomb Circle", StationKind::BombCircle, 16.0, &[])];
+        let stations = vec![station(
+            "r7201-bomb",
+            "R-7201 FDM - Bomb Circle",
+            StationKind::BombCircle,
+            16.0,
+            &[],
+        )];
         let mut atc = AtcPicture::default();
         atc.traffic = vec![plane(1, "alice", 15.5)];
-        let range = RangeLive { stations, mission_time: "10:00:00".into(), ..Default::default() };
-        rc.update(&Picture { atc: &atc, range: Some(&range), now: 0., mission_s: Some(36000.) });
+        let range =
+            RangeLive { stations, mission_time: "10:00:00".into(), ..Default::default() };
+        rc.update(&Picture {
+            atc: &atc,
+            range: Some(&range),
+            now: 0.,
+            mission_s: Some(36000.),
+        });
         let caller = Caller { unit_id: Some(1), srs_name: String::new() };
         let heard = "Range Control, Viper 11, request R-7201 bomb circle";
-        let r = rc.respond(Pos::Range, &caller, heard, super::super::intent::parse(heard, "Range"), 0.);
+        let r = rc.respond(
+            Pos::Range,
+            &caller,
+            heard,
+            super::super::intent::parse(heard, "Range"),
+            0.,
+        );
         assert!(texts(&r).contains("stand"), "{}", texts(&r));
-        let r = rc.update(&Picture { atc: &atc, range: Some(&range), now: 10., mission_s: Some(36010.) });
-        assert!(texts(&r).contains("cleared into R-7201 FDM Bomb Circle"), "{}", texts(&r));
+        let r = rc.update(&Picture {
+            atc: &atc,
+            range: Some(&range),
+            now: 10.,
+            mission_s: Some(36010.),
+        });
+        assert!(
+            texts(&r).contains("cleared into R-7201 FDM Bomb Circle"),
+            "{}",
+            texts(&r)
+        );
     }
 
     #[test]
     fn unscheduled_flight_is_booked_if_free() {
         let mut rc = RangeControl::new(RangeControlCfg::default());
         rc.standby_odds = 0.;
-        let stations = vec![station("tn1-array", "TN-1 North Field - Tactical Array", StationKind::TacticalArray, 15.0, &["alice"])];
+        let stations = vec![station(
+            "tn1-array",
+            "TN-1 North Field - Tactical Array",
+            StationKind::TacticalArray,
+            15.0,
+            &["alice"],
+        )];
         let mut atc = AtcPicture::default();
         atc.traffic = vec![plane(1, "alice", 15.0)];
-        let range = RangeLive { stations, mission_time: "10:00:00".into(), ..Default::default() };
-        let pic = Picture { atc: &atc, range: Some(&range), now: 0., mission_s: Some(36000.) };
+        let range =
+            RangeLive { stations, mission_time: "10:00:00".into(), ..Default::default() };
+        let pic =
+            Picture { atc: &atc, range: Some(&range), now: 0., mission_s: Some(36000.) };
         let r = rc.update(&pic);
         assert!(texts(&r).contains("without a slot. It's free"), "{}", texts(&r));
     }

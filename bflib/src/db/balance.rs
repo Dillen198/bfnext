@@ -49,7 +49,11 @@ fn scaling(cfg: &Cfg) -> Option<&PopulationScalingCfg> {
 }
 
 /// Auto-repair speed multiplier for a base owned by `owner` right now.
-pub(super) fn repair_speed_mult(eph: &Ephemeral, persisted: &Persisted, owner: Side) -> f64 {
+pub(super) fn repair_speed_mult(
+    eph: &Ephemeral,
+    persisted: &Persisted,
+    owner: Side,
+) -> f64 {
     match scaling(&eph.cfg) {
         Some(ps) if owner != Side::Neutral => {
             ps.repair_speed_mult(active_players(eph, persisted, owner))
@@ -82,9 +86,10 @@ impl Db {
     /// takes right now. Always 1 for a Neutral base, or with the feature off.
     pub fn capture_time_mult(&self, owner: Side, attacker: Side) -> f64 {
         match scaling(&self.ephemeral.cfg) {
-            Some(ps) if owner != Side::Neutral => {
-                ps.capture_time_mult(self.active_players(owner), self.active_players(attacker))
-            }
+            Some(ps) if owner != Side::Neutral => ps.capture_time_mult(
+                self.active_players(owner),
+                self.active_players(attacker),
+            ),
             _ => 1.,
         }
     }

@@ -70,10 +70,7 @@ impl Stt {
                     http,
                 }
             }
-            None => Backend::Cli {
-                exe: exe?.clone(),
-                model: model?.clone(),
-            },
+            None => Backend::Cli { exe: exe?.clone(), model: model?.clone() },
         };
         Some(Stt {
             backend,
@@ -83,7 +80,9 @@ impl Stt {
 
     pub(crate) fn describe(&self) -> String {
         match &self.backend {
-            Backend::Cli { model, .. } => format!("whisper.cpp CLI ({})", model.display()),
+            Backend::Cli { model, .. } => {
+                format!("whisper.cpp CLI ({})", model.display())
+            }
             Backend::Server { url, .. } => format!("whisper.cpp server ({url})"),
         }
     }
@@ -122,7 +121,8 @@ impl Stt {
     }
 
     fn transcribe_cli(&self, exe: &Path, model: &Path, pcm: &[i16]) -> Result<String> {
-        let base = std::env::temp_dir().join(format!("bfvoice-stt-{}", uuid::Uuid::new_v4()));
+        let base =
+            std::env::temp_dir().join(format!("bfvoice-stt-{}", uuid::Uuid::new_v4()));
         let wav = base.with_extension("wav");
         write_wav(&wav, pcm)?;
         let out = Command::new(exe)
@@ -177,12 +177,9 @@ impl Stt {
         if !resp.status().is_success() {
             anyhow::bail!("whisper server returned {}", resp.status());
         }
-        let v: serde_json::Value = resp.json().context("decoding whisper server reply")?;
-        let text = v
-            .get("text")
-            .and_then(|t| t.as_str())
-            .unwrap_or_default()
-            .to_string();
+        let v: serde_json::Value =
+            resp.json().context("decoding whisper server reply")?;
+        let text = v.get("text").and_then(|t| t.as_str()).unwrap_or_default().to_string();
         Ok(clean(&text))
     }
 }
@@ -212,9 +209,7 @@ fn normalize(pcm: &[i16]) -> Vec<i16> {
         return pcm.to_vec();
     }
     let gain = (22_000.0 / peak as f64).min(12.0);
-    pcm.iter()
-        .map(|s| (*s as f64 * gain).clamp(-32_768.0, 32_767.0) as i16)
-        .collect()
+    pcm.iter().map(|s| (*s as f64 * gain).clamp(-32_768.0, 32_767.0) as i16).collect()
 }
 
 /// Minimal 16-bit mono 16 kHz PCM WAV — avoids pulling hound just for this.
@@ -272,7 +267,10 @@ pub(crate) enum Reject {
 /// Parse a recognised transmission, with the reason it declined: `None` if it
 /// isn't addressed to the controller (`wake` = its callsign) or isn't a known
 /// request.
-pub(crate) fn parse_request_dbg(text: &str, wake: &str) -> (Option<Request>, Option<Reject>) {
+pub(crate) fn parse_request_dbg(
+    text: &str,
+    wake: &str,
+) -> (Option<Request>, Option<Reject>) {
     let tokens = tokenize(text);
     let joined: String = tokens.concat();
     let wake_tokens = tokenize(wake);
@@ -280,7 +278,10 @@ pub(crate) fn parse_request_dbg(text: &str, wake: &str) -> (Option<Request>, Opt
         return (None, Some(Reject::NotAddressed));
     }
     let has = |p: &str| phrase_in(&tokens, &joined, p);
-    let req = if has("radio check") || has("comm check") || has("how do you read") || has("how copy")
+    let req = if has("radio check")
+        || has("comm check")
+        || has("how do you read")
+        || has("how copy")
     {
         Request::RadioCheck
     } else if has("checking in") || has("check in") || has("on station") {
@@ -386,9 +387,7 @@ fn phrase_in(tokens: &[String], joined: &str, phrase: &str) -> bool {
     if joined.contains(&want.concat()) {
         return true;
     }
-    tokens
-        .windows(want.len())
-        .any(|w| w.iter().zip(&want).all(|(a, b)| close(a, b)))
+    tokens.windows(want.len()).any(|w| w.iter().zip(&want).all(|(a, b)| close(a, b)))
 }
 
 /// The controller's callsign, allowing for a mis-heard or split-up name
@@ -403,12 +402,8 @@ fn wake_matches(tokens: &[String], joined: &str, wake: &[String]) -> bool {
         return false; // too short to fuzz safely
     }
     tokens.iter().any(|t| close(t, head))
-        || tokens
-            .windows(2)
-            .any(|w| close(&format!("{}{}", w[0], w[1]), head))
-        || tokens
-            .windows(3)
-            .any(|w| close(&format!("{}{}{}", w[0], w[1], w[2]), head))
+        || tokens.windows(2).any(|w| close(&format!("{}{}", w[0], w[1]), head))
+        || tokens.windows(3).any(|w| close(&format!("{}{}{}", w[0], w[1], w[2]), head))
 }
 
 /// Pull "bullseye 270 for 45" / "bullseye 270 45" out of recognised text.

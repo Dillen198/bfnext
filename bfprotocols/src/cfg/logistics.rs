@@ -349,7 +349,8 @@ impl WarehouseConfig {
     /// stock less the reserve floor. Returns 0 for a hub sitting at or below
     /// its reserve.
     pub fn releasable(&self, stored: u32, capacity: u32) -> u32 {
-        let reserve = (capacity as f32 * (self.hub_reserve_percent.min(100) as f32 / 100.)) as u32;
+        let reserve =
+            (capacity as f32 * (self.hub_reserve_percent.min(100) as f32 / 100.)) as u32;
         stored.saturating_sub(reserve)
     }
 
@@ -395,7 +396,13 @@ impl WarehouseConfig {
     /// here. Only meaningful for items the side already has access to
     /// (qty > 0 upstream) -- this never grants a type the side doesn't
     /// otherwise produce.
-    pub fn capacity_for(&self, obj_name: &str, unlimited: bool, hub: bool, qty: u32) -> u32 {
+    pub fn capacity_for(
+        &self,
+        obj_name: &str,
+        unlimited: bool,
+        hub: bool,
+        qty: u32,
+    ) -> u32 {
         if qty > 0 && (unlimited || self.unlimited_objectives.contains(obj_name)) {
             UNLIMITED_CAPACITY
         } else {

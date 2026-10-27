@@ -179,7 +179,8 @@ fn split_call(inner: &str) -> (String, Option<String>) {
 }
 
 fn render(error: &str, position: Option<&str>, mag: Magnitude) -> String {
-    let e = lookup(ERRORS, error).map(|s| s.to_string()).unwrap_or_else(|| error.to_string());
+    let e =
+        lookup(ERRORS, error).map(|s| s.to_string()).unwrap_or_else(|| error.to_string());
     let e = match mag {
         Magnitude::Little => format!("a little {e}"),
         Magnitude::Normal => e,
@@ -194,46 +195,47 @@ fn render(error: &str, position: Option<&str>, mag: Magnitude) -> String {
 /// Parse one call token such as `_HAW_`, `(SLO)AR`, `(DRX)`, `FIM`.
 pub fn parse_call(tok: &str) -> LsoCall {
     let raw = tok.to_string();
-    let (mag, error, position) = if tok.len() > 2 && tok.starts_with('_') && tok.ends_with('_') {
-        let (e, p) = split_call(&tok[1..tok.len() - 1]);
-        (Magnitude::Lot, e, p)
-    } else if let Some(rest) = tok.strip_prefix('(') {
-        match rest.find(')') {
-            Some(i) => {
-                let inside = &rest[..i];
-                let after = &rest[i + 1..];
-                if after.is_empty() {
-                    let (e, p) = split_call(inside);
+    let (mag, error, position) =
+        if tok.len() > 2 && tok.starts_with('_') && tok.ends_with('_') {
+            let (e, p) = split_call(&tok[1..tok.len() - 1]);
+            (Magnitude::Lot, e, p)
+        } else if let Some(rest) = tok.strip_prefix('(') {
+            match rest.find(')') {
+                Some(i) => {
+                    let inside = &rest[..i];
+                    let after = &rest[i + 1..];
+                    if after.is_empty() {
+                        let (e, p) = split_call(inside);
+                        (Magnitude::Little, e, p)
+                    } else {
+                        (Magnitude::Little, inside.to_string(), Some(after.to_string()))
+                    }
+                }
+                None => {
+                    let (e, p) = split_call(rest);
                     (Magnitude::Little, e, p)
-                } else {
-                    (Magnitude::Little, inside.to_string(), Some(after.to_string()))
                 }
             }
-            None => {
-                let (e, p) = split_call(rest);
-                (Magnitude::Little, e, p)
+        } else if let Some(rest) = tok.strip_prefix('_') {
+            // `_SLO_AR`: underscores around the error only
+            match rest.find('_') {
+                Some(i) => {
+                    let after = &rest[i + 1..];
+                    (
+                        Magnitude::Lot,
+                        rest[..i].to_string(),
+                        (!after.is_empty()).then(|| after.to_string()),
+                    )
+                }
+                None => {
+                    let (e, p) = split_call(rest);
+                    (Magnitude::Lot, e, p)
+                }
             }
-        }
-    } else if let Some(rest) = tok.strip_prefix('_') {
-        // `_SLO_AR`: underscores around the error only
-        match rest.find('_') {
-            Some(i) => {
-                let after = &rest[i + 1..];
-                (
-                    Magnitude::Lot,
-                    rest[..i].to_string(),
-                    (!after.is_empty()).then(|| after.to_string()),
-                )
-            }
-            None => {
-                let (e, p) = split_call(rest);
-                (Magnitude::Lot, e, p)
-            }
-        }
-    } else {
-        let (e, p) = split_call(tok);
-        (Magnitude::Normal, e, p)
-    };
+        } else {
+            let (e, p) = split_call(tok);
+            (Magnitude::Normal, e, p)
+        };
     let text = render(&error, position.as_deref(), mag);
     LsoCall { raw, error, position, magnitude: mag, text }
 }
@@ -268,18 +270,20 @@ pub fn parse_comment(raw: &str) -> Option<LsoComment> {
     let gi = up.find("GRADE:")?;
     let after = raw[gi + 6..].trim_start();
     // the grade is the first whitespace/colon-delimited token
-    let end = after
-        .find(|c: char| c.is_whitespace() || c == ':')
-        .unwrap_or(after.len());
+    let end = after.find(|c: char| c.is_whitespace() || c == ':').unwrap_or(after.len());
     let grade = normalize_grade(&after[..end]);
     let rest = after[end..].trim_start_matches(|c: char| c == ':' || c.is_whitespace());
     let (rest, wire) = take_wire(rest);
-    let details: Vec<&str> = rest
-        .split_whitespace()
-        .filter(|t| *t != ":" && !t.is_empty())
-        .collect();
+    let details: Vec<&str> =
+        rest.split_whitespace().filter(|t| *t != ":" && !t.is_empty()).collect();
     let calls = details.iter().map(|t| parse_call(t)).collect();
-    Some(LsoComment { raw: raw.to_string(), grade, details: details.join(" "), calls, wire })
+    Some(LsoComment {
+        raw: raw.to_string(),
+        grade,
+        details: details.join(" "),
+        calls,
+        wire,
+    })
 }
 
 /// The plain-English lines for a details string (no grade, no wire).

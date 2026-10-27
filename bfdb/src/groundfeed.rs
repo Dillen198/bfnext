@@ -63,11 +63,21 @@ impl GroundCache {
 
 pub(crate) type GroundState = Arc<tokio::sync::RwLock<GroundCache>>;
 
-async fn fetch(db: &StatsDb, inst: &Inst, side: &str) -> Result<serde_json::Value, &'static str> {
-    let call = db.call_engine_rpc_optional(inst, "query-ground-war", vec![("side", Value::from(side.to_string()))]);
+async fn fetch(
+    db: &StatsDb,
+    inst: &Inst,
+    side: &str,
+) -> Result<serde_json::Value, &'static str> {
+    let call = db.call_engine_rpc_optional(
+        inst,
+        "query-ground-war",
+        vec![("side", Value::from(side.to_string()))],
+    );
     match tokio::time::timeout(Duration::from_secs(8), call).await {
         Ok(Ok(Value::String(s))) => match serde_json::from_str::<serde_json::Value>(&s) {
-            Ok(v) if v.get("enabled").and_then(|e| e.as_bool()) == Some(false) => Err("disabled"),
+            Ok(v) if v.get("enabled").and_then(|e| e.as_bool()) == Some(false) => {
+                Err("disabled")
+            }
             Ok(v) => Ok(v),
             Err(e) => {
                 log::warn!("[{}] ground feed: unparseable {side} picture: {e}", inst.id);
@@ -123,10 +133,13 @@ async fn viewer(
     inst: &Inst,
 ) -> Result<Viewer, &'static str> {
     let id = session_id.ok_or("login")?;
-    let session = task::block_in_place(|| db.get_session(id)).ok().flatten().ok_or("login")?;
+    let session =
+        task::block_in_place(|| db.get_session(id)).ok().flatten().ok_or("login")?;
     let ucid = resolve_ucid_via_bot(bot_cfg, &session.discord_id).await;
     let own = match &ucid {
-        Some(u) => task::block_in_place(|| db.pilot_current_side(&inst.id, u)).ok().flatten(),
+        Some(u) => {
+            task::block_in_place(|| db.pilot_current_side(&inst.id, u)).ok().flatten()
+        }
         None => None,
     };
     match own {
@@ -136,7 +149,8 @@ async fn viewer(
                 crate::command::note_admin(u);
                 true
             } else {
-                task::block_in_place(|| crate::command::may_command(db, inst, &u, side)).unwrap_or(false)
+                task::block_in_place(|| crate::command::may_command(db, inst, &u, side))
+                    .unwrap_or(false)
             };
             Ok(Viewer { side, ucid: Some(u.to_string()), god: false, commander })
         }
@@ -166,7 +180,10 @@ fn frame(cache: &GroundCache, v: &Viewer) -> (serde_json::Value, Option<Instant>
             if let Some(players) = p.get_mut("players").and_then(|x| x.as_array_mut()) {
                 for pl in players.iter_mut() {
                     if let Some(o) = pl.as_object_mut() {
-                        let me = match (o.get("ucid").and_then(|u| u.as_str()), v.ucid.as_deref()) {
+                        let me = match (
+                            o.get("ucid").and_then(|u| u.as_str()),
+                            v.ucid.as_deref(),
+                        ) {
                             (Some(a), Some(b)) => a == b,
                             _ => false,
                         };
@@ -176,7 +193,10 @@ fn frame(cache: &GroundCache, v: &Viewer) -> (serde_json::Value, Option<Instant>
                 }
             }
             if let Some(o) = p.as_object_mut() {
-                o.insert("can_command".into(), serde_json::json!(!v.god && v.ucid.is_some() && v.commander));
+                o.insert(
+                    "can_command".into(),
+                    serde_json::json!(!v.god && v.ucid.is_some() && v.commander),
+                );
                 o.insert("god_mode".into(), serde_json::json!(v.god));
             }
             (serde_json::json!({ "picture": p }), Some(f.at))
@@ -196,7 +216,10 @@ pub(crate) async fn handler(
     state: GroundState,
 ) -> Response {
     let Some(slot) = websec::ws_slot(ip) else {
-        return websec::ws_refused(warp::http::StatusCode::TOO_MANY_REQUESTS, "too many open connections");
+        return websec::ws_refused(
+            warp::http::StatusCode::TOO_MANY_REQUESTS,
+            "too many open connections",
+        );
     };
     let v = viewer(session_id, &query, &db, &bot_cfg, &inst).await;
     ws.on_upgrade(move |socket| async move {
@@ -223,7 +246,9 @@ async fn run(
     let mut v = match v {
         Ok(v) => v,
         Err(reason) => {
-            let _ = sink.send(Message::text(serde_json::json!({ "reason": reason }).to_string())).await;
+            let _ = sink
+                .send(Message::text(serde_json::json!({ "reason": reason }).to_string()))
+                .await;
             let _ = sink.send(Message::close()).await;
             return;
         }
@@ -316,7 +341,12 @@ mod tests {
                 "players": [{"name": "a", "ucid": "u1"}, {"name": "b", "ucid": "u2"}]
             })),
         });
-        let v = Viewer { side: Side::Blue, ucid: Some("u2".into()), god: false, commander: true };
+        let v = Viewer {
+            side: Side::Blue,
+            ucid: Some("u2".into()),
+            god: false,
+            commander: true,
+        };
         let (f, at) = frame(&c, &v);
         assert!(at.is_some());
         let players = f["picture"]["players"].as_array().unwrap();
@@ -325,7 +355,12 @@ mod tests {
         assert!(players.iter().all(|p| p.get("ucid").is_none()));
         assert_eq!(f["picture"]["can_command"], true);
         // A pilot on the side who isn't a commander watches.
-        let w = Viewer { side: Side::Blue, ucid: Some("u1".into()), god: false, commander: false };
+        let w = Viewer {
+            side: Side::Blue,
+            ucid: Some("u1".into()),
+            god: false,
+            commander: false,
+        };
         assert_eq!(frame(&c, &w).0["picture"]["can_command"], false);
         // The other side has nothing yet.
         let r = Viewer { side: Side::Red, ucid: None, god: true, commander: false };

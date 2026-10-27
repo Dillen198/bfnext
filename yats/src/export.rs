@@ -102,7 +102,11 @@ pub fn read_dump(
                 let mut n = [0; 8];
                 r.read_exact(&mut n).context("dump is truncated")?;
                 if u64::from_be_bytes(n) != stats.pairs {
-                    bail!("dump says {} pairs, read {}", u64::from_be_bytes(n), stats.pairs)
+                    bail!(
+                        "dump says {} pairs, read {}",
+                        u64::from_be_bytes(n),
+                        stats.pairs
+                    )
                 }
                 return Ok(stats);
             }

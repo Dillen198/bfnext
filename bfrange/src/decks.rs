@@ -18,10 +18,11 @@ use crate::{
 };
 use anyhow::Result;
 use bfprotocols::range::{
+    LandingResult, LiveShipDeck, PrecisionQuality, RangeResult,
     cfg::{RangeCfg, ShipDeckCfg},
-    grading, LandingResult, LiveShipDeck, PrecisionQuality, RangeResult,
+    grading,
 };
-use dcso3::{coalition::Side, unit::Unit, MizLua};
+use dcso3::{MizLua, coalition::Side, unit::Unit};
 use fxhash::FxHashMap;
 use log::{info, warn};
 use serde_json::json;
@@ -52,21 +53,52 @@ pub struct Decks {
 }
 
 fn spawn_deck(lua: MizLua, d: &Deck, spawns: &mut Spawns, now: f64) -> Result<()> {
-    let country = spawn::country_id(d.cfg.country.as_deref().unwrap_or(spawn::default_country(d.side)))?;
+    let country = spawn::country_id(
+        d.cfg.country.as_deref().unwrap_or(spawn::default_country(d.side)),
+    )?;
     let speed = d.cfg.speed_kts / util::MS_TO_KTS;
     let end = util::offset(d.start, d.cfg.heading_deg, d.cfg.leg_nm * util::NM, 0.);
     let route = vec![
         spawn::waypoint(d.start, 0., speed, vec![]),
         spawn::waypoint(end, 0., speed, vec![]),
-        spawn::waypoint(d.start, 0., speed, vec![spawn::wrapped(1, json!({ "id": "SwitchWaypoint", "params": { "fromWaypointIndex": 3, "goToWaypointIndex": 1 } }))]),
+        spawn::waypoint(
+            d.start,
+            0.,
+            speed,
+            vec![spawn::wrapped(
+                1,
+                json!({ "id": "SwitchWaypoint", "params": { "fromWaypointIndex": 3, "goToWaypointIndex": 1 } }),
+            )],
+        ),
     ];
-    let g = spawn::surface_group(&d.group, &[(d.cfg.typ.clone(), d.start, d.cfg.heading_deg)], "Excellent", route);
+    let g = spawn::surface_group(
+        &d.group,
+        &[(d.cfg.typ.clone(), d.start, d.cfg.heading_deg)],
+        "Excellent",
+        route,
+    );
     spawn::add_group(lua, country, spawn::SHIP, &g)?;
-    spawns.defer(now + 2., spawn::Pending::GroupCommand { group: d.group.clone(), cmd: spawn::bool_cmd("SetImmortal", true) });
-    spawns.defer(now + 2., spawn::Pending::GroupOption { group: d.group.clone(), id: 0, value: json!(4) });
+    spawns.defer(
+        now + 2.,
+        spawn::Pending::GroupCommand {
+            group: d.group.clone(),
+            cmd: spawn::bool_cmd("SetImmortal", true),
+        },
+    );
+    spawns.defer(
+        now + 2.,
+        spawn::Pending::GroupOption { group: d.group.clone(), id: 0, value: json!(4) },
+    );
     if let Some(t) = &d.cfg.tacan {
         // needs the unit id, so it waits for the ship to exist
-        spawns.defer(now + 3., spawn::Pending::ShipTacan { group: d.group.clone(), unit: d.unit.clone(), tacan: t.clone() });
+        spawns.defer(
+            now + 3.,
+            spawn::Pending::ShipTacan {
+                group: d.group.clone(),
+                unit: d.unit.clone(),
+                tacan: t.clone(),
+            },
+        );
     }
     Ok(())
 }
@@ -89,10 +121,19 @@ impl Decks {
                 continue;
             }
             let group = format!("RNG-DECK-{}", c.id);
-            let d = Deck { cfg: c.clone(), side: spawn::side_of_str(&c.side), unit: format!("{group}-1"), group, start };
+            let d = Deck {
+                cfg: c.clone(),
+                side: spawn::side_of_str(&c.side),
+                unit: format!("{group}-1"),
+                group,
+                start,
+            };
             match spawn_deck(lua, &d, spawns, now) {
                 Ok(()) => {
-                    info!("ship deck {} ({} {}) under way at {:.0} kts", c.id, c.name, c.typ, c.speed_kts);
+                    info!(
+                        "ship deck {} ({} {}) under way at {:.0} kts",
+                        c.id, c.name, c.typ, c.speed_kts
+                    );
                     self.decks.push(d)
                 }
                 Err(e) => warn!("ship deck {}: {e:?}", c.id),
@@ -105,7 +146,13 @@ impl Decks {
     }
 
     /// 5 Hz: helicopters close to a deck, their sink rate relative to it.
-    pub fn tick(&mut self, lua: MizLua, players: &Players, spawns: &mut Spawns, now: f64) {
+    pub fn tick(
+        &mut self,
+        lua: MizLua,
+        players: &Players,
+        spawns: &mut Spawns,
+        now: f64,
+    ) {
         if self.decks.is_empty() {
             return;
         }
@@ -120,7 +167,11 @@ impl Decks {
         let ships: Vec<Option<(V3, V3)>> = self
             .decks
             .iter()
-            .map(|d| Unit::get_by_name(lua, &d.unit).ok().and_then(|u| Some((u.get_point().ok()?.0, u.get_velocity().ok()?.0))))
+            .map(|d| {
+                Unit::get_by_name(lua, &d.unit)
+                    .ok()
+                    .and_then(|u| Some((u.get_point().ok()?.0, u.get_velocity().ok()?.0)))
+            })
             .collect();
         for f in players.flying.values().filter(|f| f.is_helo) {
             let near = ships
@@ -158,20 +209,39 @@ impl Decks {
     }
 
     /// LAND on a ship: grade it if it was one of ours.
-    pub fn landed(&mut self, lua: MizLua, cfg: &RangeCfg, rec: &mut Recorder, f: &Flying, place: &str, now: f64) -> bool {
-        let Some(di) = self.decks.iter().position(|d| d.unit == place) else { return false };
+    pub fn landed(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        rec: &mut Recorder,
+        f: &Flying,
+        place: &str,
+        now: f64,
+    ) -> bool {
+        let Some(di) = self.decks.iter().position(|d| d.unit == place) else {
+            return false;
+        };
         let a = self.appr.remove(&f.unit_name).unwrap_or_default();
         let d = &self.decks[di];
         let Ok(ship) = Unit::get_by_name(lua, &d.unit) else { return true };
-        let (Ok(sp), Ok(sv)) = (ship.get_position(), ship.get_velocity()) else { return true };
+        let (Ok(sp), Ok(sv)) = (ship.get_position(), ship.get_velocity()) else {
+            return true;
+        };
         let ship_hdg = util::hdg(sp.x.0);
-        let hp = dcso3::unit::Unit::get_by_name(lua, &f.unit_name).and_then(|u| u.get_point()).map(|p| p.0).unwrap_or(f.pos);
+        let hp = dcso3::unit::Unit::get_by_name(lua, &f.unit_name)
+            .and_then(|u| u.get_point())
+            .map(|p| p.0)
+            .unwrap_or(f.pos);
         // offsets in the ship's frame: along its heading, and to starboard
         let rel = hp - sp.p.0;
         let (s, c) = ship_hdg.to_radians().sin_cos();
         let fwd = rel.x * c + rel.z * s;
         let stbd = -rel.x * s + rel.z * c;
-        let fpm = a.vs.iter().filter(|(t, _)| now - t < 1.2).map(|(_, v)| -v * 60. * util::M_TO_FT).fold(0., f64::max);
+        let fpm =
+            a.vs.iter()
+                .filter(|(t, _)| now - t < 1.2)
+                .map(|(_, v)| -v * 60. * util::M_TO_FT)
+                .fold(0., f64::max);
         let herr = util::angdiff(f.hdg, ship_hdg).abs();
         let mut q = grading::precision_quality(d.cfg.perfect_m, stbd.abs());
         if (fpm > 500. || herr > 30.) && q > PrecisionQuality::Fair {
@@ -209,7 +279,16 @@ impl Decks {
                 cfg.message_s,
             );
         }
-        rec.emit(lua, records::pilot_of(f), &f.typ, f.side, &f.group_name, Some(q.score()), RangeResult::Landing(res), None);
+        rec.emit(
+            lua,
+            records::pilot_of(f),
+            &f.typ,
+            f.side,
+            &f.group_name,
+            Some(q.score()),
+            RangeResult::Landing(res),
+            None,
+        );
         true
     }
 
@@ -233,7 +312,11 @@ impl Decks {
                     util::dist2(from, p) / util::NM,
                     util::hdg(v),
                     v.norm() * util::MS_TO_KTS,
-                    d.cfg.tacan.as_ref().map(|t| format!(", TACAN {}", t.describe())).unwrap_or_default()
+                    d.cfg
+                        .tacan
+                        .as_ref()
+                        .map(|t| format!(", TACAN {}", t.describe()))
+                        .unwrap_or_default()
                 ))
             })
             .collect()

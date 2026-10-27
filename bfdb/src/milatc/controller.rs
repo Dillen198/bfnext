@@ -26,7 +26,7 @@
 //! or held; taxiing or landing without a clearance is called out.
 
 use super::{
-    airport::{angdiff, seg_dist, Airport, P2, TaxiRoute, FT, NM},
+    airport::{angdiff, seg_dist, Airport, TaxiRoute, FT, NM, P2},
     intent::{Approach, Intent, LandingOption, Parsed},
     llm,
     speech::{self, alt, freq, hdg, wind},
@@ -66,7 +66,18 @@ pub(crate) struct Tx {
 
 impl Tx {
     pub(crate) fn new(pos: Pos, text: String, to: Option<u64>, expires: f64) -> Self {
-        Tx { pos, text, to, expires, pilot: None, delay: 0., action: None, subtitle: None, aircraft: None, voice: None }
+        Tx {
+            pos,
+            text,
+            to,
+            expires,
+            pilot: None,
+            delay: 0.,
+            action: None,
+            subtitle: None,
+            aircraft: None,
+            voice: None,
+        }
     }
 }
 
@@ -134,7 +145,9 @@ fn ai_plan(p: Option<&str>) -> AiPlan {
     match p {
         Some("departure") => AiPlan::Departure,
         Some(p) if p.ends_with(":home") => AiPlan::Arrival,
-        Some(p) if p.starts_with("range:") || p.starts_with("tanker:") => AiPlan::Departure,
+        Some(p) if p.starts_with("range:") || p.starts_with("tanker:") => {
+            AiPlan::Departure
+        }
         _ => AiPlan::Arrival,
     }
 }
@@ -305,9 +318,13 @@ impl Flight {
             Phase::HoldingShort => format!("holding short of runway {r}"),
             Phase::LinedUp => format!("lined up on runway {r}"),
             Phase::TakeoffCleared => format!("cleared for takeoff runway {r}"),
-            Phase::Departure | Phase::Climbout => format!("departing, climbing through {} feet", self.ac.alt_ft),
+            Phase::Departure | Phase::Climbout => {
+                format!("departing, climbing through {} feet", self.ac.alt_ft)
+            }
             Phase::Enroute => format!("airborne at {} feet", self.ac.alt_ft),
-            Phase::Arrival => format!("inbound under approach control at {} feet", self.ac.alt_ft),
+            Phase::Arrival => {
+                format!("inbound under approach control at {} feet", self.ac.alt_ft)
+            }
             Phase::RadarFinal => "on a precision radar final".into(),
             Phase::Pattern => format!("in the tower's pattern for runway {r}"),
             Phase::Landing => format!("on the runway after landing on {r}"),
@@ -321,7 +338,12 @@ pub(crate) fn guess_callsign(group: &str) -> Option<String> {
     let g = group.trim();
     let word: String = g.chars().take_while(|c| c.is_alphabetic()).collect();
     let rest: String = g[word.len()..].chars().filter(|c| c.is_ascii_digit()).collect();
-    if word.len() >= 3 && (1..=3).contains(&rest.len()) && g[word.len()..].chars().all(|c| c.is_ascii_digit() || c == '-' || c == ' ' || c == '#') {
+    if word.len() >= 3
+        && (1..=3).contains(&rest.len())
+        && g[word.len()..]
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '-' || c == ' ' || c == '#')
+    {
         Some(speech::format_callsign(&word, &rest))
     } else {
         None
@@ -341,7 +363,12 @@ pub(crate) struct CtlCfg {
 
 impl Default for CtlCfg {
     fn default() -> Self {
-        CtlCfg { require_clearance: false, handoff_out: None, gca_interval_s: 5., atis_interval_s: 60. }
+        CtlCfg {
+            require_clearance: false,
+            handoff_out: None,
+            gca_interval_s: 5.,
+            atis_interval_s: 60.,
+        }
     }
 }
 
@@ -498,14 +525,18 @@ impl Controller {
 
     /// The runway in use, or a parallel one while it is closed.
     fn in_use(&self, departure: bool) -> String {
-        let Some(r) = self.ap.runway_for(&self.direction, departure) else { return String::new() };
+        let Some(r) = self.ap.runway_for(&self.direction, departure) else {
+            return String::new();
+        };
         if !self.closed.contains_key(&r.pair) {
             return r.name.clone();
         }
         self.ap
             .runways
             .iter()
-            .find(|o| o.direction() == self.direction && !self.closed.contains_key(&o.pair))
+            .find(|o| {
+                o.direction() == self.direction && !self.closed.contains_key(&o.pair)
+            })
             .unwrap_or(r)
             .name
             .clone()
@@ -518,7 +549,8 @@ impl Controller {
     fn take_squawk(&mut self) -> u16 {
         loop {
             let s = self.next_squawk;
-            self.next_squawk = if s >= 4277 { self.ap.departure.squawk_base } else { s + 1 };
+            self.next_squawk =
+                if s >= 4277 { self.ap.departure.squawk_base } else { s + 1 };
             if s.to_string().chars().all(|c| ('0'..='7').contains(&c)) {
                 return s;
             }
@@ -528,7 +560,12 @@ impl Controller {
     // ─── the picture ──────────────────────────────────────────────────────
 
     /// Feed the latest picture. Returns what the controllers say unprompted.
-    pub(crate) fn update(&mut self, field: &AtcAirfield, traffic: &[AtcTraffic], now: f64) -> Vec<Tx> {
+    pub(crate) fn update(
+        &mut self,
+        field: &AtcAirfield,
+        traffic: &[AtcTraffic],
+        now: f64,
+    ) -> Vec<Tx> {
         self.ap.elev_ft = field.elev_ft;
         self.wx = Weather {
             wind_from: field.wind_from_deg,
@@ -540,17 +577,28 @@ impl Controller {
             cloud_cover: field.cloud_cover.clone(),
         };
         let prefer = (!self.direction.is_empty()).then(|| self.direction.clone());
-        let dir = self.ap.direction_for_wind(field.wind_from_deg as f64, field.wind_speed_kts as f64, prefer.as_deref());
+        let dir = self.ap.direction_for_wind(
+            field.wind_from_deg as f64,
+            field.wind_speed_kts as f64,
+            prefer.as_deref(),
+        );
         if dir != self.direction {
             if !self.direction.is_empty() {
-                log::info!("milatc {}: runway in use changes to {}", self.ap.callsign, dir);
+                log::info!(
+                    "milatc {}: runway in use changes to {}",
+                    self.ap.callsign,
+                    dir
+                );
             }
             self.direction = dir;
         }
         self.have_picture = true;
         self.traffic = traffic
             .iter()
-            .filter(|t| !(t.ai && t.ai_plan.as_deref().map_or(false, |p| p.starts_with("carrier:"))))
+            .filter(|t| {
+                !(t.ai
+                    && t.ai_plan.as_deref().map_or(false, |p| p.starts_with("carrier:")))
+            })
             .filter_map(|t| {
                 Some(Ac {
                     unit_id: t.unit_id?,
@@ -611,8 +659,11 @@ impl Controller {
     pub(crate) fn with_readbacks(&self, out: Vec<Tx>, now: f64) -> Vec<Tx> {
         let mut v = Vec::with_capacity(out.len());
         for tx in out {
-            let rb = match (tx.pilot.is_none(), tx.to.and_then(|k| self.flights.get(&k))) {
-                (true, Some(f)) if f.is_ai() => readback(&tx.text, &f.call, &self.ap.callsign, self.rand()),
+            let rb = match (tx.pilot.is_none(), tx.to.and_then(|k| self.flights.get(&k)))
+            {
+                (true, Some(f)) if f.is_ai() => {
+                    readback(&tx.text, &f.call, &self.ap.callsign, self.rand())
+                }
                 _ => None,
             };
             let (pos, to) = (tx.pos, tx.to);
@@ -649,7 +700,10 @@ impl Controller {
             .filter_map(|a| {
                 let (along, cross) = r.frame(a.p);
                 let d = -along / NM;
-                (d > -0.3 && d < nm && cross.abs() < 0.12 * (-along).max(800.) + 300. && angdiff(a.hdg, r.hdg).abs() < 45.)
+                (d > -0.3
+                    && d < nm
+                    && cross.abs() < 0.12 * (-along).max(800.) + 300.
+                    && angdiff(a.hdg, r.hdg).abs() < 45.)
                     .then_some((a, d.max(0.)))
             })
             .min_by(|a, b| a.1.total_cmp(&b.1))
@@ -664,7 +718,11 @@ impl Controller {
             }
             let (along, cross) = r.frame(a.p);
             let rolling = a.on_ground && a.gs > 40. && cross.abs() < r.width;
-            let climbing = !a.on_ground && along > 0. && along < r.len + 2. * NM && a.agl_ft < 2000 && cross.abs() < NM;
+            let climbing = !a.on_ground
+                && along > 0.
+                && along < r.len + 2. * NM
+                && a.agl_ft < 2000
+                && cross.abs() < NM;
             rolling || climbing
         })
     }
@@ -675,11 +733,20 @@ impl Controller {
         let mine = f.ac.p.dist(r.thr);
         self.flights
             .values()
-            .filter(|o| o.key != f.key && !o.ac.on_ground && matches!(o.phase, Phase::Pattern | Phase::RadarFinal))
+            .filter(|o| {
+                o.key != f.key
+                    && !o.ac.on_ground
+                    && matches!(o.phase, Phase::Pattern | Phase::RadarFinal)
+            })
             .map(|o| (o, o.ac.p.dist(r.thr)))
             .filter(|(_, d)| *d < mine)
             .max_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(o, d)| (type_name(&o.ac.typ).unwrap_or("traffic"), ((d / NM).round() as i32).max(1)))
+            .map(|(o, d)| {
+                (
+                    type_name(&o.ac.typ).unwrap_or("traffic"),
+                    ((d / NM).round() as i32).max(1),
+                )
+            })
     }
 
     /// The landing sequence number of a flight: 1 + arrivals nearer the
@@ -714,7 +781,8 @@ impl Controller {
             None => true,
             Some(k) => {
                 k.0 != key.0
-                    || angdiff(k.1 as f64, key.1 as f64).abs() >= 30. && self.wx.wind_kts >= 5
+                    || angdiff(k.1 as f64, key.1 as f64).abs() >= 30.
+                        && self.wx.wind_kts >= 5
                     || (k.2 as i32 - key.2 as i32).abs() >= 10
                     || k.3 != key.3
             }
@@ -739,17 +807,26 @@ impl Controller {
 
     fn atis_text(&self) -> String {
         let w = &self.wx;
-        let mut s = format!("{} information {}. {}. ", self.ap.callsign, self.atis_letter(), capitalize(&self.wind()));
+        let mut s = format!(
+            "{} information {}. {}. ",
+            self.ap.callsign,
+            self.atis_letter(),
+            capitalize(&self.wind())
+        );
         if w.vis_m >= 9000 || w.vis_m == 0 {
             s.push_str("Visibility 10 kilometres or more. ");
         } else {
             s.push_str(&format!("Visibility {} metres. ", (w.vis_m / 100) * 100));
         }
         match (w.cloud_base_ft, w.cloud_cover.as_deref()) {
-            (Some(b), Some(c)) if !c.is_empty() => {
-                s.push_str(&format!("{} {}. ", capitalize(c), alt(((b + 50) / 100) * 100)))
+            (Some(b), Some(c)) if !c.is_empty() => s.push_str(&format!(
+                "{} {}. ",
+                capitalize(c),
+                alt(((b + 50) / 100) * 100)
+            )),
+            (Some(b), _) => {
+                s.push_str(&format!("Ceiling {}. ", alt(((b + 50) / 100) * 100)))
             }
-            (Some(b), _) => s.push_str(&format!("Ceiling {}. ", alt(((b + 50) / 100) * 100))),
             _ => s.push_str("Sky clear. "),
         }
         s.push_str(&format!("Temperature {}. ", w.temp_c));
@@ -764,13 +841,20 @@ impl Controller {
         let mut closed: Vec<(&String, &Closure)> = self.closed.iter().collect();
         closed.sort_by(|a, b| a.0.cmp(b.0));
         for (pair, c) in closed {
-            s.push_str(&format!("Runway {} closed, {}. ", self.ap.strip_name(pair, &self.direction), c.why));
+            s.push_str(&format!(
+                "Runway {} closed, {}. ",
+                self.ap.strip_name(pair, &self.direction),
+                c.why
+            ));
         }
         s.push_str(&format!(
             "Overhead pattern altitude {}. Precision approaches available on request. ",
             alt(self.ap.arrival.pattern_alt_ft)
         ));
-        s.push_str(&format!("Advise on initial contact you have information {}.", self.atis_letter()));
+        s.push_str(&format!(
+            "Advise on initial contact you have information {}.",
+            self.atis_letter()
+        ));
         s
     }
 
@@ -808,7 +892,14 @@ impl Controller {
     }
 
     /// An AI pilot keys up on `pos`.
-    fn pilot_says(&self, f: &mut Flight, pos: Pos, text: String, now: f64, out: &mut Vec<Tx>) {
+    fn pilot_says(
+        &self,
+        f: &mut Flight,
+        pos: Pos,
+        text: String,
+        now: f64,
+        out: &mut Vec<Tx>,
+    ) {
         self.last_said.borrow_mut().insert(pos, now);
         let mut tx = Tx::new(pos, text, Some(f.key), now + 30.);
         tx.pilot = Some(f.call.clone());
@@ -834,7 +925,9 @@ impl Controller {
 
     /// Attach an AI command to the last thing said to `f`.
     fn command(&self, f: &Flight, action: &'static str, out: &mut [Tx]) {
-        if let Some(tx) = out.iter_mut().rev().find(|t| t.to == Some(f.key) && t.pilot.is_none()) {
+        if let Some(tx) =
+            out.iter_mut().rev().find(|t| t.to == Some(f.key) && t.pilot.is_none())
+        {
             tx.action = Some((f.ac.name.clone(), action));
         }
     }
@@ -876,7 +969,11 @@ impl Controller {
                     "{}, {}, {}",
                     f.call,
                     self.facility(Pos::Clearance),
-                    self.pick(&["I have your clearance, advise ready to copy.", "clearance is ready, advise ready to copy.", "your clearance is ready, advise when ready to copy."])
+                    self.pick(&[
+                        "I have your clearance, advise ready to copy.",
+                        "clearance is ready, advise ready to copy.",
+                        "your clearance is ready, advise when ready to copy."
+                    ])
                 );
                 self.say(f, Pos::Clearance, t, now, out);
             }
@@ -884,7 +981,9 @@ impl Controller {
 
         // Off a runway: any crossing clearance has been used.
         if let Some(c) = f.crossing_cleared.clone() {
-            if self.ap.strip_at(f.ac.p, 20.).map_or(true, |s| s != c) && f.t_phase + 5. < now {
+            if self.ap.strip_at(f.ac.p, 20.).map_or(true, |s| s != c)
+                && f.t_phase + 5. < now
+            {
                 f.crossing_cleared = None;
             }
         }
@@ -916,7 +1015,11 @@ impl Controller {
             Phase::LinedUp => self.waiting_takeoff(f, now, out),
             Phase::TakeoffCleared => {
                 if airborne && f.ac.agl_ft >= self.ap.departure.handoff_agl_ft {
-                    if f.option == LandingOption::TouchAndGo || matches!(f.approach, Approach::Overhead) && f.option != LandingOption::FullStop && f.option != LandingOption::Unspecified {
+                    if f.option == LandingOption::TouchAndGo
+                        || matches!(f.approach, Approach::Overhead)
+                            && f.option != LandingOption::FullStop
+                            && f.option != LandingOption::Unspecified
+                    {
                         f.set_phase(Phase::Pattern, now);
                     } else if self.has(Pos::Departure) {
                         let from = self.speaker(f, Pos::Tower);
@@ -952,7 +1055,9 @@ impl Controller {
                     self.say(f, Pos::Tower, t, now, out);
                 }
             }
-            Phase::Ground | Phase::TaxiOut | Phase::HoldingShort | Phase::LinedUp if f.is_ai() => {
+            Phase::Ground | Phase::TaxiOut | Phase::HoldingShort | Phase::LinedUp
+                if f.is_ai() =>
+            {
                 // AI does not wait for its takeoff clearance: just hand it on.
                 f.set_phase(Phase::TakeoffCleared, now);
             }
@@ -994,23 +1099,39 @@ impl Controller {
             && !f.emergency
             && !f.last.is_empty()
             && self.has(Pos::Tower)
-            && matches!(f.phase, Phase::Pattern | Phase::Arrival | Phase::RadarFinal | Phase::Enroute);
+            && matches!(
+                f.phase,
+                Phase::Pattern | Phase::Arrival | Phase::RadarFinal | Phase::Enroute
+            );
         f.set_phase(Phase::Landing, now);
         if deviation && f.once("landed-no-clr") {
             let t = format!(
                 "{}, {}, no landing clearance was issued. Possible pilot deviation, {}.",
                 f.call,
                 self.facility(Pos::Tower),
-                self.pick(&["advise you call the tower supervisor after you park", "expect a call from the supervisor on the ground", "we'll talk about it on the ground"])
+                self.pick(&[
+                    "advise you call the tower supervisor after you park",
+                    "expect a call from the supervisor on the ground",
+                    "we'll talk about it on the ground"
+                ])
             );
             self.say(f, Pos::Tower, t, now, out);
-            log::warn!("milatc {}: {} landed without a clearance", self.ap.callsign, f.call);
+            log::warn!(
+                "milatc {}: {} landed without a clearance",
+                self.ap.callsign,
+                f.call
+            );
         }
     }
 
     fn rollout(&self, f: &mut Flight, now: f64, out: &mut Vec<Tx>) {
         let on_rwy = self.ap.strip_at(f.ac.p, 0.).is_some();
-        if on_rwy && f.ac.gs < 60. && f.ac.gs > 3. && f.once("exit") && f.option != LandingOption::TouchAndGo {
+        if on_rwy
+            && f.ac.gs < 60.
+            && f.ac.gs > 3.
+            && f.once("exit")
+            && f.option != LandingOption::TouchAndGo
+        {
             // Which way are the ramps?
             let side = self
                 .ap
@@ -1020,7 +1141,11 @@ impl Controller {
                 .unwrap_or("left");
             let sp = self.speaker(f, Pos::Tower);
             let t = if self.has(Pos::Ground) {
-                format!("{}, turn {side} next taxiway, {} when clear.", f.call, self.contact(Pos::Ground))
+                format!(
+                    "{}, turn {side} next taxiway, {} when clear.",
+                    f.call,
+                    self.contact(Pos::Ground)
+                )
             } else {
                 format!("{}, turn {side} next taxiway, taxi to parking.", f.call)
             };
@@ -1049,7 +1174,11 @@ impl Controller {
                 self.facility(sp)
             );
             self.say(f, sp, t, now, out);
-            log::warn!("milatc {}: runway incursion by {} on {name}", self.ap.callsign, f.call);
+            log::warn!(
+                "milatc {}: runway incursion by {} on {name}",
+                self.ap.callsign,
+                f.call
+            );
         }
     }
 
@@ -1078,8 +1207,14 @@ impl Controller {
             }
         }
         // Wandering off the route.
-        if f.ac.gs > 3. && self.ap.off_route(&route, f.ac.p) > 120. && f.once("off-route") {
-            let via = route.via.iter().map(|v| speech::taxiway(v)).collect::<Vec<_>>().join(", ");
+        if f.ac.gs > 3. && self.ap.off_route(&route, f.ac.p) > 120. && f.once("off-route")
+        {
+            let via = route
+                .via
+                .iter()
+                .map(|v| speech::taxiway(v))
+                .collect::<Vec<_>>()
+                .join(", ");
             let t = format!("{}, verify taxiing via {via}.", f.call);
             let sp = self.speaker(f, Pos::Ground);
             self.say(f, sp, t, now, out);
@@ -1093,7 +1228,8 @@ impl Controller {
         let sp = self.speaker(f, Pos::Ground);
         if blocked {
             if f.once("cross-hold") {
-                let t = format!("{}, continue holding short runway {name}, traffic.", f.call);
+                let t =
+                    format!("{}, continue holding short runway {name}, traffic.", f.call);
                 self.say(f, sp, t, now, out);
             }
             return;
@@ -1104,7 +1240,10 @@ impl Controller {
         let t = if via.is_empty() {
             format!("{}, cross runway {name}, hold short runway {dep}.", f.call)
         } else {
-            format!("{}, cross runway {name}, continue via {via}, hold short runway {dep}.", f.call)
+            format!(
+                "{}, cross runway {name}, continue via {via}, hold short runway {dep}.",
+                f.call
+            )
         };
         self.say(f, sp, t, now, out);
         f.crossing_cleared = Some(pair.to_string());
@@ -1129,7 +1268,11 @@ impl Controller {
             return Some(format!("runway closed, {why}"));
         }
         if let Some((a, d)) = self.arrival_within(runway, 3., f.key) {
-            return Some(format!("traffic{} {} mile final", type_phrase(&a.typ), d.ceil().max(1.) as i32));
+            return Some(format!(
+                "traffic{} {} mile final",
+                type_phrase(&a.typ),
+                d.ceil().max(1.) as i32
+            ));
         }
         if let Some(opp) = self.ap.opposite(r) {
             if self.arrival_within(&opp.name, 3., f.key).is_some() {
@@ -1150,7 +1293,10 @@ impl Controller {
             o.key != f.key
                 && o.ac.on_ground
                 && matches!(o.phase, Phase::TakeoffCleared | Phase::LinedUp)
-                && o.runway.as_deref().and_then(|x| self.ap.runway(x)).map_or(false, |x| x.pair == r.pair)
+                && o.runway
+                    .as_deref()
+                    .and_then(|x| self.ap.runway(x))
+                    .map_or(false, |x| x.pair == r.pair)
         }) {
             return Some("departing traffic".into());
         }
@@ -1162,7 +1308,10 @@ impl Controller {
     fn wake_departing(&self, f: &Flight, runway: &str, now: f64) -> String {
         match &*self.heavy_off.borrow() {
             Some((r, t, typ)) if r == runway && now - t < 150. && !heavy(&f.ac.typ) => {
-                format!("caution wake turbulence, departing {}, ", type_name(typ).unwrap_or("heavy"))
+                format!(
+                    "caution wake turbulence, departing {}, ",
+                    type_name(typ).unwrap_or("heavy")
+                )
             }
             _ => String::new(),
         }
@@ -1170,7 +1319,11 @@ impl Controller {
 
     fn takeoff_clearance(&self, f: &Flight, runway: &str, now: f64) -> String {
         let wake = self.wake_departing(f, runway, now);
-        let mut t = format!("{}, {wake}{}, runway {runway}, cleared for takeoff.", f.call, self.wind());
+        let mut t = format!(
+            "{}, {wake}{}, runway {runway}, cleared for takeoff.",
+            f.call,
+            self.wind()
+        );
         if f.squawk.is_none() && self.has(Pos::Departure) {
             t = format!(
                 "{}, {wake}{}, runway {runway}, cleared for takeoff, fly runway heading, climb and maintain {}.",
@@ -1189,7 +1342,9 @@ impl Controller {
         let mut v: Vec<&Flight> = self
             .flights
             .values()
-            .filter(|o| o.key != f.key && o.takeoff_waiting && o.runway.as_deref() == Some(runway))
+            .filter(|o| {
+                o.key != f.key && o.takeoff_waiting && o.runway.as_deref() == Some(runway)
+            })
             .filter(|o| o.ready_at.map_or(false, |t| t < mine))
             .collect();
         v.sort_by(|a, b| a.ready_at.unwrap_or(0.).total_cmp(&b.ready_at.unwrap_or(0.)));
@@ -1215,7 +1370,8 @@ impl Controller {
 
     fn departing(&self, f: &mut Flight, now: f64, out: &mut Vec<Tx>) {
         let d_nm = f.ac.p.dist(P2::default()) / NM;
-        let release = d_nm > self.ap.departure.release_nm || f.ac.alt_ft > self.ap.departure.release_alt_ft;
+        let release = d_nm > self.ap.departure.release_nm
+            || f.ac.alt_ft > self.ap.departure.release_alt_ft;
         if f.phase == Phase::Departure {
             // Never checked in: let it go quietly.
             if release || now - f.t_phase > 300. {
@@ -1223,8 +1379,13 @@ impl Controller {
             }
             return;
         }
-        if f.cleared_alt > 0 && f.ac.alt_ft > f.cleared_alt + 400 && f.ac.vs_fpm > 500 && f.once("alt-bust") {
-            let t = format!("{}, check altitude, maintain {}.", f.call, alt(f.cleared_alt));
+        if f.cleared_alt > 0
+            && f.ac.alt_ft > f.cleared_alt + 400
+            && f.ac.vs_fpm > 500
+            && f.once("alt-bust")
+        {
+            let t =
+                format!("{}, check altitude, maintain {}.", f.call, alt(f.cleared_alt));
             self.say(f, Pos::Departure, t, now, out);
         }
         if release && f.once("release") {
@@ -1384,15 +1545,25 @@ impl Controller {
         let (along, cross) = r.frame(f.ac.p);
         let dist_m = (a.touchdown_m - along).max(0.);
         let dist_nm = dist_m / NM;
-        let path_ft = (dist_m * a.glidepath_deg.to_radians().tan()) / FT + self.ap.elev_ft as f64;
+        let path_ft =
+            (dist_m * a.glidepath_deg.to_radians().tan()) / FT + self.ap.elev_ft as f64;
         let err_ft = f.ac.alt_ft as f64 - path_ft;
         let ang = cross.atan2(dist_m.max(1.)).to_degrees(); // + right of course
         let hat = f.ac.alt_ft - self.ap.elev_ft;
 
         // Unsafe: too far off to continue.
-        if ang.abs() > 6. || err_ft.abs() > (dist_nm * 300.).max(250.) || angdiff(f.ac.hdg, r.hdg).abs() > 60. {
+        if ang.abs() > 6.
+            || err_ft.abs() > (dist_nm * 300.).max(250.)
+            || angdiff(f.ac.hdg, r.hdg).abs() > 60.
+        {
             let side = if ang > 0. { "right" } else { "left" };
-            let what = if ang.abs() > 6. { format!("too far {side} of course") } else if err_ft > 0. { "too high for safe approach".into() } else { "too low for safe approach".into() };
+            let what = if ang.abs() > 6. {
+                format!("too far {side} of course")
+            } else if err_ft > 0. {
+                "too high for safe approach".into()
+            } else {
+                "too low for safe approach".into()
+            };
             let t = format!(
                 "{}, {what}. If runway not in sight, execute missed approach. Fly runway heading, climb and maintain {}, {}.",
                 f.call,
@@ -1412,7 +1583,13 @@ impl Controller {
             let side = if ang > 0. { "right" } else { "left" };
             let corr = (-ang * 3.).clamp(-10., 10.);
             let h = hdg(r.hdg + corr);
-            let deg = if ang.abs() < 1.2 { format!("slightly {side} of course") } else if ang.abs() < 3. { format!("{side} of course") } else { format!("well {side} of course") };
+            let deg = if ang.abs() < 1.2 {
+                format!("slightly {side} of course")
+            } else if ang.abs() < 3. {
+                format!("{side} of course")
+            } else {
+                format!("well {side} of course")
+            };
             let turn = if corr > 0. { "right" } else { "left" };
             parts.push(format!("{deg}, turn {turn} heading {h}"));
         }
@@ -1421,15 +1598,26 @@ impl Controller {
         if err_ft.abs() <= tol {
             parts.push("on glidepath".into());
         } else if err_ft.abs() <= tol * 3. {
-            parts.push(if err_ft > 0. { "slightly above glidepath".into() } else { "slightly below glidepath".into() });
+            parts.push(if err_ft > 0. {
+                "slightly above glidepath".into()
+            } else {
+                "slightly below glidepath".into()
+            });
         } else {
-            parts.push(if err_ft > 0. { "well above glidepath".into() } else { "well below glidepath".into() });
+            parts.push(if err_ft > 0. {
+                "well above glidepath".into()
+            } else {
+                "well below glidepath".into()
+            });
         }
         // Range at each whole mile
         let mile = dist_nm.floor() as i32;
         if mile < f.gca_mile && mile >= 1 {
             f.gca_mile = mile;
-            parts.push(format!("{mile} {} from touchdown", if mile == 1 { "mile" } else { "miles" }));
+            parts.push(format!(
+                "{mile} {} from touchdown",
+                if mile == 1 { "mile" } else { "miles" }
+            ));
         }
         let mut t = format!("{}, {}.", f.call, parts.join(", "));
 
@@ -1437,7 +1625,11 @@ impl Controller {
         if dist_nm < 4.2 && !f.landing_cleared {
             match self.landing_blocked(f, &r.name) {
                 None => {
-                    t.push_str(&format!(" Runway {}, cleared to land, {}.", r.name, self.wind()));
+                    t.push_str(&format!(
+                        " Runway {}, cleared to land, {}.",
+                        r.name,
+                        self.wind()
+                    ));
                     f.landing_cleared = true;
                 }
                 Some(why) if dist_nm < 1.2 => {
@@ -1451,13 +1643,19 @@ impl Controller {
                     self.missed(f, now);
                     return;
                 }
-                Some(_) if f.once("continue") => t.push_str(" Continue, traffic on the runway."),
+                Some(_) if f.once("continue") => {
+                    t.push_str(" Continue, traffic on the runway.")
+                }
                 Some(_) => {}
             }
         }
         // Decision height, then the threshold.
         if hat <= a.decision_height_ft + 50 && f.once("dh") {
-            t = format!("{}, at decision height, {}.", f.call, parts[..parts.len().min(2)].join(", "));
+            t = format!(
+                "{}, at decision height, {}.",
+                f.call,
+                parts[..parts.len().min(2)].join(", ")
+            );
         } else if dist_m < a.touchdown_m + 400. && f.once("thr") {
             t = format!("{}, over landing threshold.", f.call);
         }
@@ -1497,7 +1695,10 @@ impl Controller {
         }
         if let Some(o) = self.runway_occupant(&r.pair, f.key) {
             // A departure already rolling away from us is fine.
-            let rolling_out = o.on_ground && o.gs > 60. && angdiff(o.hdg, r.hdg).abs() < 20. && r.frame(o.p).0 > 0.;
+            let rolling_out = o.on_ground
+                && o.gs > 60.
+                && angdiff(o.hdg, r.hdg).abs() < 20.
+                && r.frame(o.p).0 > 0.;
             if !rolling_out {
                 return Some("traffic on the runway".into());
             }
@@ -1522,19 +1723,30 @@ impl Controller {
             .flights
             .values()
             .filter(|o| o.key != f.key && heavy(&o.ac.typ) && !heavy(&f.ac.typ))
-            .filter(|o| matches!(o.phase, Phase::Pattern | Phase::RadarFinal | Phase::Landing))
+            .filter(|o| {
+                matches!(o.phase, Phase::Pattern | Phase::RadarFinal | Phase::Landing)
+            })
             .filter_map(|o| {
                 let r = self.ap.runway(runway)?;
                 let (mine, theirs) = (f.ac.p.dist(r.thr), o.ac.p.dist(r.thr));
-                (theirs < mine && mine - theirs < 6. * NM).then(|| type_name(&o.ac.typ).unwrap_or("heavy"))
+                (theirs < mine && mine - theirs < 6. * NM)
+                    .then(|| type_name(&o.ac.typ).unwrap_or("heavy"))
             })
             .next()
             .map(|t| format!(", caution wake turbulence, landing {t}"))
             .unwrap_or_default();
         if f.emergency {
-            format!("{}, runway {runway}, {what}, {}, emergency equipment is standing by.", f.call, self.wind())
+            format!(
+                "{}, runway {runway}, {what}, {}, emergency equipment is standing by.",
+                f.call,
+                self.wind()
+            )
         } else {
-            format!("{}, check wheels down, runway {runway}, {what}, {}{wake}.", f.call, self.wind())
+            format!(
+                "{}, check wheels down, runway {runway}, {what}, {}{wake}.",
+                f.call,
+                self.wind()
+            )
         }
     }
 
@@ -1546,7 +1758,10 @@ impl Controller {
         let Some(r) = self.ap.runway(&rwy).cloned() else { return };
         let (along, cross) = r.frame(f.ac.p);
         let out_nm = -along / NM;
-        let on_final = out_nm > -0.2 && out_nm < 3. && cross.abs() < 0.6 * NM && angdiff(f.ac.hdg, r.hdg).abs() < 40.;
+        let on_final = out_nm > -0.2
+            && out_nm < 3.
+            && cross.abs() < 0.6 * NM
+            && angdiff(f.ac.hdg, r.hdg).abs() < 40.;
         if !on_final {
             return;
         }
@@ -1595,7 +1810,11 @@ impl Controller {
 
     /// Which flight a transmission is from, adopting a callsign the pilot
     /// gave.
-    pub(crate) fn identify(&mut self, who: &Caller, parsed: Option<&Parsed>) -> Option<u64> {
+    pub(crate) fn identify(
+        &mut self,
+        who: &Caller,
+        parsed: Option<&Parsed>,
+    ) -> Option<u64> {
         let key = who
             .unit_id
             .filter(|u| self.flights.contains_key(u))
@@ -1627,7 +1846,12 @@ impl Controller {
     }
 
     /// The context the language model gets.
-    pub(crate) fn llm_context(&self, pos: Pos, key: Option<u64>, heard: &str) -> llm::Context {
+    pub(crate) fn llm_context(
+        &self,
+        pos: Pos,
+        key: Option<u64>,
+        heard: &str,
+    ) -> llm::Context {
         let f = key.and_then(|k| self.flights.get(&k));
         llm::Context {
             position: self.facility(pos),
@@ -1640,12 +1864,16 @@ impl Controller {
     /// Which position should handle a request from a flight in this state.
     fn owner(&self, f: &Flight, intent: Intent) -> Pos {
         use Intent::*;
-        let first = |ps: &[Pos]| ps.iter().copied().find(|p| self.has(*p)).unwrap_or(Pos::Tower);
+        let first =
+            |ps: &[Pos]| ps.iter().copied().find(|p| self.has(*p)).unwrap_or(Pos::Tower);
         match intent {
             RequestClearance | ClearanceReadback => first(&[Pos::Clearance, Pos::Ground]),
-            RequestStartup | RequestTaxi | RequestTaxiParking | RequestCrossing => first(&[Pos::Ground, Pos::Tower]),
+            RequestStartup | RequestTaxi | RequestTaxiParking | RequestCrossing => {
+                first(&[Pos::Ground, Pos::Tower])
+            }
             ClearOfRunway => first(&[Pos::Ground, Pos::Tower]),
-            ReadyForDeparture | ReportInitial | ReportBreak | ReportDownwind | ReportBase | ReportFinal | RequestClosed => Pos::Tower,
+            ReadyForDeparture | ReportInitial | ReportBreak | ReportDownwind
+            | ReportBase | ReportFinal | RequestClosed => Pos::Tower,
             GoingAround => {
                 if f.phase == Phase::RadarFinal {
                     Pos::Final
@@ -1658,7 +1886,10 @@ impl Controller {
                     first(&[Pos::Ground, Pos::Tower])
                 } else if f.phase == Phase::RadarFinal {
                     Pos::Final
-                } else if matches!(f.phase, Phase::Departure | Phase::Climbout | Phase::TakeoffCleared) {
+                } else if matches!(
+                    f.phase,
+                    Phase::Departure | Phase::Climbout | Phase::TakeoffCleared
+                ) {
                     first(&[Pos::Departure, Pos::Approach, Pos::Tower])
                 } else {
                     first(&[Pos::Approach, Pos::Tower])
@@ -1670,7 +1901,14 @@ impl Controller {
 
     /// Answer a transmission heard on `pos`. `parsed` is `None` when neither
     /// the rules nor the language model understood it.
-    pub(crate) fn respond(&mut self, pos: Pos, who: &Caller, heard: &str, parsed: Option<Parsed>, now: f64) -> Vec<Tx> {
+    pub(crate) fn respond(
+        &mut self,
+        pos: Pos,
+        who: &Caller,
+        heard: &str,
+        parsed: Option<Parsed>,
+        now: f64,
+    ) -> Vec<Tx> {
         let fac = self.facility(pos);
         let key = self.identify(who, parsed.as_ref());
         let mut out = vec![];
@@ -1678,10 +1916,29 @@ impl Controller {
             // Nobody we have on radar.
             let addressed = crate::voice::stt::mentions(heard, &self.ap.callsign);
             match parsed.as_ref().map(|p| p.intent) {
-                Some(Intent::RadioCheck) => out.push(Tx::new(pos, format!("Station calling {fac}, loud and clear, say callsign."), None, now + STALE_S)),
-                Some(Intent::RequestWeather) => out.push(Tx::new(pos, format!("Station calling {fac}, {}, {}.", self.wind(), self.altimeter()), None, now + STALE_S)),
+                Some(Intent::RadioCheck) => out.push(Tx::new(
+                    pos,
+                    format!("Station calling {fac}, loud and clear, say callsign."),
+                    None,
+                    now + STALE_S,
+                )),
+                Some(Intent::RequestWeather) => out.push(Tx::new(
+                    pos,
+                    format!(
+                        "Station calling {fac}, {}, {}.",
+                        self.wind(),
+                        self.altimeter()
+                    ),
+                    None,
+                    now + STALE_S,
+                )),
                 Some(Intent::None) | Some(Intent::Readback) => {}
-                _ if addressed => out.push(Tx::new(pos, format!("Station calling {fac}, say again callsign."), None, now + STALE_S)),
+                _ if addressed => out.push(Tx::new(
+                    pos,
+                    format!("Station calling {fac}, say again callsign."),
+                    None,
+                    now + STALE_S,
+                )),
                 _ => {}
             }
             return out;
@@ -1693,10 +1950,20 @@ impl Controller {
         out
     }
 
-    fn answer(&mut self, f: &mut Flight, pos: Pos, heard: &str, parsed: Option<Parsed>, now: f64, out: &mut Vec<Tx>) {
+    fn answer(
+        &mut self,
+        f: &mut Flight,
+        pos: Pos,
+        heard: &str,
+        parsed: Option<Parsed>,
+        now: f64,
+        out: &mut Vec<Tx>,
+    ) {
         let fac = self.facility(pos);
         let Some(p) = parsed else {
-            if crate::voice::stt::mentions(heard, &self.ap.callsign) || f.call_confirmed && crate::voice::stt::mentions(heard, &f.call) {
+            if crate::voice::stt::mentions(heard, &self.ap.callsign)
+                || f.call_confirmed && crate::voice::stt::mentions(heard, &f.call)
+            {
                 let t = format!("{}, {fac}, say again.", f.call);
                 self.say(f, pos, t, now, out);
             }
@@ -1707,11 +1974,21 @@ impl Controller {
         match p.intent {
             None => return,
             RadioCheck => {
-                let t = format!("{}, {fac}, {}.", f.call, self.pick(&["loud and clear", "read you loud and clear", "loud and clear, go ahead"]));
+                let t = format!(
+                    "{}, {fac}, {}.",
+                    f.call,
+                    self.pick(&[
+                        "loud and clear",
+                        "read you loud and clear",
+                        "loud and clear, go ahead"
+                    ])
+                );
                 return self.say(f, pos, t, now, out);
             }
             SayAgain => {
-                let t = f.last.get(&pos).cloned().unwrap_or_else(|| format!("{}, {fac}, no further instructions.", f.call));
+                let t = f.last.get(&pos).cloned().unwrap_or_else(|| {
+                    format!("{}, {fac}, no further instructions.", f.call)
+                });
                 let mut tx = Tx::new(pos, t, Some(f.key), now + STALE_S);
                 tx.delay = self.between(0.6, 1.5);
                 tx.subtitle = (!f.is_ai()).then_some(f.key);
@@ -1735,7 +2012,11 @@ impl Controller {
                 return self.say(f, pos, t, now, out);
             }
             RequestFrequencyChange => {
-                let t = format!("{}, frequency change approved{}", f.call, self.pick(&[".", ", good day.", ", see you."]));
+                let t = format!(
+                    "{}, frequency change approved{}",
+                    f.call,
+                    self.pick(&[".", ", good day.", ", see you."])
+                );
                 self.say(f, pos, t, now, out);
                 if matches!(f.phase, Phase::Departure | Phase::Climbout) {
                     f.set_phase(Phase::Enroute, now);
@@ -1755,15 +2036,32 @@ impl Controller {
             return;
         }
         // Already told to stand by: still coming.
-        if !self.replaying && self.deferred.iter().any(|d| d.2 == f.key && d.1 == pos && d.4.intent == p.intent) {
+        if !self.replaying
+            && self
+                .deferred
+                .iter()
+                .any(|d| d.2 == f.key && d.1 == pos && d.4.intent == p.intent)
+        {
             if f.once("standby-again") {
-                let t = format!("{}, {}", f.call, self.pick(&["roger, standby.", "I have you, standby.", "copy, stand by one."]));
+                let t = format!(
+                    "{}, {}",
+                    f.call,
+                    self.pick(&[
+                        "roger, standby.",
+                        "I have you, standby.",
+                        "copy, stand by one."
+                    ])
+                );
                 self.say(f, pos, t, now, out);
             }
             return;
         }
         if !self.replaying && self.wants_standby(f, pos, p.intent, now) {
-            let t = format!("{}, {fac}, {}", f.call, self.pick(&["standby.", "stand by.", "standby one.", "roger, standby."]));
+            let t = format!(
+                "{}, {fac}, {}",
+                f.call,
+                self.pick(&["standby.", "stand by.", "standby one.", "roger, standby."])
+            );
             self.say(f, pos, t, now, out);
             let due = now + self.busy_for(pos, now, Option::None) + self.between(3., 8.);
             self.deferred.push((due, pos, f.key, heard.to_string(), p));
@@ -1792,11 +2090,13 @@ impl Controller {
                 }
             }
             RequestCrossing => {
-                let pair = f
-                    .route
-                    .as_ref()
-                    .and_then(|r| r.crossing.clone())
-                    .or_else(|| self.ap.holds.get(self.ap.hold_near(f.ac.p, 60.)?).map(|h| h.pair.clone()));
+                let pair =
+                    f.route.as_ref().and_then(|r| r.crossing.clone()).or_else(|| {
+                        self.ap
+                            .holds
+                            .get(self.ap.hold_near(f.ac.p, 60.)?)
+                            .map(|h| h.pair.clone())
+                    });
                 match pair {
                     Some(pair) => {
                         f.said.remove("cross-hold");
@@ -1819,10 +2119,17 @@ impl Controller {
                 let n = self.sequence(f);
                 let rwy = self.arr_runway();
                 let t = if n > 1 {
-                    let follow = self.landing_ahead(f).map(|(typ, d)| format!(", follow the {typ} on a {d} mile final")).unwrap_or_default();
+                    let follow = self
+                        .landing_ahead(f)
+                        .map(|(typ, d)| format!(", follow the {typ} on a {d} mile final"))
+                        .unwrap_or_default();
                     format!("{}, {fac}, runway {rwy}, number {n}{follow}, break at the numbers, report base.", f.call)
                 } else {
-                    format!("{}, {fac}, runway {rwy}, break approved, {}, report base.", f.call, self.altimeter())
+                    format!(
+                        "{}, {fac}, runway {rwy}, break approved, {}, report base.",
+                        f.call,
+                        self.altimeter()
+                    )
                 };
                 self.say(f, pos, t, now, out);
             }
@@ -1890,19 +2197,33 @@ impl Controller {
     /// something else, finding the strip).
     fn wants_standby(&self, f: &Flight, pos: Pos, intent: Intent, now: f64) -> bool {
         use Intent::*;
-        if f.emergency || !matches!(intent, RequestTaxi | CheckIn | RequestApproach | RequestTaxiParking | RequestStartup) {
+        if f.emergency
+            || !matches!(
+                intent,
+                RequestTaxi
+                    | CheckIn
+                    | RequestApproach
+                    | RequestTaxiParking
+                    | RequestStartup
+            )
+        {
             return false;
         }
         if self.busy_for(pos, now, Some(f.key)) > 6. {
             return true;
         }
-        let odds = if self.quiet(pos, now, 15.) { self.standby_odds } else { 2.5 * self.standby_odds };
+        let odds = if self.quiet(pos, now, 15.) {
+            self.standby_odds
+        } else {
+            2.5 * self.standby_odds
+        };
         self.rand() < odds
     }
 
     /// The answers held back with "standby", now due.
     fn release_deferred(&mut self, now: f64, out: &mut Vec<Tx>) {
-        let (due, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.deferred).into_iter().partition(|d| d.0 <= now);
+        let (due, keep): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut self.deferred).into_iter().partition(|d| d.0 <= now);
         self.deferred = keep;
         for (_, pos, key, heard, p) in due {
             let Some(mut f) = self.flights.remove(&key) else { continue };
@@ -1920,17 +2241,23 @@ impl Controller {
     fn tower_takes(&self, f: &Flight, intent: Intent) -> bool {
         matches!(intent, Intent::CheckIn | Intent::RequestApproach)
             && !f.ac.on_ground
-            && self.ap.runway(&self.arr_runway()).map_or(false, |r| f.ac.p.dist(r.thr) < (self.ap.arrival.tower_radius_nm + 4.) * NM)
+            && self.ap.runway(&self.arr_runway()).map_or(false, |r| {
+                f.ac.p.dist(r.thr) < (self.ap.arrival.tower_radius_nm + 4.) * NM
+            })
     }
 
     fn emergency(&self, f: &mut Flight, pos: Pos, now: f64, out: &mut Vec<Tx>) {
         f.emergency = true;
         let fac = self.facility(pos);
         let t = if f.ac.on_ground {
-            format!("{}, {fac}, roger, hold position, emergency equipment is responding.", f.call)
+            format!(
+                "{}, {fac}, roger, hold position, emergency equipment is responding.",
+                f.call
+            )
         } else {
             let rwy = self.arr_runway();
-            let brg = self.ap.runway(&rwy).map(|r| f.ac.p.bearing_to(r.thr)).unwrap_or(0.);
+            let brg =
+                self.ap.runway(&rwy).map(|r| f.ac.p.bearing_to(r.thr)).unwrap_or(0.);
             format!(
                 "{}, {fac}, roger your emergency. Runway {rwy} is yours, fly heading {}, descend at pilot's discretion, {}, {}. Say souls on board and fuel remaining.",
                 f.call,
@@ -1943,15 +2270,32 @@ impl Controller {
         log::warn!("milatc {}: {} declared an emergency", self.ap.callsign, f.call);
     }
 
-    fn check_readback(&self, f: &mut Flight, pos: Pos, heard: &str, now: f64, out: &mut Vec<Tx>) {
+    fn check_readback(
+        &self,
+        f: &mut Flight,
+        pos: Pos,
+        heard: &str,
+        now: f64,
+        out: &mut Vec<Tx>,
+    ) {
         let Some(last) = f.last.get(&pos).cloned() else { return };
-        if last.contains("hold short") && !crate::voice::stt::contains_phrase(heard, "hold short") && f.once("rb-hold-short") {
+        if last.contains("hold short")
+            && !crate::voice::stt::contains_phrase(heard, "hold short")
+            && f.once("rb-hold-short")
+        {
             let t = format!("{}, read back hold short instruction.", f.call);
             self.say(f, pos, t, now, out);
         }
     }
 
-    fn clearance(&mut self, f: &mut Flight, pos: Pos, p: &Parsed, now: f64, out: &mut Vec<Tx>) {
+    fn clearance(
+        &mut self,
+        f: &mut Flight,
+        pos: Pos,
+        p: &Parsed,
+        now: f64,
+        out: &mut Vec<Tx>,
+    ) {
         let fac = self.facility(pos);
         if !f.ac.on_ground {
             let t = format!("{}, {fac}, {}.", f.call, self.contact(Pos::Departure));
@@ -1960,7 +2304,15 @@ impl Controller {
         match f.clr {
             Clr::Ready => {}
             Clr::Preparing(_) => {
-                let t = format!("{}, {fac}, {}", f.call, self.pick(&["still working on your clearance, standby.", "standby, clearance is coming.", "copy, standby."]));
+                let t = format!(
+                    "{}, {fac}, {}",
+                    f.call,
+                    self.pick(&[
+                        "still working on your clearance, standby.",
+                        "standby, clearance is coming.",
+                        "copy, standby."
+                    ])
+                );
                 return self.say(f, pos, t, now, out);
             }
             // The first request: Clearance has to get it from the system.
@@ -1970,7 +2322,11 @@ impl Controller {
                 let t = format!(
                     "{}, {fac}, {}",
                     f.call,
-                    self.pick(&["clearance on request, standby.", "copy, clearance on request.", "roger, standby for your clearance."])
+                    self.pick(&[
+                        "clearance on request, standby.",
+                        "copy, clearance on request.",
+                        "roger, standby for your clearance."
+                    ])
                 );
                 return self.say(f, pos, t, now, out);
             }
@@ -1983,9 +2339,20 @@ impl Controller {
         };
         f.squawk = Some(sq);
         f.cleared_alt = self.ap.departure.initial_alt_ft;
-        let wanted = if p.destination.trim().is_empty() { f.clr_dest.clone() } else { p.destination.clone() };
-        let limit = if wanted.trim().is_empty() { self.ap.departure.clearance_limit.clone() } else { wanted };
-        let dep = self.freq_of(Pos::Departure).map(|d| format!(", departure frequency {d}")).unwrap_or_default();
+        let wanted = if p.destination.trim().is_empty() {
+            f.clr_dest.clone()
+        } else {
+            p.destination.clone()
+        };
+        let limit = if wanted.trim().is_empty() {
+            self.ap.departure.clearance_limit.clone()
+        } else {
+            wanted
+        };
+        let dep = self
+            .freq_of(Pos::Departure)
+            .map(|d| format!(", departure frequency {d}"))
+            .unwrap_or_default();
         let t = format!(
             "{}, {fac}, cleared to {limit} via radar vectors, fly runway heading, climb and maintain {}, expect {} 10 minutes after departure{dep}, squawk {sq:04}.",
             f.call,
@@ -1995,30 +2362,59 @@ impl Controller {
         self.say(f, pos, t, now, out);
     }
 
-    fn clearance_readback(&self, f: &mut Flight, pos: Pos, p: &Parsed, now: f64, out: &mut Vec<Tx>) {
+    fn clearance_readback(
+        &self,
+        f: &mut Flight,
+        pos: Pos,
+        p: &Parsed,
+        now: f64,
+        out: &mut Vec<Tx>,
+    ) {
         let Some(sq) = f.squawk else {
-            let t = format!("{}, {}, no clearance on file, say request.", f.call, self.facility(pos));
+            let t = format!(
+                "{}, {}, no clearance on file, say request.",
+                f.call,
+                self.facility(pos)
+            );
             return self.say(f, pos, t, now, out);
         };
         let t = if p.squawk != 0 && p.squawk != sq {
             format!("{}, negative, squawk {sq:04}.", f.call)
-        } else if p.altitude_ft != 0 && (p.altitude_ft - f.cleared_alt).abs() > 50 && p.altitude_ft != self.ap.departure.expect_alt_ft {
+        } else if p.altitude_ft != 0
+            && (p.altitude_ft - f.cleared_alt).abs() > 50
+            && p.altitude_ft != self.ap.departure.expect_alt_ft
+        {
             format!("{}, negative, climb and maintain {}.", f.call, alt(f.cleared_alt))
         } else if self.has(Pos::Ground) && pos != Pos::Ground {
-            format!("{}, readback correct, {} when ready to taxi.", f.call, self.contact(Pos::Ground))
+            format!(
+                "{}, readback correct, {} when ready to taxi.",
+                f.call,
+                self.contact(Pos::Ground)
+            )
         } else {
             format!("{}, readback correct.", f.call)
         };
         self.say(f, pos, t, now, out);
     }
 
-    fn taxi(&mut self, f: &mut Flight, pos: Pos, p: &Parsed, now: f64, out: &mut Vec<Tx>) {
+    fn taxi(
+        &mut self,
+        f: &mut Flight,
+        pos: Pos,
+        p: &Parsed,
+        now: f64,
+        out: &mut Vec<Tx>,
+    ) {
         let fac = self.facility(pos);
         if !f.ac.on_ground {
             return;
         }
         if self.cfg.require_clearance && f.squawk.is_none() && self.has(Pos::Clearance) {
-            let t = format!("{}, {fac}, clearance on request, {}.", f.call, self.contact(Pos::Clearance));
+            let t = format!(
+                "{}, {fac}, clearance on request, {}.",
+                f.call,
+                self.contact(Pos::Clearance)
+            );
             return self.say(f, pos, t, now, out);
         }
         // The runway asked for, if it is one in use; else the departure runway.
@@ -2092,24 +2488,41 @@ impl Controller {
         }
     }
 
-    fn taxi_to_parking(&self, f: &mut Flight, pos: Pos, p: &Parsed, now: f64, out: &mut Vec<Tx>) {
+    fn taxi_to_parking(
+        &self,
+        f: &mut Flight,
+        pos: Pos,
+        p: &Parsed,
+        now: f64,
+        out: &mut Vec<Tx>,
+    ) {
         let fac = self.facility(pos);
         if !f.ac.on_ground {
             return;
         }
         let ramp = self.ap.ramp_for(f.ac.p, Some(&p.destination)).cloned();
         let route = ramp.as_ref().and_then(|rm| self.ap.route_to_ramp(f.ac.p, rm));
-        let dest = ramp.as_ref().map(|r| format!("the {}", r.name)).unwrap_or_else(|| "parking".into());
+        let dest = ramp
+            .as_ref()
+            .map(|r| format!("the {}", r.name))
+            .unwrap_or_else(|| "parking".into());
         let t = match &route {
             Some(r) if !r.via.is_empty() => {
-                let via = r.via.iter().map(|v| speech::taxiway(v)).collect::<Vec<_>>().join(", ");
+                let via = r
+                    .via
+                    .iter()
+                    .map(|v| speech::taxiway(v))
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 match &r.crossing {
                     Some(pair) => format!(
                         "{}, {fac}, taxi to {dest} via {via}, hold short runway {}.",
                         f.call,
                         self.ap.strip_name(pair, &self.direction)
                     ),
-                    Option::None => format!("{}, {fac}, taxi to {dest} via {via}.", f.call),
+                    Option::None => {
+                        format!("{}, {fac}, taxi to {dest} via {via}.", f.call)
+                    }
                 }
             }
             _ => format!("{}, {fac}, taxi to {dest}.", f.call),
@@ -2149,14 +2562,19 @@ impl Controller {
         }
         match self.takeoff_blocked(f, &rwy) {
             Option::None => {
-                let t = self.takeoff_clearance(f, &rwy, now).replacen(&f.call, &format!("{}, {fac}", f.call), 1);
+                let t = self.takeoff_clearance(f, &rwy, now).replacen(
+                    &f.call,
+                    &format!("{}, {fac}", f.call),
+                    1,
+                );
                 self.say(f, pos, t, now, out);
                 f.takeoff_waiting = false;
                 f.ready_at = None;
                 f.set_phase(Phase::TakeoffCleared, now);
             }
             Some(why) if why == "departing traffic" => {
-                let t = format!("{}, {fac}, runway {rwy}, line up and wait, {why}.", f.call);
+                let t =
+                    format!("{}, {fac}, runway {rwy}, line up and wait, {why}.", f.call);
                 self.say(f, pos, t, now, out);
                 f.takeoff_waiting = true;
                 f.set_phase(Phase::LinedUp, now);
@@ -2170,7 +2588,14 @@ impl Controller {
         }
     }
 
-    fn check_in(&self, f: &mut Flight, pos: Pos, p: &Parsed, now: f64, out: &mut Vec<Tx>) {
+    fn check_in(
+        &self,
+        f: &mut Flight,
+        pos: Pos,
+        p: &Parsed,
+        now: f64,
+        out: &mut Vec<Tx>,
+    ) {
         let fac = self.facility(pos);
         if f.ac.on_ground {
             return;
@@ -2204,11 +2629,21 @@ impl Controller {
             Pos::Tower => {
                 f.set_phase(Phase::Pattern, now);
                 let report = match f.approach {
-                    Approach::StraightIn | Approach::Visual | Approach::Ils | Approach::Tacan | Approach::Par | Approach::Asr => "report 3 mile final",
+                    Approach::StraightIn
+                    | Approach::Visual
+                    | Approach::Ils
+                    | Approach::Tacan
+                    | Approach::Par
+                    | Approach::Asr => "report 3 mile final",
                     _ if f.ac.rotary => "report short final",
                     _ => "report initial",
                 };
-                let t = format!("{}, {fac}, runway {rwy}, {}, {}, {report}.", f.call, self.wind(), self.altimeter());
+                let t = format!(
+                    "{}, {fac}, runway {rwy}, {}, {}, {report}.",
+                    f.call,
+                    self.wind(),
+                    self.altimeter()
+                );
                 self.say(f, pos, t, now, out);
             }
             _ => {
@@ -2269,7 +2704,11 @@ impl Controller {
         }
         let from = *f.ground_from.get_or_insert(f.ac.p);
         // only for those working us: the rest are not listening
-        if f.ac.gs > 8. && f.ac.p.dist(from) > 150. && !f.last.is_empty() && f.once("taxi-no-clr") {
+        if f.ac.gs > 8.
+            && f.ac.p.dist(from) > 150.
+            && !f.last.is_empty()
+            && f.once("taxi-no-clr")
+        {
             let t = format!(
                 "{}, {}, you are taxiing without a clearance. Hold position and say request.",
                 f.call,
@@ -2277,11 +2716,23 @@ impl Controller {
             );
             let sp = self.speaker(f, Pos::Ground);
             self.say(f, sp, t, now, out);
-            log::info!("milatc {}: {} taxiing without a clearance", self.ap.callsign, f.call);
+            log::info!(
+                "milatc {}: {} taxiing without a clearance",
+                self.ap.callsign,
+                f.call
+            );
         }
     }
 
-    fn close(&mut self, pair: &str, until: f64, why: &str, by: Option<u64>, now: f64, out: &mut Vec<Tx>) {
+    fn close(
+        &mut self,
+        pair: &str,
+        until: f64,
+        why: &str,
+        by: Option<u64>,
+        now: f64,
+        out: &mut Vec<Tx>,
+    ) {
         if self.closed.contains_key(pair) {
             return;
         }
@@ -2289,14 +2740,26 @@ impl Controller {
         self.closed.insert(pair.to_string(), Closure { until, why: why.to_string(), by });
         let name = self.ap.strip_name(pair, &self.direction).to_string();
         let after = (self.dep_runway(), self.arr_runway());
-        let mut t = format!("All aircraft, {}, runway {name} is closed, {why}.", self.facility(Pos::Tower));
-        if after != before && !self.closed.contains_key(self.ap.runway(&after.0).map(|r| r.pair.as_str()).unwrap_or("")) {
+        let mut t = format!(
+            "All aircraft, {}, runway {name} is closed, {why}.",
+            self.facility(Pos::Tower)
+        );
+        if after != before
+            && !self.closed.contains_key(
+                self.ap.runway(&after.0).map(|r| r.pair.as_str()).unwrap_or(""),
+            )
+        {
             t.push_str(&format!(" Runway {} in use.", after.0));
         }
         log::warn!("milatc {}: runway {name} closed: {why}", self.ap.callsign);
         self.broadcast(Pos::Tower, t.clone(), now, out);
         if self.has(Pos::Approach) {
-            self.broadcast(Pos::Approach, t.replace(&self.facility(Pos::Tower), &self.facility(Pos::Approach)), now, out);
+            self.broadcast(
+                Pos::Approach,
+                t.replace(&self.facility(Pos::Tower), &self.facility(Pos::Approach)),
+                now,
+                out,
+            );
         }
     }
 
@@ -2307,21 +2770,33 @@ impl Controller {
         let mut close = vec![];
         for k in keys {
             let Some(mut f) = self.flights.remove(&k) else { continue };
-            let pair = (f.ac.on_ground && f.ac.gs < 3. && !f.ac.rotary && now - f.seen < 3.)
-                .then(|| self.ap.strip_at(f.ac.p, 0.).map(String::from))
-                .flatten();
+            let pair =
+                (f.ac.on_ground && f.ac.gs < 3. && !f.ac.rotary && now - f.seen < 3.)
+                    .then(|| self.ap.strip_at(f.ac.p, 0.).map(String::from))
+                    .flatten();
             match pair {
                 None => f.rwy_stop = None,
                 Some(pair) => {
                     let since = *f.rwy_stop.get_or_insert(now);
                     // lined up and waiting is fine, for a while
-                    let grace = if matches!(f.phase, Phase::LinedUp | Phase::TakeoffCleared) || f.takeoff_waiting { 120. } else { 25. };
+                    let grace =
+                        if matches!(f.phase, Phase::LinedUp | Phase::TakeoffCleared)
+                            || f.takeoff_waiting
+                        {
+                            120.
+                        } else {
+                            25.
+                        };
                     let t = now - since - grace;
                     if t >= 0. && self.has(Pos::Tower) {
                         let name = self.ap.strip_name(&pair, &self.direction).to_string();
                         let sp = self.speaker(&f, Pos::Tower);
                         if !f.is_ai() && f.once("rwy-status") {
-                            let tx = format!("{}, {}, say status, you are stopped on runway {name}.", f.call, self.facility(sp));
+                            let tx = format!(
+                                "{}, {}, say status, you are stopped on runway {name}.",
+                                f.call,
+                                self.facility(sp)
+                            );
                             self.say(&mut f, sp, tx, now, out);
                         } else if !f.is_ai() && t >= 60. && f.once("rwy-vacate") {
                             let tx = format!("{}, vacate runway {name} at the next available taxiway, report clear of the runway.", f.call);
@@ -2336,7 +2811,14 @@ impl Controller {
             self.flights.insert(k, f);
         }
         for (pair, by) in close {
-            self.close(&pair, f64::INFINITY, "disabled aircraft on the runway", Some(by), now, out);
+            self.close(
+                &pair,
+                f64::INFINITY,
+                "disabled aircraft on the runway",
+                Some(by),
+                now,
+                out,
+            );
         }
         // reopen: the time is up, or the aircraft has moved off
         let reopen: Vec<String> = self
@@ -2345,7 +2827,9 @@ impl Controller {
             .filter(|(pair, c)| {
                 now >= c.until
                     || c.by.map_or(false, |k| {
-                        self.flights.get(&k).map_or(true, |f| self.ap.strip_at(f.ac.p, 0.) != Some(pair.as_str()))
+                        self.flights.get(&k).map_or(true, |f| {
+                            self.ap.strip_at(f.ac.p, 0.) != Some(pair.as_str())
+                        })
                     })
             })
             .map(|(p, _)| p.clone())
@@ -2354,7 +2838,10 @@ impl Controller {
             self.closed.remove(&pair);
             let name = self.ap.strip_name(&pair, &self.direction).to_string();
             log::info!("milatc {}: runway {name} open again", self.ap.callsign);
-            let t = format!("All aircraft, {}, runway {name} is open.", self.facility(Pos::Tower));
+            let t = format!(
+                "All aircraft, {}, runway {name} is open.",
+                self.facility(Pos::Tower)
+            );
             self.broadcast(Pos::Tower, t, now, out);
         }
     }
@@ -2368,8 +2855,13 @@ impl Controller {
                 continue;
             }
             f.vanished = true;
-            let fast_on_rwy = f.ac.on_ground && f.ac.gs > 40. && self.ap.strip_at(f.ac.p, 30.).is_some();
-            let low_over = !f.ac.on_ground && f.ac.agl_ft < 200 && f.ac.vs_fpm < -300 && self.ap.strip_at(f.ac.p, 150.).is_some();
+            let fast_on_rwy = f.ac.on_ground
+                && f.ac.gs > 40.
+                && self.ap.strip_at(f.ac.p, 30.).is_some();
+            let low_over = !f.ac.on_ground
+                && f.ac.agl_ft < 200
+                && f.ac.vs_fpm < -300
+                && self.ap.strip_at(f.ac.p, 150.).is_some();
             if fast_on_rwy || low_over {
                 if let Some(pair) = self.ap.strip_at(f.ac.p, 150.) {
                     crashed.push((pair.to_string(), f.call.clone()));
@@ -2377,8 +2869,18 @@ impl Controller {
             }
         }
         for (pair, call) in crashed {
-            log::warn!("milatc {}: {call} lost on runway {pair}: closing it", self.ap.callsign);
-            self.close(&pair, now + 600., "crash on the runway, emergency vehicles responding", None, now, out);
+            log::warn!(
+                "milatc {}: {call} lost on runway {pair}: closing it",
+                self.ap.callsign
+            );
+            self.close(
+                &pair,
+                now + 600.,
+                "crash on the runway, emergency vehicles responding",
+                None,
+                now,
+                out,
+            );
         }
     }
 
@@ -2391,9 +2893,19 @@ impl Controller {
         let blockers: Vec<(u64, P2, String)> = self
             .flights
             .values()
-            .filter(|f| f.ac.on_ground && !f.ac.rotary && now - f.seen < 3. && f.stop_since.map_or(false, |t| now - t > 45.))
-            .filter(|f| self.ap.strip_at(f.ac.p, 20.).is_none() && self.ap.hold_near(f.ac.p, 80.).is_none())
-            .filter_map(|f| Some((f.key, f.ac.p, self.ap.taxiway_at(f.ac.p, 20.)?.to_string())))
+            .filter(|f| {
+                f.ac.on_ground
+                    && !f.ac.rotary
+                    && now - f.seen < 3.
+                    && f.stop_since.map_or(false, |t| now - t > 45.)
+            })
+            .filter(|f| {
+                self.ap.strip_at(f.ac.p, 20.).is_none()
+                    && self.ap.hold_near(f.ac.p, 80.).is_none()
+            })
+            .filter_map(|f| {
+                Some((f.key, f.ac.p, self.ap.taxiway_at(f.ac.p, 20.)?.to_string()))
+            })
             .collect();
         let keys: Vec<u64> = self.flights.keys().copied().collect();
         for k in keys {
@@ -2401,8 +2913,17 @@ impl Controller {
             // the blocker itself, if it is a player stopped a while
             if let Some((_, _, tw)) = blockers.iter().find(|b| b.0 == f.key) {
                 let long = f.stop_since.map_or(false, |t| now - t > 90.);
-                if !f.is_ai() && long && matches!(f.phase, Phase::TaxiOut | Phase::TaxiIn) && f.once("tw-status") {
-                    let t = format!("{}, {}, say status, you are stopped on taxiway {}.", f.call, self.facility(Pos::Ground), speech::taxiway(tw));
+                if !f.is_ai()
+                    && long
+                    && matches!(f.phase, Phase::TaxiOut | Phase::TaxiIn)
+                    && f.once("tw-status")
+                {
+                    let t = format!(
+                        "{}, {}, say status, you are stopped on taxiway {}.",
+                        f.call,
+                        self.facility(Pos::Ground),
+                        speech::taxiway(tw)
+                    );
                     let sp = self.speaker(&f, Pos::Ground);
                     self.say(&mut f, sp, t, now, out);
                 }
@@ -2412,30 +2933,59 @@ impl Controller {
                 if let Some(b) = f.held_for {
                     if !blockers.iter().any(|x| x.0 == b) {
                         f.held_for = None;
-                        let via = f.route.as_ref().map(|r| r.via.iter().map(|v| speech::taxiway(v)).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+                        let via = f
+                            .route
+                            .as_ref()
+                            .map(|r| {
+                                r.via
+                                    .iter()
+                                    .map(|v| speech::taxiway(v))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            })
+                            .unwrap_or_default();
                         let t = if via.is_empty() {
                             format!("{}, traffic has moved, continue taxi.", f.call)
                         } else {
-                            format!("{}, traffic has moved, continue taxi via {via}.", f.call)
+                            format!(
+                                "{}, traffic has moved, continue taxi via {via}.",
+                                f.call
+                            )
                         };
                         self.say(&mut f, Pos::Ground, t, now, out);
                     }
                 } else if let Some(route) = f.route.clone() {
-                    let near = blockers
-                        .iter()
-                        .find(|b| b.0 != f.key && b.1.dist(f.ac.p) < 900. && self.ap.route_ahead_passes(&route, f.ac.p, b.1, 35.));
+                    let near = blockers.iter().find(|b| {
+                        b.0 != f.key
+                            && b.1.dist(f.ac.p) < 900.
+                            && self.ap.route_ahead_passes(&route, f.ac.p, b.1, 35.)
+                    });
                     if let Some((bk, bp, tw)) = near.cloned() {
                         let avoid = [(bp, 30.)];
                         let alt_route = match f.phase {
-                            Phase::TaxiOut => f.runway.clone().and_then(|r| self.ap.route_to_runway_avoiding(f.ac.p, &r, &avoid)),
-                            _ => self.ap.route_to_point_avoiding(f.ac.p, route.end, &avoid),
+                            Phase::TaxiOut => f.runway.clone().and_then(|r| {
+                                self.ap.route_to_runway_avoiding(f.ac.p, &r, &avoid)
+                            }),
+                            _ => {
+                                self.ap.route_to_point_avoiding(f.ac.p, route.end, &avoid)
+                            }
                         };
                         let tw = speech::taxiway(&tw);
                         match alt_route {
-                            Some(nr) if nr.via != route.via && nr.length_m < route.length_m * 2.5 + 400. => {
-                                let via = nr.via.iter().map(|v| speech::taxiway(v)).collect::<Vec<_>>().join(", ");
+                            Some(nr)
+                                if nr.via != route.via
+                                    && nr.length_m < route.length_m * 2.5 + 400. =>
+                            {
+                                let via = nr
+                                    .via
+                                    .iter()
+                                    .map(|v| speech::taxiway(v))
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
                                 let tail = match (f.phase, f.runway.clone()) {
-                                    (Phase::TaxiOut, Some(r)) => format!(", hold short runway {r}"),
+                                    (Phase::TaxiOut, Some(r)) => {
+                                        format!(", hold short runway {r}")
+                                    }
                                     _ => String::new(),
                                 };
                                 let t = format!("{}, amend taxi instructions, traffic stopped on {tw}, taxi via {via}{tail}.", f.call);
@@ -2470,14 +3020,22 @@ fn ahead_of(a: &Ac, t: f64) -> P2 {
 fn crossing_way(me: &Ac, other: &Ac) -> &'static str {
     // which side it is on now, relative to my heading
     let rel = angdiff(me.p.bearing_to(other.p), me.hdg);
-    if rel < 0. { "left to right" } else { "right to left" }
+    if rel < 0. {
+        "left to right"
+    } else {
+        "right to left"
+    }
 }
 
 /// The o'clock of `other` from `me`.
 fn oclock(me: &Ac, other: &Ac) -> i32 {
     let rel = (me.p.bearing_to(other.p) - me.hdg).rem_euclid(360.);
     let h = ((rel / 30.).round() as i32) % 12;
-    if h == 0 { 12 } else { h }
+    if h == 0 {
+        12
+    } else {
+        h
+    }
 }
 
 impl Controller {
@@ -2488,11 +3046,20 @@ impl Controller {
         if !self.has(Pos::Ground) {
             return;
         }
-        let movers: Vec<Ac> = self.traffic.iter().filter(|a| a.on_ground && a.gs > 3. && !a.rotary).cloned().collect();
+        let movers: Vec<Ac> = self
+            .traffic
+            .iter()
+            .filter(|a| a.on_ground && a.gs > 3. && !a.rotary)
+            .cloned()
+            .collect();
         let keys: Vec<u64> = self.flights.keys().copied().collect();
         for k in keys {
             let Some(mut f) = self.flights.remove(&k) else { continue };
-            if !f.is_ai() && f.ac.on_ground && matches!(f.phase, Phase::TaxiOut | Phase::TaxiIn) && f.freq != Some(Pos::Tower) {
+            if !f.is_ai()
+                && f.ac.on_ground
+                && matches!(f.phase, Phase::TaxiOut | Phase::TaxiIn)
+                && f.freq != Some(Pos::Tower)
+            {
                 self.give_way(&mut f, &movers, now, out);
             }
             self.flights.insert(k, f);
@@ -2507,7 +3074,9 @@ impl Controller {
         if path.len() < 2 {
             return None;
         }
-        let near = |q: P2| path.windows(2).map(|w| seg_dist(q, w[0], w[1])).fold(f64::INFINITY, f64::min);
+        let near = |q: P2| {
+            path.windows(2).map(|w| seg_dist(q, w[0], w[1])).fold(f64::INFINITY, f64::min)
+        };
         // how far along my path a point is
         let along = |q: P2| {
             let mut run = 0.;
@@ -2528,7 +3097,9 @@ impl Controller {
             .filter_map(|o| {
                 let diff = angdiff(o.hdg, f.ac.hdg).abs();
                 // where it will be over the next 20 s, and the first time it is on my path
-                let hit = (0..=10).map(|i| i as f64 * 2.).find(|t| near(ahead_of(o, *t)) < 35.)?;
+                let hit = (0..=10)
+                    .map(|i| i as f64 * 2.)
+                    .find(|t| near(ahead_of(o, *t)) < 35.)?;
                 let at = ahead_of(o, hit);
                 let d_me = along(at);
                 if diff < 45. {
@@ -2538,8 +3109,16 @@ impl Controller {
                 if hit > d_me / my_speed + 8. {
                     return None;
                 }
-                let tw = self.ap.taxiway_at(at, 40.).map(|t| format!(" on {}", speech::taxiway(t))).unwrap_or_default();
-                let what = if diff > 135. { "opposite direction traffic".to_string() } else { format!("traffic crossing {}", crossing_way(&f.ac, o)) };
+                let tw = self
+                    .ap
+                    .taxiway_at(at, 40.)
+                    .map(|t| format!(" on {}", speech::taxiway(t)))
+                    .unwrap_or_default();
+                let what = if diff > 135. {
+                    "opposite direction traffic".to_string()
+                } else {
+                    format!("traffic crossing {}", crossing_way(&f.ac, o))
+                };
                 let typ = type_phrase(&o.typ);
                 let typ = typ.trim_end_matches(" on a");
                 Some((o.clone(), format!("{what}{typ}{tw}")))
@@ -2566,7 +3145,15 @@ impl Controller {
                 let still = c.as_ref().map_or(false, |(o, _)| o.unit_id == who);
                 if (!still && now - since > 4.) || now - since > 120. {
                     f.give_way = None;
-                    let t = format!("{}, {}", f.call, self.pick(&["traffic has passed, continue taxi.", "continue taxi.", "traffic is clear, continue taxi."]));
+                    let t = format!(
+                        "{}, {}",
+                        f.call,
+                        self.pick(&[
+                            "traffic has passed, continue taxi.",
+                            "continue taxi.",
+                            "traffic is clear, continue taxi."
+                        ])
+                    );
                     let sp = self.speaker(f, Pos::Ground);
                     self.say(f, sp, t, now, out);
                 }
@@ -2577,7 +3164,11 @@ impl Controller {
                 let lead = movers
                     .iter()
                     .filter(|o| o.unit_id != f.key && !f.followed.contains(&o.unit_id))
-                    .filter(|o| angdiff(o.hdg, f.ac.hdg).abs() < 40. && o.p.dist(f.ac.p) < 350. && o.p.dist(f.ac.p) > 40.)
+                    .filter(|o| {
+                        angdiff(o.hdg, f.ac.hdg).abs() < 40.
+                            && o.p.dist(f.ac.p) < 350.
+                            && o.p.dist(f.ac.p) > 40.
+                    })
                     .find(|o| self.ap.route_ahead_passes(route, f.ac.p, o.p, 30.))
                     .cloned();
                 if let Some(o) = lead {
@@ -2597,7 +3188,12 @@ impl Controller {
     /// aircraft within 4 miles and 1,500 feet that are closing.
     fn traffic_advisories(&mut self, now: f64, out: &mut Vec<Tx>) {
         self.advised.retain(|_, t| now - *t < 300.);
-        let air: Vec<Ac> = self.traffic.iter().filter(|a| !a.on_ground && a.agl_ft > 300).cloned().collect();
+        let air: Vec<Ac> = self
+            .traffic
+            .iter()
+            .filter(|a| !a.on_ground && a.agl_ft > 300)
+            .cloned()
+            .collect();
         let keys: Vec<u64> = self.flights.keys().copied().collect();
         for k in keys {
             let Some(mut f) = self.flights.remove(&k) else { continue };
@@ -2609,10 +3205,18 @@ impl Controller {
                 let pos = f.freq.unwrap_or(Pos::Approach);
                 let call = air
                     .iter()
-                    .filter(|o| o.unit_id != f.key && !self.advised.contains_key(&(f.key, o.unit_id)))
-                    .filter(|o| (o.alt_ft - f.ac.alt_ft).abs() < 1500 && o.p.dist(f.ac.p) < 4. * NM)
+                    .filter(|o| {
+                        o.unit_id != f.key
+                            && !self.advised.contains_key(&(f.key, o.unit_id))
+                    })
+                    .filter(|o| {
+                        (o.alt_ft - f.ac.alt_ft).abs() < 1500
+                            && o.p.dist(f.ac.p) < 4. * NM
+                    })
                     // closing: nearer in 20 s than now
-                    .filter(|o| ahead_of(o, 20.).dist(ahead_of(&f.ac, 20.)) < o.p.dist(f.ac.p))
+                    .filter(|o| {
+                        ahead_of(o, 20.).dist(ahead_of(&f.ac, 20.)) < o.p.dist(f.ac.p)
+                    })
                     .min_by(|a, b| a.p.dist(f.ac.p).total_cmp(&b.p.dist(f.ac.p)))
                     .cloned();
                 if let Some(o) = call {
@@ -2625,10 +3229,16 @@ impl Controller {
                         } else if diff < 45. {
                             "same direction".to_string()
                         } else {
-                            let way = if angdiff(o.hdg, f.ac.hdg) > 0. { "left to right" } else { "right to left" };
+                            let way = if angdiff(o.hdg, f.ac.hdg) > 0. {
+                                "left to right"
+                            } else {
+                                "right to left"
+                            };
                             format!("crossing {way}")
                         };
-                        let typ = type_name(&o.typ).map(|t| format!(", a {t}")).unwrap_or_default();
+                        let typ = type_name(&o.typ)
+                            .map(|t| format!(", a {t}"))
+                            .unwrap_or_default();
                         let t = format!(
                             "{}, traffic, {} o'clock, {d} mile{}, {dir}{typ}, {}.",
                             f.call,
@@ -2650,7 +3260,11 @@ impl Controller {
     /// busy, or a player is working the pattern.
     fn ai_departure_blocked(&self, f: &Flight, runway: &str) -> Option<String> {
         if let Some((a, d)) = self.arrival_within(runway, 6., f.key) {
-            return Some(format!("traffic{} {} mile final", type_phrase(&a.typ), d.ceil().max(1.) as i32));
+            return Some(format!(
+                "traffic{} {} mile final",
+                type_phrase(&a.typ),
+                d.ceil().max(1.) as i32
+            ));
         }
         let r = self.ap.runway(runway)?;
         if self.is_closed(&r.pair).is_some() {
@@ -2660,7 +3274,14 @@ impl Controller {
             return Some("traffic on the runway".into());
         }
         let busy = self.flights.values().any(|o| {
-            !o.is_ai() && matches!(o.phase, Phase::RadarFinal | Phase::Pattern | Phase::TakeoffCleared | Phase::LinedUp)
+            !o.is_ai()
+                && matches!(
+                    o.phase,
+                    Phase::RadarFinal
+                        | Phase::Pattern
+                        | Phase::TakeoffCleared
+                        | Phase::LinedUp
+                )
         });
         if busy {
             return Some("traffic in the pattern".into());
@@ -2670,12 +3291,19 @@ impl Controller {
         let ahead = self.ap.path_ahead(&path, f.ac.p, 1500.);
         self.flights
             .values()
-            .filter(|o| o.key != f.key && !o.is_ai() && o.ac.on_ground && matches!(o.phase, Phase::TaxiOut | Phase::TaxiIn))
+            .filter(|o| {
+                o.key != f.key
+                    && !o.is_ai()
+                    && o.ac.on_ground
+                    && matches!(o.phase, Phase::TaxiOut | Phase::TaxiIn)
+            })
             .find(|o| {
                 ahead.windows(2).any(|w| seg_dist(o.ac.p, w[0], w[1]) < 60.)
                     || o.route.as_ref().map_or(false, |r| {
                         let theirs = self.ap.path_ahead(r, o.ac.p, 600.);
-                        theirs.iter().any(|q| ahead.windows(2).any(|w| seg_dist(*q, w[0], w[1]) < 40.))
+                        theirs.iter().any(|q| {
+                            ahead.windows(2).any(|w| seg_dist(*q, w[0], w[1]) < 40.)
+                        })
                     })
             })
             .map(|o| match self.ap.taxiway_at(o.ac.p, 40.) {
@@ -2687,16 +3315,29 @@ impl Controller {
     /// Hold an AI arrival while a player is on the approach or in the
     /// pattern, and let it go again. Returns true while it is holding (no
     /// other Approach business with it).
-    fn ai_sequencing(&self, f: &mut Flight, field_nm: f64, now: f64, out: &mut Vec<Tx>) -> bool {
+    fn ai_sequencing(
+        &self,
+        f: &mut Flight,
+        field_nm: f64,
+        now: f64,
+        out: &mut Vec<Tx>,
+    ) -> bool {
         let conflict = self.flights.values().any(|o| {
             !o.is_ai()
                 && !o.ac.on_ground
                 && matches!(o.phase, Phase::RadarFinal | Phase::Pattern | Phase::Arrival)
-                && self.ap.runway(&self.arr_runway()).map_or(false, |r| o.ac.p.dist(r.thr) / NM < field_nm.min(12.))
+                && self
+                    .ap
+                    .runway(&self.arr_runway())
+                    .map_or(false, |r| o.ac.p.dist(r.thr) / NM < field_nm.min(12.))
         });
         match f.ai_hold_since {
             None => {
-                if conflict && field_nm > 14. && f.ac.ai_state == "active" && f.once("ai-hold") {
+                if conflict
+                    && field_nm > 14.
+                    && f.ac.ai_state == "active"
+                    && f.once("ai-hold")
+                {
                     let t = format!(
                         "{}, hold present position, left turns, maintain {}, expect further clearance in {} minutes.",
                         f.call,
@@ -2760,10 +3401,21 @@ impl Controller {
         let d_nm = (f.ac.p.dist(thr) / NM).round() as i32;
         let dir = speech::compass(thr.bearing_to(f.ac.p));
         match (plan, f.phase) {
-            (AiPlan::Departure, Phase::Ground) if f.ac.ai_state == "waiting" && !f.ai_taxi_hold => {
+            (AiPlan::Departure, Phase::Ground)
+                if f.ac.ai_state == "waiting" && !f.ai_taxi_hold =>
+            {
                 if quiet(self, Pos::Ground) && f.once("ai-taxi") {
-                    let ramp = self.ap.ramp_for(f.ac.p, None).map(|r| r.name.clone()).unwrap_or_else(|| "the ramp".into());
-                    let t = format!("{}, {}{}, {ramp}, with {letter}, request taxi.", self.facility(Pos::Ground), f.call, spoken_type(&f.ac.typ));
+                    let ramp = self
+                        .ap
+                        .ramp_for(f.ac.p, None)
+                        .map(|r| r.name.clone())
+                        .unwrap_or_else(|| "the ramp".into());
+                    let t = format!(
+                        "{}, {}{}, {ramp}, with {letter}, request taxi.",
+                        self.facility(Pos::Ground),
+                        f.call,
+                        spoken_type(&f.ac.typ)
+                    );
                     self.pilot_says(f, Pos::Ground, t, now, out);
                     let p = Parsed::of(Intent::RequestTaxi);
                     self.taxi(f, Pos::Ground, &p, now, out);
@@ -2776,10 +3428,17 @@ impl Controller {
                     let (along, cross) = r.frame(f.ac.p);
                     along < 900. && cross.abs() < 250.
                 });
-                if near && f.freq == Some(Pos::Ground) && self.has(Pos::Tower) && f.once("ai-to-tower") {
+                if near
+                    && f.freq == Some(Pos::Ground)
+                    && self.has(Pos::Tower)
+                    && f.once("ai-to-tower")
+                {
                     self.handoff(f, Pos::Ground, Pos::Tower, now, out);
                     f.ai_next = now + self.between(4., 8.);
-                } else if f.freq == Some(Pos::Tower) && quiet(self, Pos::Tower) && f.once("ai-ready") {
+                } else if f.freq == Some(Pos::Tower)
+                    && quiet(self, Pos::Tower)
+                    && f.once("ai-ready")
+                {
                     let t = format!(
                         "{}, {}, holding short {rwy}, ready for departure.",
                         self.facility(Pos::Tower),
@@ -2791,7 +3450,10 @@ impl Controller {
                 }
             }
             (AiPlan::Departure, Phase::Departure) => {
-                if now - f.t_handoff > 4. && quiet(self, Pos::Departure) && f.once("ai-dep") {
+                if now - f.t_handoff > 4.
+                    && quiet(self, Pos::Departure)
+                    && f.once("ai-dep")
+                {
                     let t = format!(
                         "{}, {}, passing {} for {}.",
                         self.facility(Pos::Departure),
@@ -2805,7 +3467,10 @@ impl Controller {
                 }
             }
             (AiPlan::Arrival, Phase::Enroute) => {
-                if self.has(Pos::Approach) && quiet(self, Pos::Approach) && f.once("ai-app") {
+                if self.has(Pos::Approach)
+                    && quiet(self, Pos::Approach)
+                    && f.once("ai-app")
+                {
                     let t = format!(
                         "{}, {}{}, {d_nm} miles {dir}, {}, inbound full stop with {letter}.",
                         self.facility(Pos::Approach),
@@ -2821,8 +3486,17 @@ impl Controller {
                 }
             }
             (AiPlan::Arrival, Phase::Pattern) => {
-                if f.freq == Some(Pos::Tower) && now - f.t_handoff > 4. && quiet(self, Pos::Tower) && f.once("ai-twr") {
-                    let t = format!("{}, {}{}, {d_nm} miles {dir}, full stop.", self.facility(Pos::Tower), f.call, spoken_type(&f.ac.typ));
+                if f.freq == Some(Pos::Tower)
+                    && now - f.t_handoff > 4.
+                    && quiet(self, Pos::Tower)
+                    && f.once("ai-twr")
+                {
+                    let t = format!(
+                        "{}, {}{}, {d_nm} miles {dir}, full stop.",
+                        self.facility(Pos::Tower),
+                        f.call,
+                        spoken_type(&f.ac.typ)
+                    );
                     self.pilot_says(f, Pos::Tower, t, now, out);
                     let mut p = Parsed::of(Intent::CheckIn);
                     p.option = LandingOption::FullStop;
@@ -2830,8 +3504,15 @@ impl Controller {
                 }
             }
             (AiPlan::Arrival, Phase::Ground) => {
-                if f.freq == Some(Pos::Ground) && quiet(self, Pos::Ground) && f.once("ai-in") {
-                    let t = format!("{}, {}, clear of {rwy_arr}, taxi to parking.", self.facility(Pos::Ground), f.call);
+                if f.freq == Some(Pos::Ground)
+                    && quiet(self, Pos::Ground)
+                    && f.once("ai-in")
+                {
+                    let t = format!(
+                        "{}, {}, clear of {rwy_arr}, taxi to parking.",
+                        self.facility(Pos::Ground),
+                        f.call
+                    );
                     self.pilot_says(f, Pos::Ground, t, now, out);
                     let p = Parsed::of(Intent::ClearOfRunway);
                     self.taxi_to_parking(f, Pos::Ground, &p, now, out);
@@ -2889,7 +3570,11 @@ pub(crate) fn readback(text: &str, call: &str, field: &str, r: f64) -> Option<St
         // "contact Andersen Tower 340.2" → "Tower 340.2" (or just the number)
         if let Some(rest) = c.strip_prefix("contact ") {
             let rest = rest.strip_prefix(&format!("{field} ")).unwrap_or(rest);
-            keep.push(if r < 0.5 { format!("over to {rest}") } else { rest.split(' ').last().unwrap_or(rest).to_string() });
+            keep.push(if r < 0.5 {
+                format!("over to {rest}")
+            } else {
+                rest.split(' ').last().unwrap_or(rest).to_string()
+            });
             continue;
         }
         keep.push(c.replace("runway ", ""));
@@ -2901,14 +3586,23 @@ pub(crate) fn readback(text: &str, call: &str, field: &str, r: f64) -> Option<St
     if let Some(f) = s.get_mut(0..1) {
         f.make_ascii_uppercase();
     }
-    let tail = if lower.contains("radar service terminated") && r > 0.4 { ", good day" } else { "" };
+    let tail = if lower.contains("radar service terminated") && r > 0.4 {
+        ", good day"
+    } else {
+        ""
+    };
     Some(format!("{s}, {call}{tail}."))
 }
 
 /// Heavies, for wake turbulence.
 fn heavy(dcs_type: &str) -> bool {
     let t = dcs_type.to_uppercase();
-    ["C-17", "KC-135", "KC135", "KC-10", "B-52", "B-1", "E-3", "C-5", "IL-76", "IL-78", "A-50", "TU-"].iter().any(|h| t.starts_with(h))
+    [
+        "C-17", "KC-135", "KC135", "KC-10", "B-52", "B-1", "E-3", "C-5", "IL-76",
+        "IL-78", "A-50", "TU-",
+    ]
+    .iter()
+    .any(|h| t.starts_with(h))
 }
 
 /// What pilots and controllers call a DCS type: "C-17", "Hornet". `None`
@@ -2981,7 +3675,14 @@ pub(crate) fn spoken_type(dcs_type: &str) -> String {
 /// means nothing to a listener.
 fn type_phrase(dcs_type: &str) -> String {
     let Some(name) = type_name(dcs_type) else { return String::new() };
-    let article = if name.starts_with(['A', 'E', 'F', 'H']) && !name.starts_with("Ho") && !name.starts_with("Ha") { "an" } else { "a" };
+    let article = if name.starts_with(['A', 'E', 'F', 'H'])
+        && !name.starts_with("Ho")
+        && !name.starts_with("Ha")
+    {
+        "an"
+    } else {
+        "a"
+    };
     format!(", {article} {name} on a")
 }
 
@@ -3051,7 +3752,8 @@ mod tests {
     impl World {
         fn new() -> Self {
             let mut ap = Airport::from_json(BUILTIN_ANDERSEN).unwrap();
-            let dcs: Vec<(String, P2)> = ap.runways.iter().map(|r| (r.name.clone(), r.thr)).collect();
+            let dcs: Vec<(String, P2)> =
+                ap.runways.iter().map(|r| (r.name.clone(), r.thr)).collect();
             ap.align(&dcs).unwrap();
             let f = field(&ap);
             let mut c = Controller::new(ap, CtlCfg::default());
@@ -3068,7 +3770,15 @@ mod tests {
             (lat0 + p.n / k_lat, lon0 + p.e / k_lon)
         }
 
-        fn put(&mut self, id: u64, p: P2, alt_ft: i32, hdg: f64, gs: f64, on_ground: bool) {
+        fn put(
+            &mut self,
+            id: u64,
+            p: P2,
+            alt_ft: i32,
+            hdg: f64,
+            gs: f64,
+            on_ground: bool,
+        ) {
             let (lat, lon) = self.ll(p);
             self.traffic.retain(|t| t.unit_id != Some(id));
             self.traffic.push(AtcTraffic {
@@ -3103,7 +3813,13 @@ mod tests {
 
         fn say(&mut self, id: u64, pos: Pos, text: &str) -> Vec<Tx> {
             let p = parse(text, "Andersen");
-            self.c.respond(pos, &Caller { unit_id: Some(id), srs_name: format!("pilot{id}") }, text, p, self.now)
+            self.c.respond(
+                pos,
+                &Caller { unit_id: Some(id), srs_name: format!("pilot{id}") },
+                text,
+                p,
+                self.now,
+            )
         }
     }
 
@@ -3120,15 +3836,28 @@ mod tests {
         assert_eq!(w.c.direction, "06");
 
         // Clearance on request, then a call back when it is ready.
-        let r = w.say(1, Pos::Clearance, "Andersen Clearance, Viper 11, request clearance to the range");
-        assert!(texts(&r)[0].contains("standby") || texts(&r)[0].contains("on request"), "{r:?}");
+        let r = w.say(
+            1,
+            Pos::Clearance,
+            "Andersen Clearance, Viper 11, request clearance to the range",
+        );
+        assert!(
+            texts(&r)[0].contains("standby") || texts(&r)[0].contains("on request"),
+            "{r:?}"
+        );
         let mut ready = vec![];
         for _ in 0..30 {
             ready.extend(texts(&w.tick()));
         }
-        assert!(ready.iter().any(|t| t.contains("advise") && t.contains("ready to copy")), "{ready:?}");
+        assert!(
+            ready.iter().any(|t| t.contains("advise") && t.contains("ready to copy")),
+            "{ready:?}"
+        );
         let r = w.say(1, Pos::Clearance, "Viper 11, ready to copy");
-        assert!(texts(&r)[0].contains("cleared to") && texts(&r)[0].contains("squawk 4201"), "{r:?}");
+        assert!(
+            texts(&r)[0].contains("cleared to") && texts(&r)[0].contains("squawk 4201"),
+            "{r:?}"
+        );
         let r = w.say(1, Pos::Clearance, "cleared to the range, maintain 4,000, departure 363.8, squawk 4201, Viper 11");
         assert!(texts(&r)[0].contains("readback correct"), "{r:?}");
 
@@ -3146,14 +3875,25 @@ mod tests {
         // Arrive at the hold: Ground hands off to Tower.
         w.put(1, hp, 612, 66., 0., true);
         let r = w.tick();
-        assert!(texts(&r).iter().any(|t| t.contains("contact Andersen Tower 340.2")), "{r:?}");
+        assert!(
+            texts(&r).iter().any(|t| t.contains("contact Andersen Tower 340.2")),
+            "{r:?}"
+        );
 
         // Traffic on a 2 mile final: hold short.
         let thr = w.c.ap.runway("06R").unwrap().thr;
         w.put(2, thr.offset(246., 2. * NM), 1300, 66., 150., false);
         w.tick();
-        let r = w.say(1, Pos::Tower, "Andersen Tower, Viper 11, holding short 06R, ready for departure");
-        assert!(texts(&r)[0].contains("hold short runway 06R, traffic, an F-16 on a 2 mile final"), "{r:?}");
+        let r = w.say(
+            1,
+            Pos::Tower,
+            "Andersen Tower, Viper 11, holding short 06R, ready for departure",
+        );
+        assert!(
+            texts(&r)[0]
+                .contains("hold short runway 06R, traffic, an F-16 on a 2 mile final"),
+            "{r:?}"
+        );
         // It lands and clears; the takeoff clearance follows unprompted.
         w.traffic.retain(|t| t.unit_id != Some(2));
         let r = w.tick();
@@ -3163,13 +3903,23 @@ mod tests {
         let rw = w.c.ap.runway("06R").unwrap().clone();
         w.put(1, rw.thr.offset(66., 2500.), 612 + 800, 66., 200., false);
         let r = w.tick();
-        assert!(texts(&r).iter().any(|t| t.contains("contact Andersen Departure 363.8")), "{r:?}");
-        let r = w.say(1, Pos::Departure, "Andersen Departure, Viper 11, passing 2,000 for 4,000");
+        assert!(
+            texts(&r).iter().any(|t| t.contains("contact Andersen Departure 363.8")),
+            "{r:?}"
+        );
+        let r = w.say(
+            1,
+            Pos::Departure,
+            "Andersen Departure, Viper 11, passing 2,000 for 4,000",
+        );
         assert!(texts(&r)[0].contains("radar contact"), "{r:?}");
         // Far out: released.
         w.put(1, rw.thr.offset(66., 30. * NM), 14000, 66., 400., false);
         let r = w.tick();
-        assert!(texts(&r).iter().any(|t| t.contains("radar service terminated")), "{r:?}");
+        assert!(
+            texts(&r).iter().any(|t| t.contains("radar service terminated")),
+            "{r:?}"
+        );
     }
 
     #[test]
@@ -3200,7 +3950,10 @@ mod tests {
         for _ in 0..200 {
             said.extend(texts(&w.tick()));
         }
-        assert!(said.iter().any(|t| t.contains("say status, you are stopped on runway 06R")), "{said:?}");
+        assert!(
+            said.iter().any(|t| t.contains("say status, you are stopped on runway 06R")),
+            "{said:?}"
+        );
         assert!(said.iter().any(|t| t.contains("vacate runway 06R")), "{said:?}");
         assert!(said.iter().any(|t| t.contains("runway 06R is closed")), "{said:?}");
         assert_eq!(w.c.dep_runway(), "06L");
@@ -3219,7 +3972,10 @@ mod tests {
         w.tick();
         w.traffic.clear();
         let said: Vec<String> = (0..5).flat_map(|_| texts(&w.tick())).collect();
-        assert!(said.iter().any(|t| t.contains("runway 06R is closed, crash on the runway")), "{said:?}");
+        assert!(
+            said.iter().any(|t| t.contains("runway 06R is closed, crash on the runway")),
+            "{said:?}"
+        );
         assert!(w.c.atis_text().contains("Runway 06R closed"));
     }
 
@@ -3247,7 +4003,9 @@ mod tests {
         w.put(2, spot, 612, 0., 0., true);
         let said: Vec<String> = (0..60).flat_map(|_| texts(&w.tick())).collect();
         assert!(
-            said.iter().any(|t| t.starts_with("Viper 1-1") && (t.contains("amend taxi instructions") || t.contains("hold position, traffic stopped"))),
+            said.iter().any(|t| t.starts_with("Viper 1-1")
+                && (t.contains("amend taxi instructions")
+                    || t.contains("hold position, traffic stopped"))),
             "{said:?}"
         );
     }
@@ -3287,7 +4045,10 @@ mod tests {
             let l = win[0].dist(win[1]);
             if run + l >= 150. {
                 let t = (150. - run) / l;
-                q = P2::new(win[0].n + t * (win[1].n - win[0].n), win[0].e + t * (win[1].e - win[0].e));
+                q = P2::new(
+                    win[0].n + t * (win[1].n - win[0].n),
+                    win[0].e + t * (win[1].e - win[0].e),
+                );
                 seg = win[0].bearing_to(win[1]);
                 break;
             }
@@ -3296,7 +4057,10 @@ mod tests {
         w.put(2, q.offset(seg + 90., 70.), 612, (seg + 270.) % 360., 15., true);
         w.put(1, ramp, 612, path[0].bearing_to(path[1]), 10., true);
         let said: Vec<String> = (0..3).flat_map(|_| texts(&w.tick())).collect();
-        assert!(said.iter().any(|t| t.contains("hold position, traffic crossing")), "{said:?}");
+        assert!(
+            said.iter().any(|t| t.contains("hold position, traffic crossing")),
+            "{said:?}"
+        );
         // it has gone by
         w.put(2, q.offset(seg + 270., 300.), 612, (seg + 270.) % 360., 15., true);
         let said: Vec<String> = (0..8).flat_map(|_| texts(&w.tick())).collect();
@@ -3306,24 +4070,41 @@ mod tests {
     #[test]
     fn departures_go_in_the_order_they_called_ready() {
         let mut w = World::new();
-        let hold = w.c.ap.route_to_runway(w.c.ap.ramps[1].p, "06R").unwrap().hold.unwrap();
+        let hold =
+            w.c.ap.route_to_runway(w.c.ap.ramps[1].p, "06R").unwrap().hold.unwrap();
         let hp = w.c.ap.node(w.c.ap.holds[hold].node);
         w.put(1, hp, 612, 66., 0., true);
         w.put(2, hp.offset(246., 60.), 612, 66., 0., true);
         let thr = w.c.ap.runway("06R").unwrap().thr;
         w.put(3, thr.offset(246., 2. * NM), 1300, 66., 150., false);
         w.tick();
-        let r = w.say(1, Pos::Tower, "Andersen Tower, Viper 11, holding short 06R, ready for departure");
+        let r = w.say(
+            1,
+            Pos::Tower,
+            "Andersen Tower, Viper 11, holding short 06R, ready for departure",
+        );
         assert!(texts(&r)[0].contains("hold short runway 06R, traffic"), "{r:?}");
         w.now += 1.;
-        let r = w.say(2, Pos::Tower, "Andersen Tower, Viper 12, holding short 06R, ready for departure");
+        let r = w.say(
+            2,
+            Pos::Tower,
+            "Andersen Tower, Viper 12, holding short 06R, ready for departure",
+        );
         assert!(texts(&r)[0].contains("number 2 for departure"), "{r:?}");
         // the arrival lands: the first goes, the second lines up behind it
         w.traffic.retain(|t| t.unit_id != Some(3));
         let r = w.tick();
         let t = texts(&r);
-        assert!(t.iter().any(|t| t.starts_with("Viper 1-1") && t.contains("cleared for takeoff")), "{t:?}");
-        assert!(!t.iter().any(|t| t.contains("Viper 1-2") && t.contains("cleared for takeoff")), "{t:?}");
+        assert!(
+            t.iter()
+                .any(|t| t.starts_with("Viper 1-1") && t.contains("cleared for takeoff")),
+            "{t:?}"
+        );
+        assert!(
+            !t.iter()
+                .any(|t| t.contains("Viper 1-2") && t.contains("cleared for takeoff")),
+            "{t:?}"
+        );
     }
 
     #[test]
@@ -3337,12 +4118,20 @@ mod tests {
         w.put(1, r.thr.offset(r.hdg, 2500.), 1100, r.hdg, 160., false);
         w.traffic.last_mut().unwrap().unit_type = "KC-135".into();
         w.tick();
-        let hold = w.c.ap.route_to_runway(w.c.ap.ramps[1].p, "06R").unwrap().hold.unwrap();
+        let hold =
+            w.c.ap.route_to_runway(w.c.ap.ramps[1].p, "06R").unwrap().hold.unwrap();
         w.put(2, w.c.ap.node(w.c.ap.holds[hold].node), 612, 66., 0., true);
         w.traffic.retain(|t| t.unit_id != Some(1));
         w.tick();
-        let r = w.say(2, Pos::Tower, "Andersen Tower, Viper 12, holding short 06R, ready for departure");
-        assert!(texts(&r)[0].contains("caution wake turbulence, departing KC-135"), "{r:?}");
+        let r = w.say(
+            2,
+            Pos::Tower,
+            "Andersen Tower, Viper 12, holding short 06R, ready for departure",
+        );
+        assert!(
+            texts(&r)[0].contains("caution wake turbulence, departing KC-135"),
+            "{r:?}"
+        );
     }
 
     #[test]
@@ -3360,7 +4149,14 @@ mod tests {
         let mut w = World::new();
         let r = w.c.ap.runway("06R").unwrap().clone();
         let back = 246.;
-        w.put(1, r.thr.offset(back, 25. * NM).offset(156., 5. * NM), 12000, 66., 300., false);
+        w.put(
+            1,
+            r.thr.offset(back, 25. * NM).offset(156., 5. * NM),
+            12000,
+            66.,
+            300.,
+            false,
+        );
         w.tick();
         let rr = w.say(1, Pos::Approach, "Andersen Approach, Viper 11, 25 miles southwest, angels 12, request PAR full stop");
         let t = &texts(&rr)[0];
@@ -3369,7 +4165,10 @@ mod tests {
         // Established on a 9 mile final: handed to Final.
         w.put(1, r.thr.offset(back, 9. * NM), 3000, 66., 180., false);
         let rr = w.tick();
-        assert!(texts(&rr).iter().any(|t| t.contains("contact Andersen Final 385.4")), "{rr:?}");
+        assert!(
+            texts(&rr).iter().any(|t| t.contains("contact Andersen Final 385.4")),
+            "{rr:?}"
+        );
         let rr = w.say(1, Pos::Final, "Andersen Final, Viper 11, how do you read");
         // radio check answers, then a check-in starts the approach
         assert!(texts(&rr)[0].contains("loud and clear"), "{rr:?}");
@@ -3390,7 +4189,12 @@ mod tests {
         w.now += 10.;
         let rr = w.tick();
         let t = texts(&rr).join(" | ");
-        assert!(t.contains("right of course") && t.contains("above glidepath") && t.contains("cleared to land"), "{t}");
+        assert!(
+            t.contains("right of course")
+                && t.contains("above glidepath")
+                && t.contains("cleared to land"),
+            "{t}"
+        );
     }
 
     #[test]
@@ -3407,7 +4211,10 @@ mod tests {
         // Viper on a 1 mile final: continue, then go around inside half a mile.
         w.put(1, r.thr.offset(246., 1.5 * NM), 1100, 66., 160., false);
         let rr = w.tick();
-        assert!(texts(&rr).iter().any(|t| t.contains("continue, traffic on the runway")), "{rr:?}");
+        assert!(
+            texts(&rr).iter().any(|t| t.contains("continue, traffic on the runway")),
+            "{rr:?}"
+        );
         w.put(1, r.thr.offset(246., 0.4 * NM), 750, 66., 150., false);
         let rr = w.tick();
         let all = texts(&rr).join(" | ");
@@ -3428,12 +4235,24 @@ mod tests {
         assert!(texts(&rr).iter().any(|t| t.contains("cleared to land")), "{rr:?}");
         w.put(1, r.thr.offset(66., 900.), 612, 66., 40., true);
         let rr = w.tick();
-        assert!(texts(&rr).iter().any(|t| t.contains("turn right next taxiway, contact Andersen Ground")), "{rr:?}");
+        assert!(
+            texts(&rr)
+                .iter()
+                .any(|t| t.contains("turn right next taxiway, contact Andersen Ground")),
+            "{rr:?}"
+        );
         // Off the runway to the south, stopped.
         w.put(1, r.thr.offset(66., 1200.).offset(156., 150.), 612, 156., 5., true);
         w.tick();
-        let rr = w.say(1, Pos::Ground, "Andersen Ground, Viper 11, clear of the runway, request taxi to parking");
-        assert!(texts(&rr)[0].starts_with("Viper 1-1, Andersen Ground, taxi to the"), "{rr:?}");
+        let rr = w.say(
+            1,
+            Pos::Ground,
+            "Andersen Ground, Viper 11, clear of the runway, request taxi to parking",
+        );
+        assert!(
+            texts(&rr)[0].starts_with("Viper 1-1, Andersen Ground, taxi to the"),
+            "{rr:?}"
+        );
     }
 
     #[test]
@@ -3454,17 +4273,46 @@ mod tests {
             "06R, taxi via Bravo, Echo, hold short 06R, Reach 3-1."
         );
         assert_eq!(
-            readback("Reach 3-1, contact Andersen Tower 340.2.", "Reach 3-1", "Andersen", 0.9).unwrap(),
+            readback(
+                "Reach 3-1, contact Andersen Tower 340.2.",
+                "Reach 3-1",
+                "Andersen",
+                0.9
+            )
+            .unwrap(),
             "340.2, Reach 3-1."
         );
         assert_eq!(
-            readback("Reach 3-1, contact Andersen Tower 340.2.", "Reach 3-1", "Andersen", 0.1).unwrap(),
+            readback(
+                "Reach 3-1, contact Andersen Tower 340.2.",
+                "Reach 3-1",
+                "Andersen",
+                0.1
+            )
+            .unwrap(),
             "Over to Tower 340.2, Reach 3-1."
         );
-        assert!(readback("Reach 3-1, Andersen Tower, loud and clear.", "Reach 3-1", "Andersen", 0.5).is_none());
+        assert!(readback(
+            "Reach 3-1, Andersen Tower, loud and clear.",
+            "Reach 3-1",
+            "Andersen",
+            0.5
+        )
+        .is_none());
     }
 
-    fn put_ai(w: &mut World, id: u64, call: &str, plan: &str, state: &str, p: P2, alt_ft: i32, hdg: f64, gs: f64, on_ground: bool) {
+    fn put_ai(
+        w: &mut World,
+        id: u64,
+        call: &str,
+        plan: &str,
+        state: &str,
+        p: P2,
+        alt_ft: i32,
+        hdg: f64,
+        gs: f64,
+        on_ground: bool,
+    ) {
         w.put(id, p, alt_ft, hdg, gs, on_ground);
         let t = w.traffic.iter_mut().find(|t| t.unit_id == Some(id)).unwrap();
         t.ai = true;
@@ -3489,9 +4337,15 @@ mod tests {
         }
         let all = texts(&said).join(" | ");
         assert!(all.contains("Andersen Ground, Reach 3-1, C-17"), "{all}");
-        assert!(said.iter().any(|t| t.pilot.is_some() && t.aircraft.is_some()), "AI calls carry the type");
+        assert!(
+            said.iter().any(|t| t.pilot.is_some() && t.aircraft.is_some()),
+            "AI calls carry the type"
+        );
         assert!(all.contains("hold position, traffic"), "{all}");
-        assert!(said.iter().all(|t| t.action.is_none()), "not released while the final is busy");
+        assert!(
+            said.iter().all(|t| t.action.is_none()),
+            "not released while the final is busy"
+        );
         // the player lands and is gone: Ground releases it
         w.traffic.retain(|t| t.unit_id != Some(2));
         let mut said = vec![];
@@ -3502,19 +4356,40 @@ mod tests {
         assert_eq!(rel.action.as_ref().unwrap().1, "start");
         assert!(rel.text.contains("taxi via"), "{}", rel.text);
         // and the pilot reads it back in his own voice
-        assert!(said.iter().any(|t| t.pilot.is_some() && t.text.contains("hold short 06R") && t.text.contains("Reach 3-1")), "{:?}", texts(&said));
+        assert!(
+            said.iter().any(|t| t.pilot.is_some()
+                && t.text.contains("hold short 06R")
+                && t.text.contains("Reach 3-1")),
+            "{:?}",
+            texts(&said)
+        );
     }
 
     #[test]
     fn ai_arrival_is_held_for_a_player_on_the_approach() {
         let mut w = World::new();
         let thr = w.c.ap.runway("06R").unwrap().thr;
-        put_ai(&mut w, 8, "Shell 7-1", "arrival", "active", thr.offset(20., 30. * NM), 12000, 200., 300., false);
+        put_ai(
+            &mut w,
+            8,
+            "Shell 7-1",
+            "arrival",
+            "active",
+            thr.offset(20., 30. * NM),
+            12000,
+            200.,
+            300.,
+            false,
+        );
         let mut said = vec![];
         for _ in 0..30 {
             said.extend(w.tick());
         }
-        assert!(texts(&said).iter().any(|t| t.contains("Andersen Approach, Shell 7-1")), "{:?}", texts(&said));
+        assert!(
+            texts(&said).iter().any(|t| t.contains("Andersen Approach, Shell 7-1")),
+            "{:?}",
+            texts(&said)
+        );
         // a player starts a PAR inside it
         w.put(1, thr.offset(246., 9. * NM), 3000, 66., 180., false);
         w.tick();
@@ -3523,7 +4398,10 @@ mod tests {
         for _ in 0..5 {
             said.extend(w.tick());
         }
-        let hold = said.iter().find(|t| t.action.as_ref().map(|a| a.1) == Some("hold")).expect("held");
+        let hold = said
+            .iter()
+            .find(|t| t.action.as_ref().map(|a| a.1) == Some("hold"))
+            .expect("held");
         assert!(hold.text.contains("hold present position"), "{}", hold.text);
         assert!(hold.subtitle.is_none(), "no subtitles for AI");
     }
@@ -3534,11 +4412,20 @@ mod tests {
         let r = w.tick();
         let atis: Vec<_> = r.iter().filter(|t| t.pos == Pos::Atis).collect();
         assert_eq!(atis.len(), 1);
-        assert!(atis[0].text.starts_with("Andersen information Alpha"), "{}", atis[0].text);
+        assert!(
+            atis[0].text.starts_with("Andersen information Alpha"),
+            "{}",
+            atis[0].text
+        );
         assert!(atis[0].text.contains("Runway 06R in use"));
         w.f.wind_from_deg = 250;
         let r = w.tick();
-        let a = r.iter().find(|t| t.pos == Pos::Atis).expect("new letter broadcast at once");
-        assert!(a.text.contains("information Bravo") && a.text.contains("Runway 24L in use"), "{}", a.text);
+        let a =
+            r.iter().find(|t| t.pos == Pos::Atis).expect("new letter broadcast at once");
+        assert!(
+            a.text.contains("information Bravo") && a.text.contains("Runway 24L in use"),
+            "{}",
+            a.text
+        );
     }
 }

@@ -12,7 +12,8 @@ FITNESS FOR A PARTICULAR PURPOSE.
 */
 
 use crate::{
-    as_tbl, coalition::Side, env::miz::GroupId, wrap_f, wrapped_table, LuaEnv, MizLua, String,
+    as_tbl, coalition::Side, env::miz::GroupId, wrap_f, wrapped_table, LuaEnv, MizLua,
+    String,
 };
 use anyhow::Result;
 use compact_str::format_compact;
@@ -148,11 +149,19 @@ impl MissionCommands {
         Ok(self.call_function("addCommandForCoalition", (side, name, parent, f, arg))?)
     }
 
-    pub fn remove_submenu_for_coalition(&self, side: Side, menu: CoalitionSubMenu) -> Result<()> {
+    pub fn remove_submenu_for_coalition(
+        &self,
+        side: Side,
+        menu: CoalitionSubMenu,
+    ) -> Result<()> {
         Ok(self.call_function("removeItemForCoalition", (side, menu))?)
     }
 
-    pub fn remove_command_for_coalition(&self, side: Side, item: CoalitionCommandItem) -> Result<()> {
+    pub fn remove_command_for_coalition(
+        &self,
+        side: Side,
+        item: CoalitionCommandItem,
+    ) -> Result<()> {
         Ok(self.call_function("removeItemForCoalition", (side, item))?)
     }
 
@@ -199,13 +208,21 @@ impl MissionCommands {
         Ok(item)
     }
 
-    pub fn remove_submenu_for_group(&self, group: GroupId, menu: GroupSubMenu) -> Result<()> {
+    pub fn remove_submenu_for_group(
+        &self,
+        group: GroupId,
+        menu: GroupSubMenu,
+    ) -> Result<()> {
         let path: Vec<String> = menu.clone().into();
         mirror_forget(self.lua.inner(), group, &path)?;
         Ok(self.call_function("removeItemForGroup", (group, menu))?)
     }
 
-    pub fn remove_command_for_group(&self, group: GroupId, item: GroupCommandItem) -> Result<()> {
+    pub fn remove_command_for_group(
+        &self,
+        group: GroupId,
+        item: GroupCommandItem,
+    ) -> Result<()> {
         let path: Vec<String> = item.clone().into();
         mirror_forget(self.lua.inner(), group, &path)?;
         Ok(self.call_function("removeItemForGroup", (group, item))?)
@@ -316,8 +333,7 @@ fn mirror_record(
         None => entry.raw_set("command", false)?,
     }
 
-    g.raw_get::<LuaTable>("items")?
-        .raw_set(path_key(path), entry)?;
+    g.raw_get::<LuaTable>("items")?.raw_set(path_key(path), entry)?;
     Ok(())
 }
 
@@ -396,16 +412,19 @@ pub fn mirrored_menu(lua: MizLua, group: GroupId) -> Result<Vec<MirroredMenuItem
 /// The handler runs immediately and synchronously, and it is the same handler
 /// DCS holds -- including its `Context::get_mut()` access -- so callers must
 /// not be relying on a `&mut Context` borrow surviving across this call.
-pub fn invoke_mirrored_menu(lua: MizLua, group: GroupId, path: &[std::string::String]) -> Result<bool> {
+pub fn invoke_mirrored_menu(
+    lua: MizLua,
+    group: GroupId,
+    path: &[std::string::String],
+) -> Result<bool> {
     let inner = lua.inner();
     let root = mirror_root(inner)?;
     let Some(g) = root.raw_get::<Option<LuaTable>>(group)? else {
         return Ok(false);
     };
     let key: Vec<String> = path.iter().map(|s| String::from(s.as_str())).collect();
-    let Some(entry) = g
-        .raw_get::<LuaTable>("items")?
-        .raw_get::<Option<LuaTable>>(path_key(&key))?
+    let Some(entry) =
+        g.raw_get::<LuaTable>("items")?.raw_get::<Option<LuaTable>>(path_key(&key))?
     else {
         return Ok(false);
     };

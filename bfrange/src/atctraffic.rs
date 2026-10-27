@@ -38,11 +38,13 @@ use crate::{
 use bfprotocols::{
     atc::AtcTraffic,
     range::{
-        cfg::{tanker_type, AtcTrafficCfg, AtcTrafficType, CarrierKind, RangeCfg},
         RefuelMethod, StationKind,
+        cfg::{AtcTrafficCfg, AtcTrafficType, CarrierKind, RangeCfg, tanker_type},
     },
 };
-use dcso3::{airbase::AirbaseCategory, coalition::Side, unit::Unit, world::World, MizLua};
+use dcso3::{
+    MizLua, airbase::AirbaseCategory, coalition::Side, unit::Unit, world::World,
+};
 use log::{info, warn};
 use serde_json::json;
 
@@ -157,7 +159,12 @@ pub struct AtcTrafficSim {
 }
 
 fn default_types() -> Vec<AtcTrafficType> {
-    let t = |typ: &str, cs: &str, weight: u32| AtcTrafficType { typ: typ.into(), callsign: cs.into(), livery: None, weight };
+    let t = |typ: &str, cs: &str, weight: u32| AtcTrafficType {
+        typ: typ.into(),
+        callsign: cs.into(),
+        livery: None,
+        weight,
+    };
     vec![
         t("C-17A", "Reach", 3),
         t("KC-135", "Shell", 2),
@@ -201,8 +208,17 @@ impl AtcTrafficSim {
             }
         }
         for t in &range.tankers {
-            let (Some(tt), Ok(pos)) = (tanker_type(&t.typ), crate::ag::resolve(lua, &t.loc)) else { continue };
-            self.tankers.push(TankerSpot { id: t.id.clone(), method: tt.method, pos, alt_m: t.alt_ft / util::M_TO_FT });
+            let (Some(tt), Ok(pos)) =
+                (tanker_type(&t.typ), crate::ag::resolve(lua, &t.loc))
+            else {
+                continue;
+            };
+            self.tankers.push(TankerSpot {
+                id: t.id.clone(),
+                method: tt.method,
+                pos,
+                alt_m: t.alt_ft / util::M_TO_FT,
+            });
         }
         for c in &range.carriers {
             if matches!(c.kind, CarrierKind::Nimitz | CarrierKind::Forrestal) {
@@ -223,7 +239,12 @@ impl AtcTrafficSim {
                 }
                 let pos = ab.get_point()?.0;
                 let id = ab.get_id()?.inner();
-                return Ok(Some(Home { id, name, pos, elev: util::ground_height(lua, pos) }));
+                return Ok(Some(Home {
+                    id,
+                    name,
+                    pos,
+                    elev: util::ground_height(lua, pos),
+                }));
             }
             Ok(None)
         })();
@@ -251,8 +272,16 @@ impl AtcTrafficSim {
     }
 
     /// Spawn and clean up, every few seconds.
-    pub fn tick(&mut self, lua: MizLua, spawns: &mut Spawns, players_flying: usize, now: f64) {
-        let (Some(cfg), Some(home)) = (self.cfg.clone(), self.home.clone()) else { return };
+    pub fn tick(
+        &mut self,
+        lua: MizLua,
+        spawns: &mut Spawns,
+        players_flying: usize,
+        now: f64,
+    ) {
+        let (Some(cfg), Some(home)) = (self.cfg.clone(), self.home.clone()) else {
+            return;
+        };
         if now - self.last < 5. {
             return;
         }
@@ -282,17 +311,26 @@ impl AtcTrafficSim {
             if let Err(e) = self.spawn_arrival(lua, &cfg, &home, spawns, now) {
                 warn!("atc traffic: arrival not spawned: {e:#}");
             }
-        } else if now >= self.next_range && cfg.range_sorties_per_hour > 0. && !self.targets.is_empty() {
+        } else if now >= self.next_range
+            && cfg.range_sorties_per_hour > 0.
+            && !self.targets.is_empty()
+        {
             self.next_range = now + self.gap(cfg.range_sorties_per_hour);
             if let Err(e) = self.spawn_range_sortie(lua, &cfg, &home, spawns, now) {
                 warn!("atc traffic: range sortie not spawned: {e:#}");
             }
-        } else if now >= self.next_tanker && cfg.tanker_sorties_per_hour > 0. && !self.tankers.is_empty() {
+        } else if now >= self.next_tanker
+            && cfg.tanker_sorties_per_hour > 0.
+            && !self.tankers.is_empty()
+        {
             self.next_tanker = now + self.gap(cfg.tanker_sorties_per_hour);
             if let Err(e) = self.spawn_tanker_sortie(lua, &cfg, &home, spawns, now) {
                 warn!("atc traffic: tanker sortie not spawned: {e:#}");
             }
-        } else if now >= self.next_carrier && cfg.carrier_recoveries_per_hour > 0. && !self.decks.is_empty() {
+        } else if now >= self.next_carrier
+            && cfg.carrier_recoveries_per_hour > 0.
+            && !self.decks.is_empty()
+        {
             self.next_carrier = now + self.gap(cfg.carrier_recoveries_per_hour);
             if let Err(e) = self.spawn_carrier_recovery(lua, &cfg, spawns, now) {
                 warn!("atc traffic: carrier recovery not spawned: {e:#}");
@@ -301,7 +339,11 @@ impl AtcTrafficSim {
     }
 
     /// A fighter type for a sortie (F-16 or Hornet unless configured).
-    fn pick_fighter(&mut self, cfg: &AtcTrafficCfg, want: Option<RefuelMethod>) -> AtcTrafficType {
+    fn pick_fighter(
+        &mut self,
+        cfg: &AtcTrafficCfg,
+        want: Option<RefuelMethod>,
+    ) -> AtcTrafficType {
         let mut v: Vec<AtcTrafficType> = cfg
             .types
             .iter()
@@ -310,29 +352,56 @@ impl AtcTrafficSim {
             .collect();
         if v.is_empty() {
             v = vec![
-                AtcTrafficType { typ: "F-16C_50".into(), callsign: "Venom".into(), livery: None, weight: 1 },
-                AtcTrafficType { typ: "FA-18C_hornet".into(), callsign: "Ragin".into(), livery: None, weight: 1 },
+                AtcTrafficType {
+                    typ: "F-16C_50".into(),
+                    callsign: "Venom".into(),
+                    livery: None,
+                    weight: 1,
+                },
+                AtcTrafficType {
+                    typ: "FA-18C_hornet".into(),
+                    callsign: "Ragin".into(),
+                    livery: None,
+                    weight: 1,
+                },
             ];
         }
         // F-16s take the boom, Hornets the basket
         if let Some(m) = want {
-            v.retain(|t| (t.typ.starts_with("F-16") || t.typ.starts_with("F-15")) == (m == RefuelMethod::Boom));
+            v.retain(|t| {
+                (t.typ.starts_with("F-16") || t.typ.starts_with("F-15"))
+                    == (m == RefuelMethod::Boom)
+            });
         }
         let i = (self.rand() * v.len() as f64) as usize;
         v.get(i).cloned().unwrap_or_else(|| v[0].clone())
     }
 
     /// A free stand at home, for a type.
-    fn stand(&mut self, lua: MizLua, home: &Home, typ: &str) -> anyhow::Result<dcso3::airbase::ParkingSpot> {
-        let heavy = !(typ.starts_with("F-") || typ.starts_with("FA-") || typ.starts_with("AV8") || typ.starts_with("A-10"));
+    fn stand(
+        &mut self,
+        lua: MizLua,
+        home: &Home,
+        typ: &str,
+    ) -> anyhow::Result<dcso3::airbase::ParkingSpot> {
+        let heavy = !(typ.starts_with("F-")
+            || typ.starts_with("FA-")
+            || typ.starts_with("AV8")
+            || typ.starts_with("A-10"));
         let ab = dcso3::airbase::Airbase::get_by_name(lua, home.name.as_str().into())?;
         let spots: Vec<_> = ab
             .get_parking_spots(true)?
             .into_iter()
-            .filter(|s| s.usable_by(false) && (!heavy || s.term_type == dcso3::airbase::term_type::OPEN_BIG))
+            .filter(|s| {
+                s.usable_by(false)
+                    && (!heavy || s.term_type == dcso3::airbase::term_type::OPEN_BIG)
+            })
             .collect();
         let pick = (self.rand() * spots.len() as f64) as usize;
-        spots.get(pick).copied().ok_or_else(|| anyhow::anyhow!("no free stand for a {typ} at {}", home.name))
+        spots
+            .get(pick)
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("no free stand for a {typ} at {}", home.name))
     }
 
     /// Put a flight on a stand at home, uncontrolled until Ground releases
@@ -361,19 +430,43 @@ impl AtcTrafficSim {
             "speed": 0, "speed_locked": true, "ETA": 0, "ETA_locked": true,
             "task": { "id": "ComboTask", "params": { "tasks": [] } }
         })];
-        let first = after.first().and_then(|w| Some(V3::new(w["x"].as_f64()?, 0., w["y"].as_f64()?))).unwrap_or(home.pos);
+        let first = after
+            .first()
+            .and_then(|w| Some(V3::new(w["x"].as_f64()?, 0., w["y"].as_f64()?)))
+            .unwrap_or(home.pos);
         route.extend(after);
-        let mut g = self.base_group(&gname, &uname, &typ, p, util::bearing(p, first), 0., home.elev, route);
+        let mut g = self.base_group(
+            &gname,
+            &uname,
+            &typ,
+            p,
+            util::bearing(p, first),
+            0.,
+            home.elev,
+            route,
+        );
         g["units"][0]["parking"] = json!(spot.term_index);
         g["x"] = json!(p.x);
         g["y"] = json!(p.z);
         g["uncontrolled"] = json!(true);
-        let country = spawn::country_id(&cfg.country).or_else(|_| spawn::country_id(spawn::default_country(Side::Blue)))?;
+        let country = spawn::country_id(&cfg.country)
+            .or_else(|_| spawn::country_id(spawn::default_country(Side::Blue)))?;
         spawn::add_group(lua, country, spawn::AIRPLANE, &g)?;
-        for c in [spawn::bool_cmd("SetUnlimitedFuel", true), spawn::bool_cmd("SetImmortal", true)] {
-            spawns.defer(now + 2., spawn::Pending::GroupCommand { group: gname.clone(), cmd: c });
+        for c in [
+            spawn::bool_cmd("SetUnlimitedFuel", true),
+            spawn::bool_cmd("SetImmortal", true),
+        ] {
+            spawns.defer(
+                now + 2.,
+                spawn::Pending::GroupCommand { group: gname.clone(), cmd: c },
+            );
         }
-        info!("atc traffic: {cs} ({}) on a stand at {} for {}", typ.typ, home.name, plan.wire());
+        info!(
+            "atc traffic: {cs} ({}) on a stand at {} for {}",
+            typ.typ,
+            home.name,
+            plan.wire()
+        );
         self.flights.push(Flight {
             group: gname,
             unit: uname,
@@ -407,7 +500,14 @@ impl AtcTrafficSim {
         ]
     }
 
-    fn spawn_range_sortie(&mut self, lua: MizLua, cfg: &AtcTrafficCfg, home: &Home, spawns: &mut Spawns, now: f64) -> anyhow::Result<()> {
+    fn spawn_range_sortie(
+        &mut self,
+        lua: MizLua,
+        cfg: &AtcTrafficCfg,
+        home: &Home,
+        spawns: &mut Spawns,
+        now: f64,
+    ) -> anyhow::Result<()> {
         let i = (self.rand() * self.targets.len() as f64) as usize;
         let t = self.targets[i.min(self.targets.len() - 1)].clone();
         let typ = self.pick_fighter(cfg, None);
@@ -422,26 +522,69 @@ impl AtcTrafficSim {
             spawn::waypoint(t.pos, 2740., 190., vec![spawn::task_entry(1, passes)]),
         ];
         after.extend(Self::home_legs(home, t.pos));
-        self.from_the_ramp(lua, cfg, home, spawns, typ, Plan::Range(t.id.clone()), after, t.pos, now)
+        self.from_the_ramp(
+            lua,
+            cfg,
+            home,
+            spawns,
+            typ,
+            Plan::Range(t.id.clone()),
+            after,
+            t.pos,
+            now,
+        )
     }
 
-    fn spawn_tanker_sortie(&mut self, lua: MizLua, cfg: &AtcTrafficCfg, home: &Home, spawns: &mut Spawns, now: f64) -> anyhow::Result<()> {
+    fn spawn_tanker_sortie(
+        &mut self,
+        lua: MizLua,
+        cfg: &AtcTrafficCfg,
+        home: &Home,
+        spawns: &mut Spawns,
+        now: f64,
+    ) -> anyhow::Result<()> {
         let i = (self.rand() * self.tankers.len() as f64) as usize;
         let tk = self.tankers[i.min(self.tankers.len() - 1)].clone();
         let typ = self.pick_fighter(cfg, Some(tk.method));
         let refuel = spawn::task_entry(1, json!({ "id": "Refueling", "params": {} }));
-        let mut after = vec![spawn::waypoint(tk.pos, (tk.alt_m - 300.).max(1500.), 210., vec![refuel])];
+        let mut after = vec![spawn::waypoint(
+            tk.pos,
+            (tk.alt_m - 300.).max(1500.),
+            210.,
+            vec![refuel],
+        )];
         after.extend(Self::home_legs(home, tk.pos));
-        self.from_the_ramp(lua, cfg, home, spawns, typ, Plan::Tanker(tk.id.clone()), after, tk.pos, now)
+        self.from_the_ramp(
+            lua,
+            cfg,
+            home,
+            spawns,
+            typ,
+            Plan::Tanker(tk.id.clone()),
+            after,
+            tk.pos,
+            now,
+        )
     }
 
-    fn spawn_carrier_recovery(&mut self, lua: MizLua, cfg: &AtcTrafficCfg, spawns: &mut Spawns, now: f64) -> anyhow::Result<()> {
+    fn spawn_carrier_recovery(
+        &mut self,
+        lua: MizLua,
+        cfg: &AtcTrafficCfg,
+        spawns: &mut Spawns,
+        now: f64,
+    ) -> anyhow::Result<()> {
         let i = (self.rand() * self.decks.len() as f64) as usize;
         let d = self.decks[i.min(self.decks.len() - 1)].clone();
         let ship = Unit::get_by_name(lua, &d.unit)?;
         let sp = ship.get_point()?.0;
         let ship_id = ship.id()?.inner();
-        let typ = AtcTrafficType { typ: "FA-18C_hornet".into(), callsign: "Ragin".into(), livery: None, weight: 1 };
+        let typ = AtcTrafficType {
+            typ: "FA-18C_hornet".into(),
+            callsign: "Ragin".into(),
+            livery: None,
+            weight: 1,
+        };
         let cs = self.callsign(&typ.callsign);
         let (gname, uname) = self.names(&cs);
         let brg = self.rand() * 360.;
@@ -460,11 +603,27 @@ impl AtcTrafficSim {
                 "task": { "id": "ComboTask", "params": { "tasks": [] } }
             }),
         ];
-        let g = self.base_group(&gname, &uname, &typ, start, (brg + 180.).rem_euclid(360.), 220., alt, route);
-        let country = spawn::country_id(&cfg.country).or_else(|_| spawn::country_id(spawn::default_country(Side::Blue)))?;
+        let g = self.base_group(
+            &gname,
+            &uname,
+            &typ,
+            start,
+            (brg + 180.).rem_euclid(360.),
+            220.,
+            alt,
+            route,
+        );
+        let country = spawn::country_id(&cfg.country)
+            .or_else(|_| spawn::country_id(spawn::default_country(Side::Blue)))?;
         spawn::add_group(lua, country, spawn::AIRPLANE, &g)?;
-        for c in [spawn::bool_cmd("SetUnlimitedFuel", true), spawn::bool_cmd("SetImmortal", true)] {
-            spawns.defer(now + 2., spawn::Pending::GroupCommand { group: gname.clone(), cmd: c });
+        for c in [
+            spawn::bool_cmd("SetUnlimitedFuel", true),
+            spawn::bool_cmd("SetImmortal", true),
+        ] {
+            spawns.defer(
+                now + 2.,
+                spawn::Pending::GroupCommand { group: gname.clone(), cmd: c },
+            );
         }
         info!("atc traffic: {cs} (Hornet) inbound to carrier {} from {:.0}°", d.id, brg);
         self.flights.push(Flight {
@@ -486,7 +645,8 @@ impl AtcTrafficSim {
     }
 
     fn pick_type(&mut self, cfg: &AtcTrafficCfg) -> AtcTrafficType {
-        let types = if cfg.types.is_empty() { default_types() } else { cfg.types.clone() };
+        let types =
+            if cfg.types.is_empty() { default_types() } else { cfg.types.clone() };
         let total: u32 = types.iter().map(|t| t.weight.max(1)).sum();
         let mut r = (self.rand() * total as f64) as u32;
         for t in &types {
@@ -517,7 +677,17 @@ impl AtcTrafficSim {
         (g, u)
     }
 
-    fn base_group(&self, name: &str, unit: &str, typ: &AtcTrafficType, unit_pos: V3, hdg: f64, speed: f64, alt: f64, route: Vec<serde_json::Value>) -> serde_json::Value {
+    fn base_group(
+        &self,
+        name: &str,
+        unit: &str,
+        typ: &AtcTrafficType,
+        unit_pos: V3,
+        hdg: f64,
+        speed: f64,
+        alt: f64,
+        route: Vec<serde_json::Value>,
+    ) -> serde_json::Value {
         let mut u = json!({
             "name": unit,
             "type": typ.typ,
@@ -542,14 +712,27 @@ impl AtcTrafficSim {
         })
     }
 
-    fn spawn_departure(&mut self, lua: MizLua, cfg: &AtcTrafficCfg, home: &Home, spawns: &mut Spawns, now: f64) -> anyhow::Result<()> {
+    fn spawn_departure(
+        &mut self,
+        lua: MizLua,
+        cfg: &AtcTrafficCfg,
+        home: &Home,
+        spawns: &mut Spawns,
+        now: f64,
+    ) -> anyhow::Result<()> {
         let typ = self.pick_type(cfg);
-        let heavy = !(typ.typ.starts_with("F-") || typ.typ.starts_with("FA-") || typ.typ.starts_with("AV8") || typ.typ.starts_with("A-10"));
+        let heavy = !(typ.typ.starts_with("F-")
+            || typ.typ.starts_with("FA-")
+            || typ.typ.starts_with("AV8")
+            || typ.typ.starts_with("A-10"));
         let ab = dcso3::airbase::Airbase::get_by_name(lua, home.name.as_str().into())?;
         let spots: Vec<_> = ab
             .get_parking_spots(true)?
             .into_iter()
-            .filter(|s| s.usable_by(false) && (!heavy || s.term_type == dcso3::airbase::term_type::OPEN_BIG))
+            .filter(|s| {
+                s.usable_by(false)
+                    && (!heavy || s.term_type == dcso3::airbase::term_type::OPEN_BIG)
+            })
             .collect();
         let pick = (self.rand() * spots.len() as f64) as usize;
         let Some(spot) = spots.get(pick).copied() else {
@@ -573,18 +756,37 @@ impl AtcTrafficSim {
             spawn::waypoint(w1, cruise, 200., vec![]),
             spawn::waypoint(w2, cruise, 220., vec![]),
         ];
-        let mut g = self.base_group(&gname, &uname, &typ, p, util::bearing(p, w1), 0., home.elev, route);
+        let mut g = self.base_group(
+            &gname,
+            &uname,
+            &typ,
+            p,
+            util::bearing(p, w1),
+            0.,
+            home.elev,
+            route,
+        );
         g["units"][0]["parking"] = json!(spot.term_index);
         g["x"] = json!(p.x);
         g["y"] = json!(p.z);
         // Sits on its stand until Ground releases it.
         g["uncontrolled"] = json!(true);
-        let country = spawn::country_id(&cfg.country).or_else(|_| spawn::country_id(spawn::default_country(Side::Blue)))?;
+        let country = spawn::country_id(&cfg.country)
+            .or_else(|_| spawn::country_id(spawn::default_country(Side::Blue)))?;
         spawn::add_group(lua, country, spawn::AIRPLANE, &g)?;
-        for c in [spawn::bool_cmd("SetUnlimitedFuel", true), spawn::bool_cmd("SetImmortal", true)] {
-            spawns.defer(now + 2., spawn::Pending::GroupCommand { group: gname.clone(), cmd: c });
+        for c in [
+            spawn::bool_cmd("SetUnlimitedFuel", true),
+            spawn::bool_cmd("SetImmortal", true),
+        ] {
+            spawns.defer(
+                now + 2.,
+                spawn::Pending::GroupCommand { group: gname.clone(), cmd: c },
+            );
         }
-        info!("atc traffic: {cs} ({}) on a stand at {}, waiting for taxi", typ.typ, home.name);
+        info!(
+            "atc traffic: {cs} ({}) on a stand at {}, waiting for taxi",
+            typ.typ, home.name
+        );
         self.flights.push(Flight {
             group: gname,
             unit: uname,
@@ -603,7 +805,14 @@ impl AtcTrafficSim {
         Ok(())
     }
 
-    fn spawn_arrival(&mut self, lua: MizLua, cfg: &AtcTrafficCfg, home: &Home, spawns: &mut Spawns, now: f64) -> anyhow::Result<()> {
+    fn spawn_arrival(
+        &mut self,
+        lua: MizLua,
+        cfg: &AtcTrafficCfg,
+        home: &Home,
+        spawns: &mut Spawns,
+        now: f64,
+    ) -> anyhow::Result<()> {
         let typ = self.pick_type(cfg);
         let cs = self.callsign(&typ.callsign);
         let (gname, uname) = self.names(&cs);
@@ -627,12 +836,22 @@ impl AtcTrafficSim {
             }),
         ];
         let g = self.base_group(&gname, &uname, &typ, start, inbound, 190., alt, route);
-        let country = spawn::country_id(&cfg.country).or_else(|_| spawn::country_id(spawn::default_country(Side::Blue)))?;
+        let country = spawn::country_id(&cfg.country)
+            .or_else(|_| spawn::country_id(spawn::default_country(Side::Blue)))?;
         spawn::add_group(lua, country, spawn::AIRPLANE, &g)?;
-        for c in [spawn::bool_cmd("SetUnlimitedFuel", true), spawn::bool_cmd("SetImmortal", true)] {
-            spawns.defer(now + 2., spawn::Pending::GroupCommand { group: gname.clone(), cmd: c });
+        for c in [
+            spawn::bool_cmd("SetUnlimitedFuel", true),
+            spawn::bool_cmd("SetImmortal", true),
+        ] {
+            spawns.defer(
+                now + 2.,
+                spawn::Pending::GroupCommand { group: gname.clone(), cmd: c },
+            );
         }
-        info!("atc traffic: {cs} ({}) inbound to {} from {:.0}°", typ.typ, home.name, brg);
+        info!(
+            "atc traffic: {cs} ({}) inbound to {} from {:.0}°",
+            typ.typ, home.name, brg
+        );
         self.flights.push(Flight {
             group: gname,
             unit: uname,
@@ -682,7 +901,8 @@ impl AtcTrafficSim {
                     }
                     _ => {
                         f.visited |= d < 15. * util::NM;
-                        f.returning = f.visited && util::dist2(p, home.pos) < 30. * util::NM;
+                        f.returning =
+                            f.visited && util::dist2(p, home.pos) < 30. * util::NM;
                     }
                 }
             }
@@ -695,8 +915,11 @@ impl AtcTrafficSim {
             let parked = f.plan.lands()
                 && f.was_airborne
                 && !airborne
-                && (f.still_since.map_or(false, |t| now - t > 90.) || f.landed_since.map_or(false, |t| now - t > 150.));
-            let done = (f.plan == Plan::Departure && airborne && far) || parked || now - f.spawned > 5400.;
+                && (f.still_since.map_or(false, |t| now - t > 90.)
+                    || f.landed_since.map_or(false, |t| now - t > 150.));
+            let done = (f.plan == Plan::Departure && airborne && far)
+                || parked
+                || now - f.spawned > 5400.;
             if done {
                 gone.push((i, true));
             }
@@ -731,16 +954,34 @@ impl AtcTrafficSim {
 
     /// A controller's command: `start` a waiting departure, `hold` an
     /// arrival over its present position, `resume` it.
-    pub fn command(&mut self, lua: MizLua, group: &str, action: &str) -> anyhow::Result<String> {
-        let f = self.flights.iter_mut().find(|f| f.group == group).ok_or_else(|| anyhow::anyhow!("no AI flight {group}"))?;
+    pub fn command(
+        &mut self,
+        lua: MizLua,
+        group: &str,
+        action: &str,
+    ) -> anyhow::Result<String> {
+        let f = self
+            .flights
+            .iter_mut()
+            .find(|f| f.group == group)
+            .ok_or_else(|| anyhow::anyhow!("no AI flight {group}"))?;
         match action {
             "start" => {
-                util::group_controller_call(lua, &f.group, "setCommand", json!({ "id": "Start", "params": {} }))?;
+                util::group_controller_call(
+                    lua,
+                    &f.group,
+                    "setCommand",
+                    json!({ "id": "Start", "params": {} }),
+                )?;
                 f.state = State::Active;
                 Ok(format!("{} released", f.callsign))
             }
-            "hold" if f.state == State::Holding => Ok(format!("{} already holding", f.callsign)),
-            "resume" if f.state != State::Holding => Ok(format!("{} not holding", f.callsign)),
+            "hold" if f.state == State::Holding => {
+                Ok(format!("{} already holding", f.callsign))
+            }
+            "resume" if f.state != State::Holding => {
+                Ok(format!("{} not holding", f.callsign))
+            }
             "hold" => {
                 let u = Unit::get_by_name(lua, &f.unit)?;
                 let p = u.get_point()?.0;
@@ -754,7 +995,12 @@ impl AtcTrafficSim {
                 Ok(format!("{} holding", f.callsign))
             }
             "resume" => {
-                util::group_controller_call(lua, &f.group, "popTask", serde_json::Value::Null)?;
+                util::group_controller_call(
+                    lua,
+                    &f.group,
+                    "popTask",
+                    serde_json::Value::Null,
+                )?;
                 f.state = State::Active;
                 Ok(format!("{} resumed", f.callsign))
             }
@@ -795,12 +1041,14 @@ impl AtcTrafficSim {
                         true => format!("{}:home", f.plan.wire()),
                         false => f.plan.wire(),
                     }),
-                    ai_state: Some(match f.state {
-                        State::Waiting => "waiting",
-                        State::Active => "active",
-                        State::Holding => "holding",
-                    }
-                    .into()),
+                    ai_state: Some(
+                        match f.state {
+                            State::Waiting => "waiting",
+                            State::Active => "active",
+                            State::Holding => "holding",
+                        }
+                        .into(),
+                    ),
                     unit_type: f.typ.clone(),
                 })
             })

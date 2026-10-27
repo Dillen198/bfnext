@@ -11,9 +11,12 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
-use crate::object::DcsOidExt;
 use super::{as_tbl, object::Object, unit::Unit};
-use crate::{object::{DcsObject, DcsOid}, simple_enum, wrapped_table, LuaEnv, LuaVec3, MizLua, Position3};
+use crate::object::DcsOidExt;
+use crate::{
+    object::{DcsObject, DcsOid},
+    simple_enum, wrapped_table, LuaEnv, LuaVec3, MizLua, Position3,
+};
 use anyhow::{bail, Result};
 use mlua::{prelude::*, Value};
 use serde_derive::Serialize;
@@ -211,13 +214,15 @@ impl WeaponDesc {
         let int = |k: &str| -> Option<i64> { t.raw_get::<Option<i64>>(k).ok().flatten() };
         let warhead: Option<mlua::Table> = t.raw_get("warhead").ok().flatten();
         let wnum = |k: &str| -> Option<f64> {
-            warhead
-                .as_ref()
-                .and_then(|w| w.raw_get::<Option<f64>>(k).ok().flatten())
+            warhead.as_ref().and_then(|w| w.raw_get::<Option<f64>>(k).ok().flatten())
         };
         Ok(Self {
-            type_name: t.raw_get::<Option<std::string::String>>("typeName")?.unwrap_or_default(),
-            display_name: t.raw_get::<Option<std::string::String>>("displayName")?.unwrap_or_default(),
+            type_name: t
+                .raw_get::<Option<std::string::String>>("typeName")?
+                .unwrap_or_default(),
+            display_name: t
+                .raw_get::<Option<std::string::String>>("displayName")?
+                .unwrap_or_default(),
             category: int("category").and_then(|c| match c {
                 0 => Some(WeaponCategory::Shell),
                 1 => Some(WeaponCategory::Missile),
@@ -266,10 +271,7 @@ impl DcsObject for Weapon {
         let t = lua.inner().create_table()?;
         t.set_metatable(Some(lua.inner().globals().raw_get(&**id.class)?));
         t.raw_set("id_", id.id)?;
-        let t = Weapon {
-            t,
-            lua: lua.inner().clone(),
-        };
+        let t = Weapon { t, lua: lua.inner().clone() };
         if !t.is_exist()? {
             bail!("{} is an invalid weapon", id.id)
         }
@@ -278,11 +280,7 @@ impl DcsObject for Weapon {
 
     fn get_instance_dyn<T>(lua: MizLua, id: &DcsOid<T>) -> Result<Self> {
         id.check_implements(lua, "Weapon")?;
-        let id = DcsOid {
-            id: id.id,
-            class: id.class.clone(),
-            t: PhantomData,
-        };
+        let id = DcsOid { id: id.id, class: id.class.clone(), t: PhantomData };
         Self::get_instance(lua, &id)
     }
 

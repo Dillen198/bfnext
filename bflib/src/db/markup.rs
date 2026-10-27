@@ -52,7 +52,14 @@ fn make_pts(center: Vector2, r: f64, offsets: &[(f64, f64)]) -> Vec<LuaVec3> {
 /// DCS's `trigger.action` has no native "draw a connected polyline" call — only
 /// `lineToAll` (exactly 2 points). So a symbol with N points becomes N-1 individual
 /// line segments, each with its own MarkId.
-fn draw_polyline(center: Vector2, r: f64, offsets: &[(f64, f64)], sf: SideFilter, color: Color, msgq: &mut MsgQ) -> Vec<MarkId> {
+fn draw_polyline(
+    center: Vector2,
+    r: f64,
+    offsets: &[(f64, f64)],
+    sf: SideFilter,
+    color: Color,
+    msgq: &mut MsgQ,
+) -> Vec<MarkId> {
     let pts = make_pts(center, r, offsets);
     // DCS freeform (markupToAll shapeId 7) draws a connected multi-point shape
     // as ONE mark. This used to chain N-1 two-point `lineToAll` calls -- 35
@@ -108,57 +115,48 @@ fn draw_polyline(center: Vector2, r: f64, offsets: &[(f64, f64)], sf: SideFilter
 fn anchor_path() -> &'static [(f64, f64)] {
     &[
         // ── Eye ring: 8-pt circle (N=0.721, E=0, r=0.143), start at bottom ──
-        ( 0.578,  0.000), // S  — shank junction
-        ( 0.619, -0.101), // SW
-        ( 0.721, -0.143), // W
-        ( 0.821, -0.101), // NW
-        ( 0.863,  0.000), // N  — top of eye
-        ( 0.821,  0.101), // NE
-        ( 0.721,  0.143), // E
-        ( 0.619,  0.101), // SE
-        ( 0.578,  0.000), // close eye
-
+        (0.578, 0.000),  // S  — shank junction
+        (0.619, -0.101), // SW
+        (0.721, -0.143), // W
+        (0.821, -0.101), // NW
+        (0.863, 0.000),  // N  — top of eye
+        (0.821, 0.101),  // NE
+        (0.721, 0.143),  // E
+        (0.619, 0.101),  // SE
+        (0.578, 0.000),  // close eye
         // ── Shank to stock level (y=151.993 → N=0.184) ──
-        ( 0.184,  0.000),
-
+        (0.184, 0.000),
         // ── Left ball cap (centre N=0.184, E=−0.339, r=0.122) ──
         // Enter from E (stock junction), trace CW, exit back to stock
-        ( 0.184, -0.217), // E edge  (−0.339 + 0.122)
-        ( 0.062, -0.339), // S       (0.184 − 0.122)
-        ( 0.184, -0.461), // W edge  (−0.339 − 0.122)
-        ( 0.306, -0.339), // N       (0.184 + 0.122)
-        ( 0.184, -0.217), // back to E edge
-
+        (0.184, -0.217), // E edge  (−0.339 + 0.122)
+        (0.062, -0.339), // S       (0.184 − 0.122)
+        (0.184, -0.461), // W edge  (−0.339 − 0.122)
+        (0.306, -0.339), // N       (0.184 + 0.122)
+        (0.184, -0.217), // back to E edge
         // ── Back to shank centre ──
-        ( 0.184,  0.000),
-
+        (0.184, 0.000),
         // ── Right ball cap (centre N=0.184, E=+0.339, r=0.122) ──
-        ( 0.184,  0.217), // W edge
-        ( 0.062,  0.339), // S
-        ( 0.184,  0.461), // E edge
-        ( 0.306,  0.339), // N
-        ( 0.184,  0.217), // back to W edge
-
+        (0.184, 0.217), // W edge
+        (0.062, 0.339), // S
+        (0.184, 0.461), // E edge
+        (0.306, 0.339), // N
+        (0.184, 0.217), // back to W edge
         // ── Back to shank centre, down to crown ──
-        ( 0.184,  0.000),
-        (-0.644,  0.000), // crown — bottom of shank (svg y≈306)
-
+        (0.184, 0.000),
+        (-0.644, 0.000), // crown — bottom of shank (svg y≈306)
         // ── Left fluke (bezier-endpoint approximation from SVG path) ──
         // M(186,372) c(−82,−45)→ c(−24,−28)→ l(−7,+10)
         (-0.756, -0.441), // svg(104, 327) — outer fluke sweep
         (-0.608, -0.568), // svg(80,  299) — fluke arm
         (-0.657, -0.607), // svg(73,  309) — fluke tip corner
-
         // ── Bottom of anchor (SVG trace M-point, svg(186, 372)) ──
-        (-1.000,  0.000),
-
+        (-1.000, 0.000),
         // ── Right fluke (symmetric) ──
-        (-0.657,  0.607),
-        (-0.608,  0.568),
-        (-0.756,  0.441),
-
+        (-0.657, 0.607),
+        (-0.608, 0.568),
+        (-0.756, 0.441),
         // ── Return to crown ──
-        (-0.644,  0.000),
+        (-0.644, 0.000),
     ]
 }
 
@@ -172,28 +170,28 @@ fn anchor_path() -> &'static [(f64, f64)] {
 fn friendly_sam_path() -> &'static [(f64, f64)] {
     &[
         // Rectangle frame (CW from top-left)
-        ( 0.800, -0.650), // top-left
-        ( 0.800,  0.650), // top-right
-        (-0.800,  0.650), // bottom-right
+        (0.800, -0.650),  // top-left
+        (0.800, 0.650),   // top-right
+        (-0.800, 0.650),  // bottom-right
         (-0.800, -0.650), // bottom-left
-        ( 0.800, -0.650), // close
-        ( 0.800,  0.000), // top-centre (on top edge — starts centre spine)
+        (0.800, -0.650),  // close
+        (0.800, 0.000),   // top-centre (on top edge — starts centre spine)
         // Centre spine → missile nose tip
-        ( 0.342,  0.000),
+        (0.342, 0.000),
         // Left side of missile body
-        ( 0.155, -0.130),
+        (0.155, -0.130),
         (-0.341, -0.130),
         // Launcher arc (same as hostile)
         (-0.468, -0.498),
         (-0.373, -0.280),
-        (-0.337,  0.000),
-        (-0.373,  0.280),
-        (-0.468,  0.498),
+        (-0.337, 0.000),
+        (-0.373, 0.280),
+        (-0.468, 0.498),
         // Right side of missile body
-        (-0.334,  0.130),
-        ( 0.155,  0.130),
-        ( 0.260,  0.065),
-        ( 0.342,  0.000),
+        (-0.334, 0.130),
+        (0.155, 0.130),
+        (0.260, 0.065),
+        (0.342, 0.000),
     ]
 }
 
@@ -204,16 +202,16 @@ fn carrier_path() -> &'static [(f64, f64)] {
     &[
         // Hull outline starting from stern-port (SW corner), going CW
         (-0.85, -0.22), // stern-port
-        (-0.85,  0.22), // stern-starboard
-        ( 0.55,  0.22), // mid-starboard (before island)
+        (-0.85, 0.22),  // stern-starboard
+        (0.55, 0.22),   // mid-starboard (before island)
         // Island superstructure stub on starboard
-        ( 0.55,  0.40),
-        ( 0.20,  0.40),
-        ( 0.20,  0.22),
+        (0.55, 0.40),
+        (0.20, 0.40),
+        (0.20, 0.22),
         // Continue hull to bow
-        ( 0.85,  0.22), // bow-starboard shoulder
-        ( 1.00,  0.00), // bow tip
-        ( 0.85, -0.22), // bow-port shoulder
+        (0.85, 0.22),   // bow-starboard shoulder
+        (1.00, 0.00),   // bow tip
+        (0.85, -0.22),  // bow-port shoulder
         (-0.85, -0.22), // back to stern-port (close hull)
     ]
 }
@@ -221,12 +219,12 @@ fn carrier_path() -> &'static [(f64, f64)] {
 /// FOB icon — simple tent/outpost pentagon, apex to the north.
 fn fob_path() -> &'static [(f64, f64)] {
     &[
-        ( 0.90,  0.00), // apex
-        ( 0.30,  0.60), // starboard eave
-        (-0.70,  0.60), // starboard base corner
+        (0.90, 0.00),   // apex
+        (0.30, 0.60),   // starboard eave
+        (-0.70, 0.60),  // starboard base corner
         (-0.70, -0.60), // port base corner
-        ( 0.30, -0.60), // port eave
-        ( 0.90,  0.00), // close at apex
+        (0.30, -0.60),  // port eave
+        (0.90, 0.00),   // close at apex
     ]
 }
 
@@ -234,14 +232,14 @@ fn fob_path() -> &'static [(f64, f64)] {
 fn factory_path() -> &'static [(f64, f64)] {
     &[
         (-0.80, -0.80), // base, port-aft
-        ( 0.30, -0.80), // wall top, port-aft
-        ( 0.70, -0.53), // roof peak 1
-        ( 0.30, -0.27), // roof valley 1
-        ( 0.70,  0.00), // roof peak 2
-        ( 0.30,  0.27), // roof valley 2
-        ( 0.70,  0.53), // roof peak 3
-        ( 0.30,  0.80), // wall top, starboard-aft
-        (-0.80,  0.80), // base, starboard-aft
+        (0.30, -0.80),  // wall top, port-aft
+        (0.70, -0.53),  // roof peak 1
+        (0.30, -0.27),  // roof valley 1
+        (0.70, 0.00),   // roof peak 2
+        (0.30, 0.27),   // roof valley 2
+        (0.70, 0.53),   // roof peak 3
+        (0.30, 0.80),   // wall top, starboard-aft
+        (-0.80, 0.80),  // base, starboard-aft
         (-0.80, -0.80), // close at base
     ]
 }
@@ -252,41 +250,41 @@ fn factory_path() -> &'static [(f64, f64)] {
 fn farp_path() -> &'static [(f64, f64)] {
     &[
         (-0.90, -0.50), // port bar, bottom
-        ( 0.90, -0.50), // port bar, top
-        ( 0.00, -0.50), // back down to mid, port side
-        ( 0.00,  0.50), // crossbar to mid, starboard side
-        ( 0.90,  0.50), // starboard bar, top
-        (-0.90,  0.50), // starboard bar, bottom
+        (0.90, -0.50),  // port bar, top
+        (0.00, -0.50),  // back down to mid, port side
+        (0.00, 0.50),   // crossbar to mid, starboard side
+        (0.90, 0.50),   // starboard bar, top
+        (-0.90, 0.50),  // starboard bar, bottom
     ]
 }
 
 /// Logistics hub icon — hexagon (package/crate outline).
 fn logistics_path() -> &'static [(f64, f64)] {
     &[
-        ( 1.00,  0.00),
-        ( 0.50,  0.866),
-        (-0.50,  0.866),
-        (-1.00,  0.00),
+        (1.00, 0.00),
+        (0.50, 0.866),
+        (-0.50, 0.866),
+        (-1.00, 0.00),
         (-0.50, -0.866),
-        ( 0.50, -0.866),
-        ( 1.00,  0.00), // close
+        (0.50, -0.866),
+        (1.00, 0.00), // close
     ]
 }
 
 /// Command Center icon — five-pointed star, the standard HQ/command symbol.
 fn command_center_path() -> &'static [(f64, f64)] {
     &[
-        ( 1.000,  0.000), // outer, N
-        ( 0.324,  0.235), // inner
-        ( 0.309,  0.951), // outer
-        (-0.124,  0.380), // inner
-        (-0.809,  0.588), // outer
-        (-0.400,  0.000), // inner
+        (1.000, 0.000),   // outer, N
+        (0.324, 0.235),   // inner
+        (0.309, 0.951),   // outer
+        (-0.124, 0.380),  // inner
+        (-0.809, 0.588),  // outer
+        (-0.400, 0.000),  // inner
         (-0.809, -0.588), // outer
         (-0.124, -0.380), // inner
-        ( 0.309, -0.951), // outer
-        ( 0.324, -0.235), // inner
-        ( 1.000,  0.000), // close
+        (0.309, -0.951),  // outer
+        (0.324, -0.235),  // inner
+        (1.000, 0.000),   // close
     ]
 }
 
@@ -462,11 +460,7 @@ fn hex_points(center: Vector2, r: f64) -> Vec<LuaVec3> {
     (0..6)
         .map(|i| {
             let a = (60. * i as f64 + 30.).to_radians();
-            LuaVec3(Vector3::new(
-                center.x + r * a.cos(),
-                0.,
-                center.y + r * a.sin(),
-            ))
+            LuaVec3(Vector3::new(center.x + r * a.cos(), 0., center.y + r * a.sin()))
         })
         .collect()
 }
@@ -497,7 +491,12 @@ impl StatusHexes {
         [obj.health, obj.logi, obj.supply, obj.fuel]
     }
 
-    fn new(obj: &Objective, pos: Vector2, sf: SideFilter, msgq: &mut MsgQ) -> StatusHexes {
+    fn new(
+        obj: &Objective,
+        pos: Vector2,
+        sf: SideFilter,
+        msgq: &mut MsgQ,
+    ) -> StatusHexes {
         let vals = Self::stats(obj);
         let mut ids = [MarkId::new(); N_HEX];
         let mut buckets = [Bucket::Good; N_HEX];
@@ -525,11 +524,7 @@ impl StatusHexes {
                 None,
             );
         }
-        StatusHexes {
-            ids,
-            buckets,
-            unlimited_supply: obj.unlimited_supply,
-        }
+        StatusHexes { ids, buckets, unlimited_supply: obj.unlimited_supply }
     }
 
     fn update(&mut self, obj: &Objective, msgq: &mut MsgQ) {
@@ -543,11 +538,8 @@ impl StatusHexes {
         }
         if obj.unlimited_supply != self.unlimited_supply {
             self.unlimited_supply = obj.unlimited_supply;
-            let outline = if self.unlimited_supply {
-                unlimited_outline()
-            } else {
-                hex_outline()
-            };
+            let outline =
+                if self.unlimited_supply { unlimited_outline() } else { hex_outline() };
             msgq.set_markup_color(self.ids[2], outline);
         }
     }
@@ -676,12 +668,20 @@ fn objective_label(
         // can never capture it. It also sits well off the zone centre, so
         // point at the ring rather than at "the zone".
         let _ = match obj.owner {
-            Side::Neutral => write!(s, "\n>> NEUTRAL - either side captures: land troops inside the ring"),
-            Side::Red => write!(s, "\n>> UNDEFENDED - BLUE captures: land troops inside the ring"),
-            Side::Blue => write!(s, "\n>> UNDEFENDED - RED captures: land troops inside the ring"),
+            Side::Neutral => write!(
+                s,
+                "\n>> NEUTRAL - either side captures: land troops inside the ring"
+            ),
+            Side::Red => {
+                write!(s, "\n>> UNDEFENDED - BLUE captures: land troops inside the ring")
+            }
+            Side::Blue => {
+                write!(s, "\n>> UNDEFENDED - RED captures: land troops inside the ring")
+            }
         };
     } else if obj.health <= 20 && obj.infantry > 0 {
-        let _ = write!(s, "\nInfantry: {}% — clear all defenders to capture", obj.infantry);
+        let _ =
+            write!(s, "\nInfantry: {}% — clear all defenders to capture", obj.infantry);
     }
     if let Some(pct) = capture_pct {
         let _ = write!(s, "\nCapturing: {pct}%");
@@ -761,10 +761,16 @@ impl ObjectiveMarkup {
                 lit
             }
         };
-        msgq.set_markup_color(self.owner_ring, ring_color(obj, if lit { 1. } else { DIM }));
+        msgq.set_markup_color(
+            self.owner_ring,
+            ring_color(obj, if lit { 1. } else { DIM }),
+        );
         if let KindSymbol::Single(ids) = &self.kind_symbol {
             for id in ids {
-                msgq.set_markup_color(*id, text_color(obj.owner, if lit { 0.85 } else { DIM }));
+                msgq.set_markup_color(
+                    *id,
+                    text_color(obj.owner, if lit { 0.85 } else { DIM }),
+                );
             }
         }
     }
@@ -787,7 +793,8 @@ impl ObjectiveMarkup {
             msgq.set_markup_color(self.label, text_color(LABEL_ALPHA));
             msgq.set_markup_color(self.owner_ring, ring_color(obj, 1.));
             if obj.kind.is_special_sam_site() {
-                let capturable_color = if obj.health == 0 { Color::white(0.75) } else { text_color(0.75) };
+                let capturable_color =
+                    if obj.health == 0 { Color::white(0.75) } else { text_color(0.75) };
                 msgq.set_markup_color(self.capturable_ring, capturable_color);
             }
             for (_, id) in self.supply_connections.drain() {
@@ -831,11 +838,8 @@ impl ObjectiveMarkup {
             // the site is dead) needs refreshing on a health change.
             if obj.kind.is_special_sam_site() && self.health != obj.health {
                 let text_color = |a| text_color(obj.owner, a);
-                let capturable_color = if obj.health == 0 {
-                    Color::white(0.75)
-                } else {
-                    text_color(0.75)
-                };
+                let capturable_color =
+                    if obj.health == 0 { Color::white(0.75) } else { text_color(0.75) };
                 msgq.set_markup_color(self.capturable_ring, capturable_color);
             }
             self.health = obj.health;
@@ -1061,38 +1065,84 @@ impl ObjectiveMarkup {
         let sym_r = obj.zone.radius().max(500.) * 0.45;
         let sym_color = text_color(0.85);
         t.kind_symbol = match obj.kind {
-            ObjectiveKind::SpecialSamSite => {
-                KindSymbol::Single(draw_polyline(t.pos, sym_r, friendly_sam_path(), draw_spec, sym_color, msgq))
-            }
-            ObjectiveKind::NavalBase => KindSymbol::Single(
-                draw_polyline(t.pos, sym_r, anchor_path(), draw_spec, sym_color, msgq)
-            ),
-            ObjectiveKind::CarrierGroup { .. } => KindSymbol::Single(
-                draw_polyline(t.pos, sym_r, carrier_path(), draw_spec, sym_color, msgq)
-            ),
+            ObjectiveKind::SpecialSamSite => KindSymbol::Single(draw_polyline(
+                t.pos,
+                sym_r,
+                friendly_sam_path(),
+                draw_spec,
+                sym_color,
+                msgq,
+            )),
+            ObjectiveKind::NavalBase => KindSymbol::Single(draw_polyline(
+                t.pos,
+                sym_r,
+                anchor_path(),
+                draw_spec,
+                sym_color,
+                msgq,
+            )),
+            ObjectiveKind::CarrierGroup { .. } => KindSymbol::Single(draw_polyline(
+                t.pos,
+                sym_r,
+                carrier_path(),
+                draw_spec,
+                sym_color,
+                msgq,
+            )),
             // No symbol for a real airbase: DCS already draws the airfield,
             // its runways and its name on the F10 map. Ours only sat on top of
             // that, so it cost marks to say something already said.
             ObjectiveKind::Airbase => KindSymbol::None,
-            ObjectiveKind::Fob => KindSymbol::Single(
-                draw_polyline(t.pos, sym_r, fob_path(), draw_spec, sym_color, msgq)
-            ),
-            ObjectiveKind::Farp { .. } => KindSymbol::Single(
-                draw_polyline(t.pos, sym_r, farp_path(), draw_spec, sym_color, msgq)
-            ),
-            ObjectiveKind::Logistics => KindSymbol::Single(
-                draw_polyline(t.pos, sym_r, logistics_path(), draw_spec, sym_color, msgq)
-            ),
-            ObjectiveKind::Factory { .. } => KindSymbol::Single(
-                draw_polyline(t.pos, sym_r, factory_path(), draw_spec, sym_color, msgq)
-            ),
-            ObjectiveKind::CommandCenter => KindSymbol::Single(
-                draw_polyline(t.pos, sym_r, command_center_path(), draw_spec, sym_color, msgq)
-            ),
+            ObjectiveKind::Fob => KindSymbol::Single(draw_polyline(
+                t.pos,
+                sym_r,
+                fob_path(),
+                draw_spec,
+                sym_color,
+                msgq,
+            )),
+            ObjectiveKind::Farp { .. } => KindSymbol::Single(draw_polyline(
+                t.pos,
+                sym_r,
+                farp_path(),
+                draw_spec,
+                sym_color,
+                msgq,
+            )),
+            ObjectiveKind::Logistics => KindSymbol::Single(draw_polyline(
+                t.pos,
+                sym_r,
+                logistics_path(),
+                draw_spec,
+                sym_color,
+                msgq,
+            )),
+            ObjectiveKind::Factory { .. } => KindSymbol::Single(draw_polyline(
+                t.pos,
+                sym_r,
+                factory_path(),
+                draw_spec,
+                sym_color,
+                msgq,
+            )),
+            ObjectiveKind::CommandCenter => KindSymbol::Single(draw_polyline(
+                t.pos,
+                sym_r,
+                command_center_path(),
+                draw_spec,
+                sym_color,
+                msgq,
+            )),
         };
 
         match obj.kind {
-            ObjectiveKind::Airbase | ObjectiveKind::Farp { .. } | ObjectiveKind::Fob | ObjectiveKind::Factory { .. } | ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::SpecialSamSite { .. } | ObjectiveKind::CommandCenter => (),
+            ObjectiveKind::Airbase
+            | ObjectiveKind::Farp { .. }
+            | ObjectiveKind::Fob
+            | ObjectiveKind::Factory { .. }
+            | ObjectiveKind::CarrierGroup { .. }
+            | ObjectiveKind::SpecialSamSite { .. }
+            | ObjectiveKind::CommandCenter => (),
             ObjectiveKind::Logistics => {
                 for oid in &obj.warehouse.destination {
                     let id = MarkId::new();

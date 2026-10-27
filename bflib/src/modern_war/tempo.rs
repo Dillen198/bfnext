@@ -25,7 +25,7 @@ for more details.
 //! chosen from the map as it stands when the offensive (or this session)
 //! starts: the enemy objective the side is best placed to hit.
 
-use crate::{airlife::dist, Context};
+use crate::{Context, airlife::dist};
 use bfprotocols::{
     cfg::TempoCfg,
     db::objective::{ObjectiveId, ObjectiveKind},
@@ -58,17 +58,18 @@ pub(crate) fn phase_at(cfg: &TempoCfg, side: Side, now: DateTime<Utc>) -> (Phase
         _ => 0,
     };
     let t = (now.timestamp() + shift).rem_euclid(cycle);
-    if t < off {
-        (Phase::Offensive, off - t)
-    } else {
-        (Phase::Regroup, cycle - t)
-    }
+    if t < off { (Phase::Offensive, off - t) } else { (Phase::Regroup, cycle - t) }
 }
 
 impl Tempo {
     /// Interval multiplier for `side`'s raids and packages right now. 1.0
     /// when tempo is off.
-    pub(crate) fn factor(&self, cfg: Option<&TempoCfg>, side: Side, now: DateTime<Utc>) -> f64 {
+    pub(crate) fn factor(
+        &self,
+        cfg: Option<&TempoCfg>,
+        side: Side,
+        now: DateTime<Utc>,
+    ) -> f64 {
         match cfg.filter(|c| c.enabled) {
             None => 1.,
             Some(c) => match phase_at(c, side, now).0 {
@@ -101,7 +102,10 @@ fn pick_axis(ctx: &Context, side: Side) -> Option<ObjectiveId> {
         .objectives()
         .filter(|(_, o)| o.owner() == side.opposite())
         .filter(|(_, o)| {
-            !matches!(o.kind(), ObjectiveKind::SpecialSamSite | ObjectiveKind::CarrierGroup { .. })
+            !matches!(
+                o.kind(),
+                ObjectiveKind::SpecialSamSite | ObjectiveKind::CarrierGroup { .. }
+            )
         })
         .filter_map(|(id, o)| {
             let gap = own.iter().map(|p| dist(*p, o.pos())).fold(f64::INFINITY, f64::min);
@@ -154,9 +158,11 @@ pub(crate) fn tick(ctx: &mut Context, cfg: &TempoCfg, now: DateTime<Utc>) {
             continue;
         }
         let msg = match (phase, &axis_name) {
-            (Phase::Offensive, Some(name)) if prev == Some(Phase::Offensive) => format_compact!(
-                "OPERATIONAL ORDERS: the offensive shifts to {name}. Strikes will concentrate there."
-            ),
+            (Phase::Offensive, Some(name)) if prev == Some(Phase::Offensive) => {
+                format_compact!(
+                    "OPERATIONAL ORDERS: the offensive shifts to {name}. Strikes will concentrate there."
+                )
+            }
             (Phase::Offensive, Some(name)) => format_compact!(
                 "OPERATIONAL ORDERS: offensive operations toward {name} begin. Raids and air \
                  packages concentrate there for the next {hours:.0} hours."

@@ -59,18 +59,12 @@ impl Coord {
     }
 
     pub fn ll_to_lo(&self, pos: LLPos) -> Result<LuaVec3> {
-        Ok(self
-            .t
-            .call_function("LLtoLO", (pos.latitude, pos.longitude, pos.altitude))?)
+        Ok(self.t.call_function("LLtoLO", (pos.latitude, pos.longitude, pos.altitude))?)
     }
 
     pub fn lo_to_ll(&self, pos: LuaVec3) -> Result<LLPos> {
         let (latitude, longitude, altitude) = self.t.call_function("LOtoLL", pos)?;
-        Ok(LLPos {
-            latitude,
-            longitude,
-            altitude,
-        })
+        Ok(LLPos { latitude, longitude, altitude })
     }
 
     pub fn ll_to_mgrs(&self, latitude: f64, longitude: f64) -> Result<MGRSPos> {
@@ -79,10 +73,6 @@ impl Coord {
 
     pub fn mgrs_to_ll(&self, mgrs: MGRSPos) -> Result<LLPos> {
         let (latitude, longitude, altitude) = self.t.call_function("MGRStoLL", mgrs)?;
-        Ok(LLPos {
-            latitude,
-            longitude,
-            altitude,
-        })
+        Ok(LLPos { latitude, longitude, altitude })
     }
 }

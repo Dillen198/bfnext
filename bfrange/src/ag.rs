@@ -14,20 +14,21 @@ use crate::{
     util::{self, V3},
     weapons::{Impact, Purpose},
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use bfprotocols::range::{
-    cfg::{Loc, LocKind, ObjCategory, RangeCfg, StationCfg, StrafePitCfg},
-    grading, BombResult, LiveStation, PilotRef, RangeResult, Release, StationKind, StrafeQuality,
+    BombResult, LiveStation, PilotRef, RangeResult, Release, StationKind, StrafeQuality,
     StrafeResult, Track, WeaponClass,
+    cfg::{Loc, LocKind, ObjCategory, RangeCfg, StationCfg, StrafePitCfg},
+    grading,
 };
 use dcso3::{
+    Color, LuaEnv, LuaVec3, MizLua,
     coalition::Side,
     trigger::{CircleSpec, LineType, SideFilter, TextSpec, Trigger},
-    Color, LuaEnv, LuaVec3, MizLua,
 };
 use fxhash::FxHashMap;
 use log::{error, info, warn};
-use mlua::{prelude::*, RegistryKey};
+use mlua::{RegistryKey, prelude::*};
 use serde_json::json;
 
 #[derive(Debug)]
@@ -113,9 +114,9 @@ pub fn resolve(lua: MizLua, loc: &Loc) -> Result<V3> {
             Ok(p)
         }
         LocKind::Zone(zone) => {
-            let z = Trigger::singleton(lua)?
-                .get_zone(zone.into())
-                .map_err(|e| anyhow!("trigger zone {zone:?} is not in the mission: {e}"))?;
+            let z = Trigger::singleton(lua)?.get_zone(zone.into()).map_err(|e| {
+                anyhow!("trigger zone {zone:?} is not in the mission: {e}")
+            })?;
             let mut p = z.point.0;
             p.y = util::ground_height(lua, p);
             Ok(p)
@@ -208,7 +209,13 @@ impl AirToGround {
         }
     }
 
-    pub fn reset(&mut self, lua: MizLua, idx: usize, spawns: &mut Spawns, now: f64) -> Result<()> {
+    pub fn reset(
+        &mut self,
+        lua: MizLua,
+        idx: usize,
+        spawns: &mut Spawns,
+        now: f64,
+    ) -> Result<()> {
         let st = self.stations.get_mut(idx).ok_or_else(|| anyhow!("no such station"))?;
         respawn(lua, st, spawns, now)
     }
@@ -232,9 +239,15 @@ impl AirToGround {
             .stations
             .iter()
             .enumerate()
-            .filter(|(_, s)| !matches!(s.cfg.kind, StationKind::ShipTarget | StationKind::StrafePit))
-            .filter_map(|(i, s)| s.nearest_target(imp.pos).map(|t| (i, util::dist2(t.pos, imp.pos))))
-            .filter(|(i, d)| *d <= cfg.scoring.max_score_m.max(self.stations[*i].cfg.radius_m))
+            .filter(|(_, s)| {
+                !matches!(s.cfg.kind, StationKind::ShipTarget | StationKind::StrafePit)
+            })
+            .filter_map(|(i, s)| {
+                s.nearest_target(imp.pos).map(|t| (i, util::dist2(t.pos, imp.pos)))
+            })
+            .filter(|(i, d)| {
+                *d <= cfg.scoring.max_score_m.max(self.stations[*i].cfg.radius_m)
+            })
             .min_by(|a, b| a.1.total_cmp(&b.1));
         let Some((si, _)) = near else {
             if let Some(g) = imp.w.shooter.group_id {
@@ -249,7 +262,10 @@ impl AirToGround {
         };
         if imp.w.class == WeaponClass::Rocket {
             let key = (imp.w.shooter.unit_name.clone(), imp.w.weapon.clone());
-            let s = self.salvos.entry(key).or_insert_with(|| Salvo { impacts: vec![], last: now });
+            let s = self
+                .salvos
+                .entry(key)
+                .or_insert_with(|| Salvo { impacts: vec![], last: now });
             s.last = now;
             s.impacts.push((now, imp));
             return None;
@@ -259,7 +275,14 @@ impl AirToGround {
     }
 
     /// Flush rocket ripples once no rocket has landed for 1.5 s.
-    pub fn flush_salvos(&mut self, lua: MizLua, cfg: &RangeCfg, rec: &mut Recorder, ew: &crate::ew::Ew, now: f64) {
+    pub fn flush_salvos(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        rec: &mut Recorder,
+        ew: &crate::ew::Ew,
+        now: f64,
+    ) {
         let done: Vec<(String, String)> = self
             .salvos
             .iter()
@@ -304,14 +327,22 @@ impl AirToGround {
         let tpos = tgt.pos;
         let d = imp.pos - tpos;
         let rel_v = w.rel_vel;
-        let BombMiss { miss, radial, attack_hdg, rel, long, cross } = bomb_miss(tpos, imp.pos, rel_v);
+        let BombMiss { miss, radial, attack_hdg, rel, long, cross } =
+            bomb_miss(tpos, imp.pos, rel_v);
         let quality = grading::bomb_quality(&cfg.scoring, w.class, miss);
         let (wind_from, wind_kts, wind_v) = util::wind_at(lua, w.rel_pos);
         let tas = (rel_v - wind_v).norm() * util::MS_TO_KTS;
         let (release_temp_c, _) = util::temp_pressure_at(lua, w.rel_pos);
         let agl = w.rel_pos.y - util::ground_height(lua, w.rel_pos);
         // the air the bomb fell through, as DCS has it, for the calibration
-        let atmo = util::atmo_profile(lua, w.rel_pos.x, w.rel_pos.z, imp.pos.y, w.rel_pos.y, 250.);
+        let atmo = util::atmo_profile(
+            lua,
+            w.rel_pos.x,
+            w.rel_pos.z,
+            imp.pos.y,
+            w.rel_pos.y,
+            250.,
+        );
         let good = grading::good_radius(&cfg.scoring, w.class);
         let release = Release {
             pos: util::geo(lua, w.rel_pos),
@@ -373,24 +404,36 @@ impl AirToGround {
         let msg = format!(
             "RANGE {}{}: {} {:.0} m @ {} o'clock ({}) - {}\nreleased {:.0} ft AGL, {:.0} KTAS, {:.0} deg dive, {:.1} nm{}",
             st.cfg.name,
-            st.cfg.tier.as_ref().map(|t| format!(" [{}]", t.to_ascii_uppercase())).unwrap_or_default(),
+            st.cfg
+                .tier
+                .as_ref()
+                .map(|t| format!(" [{}]", t.to_ascii_uppercase()))
+                .unwrap_or_default(),
             display,
             miss,
             clock,
-            if long >= 0. { format!("{:.0} m long", long.abs()) } else { format!("{:.0} m short", long.abs()) },
+            if long >= 0. {
+                format!("{:.0} m long", long.abs())
+            } else {
+                format!("{:.0} m short", long.abs())
+            },
             quality.label(),
             agl * util::M_TO_FT,
             tas,
             -util::fpa(rel_v),
             util::dist2(w.rel_pos, tpos) / util::NM,
-            gps_denied.as_ref().map(|j| format!("\nGPS DENIED at release ({j})")).unwrap_or_default(),
+            gps_denied
+                .as_ref()
+                .map(|j| format!("\nGPS DENIED at release ({j})"))
+                .unwrap_or_default(),
         );
         if cfg.in_game_results {
             if let Some(g) = sh.group_id {
                 records::to_group(lua, g, &msg, cfg.message_s);
             }
         }
-        let pilot = PilotRef { ucid: sh.ucid.map(|u| u.to_string()), name: sh.name.clone() };
+        let pilot =
+            PilotRef { ucid: sh.ucid.map(|u| u.to_string()), name: sh.name.clone() };
         rec.emit(
             lua,
             pilot,
@@ -406,7 +449,12 @@ impl AirToGround {
     // ------------------------------------------------------------- strafe
 
     /// Is this player set up on a strafe pit right now? Returns the station.
-    pub fn in_pit(&self, pos: V3, vel: V3, agl: f64) -> Option<(usize, StrafePitCfg, V3)> {
+    pub fn in_pit(
+        &self,
+        pos: V3,
+        vel: V3,
+        agl: f64,
+    ) -> Option<(usize, StrafePitCfg, V3)> {
         for (i, st) in self.stations.iter().enumerate() {
             if st.cfg.kind != StationKind::StrafePit {
                 continue;
@@ -459,7 +507,8 @@ impl AirToGround {
         }
         let st = &mut self.stations[run.station];
         let pit = st.cfg.strafe.clone().unwrap_or_default();
-        let (rounds, acc, valid) = strafe_tally(run.ammo_start, ammo_now, run.hits, run.foul);
+        let (rounds, acc, valid) =
+            strafe_tally(run.ammo_start, ammo_now, run.hits, run.foul);
         let quality = grading::strafe_quality(&cfg.scoring, acc, valid);
         let invalid_reason = if run.foul {
             Some(format!("fired inside the {:.0} m foul line", pit.foul_line_m))
@@ -500,7 +549,8 @@ impl AirToGround {
             target_pos: util::geo(lua, target_pos),
             foul_line_m: pit.foul_line_m,
         };
-        let score = if quality == StrafeQuality::Invalid { None } else { quality.score() };
+        let score =
+            if quality == StrafeQuality::Invalid { None } else { quality.score() };
         rec.emit(
             lua,
             run.pilot.clone(),
@@ -532,7 +582,14 @@ impl AirToGround {
                     elev_m: Some(elev),
                     // what the release calculator plans with: DCS's own air
                     // over the target, surface to 10 km
-                    atmo: util::atmo_profile(lua, st.center.x, st.center.z, elev + 10., 10000., 500.),
+                    atmo: util::atmo_profile(
+                        lua,
+                        st.center.x,
+                        st.center.z,
+                        elev + 10.,
+                        10000.,
+                        500.,
+                    ),
                 }
             })
             .collect()
@@ -553,8 +610,13 @@ impl AirToGround {
                         )
                     })
                     .unwrap_or_default();
-                let laser = st.cfg.laser_code.map(|c| format!(" laser {c}")).unwrap_or_default();
-                let hot = if st.hot.is_empty() { "cold".to_string() } else { format!("HOT ({})", st.hot.len()) };
+                let laser =
+                    st.cfg.laser_code.map(|c| format!(" laser {c}")).unwrap_or_default();
+                let hot = if st.hot.is_empty() {
+                    "cold".to_string()
+                } else {
+                    format!("HOT ({})", st.hot.len())
+                };
                 format!(
                     "{} [{}] {}{rel}{laser} {}/{} targets, {hot}  {:.4} {:.4}",
                     st.cfg.name,
@@ -593,15 +655,28 @@ fn bomb_miss(target: V3, impact: V3, rel_vel: V3) -> BombMiss {
     let radial = util::hdg(d);
     let attack_hdg = util::hdg(rel_vel);
     let rel = util::angdiff(radial, attack_hdg);
-    BombMiss { miss, radial, attack_hdg, rel, long: miss * rel.to_radians().cos(), cross: miss * rel.to_radians().sin() }
+    BombMiss {
+        miss,
+        radial,
+        attack_hdg,
+        rel,
+        long: miss * rel.to_radians().cos(),
+        cross: miss * rel.to_radians().sin(),
+    }
 }
 
 /// (rounds fired, accuracy %, valid) for a strafe pass. Rounds come from
 /// the gun's ammo count, but never fewer than the hits (DCS's count can
 /// lag); a pass that crossed the foul line or fired nothing is invalid.
-fn strafe_tally(ammo_start: u32, ammo_now: u32, hits: u32, foul: bool) -> (u32, f64, bool) {
+fn strafe_tally(
+    ammo_start: u32,
+    ammo_now: u32,
+    hits: u32,
+    foul: bool,
+) -> (u32, f64, bool) {
     let rounds = ammo_start.saturating_sub(ammo_now).max(hits);
-    let acc = if rounds > 0 { (hits as f64 / rounds as f64 * 100.).min(100.) } else { 0. };
+    let acc =
+        if rounds > 0 { (hits as f64 / rounds as f64 * 100.).min(100.) } else { 0. };
     (rounds, acc, !foul && rounds > 0)
 }
 
@@ -634,7 +709,12 @@ fn target_positions(st: &StationCfg, center: V3) -> Vec<(V3, f64)> {
         .collect()
 }
 
-fn spawn_station(lua: MizLua, st: &mut Station, spawns: &mut Spawns, now: f64) -> Result<()> {
+fn spawn_station(
+    lua: MizLua,
+    st: &mut Station,
+    spawns: &mut Spawns,
+    now: f64,
+) -> Result<()> {
     let cfg = st.cfg.clone();
     let country = spawn::country_id(&cfg.country)?;
     let side = spawn::side_of_str(&cfg.side);
@@ -661,7 +741,11 @@ fn spawn_station(lua: MizLua, st: &mut Station, spawns: &mut Spawns, now: f64) -
                     p.x = q.x;
                     p.z = q.z;
                 }
-                None => warn!("station {}: target {} is in water with no land within 600 m", cfg.id, i + 1),
+                None => warn!(
+                    "station {}: target {} is in water with no land within 600 m",
+                    cfg.id,
+                    i + 1
+                ),
             }
         }
     }
@@ -673,7 +757,10 @@ fn spawn_station(lua: MizLua, st: &mut Station, spawns: &mut Spawns, now: f64) -
                 let name = format!("RNG-{}-T{}", cfg.id, i + 1);
                 let s = spawn::static_object(&name, &t.typ, *p, *h, None);
                 if let Err(e) = spawn::add_static(lua, country, &s) {
-                    warn!("station {}: static {} ({}) failed: {e:?}", cfg.id, name, t.typ);
+                    warn!(
+                        "station {}: static {} ({}) failed: {e:?}",
+                        cfg.id, name, t.typ
+                    );
                     continue;
                 }
                 st.targets.push(Target {
@@ -684,7 +771,9 @@ fn spawn_station(lua: MizLua, st: &mut Station, spawns: &mut Spawns, now: f64) -
                     alive: true,
                 });
             }
-            ObjCategory::Vehicle | ObjCategory::Ship => vehicles.push((t.typ.clone(), *p, *h)),
+            ObjCategory::Vehicle | ObjCategory::Ship => {
+                vehicles.push((t.typ.clone(), *p, *h))
+            }
         }
     }
     if !vehicles.is_empty() {
@@ -715,15 +804,34 @@ fn spawn_station(lua: MizLua, st: &mut Station, spawns: &mut Spawns, now: f64) -
             (4, 1)
         };
         // ground ROE: 2 OPEN_FIRE, 4 WEAPON_HOLD; ALARM_STATE (9): 1 GREEN, 2 RED
-        spawns.defer(now + 2., spawn::Pending::GroupOption { group: gname.clone(), id: 0, value: json!(roe) });
-        spawns.defer(now + 2., spawn::Pending::GroupOption { group: gname.clone(), id: 9, value: json!(alarm) });
+        spawns.defer(
+            now + 2.,
+            spawn::Pending::GroupOption {
+                group: gname.clone(),
+                id: 0,
+                value: json!(roe),
+            },
+        );
+        spawns.defer(
+            now + 2.,
+            spawn::Pending::GroupOption {
+                group: gname.clone(),
+                id: 9,
+                value: json!(alarm),
+            },
+        );
         let _ = side;
         st.group = Some(gname);
     }
     Ok(())
 }
 
-fn station_route(lua: MizLua, cfg: &StationCfg, center: V3, ship: bool) -> Result<Vec<serde_json::Value>> {
+fn station_route(
+    lua: MizLua,
+    cfg: &StationCfg,
+    center: V3,
+    ship: bool,
+) -> Result<Vec<serde_json::Value>> {
     let Some(r) = &cfg.route else {
         return Ok(vec![if ship {
             spawn::waypoint(center, 0., 0., vec![])
@@ -779,7 +887,11 @@ fn draw_station(lua: MizLua, st: &Station) {
     let r = (|| -> Result<()> {
         let act = Trigger::singleton(lua)?.action()?;
         let c = ring_color(st.cfg.kind);
-        let rings = if st.cfg.rings_m.is_empty() { vec![25., 50.] } else { st.cfg.rings_m.clone() };
+        let rings = if st.cfg.rings_m.is_empty() {
+            vec![25., 50.]
+        } else {
+            st.cfg.rings_m.clone()
+        };
         for (i, radius) in rings.iter().enumerate() {
             act.circle_to_all(
                 SideFilter::All,
@@ -797,7 +909,8 @@ fn draw_station(lua: MizLua, st: &Station) {
         }
         let mut label = st.center;
         label.x += rings.iter().cloned().fold(50., f64::max) + 60.;
-        let laser = st.cfg.laser_code.map(|c| format!(" / LASER {c}")).unwrap_or_default();
+        let laser =
+            st.cfg.laser_code.map(|c| format!(" / LASER {c}")).unwrap_or_default();
         act.text_to_all(
             SideFilter::All,
             dcso3::trigger::MarkId::new(),
@@ -820,7 +933,12 @@ fn draw_station(lua: MizLua, st: &Station) {
 
 /// Keep an AI designator (an invisible, immortal MQ-9 orbiting overhead)
 /// lasing the first live target of a station with a laser code.
-fn update_laser(lua: MizLua, st: &mut Station, spawns: &mut Spawns, now: f64) -> Result<()> {
+fn update_laser(
+    lua: MizLua,
+    st: &mut Station,
+    spawns: &mut Spawns,
+    now: f64,
+) -> Result<()> {
     let Some(code) = st.cfg.laser_code else { return Ok(()) };
     let target = st.targets.iter().find(|t| t.alive).map(|t| t.pos);
     if st.designator.is_none() {
@@ -844,14 +962,26 @@ fn update_laser(lua: MizLua, st: &mut Station, spawns: &mut Spawns, now: f64) ->
             callsign: None,
             freq_mhz: None,
             task: "Reconnaissance".into(),
-            route: vec![spawn::waypoint(st.center, alt, 60., vec![spawn::task_entry(1, orbit)])],
+            route: vec![spawn::waypoint(
+                st.center,
+                alt,
+                60.,
+                vec![spawn::task_entry(1, orbit)],
+            )],
             fuel_kg: None,
             side: spawn::side_of_str(if st.cfg.side == "red" { "blue" } else { "red" }),
         };
         let country = spawn::country_id(spawn::default_country(spec.side))?;
         spawn::add_group(lua, country, spawn::AIRPLANE, &spawn::air_group(&spec))?;
-        for c in [spawn::bool_cmd("SetInvisible", true), spawn::bool_cmd("SetImmortal", true), spawn::bool_cmd("SetUnlimitedFuel", true)] {
-            spawns.defer(now + 2., spawn::Pending::GroupCommand { group: name.clone(), cmd: c });
+        for c in [
+            spawn::bool_cmd("SetInvisible", true),
+            spawn::bool_cmd("SetImmortal", true),
+            spawn::bool_cmd("SetUnlimitedFuel", true),
+        ] {
+            spawns.defer(
+                now + 2.,
+                spawn::Pending::GroupCommand { group: name.clone(), cmd: c },
+            );
         }
         st.designator = Some(name);
         return Ok(());
@@ -894,7 +1024,7 @@ fn update_laser(lua: MizLua, st: &mut Station, spawns: &mut Spawns, now: f64) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bfprotocols::range::{cfg::ScoringCfg, BombQuality, StrafeQuality};
+    use bfprotocols::range::{BombQuality, StrafeQuality, cfg::ScoringCfg};
 
     /// DCS's frame: x north, z east.
     fn ne(north: f64, east: f64) -> V3 {
@@ -910,8 +1040,14 @@ mod tests {
         assert!((m.long + 12.).abs() < 1e-9 && m.cross.abs() < 1e-9, "{m:?}");
         assert_eq!(grading::clock(m.rel), 6);
         let cfg = ScoringCfg::default();
-        assert_eq!(grading::bomb_quality(&cfg, WeaponClass::Unguided, m.miss), BombQuality::Excellent);
-        assert_eq!(grading::bomb_quality(&cfg, WeaponClass::Guided, m.miss), BombQuality::Ineffective);
+        assert_eq!(
+            grading::bomb_quality(&cfg, WeaponClass::Unguided, m.miss),
+            BombQuality::Excellent
+        );
+        assert_eq!(
+            grading::bomb_quality(&cfg, WeaponClass::Guided, m.miss),
+            BombQuality::Ineffective
+        );
     }
 
     #[test]

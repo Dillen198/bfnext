@@ -18,12 +18,7 @@ FITNESS FOR A PARTICULAR PURPOSE.
 
 use anyhow::{bail, Context, Result};
 use mlua::{ChunkMode, Lua, LuaOptions, StdLib, Table, Value};
-use std::{
-    fmt::Display,
-    fs, io,
-    panic::AssertUnwindSafe,
-    path::Path,
-};
+use std::{fmt::Display, fs, io, panic::AssertUnwindSafe, path::Path};
 use zip::{read::ZipArchive, write::FileOptions, ZipWriter};
 
 /// A fresh Lua state fit for evaluating .miz entries with
@@ -37,7 +32,8 @@ use zip::{read::ZipArchive, write::FileOptions, ZipWriter};
 /// constructor and need no library at all, so none is loaded. (Lua 5.1's base
 /// library is always present; it has no way to write files or run programs.)
 pub fn scratch_lua() -> Result<Lua> {
-    Lua::new_with(StdLib::NONE, LuaOptions::default()).context("creating scratch lua state")
+    Lua::new_with(StdLib::NONE, LuaOptions::default())
+        .context("creating scratch lua state")
 }
 
 /// Read the Lua table assigned to `entry_name` (e.g. "mission", "options",
@@ -50,8 +46,8 @@ pub fn read_table_from_miz(
     miz_path: &Path,
     entry_name: &str,
 ) -> Result<Table> {
-    let file = fs::File::open(miz_path)
-        .with_context(|| format!("opening {miz_path:?}"))?;
+    let file =
+        fs::File::open(miz_path).with_context(|| format!("opening {miz_path:?}"))?;
     let mut archive =
         ZipArchive::new(file).with_context(|| format!("unzipping {miz_path:?}"))?;
     let mut entry = archive
@@ -71,21 +67,25 @@ pub fn read_table_from_miz(
         .set_mode(ChunkMode::Text)
         .exec()
         .with_context(|| format!("loading {entry_name} into lua"))?;
-    lua.globals()
-        .raw_get(entry_name)
-        .with_context(|| format!("extracting {entry_name}"))
+    lua.globals().raw_get(entry_name).with_context(|| format!("extracting {entry_name}"))
 }
 
 /// Rewrite a single top level entry inside a .miz zip file in place, leaving
 /// every other entry byte for byte unchanged. Writes to a temp file next to
 /// `miz_path` and atomically renames it over the original once complete, so
 /// a failure partway through never leaves a corrupt mission file behind.
-pub fn rewrite_entry_in_miz(miz_path: &Path, entry_name: &str, new_content: &str) -> Result<()> {
+pub fn rewrite_entry_in_miz(
+    miz_path: &Path,
+    entry_name: &str,
+    new_content: &str,
+) -> Result<()> {
     let tmp_path = miz_path.with_extension("miz.tmp");
-    let res = write_rewritten_miz(miz_path, &tmp_path, entry_name, new_content).and_then(|()| {
-        fs::rename(&tmp_path, miz_path)
-            .with_context(|| format!("replacing {miz_path:?} with {tmp_path:?}"))
-    });
+    let res = write_rewritten_miz(miz_path, &tmp_path, entry_name, new_content).and_then(
+        |()| {
+            fs::rename(&tmp_path, miz_path)
+                .with_context(|| format!("replacing {miz_path:?} with {tmp_path:?}"))
+        },
+    );
     // Every failure path, not just "entry not found": a half-written temp
     // file left next to the mission is at best litter, and at worst picked
     // up by someone as a mission in its own right.
@@ -104,18 +104,17 @@ fn write_rewritten_miz(
     entry_name: &str,
     new_content: &str,
 ) -> Result<()> {
-    let file = fs::File::open(miz_path)
-        .with_context(|| format!("opening {miz_path:?}"))?;
+    let file =
+        fs::File::open(miz_path).with_context(|| format!("opening {miz_path:?}"))?;
     let mut archive =
         ZipArchive::new(file).with_context(|| format!("unzipping {miz_path:?}"))?;
-    let tmp_file = fs::File::create(tmp_path)
-        .with_context(|| format!("creating {tmp_path:?}"))?;
+    let tmp_file =
+        fs::File::create(tmp_path).with_context(|| format!("creating {tmp_path:?}"))?;
     let mut writer = ZipWriter::new(io::BufWriter::new(tmp_file));
     let mut found = false;
     for i in 0..archive.len() {
-        let mut entry = archive
-            .by_index(i)
-            .with_context(|| format!("getting zip entry {i}"))?;
+        let mut entry =
+            archive.by_index(i).with_context(|| format!("getting zip entry {i}"))?;
         let name = entry.name().to_string();
         writer
             .start_file(&name, FileOptions::default())
@@ -143,8 +142,7 @@ fn write_rewritten_miz(
     // cut or hard kill right after the restart that follows (exactly when
     // bflib calls this) leaves a zero-filled mission in place of both the old
     // file and the new one.
-    file.sync_all()
-        .with_context(|| format!("syncing {tmp_path:?}"))?;
+    file.sync_all().with_context(|| format!("syncing {tmp_path:?}"))?;
     Ok(())
 }
 
@@ -184,7 +182,9 @@ fn write_lua_string(f: &mut std::fmt::Formatter<'_>, s: &[u8]) -> std::fmt::Resu
                 // truncates the chunk at the C boundary and every lexer
                 // downstream of it sees a file that just stops. Always three
                 // digits, so a following digit can't be read as part of it.
-                c if (c as u32) < 0x20 || c as u32 == 0x7f => write!(f, "\\{:03}", c as u32)?,
+                c if (c as u32) < 0x20 || c as u32 == 0x7f => {
+                    write!(f, "\\{:03}", c as u32)?
+                }
                 c => f.write_char(c)?,
             }
         }
@@ -242,14 +242,8 @@ impl Display for LuaSerVal {
             Value::Table(tbl) => {
                 macro_rules! write_elt {
                     ($k:expr, $v:expr) => {
-                        let k = LuaSerVal {
-                            value: $k,
-                            level: self.level + 4,
-                        };
-                        let v = LuaSerVal {
-                            value: $v,
-                            level: self.level + 4,
-                        };
+                        let k = LuaSerVal { value: $k, level: self.level + 4 };
+                        let v = LuaSerVal { value: $v, level: self.level + 4 };
                         k.indented(f).unwrap();
                         if v.value.is_table() {
                             write!(f, "[{k}] = {v}, -- end of [{k}]\n").unwrap();
@@ -297,7 +291,9 @@ impl Display for LuaSerVal {
             | Value::LightUserData(_)
             | Value::Thread(_)
             | Value::UserData(_)
-            | Value::Other(_) => panic!("value type {:?} can't be serialized", self.value),
+            | Value::Other(_) => {
+                panic!("value type {:?} can't be serialized", self.value)
+            }
         }
     }
 }
@@ -444,7 +440,11 @@ mod tests {
         let m = read_table_from_miz(&lua, &miz.0, "mission")?;
         let weather: Table = m.raw_get("weather")?;
         weather.raw_set("qnh", 745)?;
-        rewrite_entry_in_miz(&miz.0, "mission", &serialize_to_lua("mission", Value::Table(m))?)?;
+        rewrite_entry_in_miz(
+            &miz.0,
+            "mission",
+            &serialize_to_lua("mission", Value::Table(m))?,
+        )?;
         // the rewritten entry has the change and keeps the non-UTF-8 name
         let lua = scratch_lua()?;
         let back = read_table_from_miz(&lua, &miz.0, "mission")?;

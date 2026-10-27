@@ -16,12 +16,14 @@ for more details.
 
 use super::slot_for_group;
 use crate::{
-    ewr::{self, EwrUnits},
     Context,
+    ewr::{self, EwrUnits},
 };
 use anyhow::{Context as ErrContext, Result};
-use compact_str::{format_compact, CompactString};
-use dcso3::{net::Ucid, Vector2, env::miz::GroupId, mission_commands::MissionCommands, MizLua};
+use compact_str::{CompactString, format_compact};
+use dcso3::{
+    MizLua, Vector2, env::miz::GroupId, mission_commands::MissionCommands, net::Ucid,
+};
 use std::fmt::Write;
 
 // ─── Shared report-building logic ──────────────────────────────────────────
@@ -34,21 +36,31 @@ pub(crate) fn ewr_toggle_for(ctx: &mut Context, ucid: &Ucid) -> bool {
 }
 
 pub(crate) fn ewr_set_units_for(ctx: &mut Context, ucid: &Ucid, imperial: bool) {
-    ctx.ewr.set_units(
-        ucid,
-        if imperial { EwrUnits::Imperial } else { EwrUnits::Metric },
-    );
+    ctx.ewr.set_units(ucid, if imperial { EwrUnits::Imperial } else { EwrUnits::Metric });
 }
 
-pub(crate) fn build_braa_report(ctx: &mut Context, ucid: &Ucid, friendly: bool) -> CompactString {
-    let mut report = format_compact!("{} BRAA\n", if friendly { "Friendlies" } else { "Bandits" });
+pub(crate) fn build_braa_report(
+    ctx: &mut Context,
+    ucid: &Ucid,
+    friendly: bool,
+) -> CompactString {
+    let mut report =
+        format_compact!("{} BRAA\n", if friendly { "Friendlies" } else { "Bandits" });
     let mode = ctx.db.ephemeral.cfg.ewr_mode;
     let delay = ctx.db.ephemeral.cfg.ewr_delay;
     if let Some(player) = ctx.db.player(ucid) {
         if let Some((_, Some(inst))) = &player.current_slot {
-            let contacts = ctx
-                .ewr
-                .where_chicken(&ctx.db, ctx.db.ephemeral.now(), friendly, true, ucid, player, inst, mode, delay);
+            let contacts = ctx.ewr.where_chicken(
+                &ctx.db,
+                ctx.db.ephemeral.now(),
+                friendly,
+                true,
+                ucid,
+                player,
+                inst,
+                mode,
+                delay,
+            );
             let _ = write!(report, "{}\n", ewr::HEADER);
             for braa in contacts {
                 let _ = write!(report, "{braa}\n");
@@ -121,10 +133,12 @@ fn ewr_units_imperial(lua: MizLua, gid: GroupId) -> Result<()> {
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
         ewr_set_units_for(ctx, &ucid, true);
-        ctx.db
-            .ephemeral
-            .msgs()
-            .panel_to_group(5, false, gid, "EWR units are now Imperial");
+        ctx.db.ephemeral.msgs().panel_to_group(
+            5,
+            false,
+            gid,
+            "EWR units are now Imperial",
+        );
     }
     Ok(())
 }
@@ -135,10 +149,7 @@ fn ewr_units_metric(lua: MizLua, gid: GroupId) -> Result<()> {
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
         ewr_set_units_for(ctx, &ucid, false);
-        ctx.db
-            .ephemeral
-            .msgs()
-            .panel_to_group(5, false, gid, "EWR units are now Metric");
+        ctx.db.ephemeral.msgs().panel_to_group(5, false, gid, "EWR units are now Metric");
     }
     Ok(())
 }
@@ -173,15 +184,17 @@ fn gci_toggle_auto(lua: MizLua, gid: GroupId) -> Result<()> {
         } else {
             "GCI will stay quiet unless you call — key up and ask for a bogey dope or picture"
         };
-        ctx.db
-            .ephemeral
-            .msgs()
-            .panel_to_group(8, false, gid, format_compact!("{msg}"));
+        ctx.db.ephemeral.msgs().panel_to_group(8, false, gid, format_compact!("{msg}"));
     }
     Ok(())
 }
 
-fn gci_units_set(lua: MizLua, gid: GroupId, units: Option<crate::ewr::EwrUnits>, label: &str) -> Result<()> {
+fn gci_units_set(
+    lua: MizLua,
+    gid: GroupId,
+    units: Option<crate::ewr::EwrUnits>,
+    label: &str,
+) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
@@ -209,7 +222,12 @@ fn gci_units_auto(lua: MizLua, gid: GroupId) -> Result<()> {
     gci_units_set(lua, gid, None, "the server default")
 }
 
-fn gci_ref_set(lua: MizLua, gid: GroupId, refmode: Option<u8>, label: &str) -> Result<()> {
+fn gci_ref_set(
+    lua: MizLua,
+    gid: GroupId,
+    refmode: Option<u8>,
+    label: &str,
+) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;

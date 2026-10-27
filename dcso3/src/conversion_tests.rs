@@ -39,7 +39,9 @@ fn numbers_arrive_as_integer_when_integral() {
     assert!(matches!(eval::<Value>(&lua, "3.5").unwrap(), Value::Number(n) if n == 3.5));
     // outside i64: stays a float
     assert!(matches!(eval::<Value>(&lua, "2^63").unwrap(), Value::Number(_)));
-    assert!(matches!(eval::<Value>(&lua, "1/0").unwrap(), Value::Number(n) if n.is_infinite()));
+    assert!(
+        matches!(eval::<Value>(&lua, "1/0").unwrap(), Value::Number(n) if n.is_infinite())
+    );
     assert!(matches!(eval::<Value>(&lua, "'3'").unwrap(), Value::String(_)));
 }
 
@@ -187,7 +189,9 @@ fn enums_from_numbers_and_numeric_strings() {
     assert!(eval::<Side>(&lua, "nil").is_err());
     assert!(matches!(Side::Red.into_lua(&lua).unwrap(), Value::Integer(1)));
     assert!(matches!(eval::<PathElt>(&lua, "3").unwrap(), PathElt::Integer(3)));
-    assert!(matches!(eval::<PathElt>(&lua, "'k'").unwrap(), PathElt::String(s) if s.as_str() == "k"));
+    assert!(
+        matches!(eval::<PathElt>(&lua, "'k'").unwrap(), PathElt::String(s) if s.as_str() == "k")
+    );
     assert!(eval::<PathElt>(&lua, "1.5").is_err());
 }
 
@@ -232,7 +236,9 @@ fn serde_round_trip() {
     // stored as a float, read back as an integer: Lua 5.1 has one number type
     assert!(matches!(t.raw_get::<Value>("f").unwrap(), Value::Integer(2)));
     // None is mlua's null (a null light userdata), not nil: the key exists
-    assert!(matches!(t.raw_get::<Value>("c").unwrap(), Value::LightUserData(p) if p.0.is_null()));
+    assert!(
+        matches!(t.raw_get::<Value>("c").unwrap(), Value::LightUserData(p) if p.0.is_null())
+    );
     assert_eq!(t.raw_get::<LuaTable>("v").unwrap().raw_len(), 0);
     assert_eq!(lua.from_value::<Cfg>(back).unwrap(), cfg);
 }

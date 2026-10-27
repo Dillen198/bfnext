@@ -14,25 +14,27 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
-use super::{brg_rng, player_world_pos, slot_for_group, ArgQuad, ArgTriple, ArgTuple, Pager};
+use super::{
+    ArgQuad, ArgTriple, ArgTuple, Pager, brg_rng, player_world_pos, slot_for_group,
+};
 use crate::{
+    Context,
     db::{
+        Db,
         markup::{objective_visible_to, public_stat_bucket},
         objective::Objective,
-        Db,
     },
-    Context,
 };
 use anyhow::{Context as ErrContext, Result};
 use bfprotocols::db::objective::{ObjectiveId, ObjectiveKind};
-use compact_str::{format_compact, CompactString};
+use compact_str::{CompactString, format_compact};
 use dcso3::{
+    LuaVec3, MizLua, Vector2, Vector3,
     coalition::Side,
     coord::Coord,
     env::miz::GroupId,
     mission_commands::{GroupSubMenu, MissionCommands},
     net::{SlotId, Ucid},
-    LuaVec3, MizLua, Vector2, Vector3,
 };
 use mlua::prelude::{FromLua, IntoLua};
 use std::fmt::Write;
@@ -109,11 +111,12 @@ fn fmt_latlon(lat: f64, lon: f64) -> CompactString {
 }
 
 /// LL and MGRS strings for a map position. `None` if the coord library isn't reachable.
-pub(crate) fn fmt_position(lua: MizLua, pos: Vector2) -> Option<(CompactString, CompactString)> {
+pub(crate) fn fmt_position(
+    lua: MizLua,
+    pos: Vector2,
+) -> Option<(CompactString, CompactString)> {
     let coord = Coord::singleton(lua).ok()?;
-    let ll = coord
-        .lo_to_ll(LuaVec3(Vector3::new(pos.x, 0.0, pos.y)))
-        .ok()?;
+    let ll = coord.lo_to_ll(LuaVec3(Vector3::new(pos.x, 0.0, pos.y))).ok()?;
     let ll_s = fmt_latlon(ll.latitude, ll.longitude);
     let mgrs_s = coord
         .ll_to_mgrs(ll.latitude, ll.longitude)
@@ -172,7 +175,11 @@ fn shows_priority(obj: &Objective, viewer: Side) -> bool {
 
 /// The objectives a status report for `want`-held bases lists to `viewer`,
 /// with the owner-only kinds the viewer can't see on the map filtered out.
-fn report_objectives<'a>(db: &'a Db, viewer: Side, want: Side) -> Vec<(&'a ObjectiveId, &'a Objective)> {
+fn report_objectives<'a>(
+    db: &'a Db,
+    viewer: Side,
+    want: Side,
+) -> Vec<(&'a ObjectiveId, &'a Objective)> {
     db.objectives()
         .filter(|(_, o)| o.owner() == want && objective_visible_to(o, viewer))
         .collect()
@@ -231,14 +238,21 @@ fn build_side_report(
     }
     let total = objectives.len();
     let total_pages = total.div_ceil(PAGE_SIZE).max(1);
-    let slice: Vec<_> = objectives
-        .into_iter()
-        .skip(page * PAGE_SIZE)
-        .take(PAGE_SIZE)
-        .collect();
-    let heading = if want == viewer { "Friendly" } else if want == Side::Neutral { "Neutral" } else { "Enemy" };
+    let slice: Vec<_> =
+        objectives.into_iter().skip(page * PAGE_SIZE).take(PAGE_SIZE).collect();
+    let heading = if want == viewer {
+        "Friendly"
+    } else if want == Side::Neutral {
+        "Neutral"
+    } else {
+        "Enemy"
+    };
     let sort = if from.is_some() { "by range" } else { "by name" };
-    let mut report = format_compact!("=== {heading} Objectives ({sort}) pg {}/{} ===\n", page + 1, total_pages);
+    let mut report = format_compact!(
+        "=== {heading} Objectives ({sort}) pg {}/{} ===\n",
+        page + 1,
+        total_pages
+    );
     for &(oid, obj) in &slice {
         report.push_str(&objective_line(db, oid, obj, viewer, from, full));
     }
@@ -275,7 +289,8 @@ fn repair_state(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString {
         return CompactString::from("stalled -- logistics defense destroyed");
     }
     let pulse = db.repair_pulse_secs(obj).max(1.0);
-    let elapsed = (db.ephemeral.now() - obj.repair_clock_start()).num_seconds().max(0) as f64;
+    let elapsed =
+        (db.ephemeral.now() - obj.repair_clock_start()).num_seconds().max(0) as f64;
     let remaining = (pulse - elapsed).max(0.0);
     format_compact!(
         "active -- next pulse in ~{:.0}m{}",
@@ -311,7 +326,9 @@ fn repair_outlook(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString 
         );
     }
     if obj.owner() == Side::Neutral {
-        return CompactString::from("NEUTRAL -- does not self-repair, must be retaken with troops");
+        return CompactString::from(
+            "NEUTRAL -- does not self-repair, must be retaken with troops",
+        );
     }
     if obj.threatened() {
         return CompactString::from(
@@ -333,10 +350,13 @@ fn repair_outlook(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString 
         );
     }
     if obj.logi() == 0 && !obj.kind().is_special_sam_site() {
-        return CompactString::from("logistics destroyed (logi 0%) -- cannot self-repair");
+        return CompactString::from(
+            "logistics destroyed (logi 0%) -- cannot self-repair",
+        );
     }
     let pulse = db.repair_pulse_secs(obj).max(1.0);
-    let elapsed = (db.ephemeral.now() - obj.repair_clock_start()).num_seconds().max(0) as f64;
+    let elapsed =
+        (db.ephemeral.now() - obj.repair_clock_start()).num_seconds().max(0) as f64;
     let remaining = (pulse - elapsed).max(0.0);
     format_compact!(
         "WILL self-repair -- next pulse ~{:.0}m{}; act fast or it heals back above 20%",
@@ -349,7 +369,12 @@ fn repair_outlook(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString 
 /// the percentage of the garrison's infantry still alive, not a head count;
 /// the enemy only gets it once health is at or under 20%, which is when the
 /// F10 label starts printing it for everyone.
-fn capture_state(frac: f64, consolidation: u32, obj: &Objective, friendly: bool) -> CompactString {
+fn capture_state(
+    frac: f64,
+    consolidation: u32,
+    obj: &Objective,
+    friendly: bool,
+) -> CompactString {
     if obj.in_capture_hold() {
         if obj.capture_hold_stalled() {
             return CompactString::from(
@@ -398,7 +423,10 @@ fn capture_state(frac: f64, consolidation: u32, obj: &Objective, friendly: bool)
             obj.infantry()
         ),
         (true, false) if friendly => {
-            format_compact!("not eligible -- need health <=20% (now {}%){frac_note}", obj.health())
+            format_compact!(
+                "not eligible -- need health <=20% (now {}%){frac_note}",
+                obj.health()
+            )
         }
         // Same words whether or not infantry is left, so the enemy can't read
         // the garrison's infantry state off which sentence they got.
@@ -414,7 +442,13 @@ fn capture_state(frac: f64, consolidation: u32, obj: &Objective, friendly: bool)
     }
 }
 
-fn build_detail_card(ctx: &Context, lua: MizLua, oid: &ObjectiveId, viewer: Side, from: Option<Vector2>) -> CompactString {
+fn build_detail_card(
+    ctx: &Context,
+    lua: MizLua,
+    oid: &ObjectiveId,
+    viewer: Side,
+    from: Option<Vector2>,
+) -> CompactString {
     let db = &ctx.db;
     let obj = match db.objective(oid) {
         Ok(o) => o,
@@ -507,10 +541,8 @@ fn status_page(lua: MizLua, arg: ArgQuad<GroupId, Side, u8, u8>) -> Result<()> {
         RPT_NEUTRAL => Side::Neutral,
         _ => arg.snd,
     };
-    let pages = report_objectives(&ctx.db, arg.snd, want)
-        .len()
-        .div_ceil(PAGE_SIZE)
-        .max(1);
+    let pages =
+        report_objectives(&ctx.db, arg.snd, want).len().div_ceil(PAGE_SIZE).max(1);
     let page = {
         let cursor = ctx.objective_pages.entry(arg.fst).or_default();
         let slot = match arg.trd {
@@ -533,13 +565,19 @@ fn nearest_base(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
     let report = match from_pos(ctx, lua, &arg.fst) {
-        None => CompactString::from("Get airborne first -- nearest base needs your position."),
+        None => {
+            CompactString::from("Get airborne first -- nearest base needs your position.")
+        }
         Some(p) => {
             let nearest = ctx
                 .db
                 .objectives()
-                .filter(|(_, o)| o.owner() != Side::Neutral && objective_visible_to(o, arg.snd))
-                .min_by(|(_, a), (_, b)| brg_rng(p, a.pos()).1.total_cmp(&brg_rng(p, b.pos()).1))
+                .filter(|(_, o)| {
+                    o.owner() != Side::Neutral && objective_visible_to(o, arg.snd)
+                })
+                .min_by(|(_, a), (_, b)| {
+                    brg_rng(p, a.pos()).1.total_cmp(&brg_rng(p, b.pos()).1)
+                })
                 .map(|(oid, _)| *oid);
             match nearest {
                 None => CompactString::from("no objectives on the map"),
@@ -692,10 +730,7 @@ fn build_capture_advisor_card(
     }
 
     if diag.in_capture_hold {
-        let _ = write!(
-            s,
-            "STATUS: post-capture hold -- takeable NOW by either side.\n"
-        );
+        let _ = write!(s, "STATUS: post-capture hold -- takeable NOW by either side.\n");
         let consolidation = db.ephemeral.cfg.capture_consolidation_secs;
         if obj.capture_hold_stalled() {
             let _ = write!(
@@ -749,10 +784,8 @@ fn build_capture_advisor_card(
     let _ = write!(s, "----------------------------------\n");
     if diag.troops.is_empty() {
         let _ = write!(s, "YOUR CAPTURE TROOPS: none within 30 nm.\n");
-        let _ = write!(
-            s,
-            "  Deploy capture-capable troops and move them into the zone.\n"
-        );
+        let _ =
+            write!(s, "  Deploy capture-capable troops and move them into the zone.\n");
     } else {
         let _ = write!(s, "YOUR TROOPS NEAR THIS BASE:\n");
         for t in &diag.troops {
@@ -761,11 +794,8 @@ fn build_capture_advisor_card(
             } else {
                 format_compact!("{:.0} m outside the zone edge", t.outside_by)
             };
-            let cap = if t.can_capture {
-                ""
-            } else {
-                "  <-- CANNOT capture (troop type)"
-            };
+            let cap =
+                if t.can_capture { "" } else { "  <-- CANNOT capture (troop type)" };
             let _ = write!(s, "  - {}: {}{}\n", t.name, loc, cap);
         }
     }
@@ -775,7 +805,10 @@ fn build_capture_advisor_card(
     s
 }
 
-fn capture_advisor_by_oid(lua: MizLua, arg: ArgTuple<GroupId, ObjectiveId>) -> Result<()> {
+fn capture_advisor_by_oid(
+    lua: MizLua,
+    arg: ArgTuple<GroupId, ObjectiveId>,
+) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
     let (viewer, from) = match slot_for_group(lua, ctx, &arg.fst) {
@@ -838,7 +871,9 @@ fn dispatch_helo(
     kind: u8,
 ) -> CompactString {
     let Some(ucid) = ucid_for_menu_call(ctx, lua, &gid) else {
-        return CompactString::from("could not identify you as a player -- are you in a slot?");
+        return CompactString::from(
+            "could not identify you as a player -- are you in a slot?",
+        );
     };
     let now = ctx.now();
     let (what, res) = if kind == HELO_TROOPS {
@@ -860,7 +895,10 @@ fn dispatch_helo(
 
 /// F10: dispatch an AI helo to a specific objective the player picked off the
 /// menu. `trd` is `HELO_TROOPS` or `HELO_SUPPLY`.
-fn helo_mission_by_oid(lua: MizLua, arg: ArgTriple<GroupId, ObjectiveId, u8>) -> Result<()> {
+fn helo_mission_by_oid(
+    lua: MizLua,
+    arg: ArgTriple<GroupId, ObjectiveId, u8>,
+) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
     let side = match slot_for_group(lua, ctx, &arg.fst) {
@@ -883,7 +921,10 @@ fn helo_mission_by_oid(lua: MizLua, arg: ArgTriple<GroupId, ObjectiveId, u8>) ->
 /// F10: dispatch an AI helo to insert a fresh troop group at the nearest
 /// capturable objective (falling back to the nearest non-owned one if
 /// nothing is currently capturable, so the failure reason is explicit).
-fn helo_troop_insertion_nearest(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
+fn helo_troop_insertion_nearest(
+    lua: MizLua,
+    arg: ArgTriple<GroupId, Side, u8>,
+) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
     let side = arg.snd;
@@ -913,7 +954,10 @@ fn helo_troop_insertion_nearest(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) 
 /// F10: dispatch an AI helo loaded with surplus supply from the nearest
 /// friendly hub to the nearest friendly objective (the one closest to the
 /// player -- presumably the one they're worried about).
-fn helo_resource_delivery_nearest(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
+fn helo_resource_delivery_nearest(
+    lua: MizLua,
+    arg: ArgTriple<GroupId, Side, u8>,
+) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
     let side = arg.snd;
@@ -1025,7 +1069,8 @@ pub(super) fn add_helo_mission_menu(
     side: Side,
 ) -> Result<()> {
     let from = from_pos(ctx, lua, &gid);
-    let root = mc.add_submenu_for_group(gid, "AI Helo Missions".into(), Some(parent.clone()))?;
+    let root =
+        mc.add_submenu_for_group(gid, "AI Helo Missions".into(), Some(parent.clone()))?;
     mc.add_command_for_group(
         gid,
         "Insert Troops: Nearest Capturable".into(),
@@ -1151,7 +1196,11 @@ where
     add_base_tree(mc, gid, &root, &bases, cb, &mk_arg)
 }
 
-pub(super) fn init_objectives_menu_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Result<()> {
+pub(super) fn init_objectives_menu_for_slot(
+    ctx: &mut Context,
+    lua: MizLua,
+    slot: &SlotId,
+) -> Result<()> {
     let mc = MissionCommands::singleton(lua)?;
     let si = ctx.db.ephemeral.get_slot_info(slot).context("getting slot info")?;
     let miz_gid = si.miz_gid;
@@ -1182,7 +1231,10 @@ pub(super) fn init_objectives_menu_for_slot(ctx: &mut Context, lua: MizLua, slot
     let mut p = Pager::new(miz_gid, root);
 
     for (label, cb) in [
-        ("Nearest Base (detail)", nearest_base as fn(MizLua, ArgTriple<GroupId, Side, u8>) -> Result<()>),
+        (
+            "Nearest Base (detail)",
+            nearest_base as fn(MizLua, ArgTriple<GroupId, Side, u8>) -> Result<()>,
+        ),
         ("Capturable / Contested", contested),
         ("Capture Advisor: Nearest", capture_advisor_nearest),
         ("Bases Under Threat", under_attack),

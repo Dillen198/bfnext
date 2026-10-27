@@ -20,10 +20,11 @@ use warp::Filter;
 pub(crate) struct PeerAddr(pub(crate) SocketAddr);
 
 /// The peer's address: warp's own when it set one (`warp::test`), else ours.
-pub(crate) fn peer_addr() -> impl Filter<Extract = (Option<SocketAddr>,), Error = Infallible> + Clone {
-    warp::addr::remote()
-        .and(warp::ext::optional::<PeerAddr>())
-        .map(|warp: Option<SocketAddr>, ours: Option<PeerAddr>| warp.or(ours.map(|p| p.0)))
+pub(crate) fn peer_addr(
+) -> impl Filter<Extract = (Option<SocketAddr>,), Error = Infallible> + Clone {
+    warp::addr::remote().and(warp::ext::optional::<PeerAddr>()).map(
+        |warp: Option<SocketAddr>, ours: Option<PeerAddr>| warp.or(ours.map(|p| p.0)),
+    )
 }
 
 /// A TLS client gets this long to finish its handshake. Without a bound, a
@@ -33,13 +34,18 @@ const TLS_HANDSHAKE: Duration = Duration::from_secs(15);
 /// The server certificate chain and key from PEM files (`--cert`, `--key`).
 /// The key may be PKCS#8, PKCS#1 (RSA) or SEC1 (EC), as warp 0.3 took.
 pub(crate) fn load_tls(cert: &Path, key: &Path) -> Result<Arc<rustls::ServerConfig>> {
-    let cert_pem = std::fs::read(cert).with_context(|| format!("reading --cert {}", cert.display()))?;
-    let key_pem = std::fs::read(key).with_context(|| format!("reading --key {}", key.display()))?;
+    let cert_pem = std::fs::read(cert)
+        .with_context(|| format!("reading --cert {}", cert.display()))?;
+    let key_pem =
+        std::fs::read(key).with_context(|| format!("reading --key {}", key.display()))?;
     tls_config(&cert_pem, &key_pem)
 }
 
 /// [`load_tls`] from PEM bytes.
-pub(crate) fn tls_config(cert_pem: &[u8], key_pem: &[u8]) -> Result<Arc<rustls::ServerConfig>> {
+pub(crate) fn tls_config(
+    cert_pem: &[u8],
+    key_pem: &[u8],
+) -> Result<Arc<rustls::ServerConfig>> {
     use rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
     let chain = CertificateDer::pem_slice_iter(cert_pem)
         .collect::<std::result::Result<Vec<_>, _>>()
@@ -47,8 +53,11 @@ pub(crate) fn tls_config(cert_pem: &[u8], key_pem: &[u8]) -> Result<Arc<rustls::
     if chain.is_empty() {
         anyhow::bail!("--cert holds no certificate");
     }
-    let key = PrivateKeyDer::from_pem_slice(key_pem)
-        .map_err(|e| anyhow::anyhow!("--key holds no usable private key (PKCS#8, RSA or EC PEM): {e:?}"))?;
+    let key = PrivateKeyDer::from_pem_slice(key_pem).map_err(|e| {
+        anyhow::anyhow!(
+            "--key holds no usable private key (PKCS#8, RSA or EC PEM): {e:?}"
+        )
+    })?;
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let mut cfg = rustls::ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
@@ -62,19 +71,27 @@ pub(crate) fn tls_config(cert_pem: &[u8], key_pem: &[u8]) -> Result<Arc<rustls::
 }
 
 /// Serve `filter` on `addr` until the future is dropped.
-pub(crate) async fn serve<F>(filter: F, addr: SocketAddr, tls: Option<Arc<rustls::ServerConfig>>) -> Result<()>
+pub(crate) async fn serve<F>(
+    filter: F,
+    addr: SocketAddr,
+    tls: Option<Arc<rustls::ServerConfig>>,
+) -> Result<()>
 where
     F: Filter + Clone + Send + Sync + 'static,
     F::Extract: warp::Reply,
 {
-    let listener = TcpListener::bind(addr).await.with_context(|| format!("binding {addr}"))?;
+    let listener =
+        TcpListener::bind(addr).await.with_context(|| format!("binding {addr}"))?;
     serve_on(listener, filter, tls).await;
     Ok(())
 }
 
 /// [`serve`] on a listener that is already bound (tests bind port 0).
-pub(crate) async fn serve_on<F>(listener: TcpListener, filter: F, tls: Option<Arc<rustls::ServerConfig>>)
-where
+pub(crate) async fn serve_on<F>(
+    listener: TcpListener,
+    filter: F,
+    tls: Option<Arc<rustls::ServerConfig>>,
+) where
     F: Filter + Clone + Send + Sync + 'static,
     F::Extract: warp::Reply,
 {
@@ -95,11 +112,18 @@ where
             let _ = tcp.set_nodelay(true);
             match acceptor {
                 None => connection(hyper_util::rt::TokioIo::new(tcp), peer, svc).await,
-                Some(acceptor) => match tokio::time::timeout(TLS_HANDSHAKE, acceptor.accept(tcp)).await {
-                    Ok(Ok(tls)) => connection(hyper_util::rt::TokioIo::new(tls), peer, svc).await,
-                    Ok(Err(e)) => log::debug!("TLS handshake with {peer} failed: {e}"),
-                    Err(_) => log::debug!("TLS handshake with {peer} timed out"),
-                },
+                Some(acceptor) => {
+                    match tokio::time::timeout(TLS_HANDSHAKE, acceptor.accept(tcp)).await
+                    {
+                        Ok(Ok(tls)) => {
+                            connection(hyper_util::rt::TokioIo::new(tls), peer, svc).await
+                        }
+                        Ok(Err(e)) => {
+                            log::debug!("TLS handshake with {peer} failed: {e}")
+                        }
+                        Err(_) => log::debug!("TLS handshake with {peer} timed out"),
+                    }
+                }
             }
         });
     }
@@ -118,14 +142,17 @@ where
         + 'static,
     S::Future: Send + 'static,
 {
-    let svc = hyper::service::service_fn(move |mut req: http::Request<hyper::body::Incoming>| {
-        req.extensions_mut().insert(PeerAddr(peer));
-        let mut svc = svc.clone();
-        svc.call(req)
-    });
-    if let Err(e) = hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new())
-        .serve_connection_with_upgrades(io, svc)
-        .await
+    let svc = hyper::service::service_fn(
+        move |mut req: http::Request<hyper::body::Incoming>| {
+            req.extensions_mut().insert(PeerAddr(peer));
+            let mut svc = svc.clone();
+            svc.call(req)
+        },
+    );
+    if let Err(e) =
+        hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new())
+            .serve_connection_with_upgrades(io, svc)
+            .await
     {
         log::debug!("connection from {peer}: {e}");
     }
@@ -202,14 +229,21 @@ AwEHoUQDQgAEmEZDR+vYw2pHJuHZIAI9IrXwc8rZoCqLB9ALokb1Fq22lIN8aSoq
         assert!(tls_config(KEY_PKCS8.as_bytes(), KEY_PKCS8.as_bytes()).is_err());
         let e = tls_config(CERT.as_bytes(), CERT.as_bytes()).unwrap_err().to_string();
         assert!(e.contains("--key"), "{e}");
-        let e = load_tls(Path::new("no/such/cert.pem"), Path::new("no/such/key.pem")).unwrap_err().to_string();
+        let e = load_tls(Path::new("no/such/cert.pem"), Path::new("no/such/key.pem"))
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("reading --cert"), "{e}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn plain_http_sees_the_peer_address() {
         let port = listen(whoami(), None).await;
-        let body = reqwest::get(format!("http://127.0.0.1:{port}/")).await.unwrap().text().await.unwrap();
+        let body = reqwest::get(format!("http://127.0.0.1:{port}/"))
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
         assert_eq!(body, "127.0.0.1 true");
     }
 
@@ -218,7 +252,9 @@ AwEHoUQDQgAEmEZDR+vYw2pHJuHZIAI9IrXwc8rZoCqLB9ALokb1Fq22lIN8aSoq
         let tls = tls_config(CERT.as_bytes(), KEY_PKCS8.as_bytes()).unwrap();
         let port = listen(whoami(), Some(tls)).await;
         let client = reqwest::Client::builder()
-            .add_root_certificate(reqwest::Certificate::from_pem(CERT.as_bytes()).unwrap())
+            .add_root_certificate(
+                reqwest::Certificate::from_pem(CERT.as_bytes()).unwrap(),
+            )
             .build()
             .unwrap();
         let r = client.get(format!("https://localhost:{port}/")).send().await.unwrap();
@@ -276,7 +312,10 @@ AwEHoUQDQgAEmEZDR+vYw2pHJuHZIAI9IrXwc8rZoCqLB9ALokb1Fq22lIN8aSoq
         let head = String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase();
         assert!(head.starts_with("http/1.1 101"), "{head}");
         // RFC 6455's own example key and answer
-        assert!(head.contains("sec-websocket-accept: s3pplmbitxaq9kygzzhzrbk+xoo="), "{head}");
+        assert!(
+            head.contains("sec-websocket-accept: s3pplmbitxaq9kygzzhzrbk+xoo="),
+            "{head}"
+        );
         // a masked text frame "hi", echoed back unmasked
         s.write_all(&[0x81, 0x82, 1, 2, 3, 4, b'h' ^ 1, b'i' ^ 2]).await.unwrap();
         let mut f = [0u8; 4];

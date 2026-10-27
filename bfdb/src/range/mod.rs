@@ -124,7 +124,8 @@ impl Lru {
         self.tick += 1;
         self.map.insert(k, (self.tick, v));
         while self.map.len() > self.cap {
-            let oldest = self.map.iter().min_by_key(|(_, (t, _))| *t).map(|(k, _)| k.clone());
+            let oldest =
+                self.map.iter().min_by_key(|(_, (t, _))| *t).map(|(k, _)| k.clone());
             match oldest {
                 Some(k) => {
                     self.map.remove(&k);
@@ -209,7 +210,9 @@ impl RangeCtx {
     ) -> std::result::Result<Scope, String> {
         let ranges = self.range_instances();
         if ranges.is_empty() {
-            return Err("no training range instance is configured (kind: \"range\")".into());
+            return Err(
+                "no training range instance is configured (kind: \"range\")".into()
+            );
         }
         let by_server = q.get("server").and_then(|n| {
             self.db.instances().by_dcs_server_name(n).map(|c| c.id.clone())
@@ -295,14 +298,20 @@ impl RangeCtx {
 
     /// The ucid linked to a dashboard session's Discord account, via
     /// DCSServerBot, cached for a couple of minutes.
-    pub(crate) async fn session_ucid(&self, sid: Uuid, discord_id: &str) -> Option<String> {
+    pub(crate) async fn session_ucid(
+        &self,
+        sid: Uuid,
+        discord_id: &str,
+    ) -> Option<String> {
         if let Some((at, u)) = self.ucids.lock().unwrap().get(&sid) {
             let ttl = if u.is_some() { UCID_TTL } else { UNLINKED_TTL };
             if at.elapsed() < ttl {
                 return u.clone();
             }
         }
-        let u = crate::resolve_ucid_via_bot(&self.bot, discord_id).await.map(|u| u.to_string());
+        let u = crate::resolve_ucid_via_bot(&self.bot, discord_id)
+            .await
+            .map(|u| u.to_string());
         let mut m = self.ucids.lock().unwrap();
         m.retain(|_, (at, _)| at.elapsed() < UCID_TTL);
         m.insert(sid, (Instant::now(), u.clone()));
@@ -311,7 +320,11 @@ impl RangeCtx {
 
     /// Rate limit for the spawn/despawn routes: one call per `per` per ucid.
     /// Returns the seconds left to wait when refused.
-    pub(crate) fn rate_limit(&self, ucid: &str, per: Duration) -> std::result::Result<(), f64> {
+    pub(crate) fn rate_limit(
+        &self,
+        ucid: &str,
+        per: Duration,
+    ) -> std::result::Result<(), f64> {
         let mut m = self.spawn_rl.lock().unwrap();
         let now = Instant::now();
         if let Some(t) = m.get(ucid) {
@@ -399,7 +412,9 @@ pub(crate) fn spawn_tasks(ctx: &Arc<RangeCtx>, track_days: u32) {
             }
             // debrief clips go with the tracks: same age limit, by file time
             let dir = c.clip_dir.clone();
-            let n = tokio::task::block_in_place(|| clip::prune(&dir, Duration::from_secs(track_days as u64 * 86_400)));
+            let n = tokio::task::block_in_place(|| {
+                clip::prune(&dir, Duration::from_secs(track_days as u64 * 86_400))
+            });
             if n > 0 {
                 info!("range: pruned {n} debrief clip(s) older than {track_days} days");
             }

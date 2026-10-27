@@ -45,9 +45,12 @@ mod spawnctx;
 mod unitdb;
 
 extern crate nalgebra as na;
-use crate::db::{events::{EventEffect, EventScheduler}, player::SlotAuth};
-use admin::{run_admin_commands, AdminCommand, AdminResult};
-use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
+use crate::db::{
+    events::{EventEffect, EventScheduler},
+    player::SlotAuth,
+};
+use admin::{AdminCommand, AdminResult, run_admin_commands};
+use anyhow::{Context as AnyhowContext, Result, anyhow, bail};
 use bfprotocols::{
     cfg::{Cfg, LifeType, UnitTag, Vehicle},
     db::{group::GroupId, objective::ObjectiveId},
@@ -56,22 +59,22 @@ use bfprotocols::{
 };
 use bg::Task;
 use chatcmd::{run_action_commands, run_jtac_commands};
-use chrono::{prelude::*, Duration};
-use compact_str::{format_compact, CompactString};
+use chrono::{Duration, prelude::*};
+use compact_str::{CompactString, format_compact};
 use crossbeam::queue::SegQueue;
 use db::{
+    Db,
     group::BirthRes,
     player::{RegErr, TakeoffRes},
-    Db,
 };
 use dcso3::{
+    HooksLua, LuaEnv, LuaVec2, LuaVec3, MizLua, String, Vector2, Vector3,
     coalition::Side,
     coord::Coord,
     dcs::Dcs,
     env::{
-        self,
+        self, Env,
         miz::{Miz, UnitId},
-        Env,
     },
     event::Event,
     hooks::UserHooks,
@@ -83,23 +86,22 @@ use dcso3::{
     trigger::Trigger,
     unit::{ClassUnit, Unit},
     world::MarkPanel,
-    HooksLua, LuaEnv, LuaVec2, LuaVec3, MizLua, String, Vector2, Vector3,
 };
 use ewr::Ewr;
 use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
 use indexmap::IndexSet;
-use jtac::{aim_and_fire_route, group_facing, JtId, Jtacs};
+use jtac::{JtId, Jtacs, aim_and_fire_route, group_facing};
 use landcache::LandCache;
 use log::{debug, error, info, warn};
 use mlua::prelude::*;
 use msgq::MsgTyp;
 use netidx::publisher::Value;
 use shots::ShotDb;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use spawnctx::SpawnCtx;
 use std::{
     backtrace::Backtrace,
-    panic::{catch_unwind, AssertUnwindSafe},
+    panic::{AssertUnwindSafe, catch_unwind},
     path::PathBuf,
     sync::Arc,
 };
@@ -234,12 +236,8 @@ impl Connected {
 
 /// The restart warnings, as (minutes remaining, wording). Ordered from the
 /// earliest to the latest, which `check_auto_shutdown` relies on.
-const SHUTDOWN_WARNINGS: [(i64, &str); 4] = [
-    (30, "30 minutes"),
-    (10, "10 minutes"),
-    (5, "5 minutes"),
-    (1, "one minute"),
-];
+const SHUTDOWN_WARNINGS: [(i64, &str); 4] =
+    [(30, "30 minutes"), (10, "10 minutes"), (5, "5 minutes"), (1, "one minute")];
 
 #[derive(Debug, Clone, Copy, Default)]
 struct AutoShutdown {
@@ -343,7 +341,6 @@ struct PendingTakeoff {
     /// When it was first seen in the air without touching down since.
     air_since: Option<DateTime<Utc>>,
 }
-
 
 #[derive(Debug, Default)]
 struct JtacSlotIfo {
@@ -483,7 +480,10 @@ struct Context {
     /// After a shutdown: the background thread's "save and logs flushed"
     /// flag, and when we started waiting for it. `try_exit_dcs` holds off
     /// exiting until it is set (or `SHUTDOWN_WAIT` has passed).
-    shutdown_wait: Option<(Arc<(parking_lot::Mutex<bool>, parking_lot::Condvar)>, std::time::Instant)>,
+    shutdown_wait: Option<(
+        Arc<(parking_lot::Mutex<bool>, parking_lot::Condvar)>,
+        std::time::Instant,
+    )>,
     /// DCS model time and the wall clock at the last 1 s tick, to notice the
     /// simulation stopping while the campaign's (wall-clock) timers ran on.
     last_tick_clocks: Option<(f64, DateTime<Utc>)>,
@@ -542,7 +542,6 @@ impl std::ops::DerefMut for CtxGuard {
     }
 }
 
-
 impl Context {
     /// The campaign state, or `None` when something on this thread already
     /// holds it (a callback DCS made from inside one of our own calls).
@@ -577,7 +576,9 @@ impl Context {
             Some(g) => Ok(g),
             None => {
                 debug_assert!(false, "{what}: re-entrant borrow of the campaign state");
-                bail!("{what}: called while the engine holds the campaign state (re-entrant call), refused")
+                bail!(
+                    "{what}: called while the engine holds the campaign state (re-entrant call), refused"
+                )
             }
         }
     }
@@ -588,7 +589,8 @@ impl Context {
                 Ok(()) => (),
                 // log::error! would go to the same dead thread
                 Err(e) => bg::fallback_log(
-                    format!("bflib: background thread is dead, task dropped: {e}\n").as_bytes(),
+                    format!("bflib: background thread is dead, task dropped: {e}\n")
+                        .as_bytes(),
                 ),
             }
         }
@@ -727,7 +729,9 @@ fn on_player_try_send_chat(
     // logged nor shown in chat (Some("") swallows the line for everybody).
     if let Some(key) = msg.strip_prefix(cockpit::KEY_CMD) {
         match cockpit::register_key(ctx, id, key.trim()) {
-            Ok(()) => info!("onPlayerTrySendChat id: {id:?} registered a cockpit overlay key"),
+            Ok(()) => {
+                info!("onPlayerTrySendChat id: {id:?} registered a cockpit overlay key")
+            }
             Err(e) => warn!("onPlayerTrySendChat id: {id:?} cockpit key rejected: {e}"),
         }
         record_perf(perf, start_ts);
@@ -765,8 +769,12 @@ fn process_slot_rejection(ctx: &mut Context, id: PlayerId, ucid: Ucid, rej: Slot
                 .and_then(|p| p.lifeline.as_ref())
                 .filter(|l| !l.airframes.is_empty())
                 .map(|l| {
-                    let types: Vec<&str> = l.airframes.iter().map(|v| v.as_str()).collect();
-                    format_compact!(" -- lifeline: {} fly free while you're short", types.join(", "))
+                    let types: Vec<&str> =
+                        l.airframes.iter().map(|v| v.as_str()).collect();
+                    format_compact!(
+                        " -- lifeline: {} fly free while you're short",
+                        types.join(", ")
+                    )
                 })
                 .unwrap_or_default();
             // An empty list covers every airframe, so a NoPoints here means
@@ -881,7 +889,9 @@ fn try_occupy_slot(
             ctx.subscribed_jtac_menus.remove(&slot);
             if matches!(
                 slot,
-                SlotId::ArtilleryCommander(..) | SlotId::ForwardObserver(..) | SlotId::Observer(..)
+                SlotId::ArtilleryCommander(..)
+                    | SlotId::ForwardObserver(..)
+                    | SlotId::Observer(..)
             ) {
                 chatcmd::commander_guide(ctx, id);
             }
@@ -927,10 +937,7 @@ fn on_player_try_change_slot(
             }
         }
     };
-    record_perf(
-        &mut Arc::make_mut(&mut Perf::get_mut().inner).dcs_hooks,
-        start_ts,
-    );
+    record_perf(&mut Arc::make_mut(&mut Perf::get_mut().inner).dcs_hooks, start_ts);
     res
 }
 
@@ -993,7 +1000,11 @@ fn try_capture_dismount_info(ctx: &Context, unit: &Unit) -> Option<DismountInfo>
 
 /// The dismount a dying vehicle leaves, from its id and the ground position
 /// it died at (x north, y east).
-fn dismount_info_for(ctx: &Context, id: &DcsOid<ClassUnit>, pos: Option<Vector2>) -> Option<DismountInfo> {
+fn dismount_info_for(
+    ctx: &Context,
+    id: &DcsOid<ClassUnit>,
+    pos: Option<Vector2>,
+) -> Option<DismountInfo> {
     let uid = ctx.db.ephemeral.get_uid_by_object_id(id)?;
     let su = ctx.db.persisted.units.get(uid)?;
     // Skip aircraft — only ground vehicles dismount
@@ -1142,12 +1153,21 @@ impl DeferredEvent {
             Event::Birth(dcso3::event::Birth { initiator: Some(initiator), .. }) => {
                 Some(Self::Birth(initiator.object_id()?))
             }
-            Event::Dead(e) => Some(Self::Death { lost: false, obj: DeathObj::capture(e.initiator.as_ref())? }),
-            Event::UnitLost(e) => Some(Self::Death { lost: true, obj: DeathObj::capture(e.initiator.as_ref())? }),
+            Event::Dead(e) => Some(Self::Death {
+                lost: false,
+                obj: DeathObj::capture(e.initiator.as_ref())?,
+            }),
+            Event::UnitLost(e) => Some(Self::Death {
+                lost: true,
+                obj: DeathObj::capture(e.initiator.as_ref())?,
+            }),
             Event::PlayerLeaveUnit(e) => Some(Self::PlayerLeaveUnit(e.clone())),
             Event::Hit(e) | Event::Kill(e) => {
                 debug!("deferring a Hit/Kill that fired inside one of our calls");
-                Some(Self::Raw { dead: target_dead(e), ev: lua.create_registry_value(raw)? })
+                Some(Self::Raw {
+                    dead: target_dead(e),
+                    ev: lua.create_registry_value(raw)?,
+                })
             }
             ev => {
                 // Not expected from inside our own calls (these come from the
@@ -1195,8 +1215,12 @@ impl Drop for Entered<'_> {
     fn drop(&mut self) {
         // the handler that had the state has returned
         let (lua, ctx) = (self.lua, &mut *self.ctx);
-        if let Err(e) = catch_unwind(AssertUnwindSafe(|| drain_deferred_events(lua, ctx))) {
-            error!("handling deferred events after a menu command panicked: {}", bg::panic_msg(&e))
+        if let Err(e) = catch_unwind(AssertUnwindSafe(|| drain_deferred_events(lua, ctx)))
+        {
+            error!(
+                "handling deferred events after a menu command panicked: {}",
+                bg::panic_msg(&e)
+            )
         }
     }
 }
@@ -1205,7 +1229,11 @@ impl Drop for Entered<'_> {
 /// timer, a scheduled function). Events our own DCS calls raise inside `f`
 /// are queued and handled before the state is let go. Asking while the state
 /// is held is a bug, see `Context::borrow`.
-pub(crate) fn with_ctx<R>(lua: MizLua, what: &str, f: impl FnOnce(&mut Context) -> R) -> Result<R> {
+pub(crate) fn with_ctx<R>(
+    lua: MizLua,
+    what: &str,
+    f: impl FnOnce(&mut Context) -> R,
+) -> Result<R> {
     let mut ctx = Context::borrow(what)?;
     let res = f(&mut ctx);
     drain_deferred_events(lua, &mut ctx);
@@ -1224,7 +1252,9 @@ pub(crate) fn with_context<R>(
     f: impl FnOnce(&mut Context) -> Result<R>,
 ) -> Result<R> {
     let Some(mut ctx) = Context::try_borrow() else {
-        bail!("{what}: called while the engine holds the campaign state (re-entrant call), refused")
+        bail!(
+            "{what}: called while the engine holds the campaign state (re-entrant call), refused"
+        )
     };
     let res = f(&mut ctx);
     drain_deferred_events(lua, &mut ctx);
@@ -1244,22 +1274,27 @@ fn drain_deferred_events(lua: MizLua, ctx: &mut Context) {
         let now = ctx.now();
         for ev in events {
             match ev {
-                DeferredEvent::Birth(oid) => match dcso3::object::Object::get_instance(lua, &oid) {
-                    Ok(obj) => {
-                        if let Err(e) = handle_birth(lua, ctx, &obj) {
-                            error!("deferred birth of {oid:?} failed {e:?}")
+                DeferredEvent::Birth(oid) => {
+                    match dcso3::object::Object::get_instance(lua, &oid) {
+                        Ok(obj) => {
+                            if let Err(e) = handle_birth(lua, ctx, &obj) {
+                                error!("deferred birth of {oid:?} failed {e:?}")
+                            }
+                        }
+                        // spawned and removed again within the same tick
+                        Err(e) => {
+                            debug!("deferred birth: {oid:?} no longer exists {e:?}")
                         }
                     }
-                    // spawned and removed again within the same tick
-                    Err(e) => debug!("deferred birth: {oid:?} no longer exists {e:?}"),
-                },
+                }
                 DeferredEvent::Death { lost, obj } => {
                     if let Err(e) = handle_death(lua, ctx, lost, obj, now) {
                         error!("deferred death failed {e:?}")
                     }
                 }
                 DeferredEvent::PlayerLeaveUnit(e) => {
-                    if let Err(e) = handle_event(lua, ctx, Event::PlayerLeaveUnit(e), now) {
+                    if let Err(e) = handle_event(lua, ctx, Event::PlayerLeaveUnit(e), now)
+                    {
                         error!("deferred player leave failed {e:?}")
                     }
                 }
@@ -1272,7 +1307,9 @@ fn drain_deferred_events(lua: MizLua, ctx: &mut Context) {
             }
         }
     }
-    warn!("deferred events still arriving after 16 passes, leaving the rest for the next drain");
+    warn!(
+        "deferred events still arriving after 16 passes, leaving the rest for the next drain"
+    );
 }
 
 /// A `DeferredEvent::Raw`: parse DCS's event table again and handle it.
@@ -1297,14 +1334,20 @@ fn handle_raw_event(
     }
 }
 
-fn handle_birth(lua: MizLua, ctx: &mut Context, initiator: &dcso3::object::Object) -> Result<()> {
+fn handle_birth(
+    lua: MizLua,
+    ctx: &mut Context,
+    initiator: &dcso3::object::Object,
+) -> Result<()> {
     if let Ok(unit) = initiator.as_unit() {
         // Civil airliners never enter the campaign db. Without this, an
         // unknown unit being born is taken for a dynamic player slot with
         // nobody in it -- and destroyed on the spot.
         if unit
             .get_name()
-            .map(|n| airlife::is_civil(n.as_str()) || modern_war::is_unmanaged(n.as_str()))
+            .map(|n| {
+                airlife::is_civil(n.as_str()) || modern_war::is_unmanaged(n.as_str())
+            })
             .unwrap_or(false)
         {
             return Ok(());
@@ -1316,9 +1359,10 @@ fn handle_birth(lua: MizLua, ctx: &mut Context, initiator: &dcso3::object::Objec
                 ctx.menu_init_queue.insert(slot.clone());
                 // EWR text units follow the airframe (metric for the
                 // Russian types) unless the player picked their own.
-                if let (Some(ucid), Ok(typ)) =
-                    (ctx.db.ephemeral.player_in_slot(&slot).copied(), unit.get_type_name())
-                {
+                if let (Some(ucid), Ok(typ)) = (
+                    ctx.db.ephemeral.player_in_slot(&slot).copied(),
+                    unit.get_type_name(),
+                ) {
                     ctx.ewr.slot_airframe(&ucid, typ.as_str());
                 }
                 if let Err(e) = atis::schedule_atis(lua, ctx, slot.clone()) {
@@ -1334,13 +1378,12 @@ fn handle_birth(lua: MizLua, ctx: &mut Context, initiator: &dcso3::object::Objec
                 // same way helicopters (which usually have it enabled in
                 // the .miz) already do. Best effort -- a failure here
                 // just means that slot relies on the .miz setting.
-                if let Err(e) = unit
-                    .get_controller()
-                    .and_then(|c| c.set_command(dcso3::controller::Command::EPLRS {
+                if let Err(e) = unit.get_controller().and_then(|c| {
+                    c.set_command(dcso3::controller::Command::EPLRS {
                         enable: true,
                         group: None,
-                    }))
-                {
+                    })
+                }) {
                     debug!("could not enable EPLRS for born slot {slot}: {e:?}");
                 }
             }
@@ -1379,7 +1422,10 @@ fn on_hit(
     start_ts: DateTime<Utc>,
 ) -> Result<()> {
     if let Some(target) = e.target.as_ref().and_then(|t| t.as_unit().ok()) {
-        let dead = match dead_then.map(Ok).unwrap_or_else(|| target.get_life().map(|life| life < 1.)) {
+        let dead = match dead_then
+            .map(Ok)
+            .unwrap_or_else(|| target.get_life().map(|life| life < 1.))
+        {
             Ok(dead) => dead,
             Err(_) => is_kill,
         };
@@ -1402,7 +1448,11 @@ fn on_hit(
             return Ok(());
         }
         // Sea drones aren't campaign units either.
-        if target.get_name().map(|n| modern_war::is_unmanaged(n.as_str())).unwrap_or(false) {
+        if target
+            .get_name()
+            .map(|n| modern_war::is_unmanaged(n.as_str()))
+            .unwrap_or(false)
+        {
             return Ok(());
         }
         // An AI helo mission taking hits re-routes (no-op for anything else).
@@ -1420,14 +1470,24 @@ fn on_hit(
             ctx.db.note_helo_hit(&uid, shooter, start_ts);
         }
         if let Some(shooter) = e.initiator.and_then(|u| u.as_unit().ok()) {
-            if let Err(e) =
-                ctx.shots_out
-                    .hit(&ctx.db, start_ts, dead, &target, &shooter, e.weapon_name)
-            {
+            if let Err(e) = ctx.shots_out.hit(
+                &ctx.db,
+                start_ts,
+                dead,
+                &target,
+                &shooter,
+                e.weapon_name,
+            ) {
                 error!("error processing hit event {:?}", e)
             }
             // A base under fire from the ground learns where the shooter is.
-            ctx.db.garrison_hit(&mut ctx.groundwar.garrison, lua, &target, &shooter, start_ts);
+            ctx.db.garrison_hit(
+                &mut ctx.groundwar.garrison,
+                lua,
+                &target,
+                &shooter,
+                start_ts,
+            );
         }
         if dead {
             let dismount = try_capture_dismount_info(ctx, &target);
@@ -1437,7 +1497,10 @@ fn on_hit(
             spawn_dismount(lua, ctx, dismount);
         }
     } else if let Some(target) = e.target.as_ref().and_then(|t| t.as_static().ok()) {
-        let dead = match dead_then.map(Ok).unwrap_or_else(|| target.get_life().map(|life| life < 1)) {
+        let dead = match dead_then
+            .map(Ok)
+            .unwrap_or_else(|| target.get_life().map(|life| life < 1))
+        {
             Ok(dead) => dead,
             Err(_) => is_kill,
         };
@@ -1482,9 +1545,9 @@ fn handle_death(
                 debug!("UnitLost for a unit we no longer track (despawn), ignored");
                 return Ok(());
             }
-            let unmanaged = name
-                .as_ref()
-                .filter(|n| airlife::is_civil(n.as_str()) || modern_war::is_unmanaged(n.as_str()));
+            let unmanaged = name.as_ref().filter(|n| {
+                airlife::is_civil(n.as_str()) || modern_war::is_unmanaged(n.as_str())
+            });
             if let Some(name) = unmanaged {
                 if airlife::is_civil(name.as_str()) {
                     airlife::civil_down(ctx, name.as_str(), start_ts);
@@ -1501,7 +1564,8 @@ fn handle_death(
                 .map(|u| (u.side, u.tags.0, u.pos))
             {
                 if vside != Side::Neutral
-                    && (vtags.contains(UnitTag::Aircraft) || vtags.contains(UnitTag::Helicopter))
+                    && (vtags.contains(UnitTag::Aircraft)
+                        || vtags.contains(UnitTag::Helicopter))
                 {
                     ctx.ewr.record_air_kill(vpos, vside, start_ts);
                 }
@@ -1614,7 +1678,12 @@ fn mission_end(lua: MizLua, ctx: &mut Context) -> Result<()> {
 }
 
 /// Handle one DCS event, from `on_event` or from the deferred queue.
-fn handle_event(lua: MizLua, ctx: &mut Context, ev: Event, start_ts: DateTime<Utc>) -> Result<()> {
+fn handle_event(
+    lua: MizLua,
+    ctx: &mut Context,
+    ev: Event,
+    start_ts: DateTime<Utc>,
+) -> Result<()> {
     match &ev {
         Event::MarkAdded(e) | Event::MarkChange(e) | Event::MarkRemoved(e)
             if e.initiator.is_none() =>
@@ -1685,21 +1754,25 @@ fn handle_event(lua: MizLua, ctx: &mut Context, ev: Event, start_ts: DateTime<Ut
                 ctx.landed.remove(&initiator);
                 ctx.pending_takeoffs.remove(&initiator);
                 // Snapshot what we need before the deslot invalidates it.
-                let leave_info = ctx.db.player_in_unit(false, &initiator).and_then(|ucid| {
-                    ctx.db.player(&ucid).and_then(|p| {
-                        p.current_slot
-                            .as_ref()
-                            .and_then(|(_, i)| i.as_ref())
-                            .filter(|inst| inst.landed_at_objective.is_none())
-                            .map(|inst| {
-                                (
-                                    p.side,
-                                    Vector2::new(inst.position.p.x, inst.position.p.z),
-                                    inst.in_air,
-                                )
-                            })
-                    })
-                });
+                let leave_info =
+                    ctx.db.player_in_unit(false, &initiator).and_then(|ucid| {
+                        ctx.db.player(&ucid).and_then(|p| {
+                            p.current_slot
+                                .as_ref()
+                                .and_then(|(_, i)| i.as_ref())
+                                .filter(|inst| inst.landed_at_objective.is_none())
+                                .map(|inst| {
+                                    (
+                                        p.side,
+                                        Vector2::new(
+                                            inst.position.p.x,
+                                            inst.position.p.z,
+                                        ),
+                                        inst.in_air,
+                                    )
+                                })
+                        })
+                    });
                 if let Some((my_side, my_pos, in_air)) = leave_info
                     && ctx.shots_out.left_slot(initiator.clone(), in_air, start_ts)
                 {
@@ -1711,8 +1784,10 @@ fn handle_event(lua: MizLua, ctx: &mut Context, ev: Event, start_ts: DateTime<Ut
                         if let Some(enemy_oid) =
                             nearest_enemy_player_in_air(&ctx.db, my_side, my_pos, radius)
                         {
-                            let shooter = crate::shots::who_for(&ctx.db, enemy_oid.clone());
-                            let target = crate::shots::who_for(&ctx.db, initiator.clone());
+                            let shooter =
+                                crate::shots::who_for(&ctx.db, enemy_oid.clone());
+                            let target =
+                                crate::shots::who_for(&ctx.db, initiator.clone());
                             let s_typ = ctx
                                 .db
                                 .ephemeral
@@ -1771,14 +1846,18 @@ fn handle_event(lua: MizLua, ctx: &mut Context, ev: Event, start_ts: DateTime<Ut
             // but nothing ever read that list -- it just grew by one entry per
             // shell for the whole session.)
             if let Some(Ok(obj_id)) = e.initiator.as_ref().map(|u| u.object_id()) {
-                let shooter_info = ctx.db.ephemeral.get_uid_by_object_id(&obj_id)
+                let shooter_info = ctx
+                    .db
+                    .ephemeral
+                    .get_uid_by_object_id(&obj_id)
                     .and_then(|uid| ctx.db.unit(uid).ok())
                     .map(|u| (u.side, u.tags.0, u.pos, u.group));
                 if let Some((side, tags, pos, gid)) = shooter_info {
                     // Live voice GCI: an enemy SAM firing -> "SAM launch, defend"
                     // for nearby friendly flights (see admin::query_gci).
                     if side != Side::Neutral
-                        && (tags.contains(UnitTag::SAM) || tags.contains(UnitTag::Launcher))
+                        && (tags.contains(UnitTag::SAM)
+                            || tags.contains(UnitTag::Launcher))
                         && !tags.contains(UnitTag::Aircraft)
                     {
                         ctx.ewr.record_sam_launch(pos, side, start_ts);
@@ -1794,7 +1873,8 @@ fn handle_event(lua: MizLua, ctx: &mut Context, ev: Event, start_ts: DateTime<Ut
                     }
                 }
                 // AI helo missions near an air-defence launch re-route.
-                if let Some(uid) = ctx.db.ephemeral.get_uid_by_object_id(&obj_id).copied() {
+                if let Some(uid) = ctx.db.ephemeral.get_uid_by_object_id(&obj_id).copied()
+                {
                     ctx.db.note_air_defence_fire(&uid, start_ts);
                 }
             }
@@ -1815,10 +1895,19 @@ fn handle_event(lua: MizLua, ctx: &mut Context, ev: Event, start_ts: DateTime<Ut
                         .and_then(|obj_id| ctx.db.ephemeral.get_uid_by_object_id(&obj_id))
                         .and_then(|uid| ctx.db.unit(uid).ok())
                         .map(|u| u.side)
-                        .or_else(|| e.initiator.as_ref().and_then(|u| u.get_coalition().ok()))
+                        .or_else(|| {
+                            e.initiator.as_ref().and_then(|u| u.get_coalition().ok())
+                        })
                         .filter(|s| *s != Side::Neutral);
-                    if let (Some(shooter_side), Ok(weapon_oid)) = (shooter_side, e.weapon.object_id()) {
-                        ctx.ewr.track_potential_arm(weapon_oid, shooter_side.opposite(), start_ts, decoy);
+                    if let (Some(shooter_side), Ok(weapon_oid)) =
+                        (shooter_side, e.weapon.object_id())
+                    {
+                        ctx.ewr.track_potential_arm(
+                            weapon_oid,
+                            shooter_side.opposite(),
+                            start_ts,
+                            decoy,
+                        );
                     }
                 }
             }
@@ -1841,8 +1930,20 @@ fn handle_event(lua: MizLua, ctx: &mut Context, ev: Event, start_ts: DateTime<Ut
                 airlife::civil_down(ctx, name.as_str(), start_ts);
             }
         }
-        Event::Dead(e) => handle_death(lua, ctx, false, DeathObj::capture(e.initiator.as_ref())?, start_ts)?,
-        Event::UnitLost(e) => handle_death(lua, ctx, true, DeathObj::capture(e.initiator.as_ref())?, start_ts)?,
+        Event::Dead(e) => handle_death(
+            lua,
+            ctx,
+            false,
+            DeathObj::capture(e.initiator.as_ref())?,
+            start_ts,
+        )?,
+        Event::UnitLost(e) => handle_death(
+            lua,
+            ctx,
+            true,
+            DeathObj::capture(e.initiator.as_ref())?,
+            start_ts,
+        )?,
         Event::PilotDead(e) => {
             if let Some(unit) = e.initiator.as_ref().and_then(|u| u.as_unit().ok()) {
                 // CSAR is only for a pilot who actually got out -- that's the
@@ -1913,11 +2014,16 @@ fn handle_event(lua: MizLua, ctx: &mut Context, ev: Event, start_ts: DateTime<Ut
                     ctx.airborne.insert(id.clone());
                     info!(
                         "[LANDING] {} takeoff event after its landing at ({:.0},{:.0}), holding until it climbs away",
-                        unit.get_player_name().ok().flatten().map(|n| n.to_string()).unwrap_or_default(),
+                        unit.get_player_name()
+                            .ok()
+                            .flatten()
+                            .map(|n| n.to_string())
+                            .unwrap_or_default(),
                         pos.x,
                         pos.y
                     );
-                    ctx.pending_takeoffs.insert(id, PendingTakeoff { pos, place, air_since: None });
+                    ctx.pending_takeoffs
+                        .insert(id, PendingTakeoff { pos, place, air_since: None });
                 } else if ctx.airborne.insert(id.clone()) {
                     let position = unit.get_ground_position()?.0;
                     process_takeoff(lua, ctx, &unit, place.as_ref(), position, start_ts)?;
@@ -1936,7 +2042,11 @@ fn handle_event(lua: MizLua, ctx: &mut Context, ev: Event, start_ts: DateTime<Ut
                     ctx.airborne.remove(&id);
                     info!(
                         "[LANDING] {} touched down again, held takeoff dropped, landing stands",
-                        unit.get_player_name().ok().flatten().map(|n| n.to_string()).unwrap_or_default()
+                        unit.get_player_name()
+                            .ok()
+                            .flatten()
+                            .map(|n| n.to_string())
+                            .unwrap_or_default()
                     );
                 } else if ctx.airborne.remove(&id) {
                     ctx.recently_landed.insert(id, ctx.now());
@@ -1979,7 +2089,11 @@ fn handle_event(lua: MizLua, ctx: &mut Context, ev: Event, start_ts: DateTime<Ut
     Ok(())
 }
 
-pub(crate) fn lives(db: &mut Db, ucid: &Ucid, typfilter: Option<LifeType>) -> Result<CompactString> {
+pub(crate) fn lives(
+    db: &mut Db,
+    ucid: &Ucid,
+    typfilter: Option<LifeType>,
+) -> Result<CompactString> {
     db.maybe_reset_lives(ucid, db.ephemeral.now())?;
     let player = db.player(ucid).ok_or_else(|| anyhow!("no such player {:?}", ucid))?;
     let cfg = &db.ephemeral.cfg;
@@ -2022,9 +2136,7 @@ fn process_takeoff(
         Err(e) => error!("could not process takeoff, {:?}", e),
         Ok(TakeoffRes::NoLifeTaken | TakeoffRes::NotPlayerSlot) => (),
         Ok(TakeoffRes::TookLife(typ)) => {
-            if let Err(e) =
-                message_life(ctx, &slot, Some(typ), "life taken\n")
-            {
+            if let Err(e) = message_life(ctx, &slot, Some(typ), "life taken\n") {
                 error!("could not display life taken message {:?}", e)
             }
             let _ = menu::cargo::list_cargo_for_slot(ctx, &slot);
@@ -2090,7 +2202,10 @@ fn confirm_takeoffs(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
             .get_point()
             .ok()
             .and_then(|pt| {
-                let ground = land.as_ref()?.get_height(LuaVec2(Vector2::new(pt.0.x, pt.0.z))).ok()?;
+                let ground = land
+                    .as_ref()?
+                    .get_height(LuaVec2(Vector2::new(pt.0.x, pt.0.z)))
+                    .ok()?;
                 Some(pt.0.y - ground)
             })
             .unwrap_or(0.);
@@ -2106,7 +2221,11 @@ fn confirm_takeoffs(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
         let Ok(unit) = Unit::get_instance(lua, &id) else { continue };
         info!(
             "[LANDING] {} climbed away, takeoff confirmed",
-            unit.get_player_name().ok().flatten().map(|n| n.to_string()).unwrap_or_default()
+            unit.get_player_name()
+                .ok()
+                .flatten()
+                .map(|n| n.to_string())
+                .unwrap_or_default()
         );
         if let Err(e) = process_takeoff(lua, ctx, &unit, p.place.as_ref(), p.pos, now) {
             error!("could not process confirmed takeoff {e:?}")
@@ -2132,7 +2251,9 @@ fn took_off_off_runway(lua: MizLua, airbase_name: &str, pos: Vector2) -> Option<
     // been over-eager -- getRunways() reports an odd centre/course on some
     // diagonal or multi-runway fields, which flagged legitimate takeoffs.
     if let Ok(land) = dcso3::land::Land::singleton(lua) {
-        if land.get_surface_type(LuaVec2(pos)).ok() == Some(dcso3::land::SurfaceType::Runway) {
+        if land.get_surface_type(LuaVec2(pos)).ok()
+            == Some(dcso3::land::SurfaceType::Runway)
+        {
             return Some(false);
         }
     }
@@ -2173,7 +2294,14 @@ fn took_off_off_runway(lua: MizLua, airbase_name: &str, pos: Vector2) -> Option<
 /// Warn a fixed-wing player who got airborne from a taxiway or apron instead of
 /// the runway. Helicopters and the AV-8B are exempt -- a pad departure is normal
 /// for them.
-fn warn_taxiway_takeoff(lua: MizLua, ctx: &mut Context, unit: &Unit, place: Option<&String>, pos: Vector2, slot: &SlotId) {
+fn warn_taxiway_takeoff(
+    lua: MizLua,
+    ctx: &mut Context,
+    unit: &Unit,
+    place: Option<&String>,
+    pos: Vector2,
+    slot: &SlotId,
+) {
     let Some(airbase_name) = place else { return };
     let Some(sifo) = ctx.db.ephemeral.get_slot_info(slot) else { return };
     let is_helo = ctx
@@ -2260,8 +2388,7 @@ fn announce_takeoff_holds(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
     // player per tick was a steady stream of priority-0 commands competing
     // with every chat line and alert for the same send budget.
     const NAG_EVERY: i64 = 5;
-    ctx.takeoff_nag_last
-        .retain(|uid, _| nags.iter().any(|(u, _)| u == uid));
+    ctx.takeoff_nag_last.retain(|uid, _| nags.iter().any(|(u, _)| u == uid));
     for (uid, secs) in nags {
         let due = ctx
             .takeoff_nag_last
@@ -2318,7 +2445,12 @@ fn announce_takeoff_holds(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
 
 /// Era weapon rules (`EraCfg::banned_weapons`): a pilot who took off with a
 /// banned store is told what it is and how long they have to land.
-fn check_banned_loadout(ctx: &mut Context, unit: &Unit, slot: &SlotId, now: DateTime<Utc>) {
+fn check_banned_loadout(
+    ctx: &mut Context,
+    unit: &Unit,
+    slot: &SlotId,
+    now: DateTime<Utc>,
+) {
     let Some(era) = ctx.db.ephemeral.cfg.era.clone() else { return };
     let Some(ucid) = ctx.db.ephemeral.player_in_slot(slot).copied() else { return };
     let Ok(ammo) = unit.get_ammo() else { return };
@@ -2351,7 +2483,8 @@ fn check_banned_loadout(ctx: &mut Context, unit: &Unit, slot: &SlotId, now: Date
             ),
         );
     }
-    ctx.banned_loadouts.insert(ucid, (now + Duration::seconds(secs as i64), slot.clone(), list));
+    ctx.banned_loadouts
+        .insert(ucid, (now + Duration::seconds(secs as i64), slot.clone(), list));
 }
 
 /// Firing a banned weapon: the aircraft is removed on the spot.
@@ -2362,12 +2495,20 @@ fn banned_weapon_fired(lua: MizLua, ctx: &mut Context, e: &dcso3::event::Shot) {
         return;
     }
     let Some(unit) = e.initiator.as_ref() else { return };
-    let Some(ucid) = unit.object_id().ok().and_then(|oid| ctx.db.player_in_unit(false, &oid)) else {
+    let Some(ucid) =
+        unit.object_id().ok().and_then(|oid| ctx.db.player_in_unit(false, &oid))
+    else {
         return;
     };
     let Ok(slot) = unit.slot() else { return };
     warn!("[ERA_RULES] {ucid} fired banned weapon {name} -- removed");
-    remove_for_era_rules(lua, ctx, &ucid, &slot, &format_compact!("You fired {name}, which is banned in this era"));
+    remove_for_era_rules(
+        lua,
+        ctx,
+        &ucid,
+        &slot,
+        &format_compact!("You fired {name}, which is banned in this era"),
+    );
 }
 
 /// Pilots past their deadline to land with a banned weapon are removed;
@@ -2397,13 +2538,17 @@ fn enforce_banned_loadouts(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
                 ctx.banned_loadouts.remove(&ucid);
             }
             rules::BannedVerdict::Remove => {
-                warn!("[ERA_RULES] {ucid} still airborne with banned {list} after the deadline -- removed");
+                warn!(
+                    "[ERA_RULES] {ucid} still airborne with banned {list} after the deadline -- removed"
+                );
                 remove_for_era_rules(
                     lua,
                     ctx,
                     &ucid,
                     &slot,
-                    &format_compact!("You did not land to remove {list}, which is banned in this era"),
+                    &format_compact!(
+                        "You did not land to remove {list}, which is banned in this era"
+                    ),
                 );
             }
             rules::BannedVerdict::Wait => (),
@@ -2411,7 +2556,13 @@ fn enforce_banned_loadouts(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
     }
 }
 
-fn remove_for_era_rules(lua: MizLua, ctx: &mut Context, ucid: &Ucid, slot: &SlotId, why: &str) {
+fn remove_for_era_rules(
+    lua: MizLua,
+    ctx: &mut Context,
+    ucid: &Ucid,
+    slot: &SlotId,
+    why: &str,
+) {
     ctx.banned_loadouts.remove(ucid);
     if let Some(uid) = slot.as_unit_id() {
         ctx.db.ephemeral.msgs().panel_to_unit(
@@ -2435,13 +2586,8 @@ fn remove_for_era_rules(lua: MizLua, ctx: &mut Context, ucid: &Ucid, slot: &Slot
 /// to spectators. Spawn camping a rear field was the PvP griefing nothing
 /// else stopped. Called from the 1 Hz loop, so each call is one second.
 fn enforce_rear_bases(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
-    let Some(cfg) = ctx
-        .db
-        .ephemeral
-        .cfg
-        .rear_base_protection
-        .clone()
-        .filter(|c| c.enabled)
+    let Some(cfg) =
+        ctx.db.ephemeral.cfg.rear_base_protection.clone().filter(|c| c.enabled)
     else {
         return;
     };
@@ -2459,7 +2605,8 @@ fn enforce_rear_bases(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
         ctx.rear_base_time.clear();
         return;
     }
-    let land = (cfg.min_agl_m > 0.).then(|| dcso3::land::Land::singleton(lua).ok()).flatten();
+    let land =
+        (cfg.min_agl_m > 0.).then(|| dcso3::land::Land::singleton(lua).ok()).flatten();
     // (ucid, name, side, slot, uid, base)
     let mut inside: Vec<(Ucid, String, Side, SlotId, UnitId, String)> = vec![];
     let mut flying: FxHashSet<Ucid> = FxHashSet::default();
@@ -2478,10 +2625,18 @@ fn enforce_rear_bases(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
             }
         }
         let hit = bases.iter().find(|(owner, bpos, _)| {
-            *owner != player.side && na::distance(&pos.into(), &(*bpos).into()) <= cfg.radius_m
+            *owner != player.side
+                && na::distance(&pos.into(), &(*bpos).into()) <= cfg.radius_m
         });
         if let Some((_, _, bname)) = hit {
-            inside.push((*ucid, player.name.clone(), player.side, slot.clone(), uid, bname.clone()));
+            inside.push((
+                *ucid,
+                player.name.clone(),
+                player.side,
+                slot.clone(),
+                uid,
+                bname.clone(),
+            ));
         }
     }
     // A new sortie starts with a clean count.
@@ -2600,16 +2755,28 @@ fn return_lives(lua: MizLua, ctx: &mut Context, ts: DateTime<Utc>) {
 /// returned life said anything at all -- on a server without lives a landing
 /// was silent, and pilots logged off not knowing whether it had registered
 /// (Discord, Sept 25).
-fn land_debrief(ctx: &mut Context, r: &crate::db::player::LandReport, now: DateTime<Utc>) -> CompactString {
+fn land_debrief(
+    ctx: &mut Context,
+    r: &crate::db::player::LandReport,
+    now: DateTime<Utc>,
+) -> CompactString {
     use std::fmt::Write;
-    let name = |db: &Db, oid: ObjectiveId| db.objective(&oid).ok().map(|o| format_compact!("{}", o.name()));
+    let name = |db: &Db, oid: ObjectiveId| {
+        db.objective(&oid).ok().map(|o| format_compact!("{}", o.name()))
+    };
     let mut m = CompactString::new("");
     match r.at.and_then(|oid| name(&ctx.db, oid)) {
         Some(at) => {
-            let _ = writeln!(m, "LANDED at {at} -- landing registered, safe to leave the slot");
+            let _ = writeln!(
+                m,
+                "LANDED at {at} -- landing registered, safe to leave the slot"
+            );
         }
         None => {
-            let _ = writeln!(m, "LANDED outside a friendly objective -- no landing credit here");
+            let _ = writeln!(
+                m,
+                "LANDED outside a friendly objective -- no landing credit here"
+            );
         }
     }
     if let Some(took_off) = r.tally.took_off {
@@ -2635,7 +2802,12 @@ fn land_debrief(ctx: &mut Context, r: &crate::db::player::LandReport, now: DateT
     } else {
         let list: Vec<std::string::String> =
             r.tally.kills.iter().map(|(typ, n)| format!("{n}x {typ}")).collect();
-        let _ = writeln!(m, "Kills: {kills} (+{} pts): {}", r.tally.kill_points, list.join(", "));
+        let _ = writeln!(
+            m,
+            "Kills: {kills} (+{} pts): {}",
+            r.tally.kill_points,
+            list.join(", ")
+        );
     }
     if r.at.is_some() {
         if r.charged > 0 {
@@ -2666,7 +2838,10 @@ fn land_debrief(ctx: &mut Context, r: &crate::db::player::LandReport, now: DateT
         } else if r.at.is_some() {
             let _ = writeln!(m, "Lives: {left}");
         } else {
-            let _ = writeln!(m, "Lives: {left} (no life back away from a friendly objective)");
+            let _ = writeln!(
+                m,
+                "Lives: {left} (no life back away from a friendly objective)"
+            );
         }
     }
     if r.at.is_none() {
@@ -2686,7 +2861,9 @@ fn advise_captureable(ctx: &mut Context) -> Result<()> {
         if *dur == 10 {
             let obj = ctx.db.objective(oid)?;
             let m = match obj.owner {
-                Side::Neutral => format_compact!("{} (neutral) is now capturable", obj.name()),
+                Side::Neutral => {
+                    format_compact!("{} (neutral) is now capturable", obj.name())
+                }
                 owner => format_compact!(
                     "{} ({owner:?}) is now capturable by {:?}",
                     obj.name(),
@@ -2710,7 +2887,11 @@ fn advise_captured(ctx: &mut Context, lua: MizLua, ts: DateTime<Utc>) -> Result<
         ctx.event_scheduler.owned_cache_dirty = true;
         let (name, pos, owner_only) = {
             let obj = ctx.db.objective(&oid)?;
-            (obj.name().to_owned(), obj.pos(), crate::db::markup::owner_only_kind(obj.kind()))
+            (
+                obj.name().to_owned(),
+                obj.pos(),
+                crate::db::markup::owner_only_kind(obj.kind()),
+            )
         };
         let mark_text = format_compact!("{} captured by {:?}", name, side);
         let (map_layer, msgs) = ctx.db.ephemeral.map_layer_and_msgs();
@@ -2776,11 +2957,8 @@ fn friendly_air_target(
     let key = CompactString::from(target.get_name().ok()?.as_str());
     let pos = target.get_point().ok()?.0;
     let typ = target.get_type_name().ok().map(|t| CompactString::from(t.as_str()));
-    let pilot = target
-        .get_player_name()
-        .ok()
-        .flatten()
-        .map(|n| CompactString::from(n.as_str()));
+    let pilot =
+        target.get_player_name().ok().flatten().map(|n| CompactString::from(n.as_str()));
     Some((key, pos, typ, pilot))
 }
 
@@ -2814,7 +2992,8 @@ fn check_buddy_spikes(ctx: &mut Context, lua: MizLua, now: DateTime<Utc>) {
         return;
     }
     let mut locks: SmallVec<
-        [(Ucid, (CompactString, Vector3, Option<CompactString>, Option<CompactString>)); 4],
+        [(Ucid, (CompactString, Vector3, Option<CompactString>, Option<CompactString>));
+            4],
     > = smallvec![];
     for (ucid, player, inst) in ctx.db.instanced_players() {
         if !inst.in_air {
@@ -2882,7 +3061,8 @@ fn check_auto_shutdown(
             }
         }
         if let Some(i) = due {
-            let msg = format_compact!("The server will restart in {}", SHUTDOWN_WARNINGS[i].1);
+            let msg =
+                format_compact!("The server will restart in {}", SHUTDOWN_WARNINGS[i].1);
             ctx.db.ephemeral.msgs().panel_to_all(60, i > 0, msg);
         }
         if wall > asd.when {
@@ -2994,15 +3174,14 @@ fn update_jtac_contacts(ctx: &mut Context, lua: MizLua) {
             // cheaper than it looks.
             let mut live: FxHashMap<Side, FxHashSet<ObjectiveId>> = FxHashMap::default();
             for jtac in ctx.jtac.jtacs() {
-                live.entry(jtac.side())
-                    .or_default()
-                    .insert(jtac.location().oid);
+                live.entry(jtac.side()).or_default().insert(jtac.location().oid);
             }
             let empty: FxHashSet<ObjectiveId> = FxHashSet::default();
             let moved: SmallVec<[Side; 3]> = [Side::Blue, Side::Red, Side::Neutral]
                 .into_iter()
                 .filter(|side| {
-                    live.get(side).unwrap_or(&empty) != ctx.jtac_locations.get(side).unwrap_or(&empty)
+                    live.get(side).unwrap_or(&empty)
+                        != ctx.jtac_locations.get(side).unwrap_or(&empty)
                 })
                 .collect();
             if !moved.is_empty() {
@@ -3060,17 +3239,16 @@ fn tick_economy(ctx: &mut Context, ts: DateTime<Utc>) {
         return;
     }
     ctx.last_commander_tick = ts;
-    let mut ucids_by_side: fxhash::FxHashMap<dcso3::coalition::Side, Vec<dcso3::net::Ucid>> =
-        fxhash::FxHashMap::default();
+    let mut ucids_by_side: fxhash::FxHashMap<
+        dcso3::coalition::Side,
+        Vec<dcso3::net::Ucid>,
+    > = fxhash::FxHashMap::default();
     // Holding pay goes to players in a slot, not every connection.
     for ifo in ctx.connected.info_by_player_id.values() {
         if let Some(player) = ctx.db.persisted.players.get(&ifo.ucid)
             && player.current_slot.is_some()
         {
-            ucids_by_side
-                .entry(player.side)
-                .or_default()
-                .push(ifo.ucid);
+            ucids_by_side.entry(player.side).or_default().push(ifo.ucid);
         }
     }
     economy::tick(&mut ctx.db, &cfg, ts, &ucids_by_side);
@@ -3127,7 +3305,10 @@ fn find_ground_template(
     let is_ground = |g: &db::group::SpawnedGroup| {
         matches!(
             g.class,
-            ObjGroupClass::Armor | ObjGroupClass::Mr | ObjGroupClass::Sr | ObjGroupClass::Lr
+            ObjGroupClass::Armor
+                | ObjGroupClass::Mr
+                | ObjGroupClass::Sr
+                | ObjGroupClass::Lr
         ) && !g.template_name.starts_with("@synthetic:")
     };
 
@@ -3146,20 +3327,21 @@ fn find_ground_template(
     }
 
     // Fallback: find any ground template owned by this side (e.g. carrier objectives have no armor)
-    db.persisted.objectives.into_iter()
-        .filter(|(_, o)| o.owner() == side)
-        .find_map(|(_, o)| {
+    db.persisted.objectives.into_iter().filter(|(_, o)| o.owner() == side).find_map(
+        |(_, o)| {
             o.groups().get(&side)?.into_iter().find_map(|gid| {
                 db.persisted.groups.get(gid).and_then(|g| {
                     if is_ground(g) { Some(g.template_name.clone()) } else { None }
                 })
             })
-        })
+        },
+    )
 }
 
 fn drain_event_effects(lua: MizLua, ctx: &mut Context) {
     use crate::db::events::EventScheduler;
-    let budget = EventScheduler::EFFECTS_PER_TICK.min(ctx.event_scheduler.pending_effects.len());
+    let budget =
+        EventScheduler::EFFECTS_PER_TICK.min(ctx.event_scheduler.pending_effects.len());
     let to_apply: Vec<_> = ctx.event_scheduler.pending_effects.drain(..budget).collect();
     if to_apply.is_empty() {
         return;
@@ -3168,15 +3350,17 @@ fn drain_event_effects(lua: MizLua, ctx: &mut Context) {
 }
 
 fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>) {
-    use crate::db::group::DeployKind;
     use crate::db::events::EventEffect;
+    use crate::db::group::DeployKind;
     use crate::db::objective::ObjGroupClass;
     use crate::spawnctx::{SpawnCtx, SpawnLoc};
     use dcso3::Color;
-    use dcso3::controller::{ActionTyp, AltType, MissionPoint, PointType, Task, VehicleFormation};
+    use dcso3::LuaVec2;
+    use dcso3::controller::{
+        ActionTyp, AltType, MissionPoint, PointType, Task, VehicleFormation,
+    };
     use dcso3::group::Group;
     use dcso3::land::Land;
-    use dcso3::LuaVec2;
     use dcso3::trigger::{CircleSpec, LineType, SideFilter};
 
     let spctx = match SpawnCtx::new(lua) {
@@ -3189,7 +3373,6 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
 
     for effect in effects {
         match effect {
-
             // C: Artillery/armor barrage — move Armor/Mr/Lr groups into firing range then fire.
             // Groups already in range fire immediately; out-of-range groups are given a
             // waypoint along the src→target vector at (arty_range * 0.85) from the target
@@ -3197,7 +3380,10 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
             EventEffect::FireBarrage { event_id, side, source_objective, target_pos } => {
                 let land = match Land::singleton(lua) {
                     Ok(l) => l,
-                    Err(e) => { error!("FireBarrage: Land singleton: {e}"); continue; }
+                    Err(e) => {
+                        error!("FireBarrage: Land singleton: {e}");
+                        continue;
+                    }
                 };
 
                 let obj = ctx.db.persisted.objectives.get(&source_objective);
@@ -3206,12 +3392,25 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                     .map(|gs| gs.into_iter().copied().collect())
                     .unwrap_or_default();
 
-                let barrage_radius = ctx.db.ephemeral.cfg.campaign_events
-                    .as_ref().map(|c| c.barrage_radius_m).unwrap_or(500.0);
-                let barrage_max_groups = ctx.db.ephemeral.cfg.campaign_events
-                    .as_ref().map(|c| c.barrage_max_groups).unwrap_or(5);
+                let barrage_radius = ctx
+                    .db
+                    .ephemeral
+                    .cfg
+                    .campaign_events
+                    .as_ref()
+                    .map(|c| c.barrage_radius_m)
+                    .unwrap_or(500.0);
+                let barrage_max_groups = ctx
+                    .db
+                    .ephemeral
+                    .cfg
+                    .campaign_events
+                    .as_ref()
+                    .map(|c| c.barrage_max_groups)
+                    .unwrap_or(5);
                 // Effective weapon range — stay 15% inside it to ensure the AI can engage.
-                let arty_range = ctx.db.ephemeral.cfg.artillery_mission_range as f64 * 0.85;
+                let arty_range =
+                    ctx.db.ephemeral.cfg.artillery_mission_range as f64 * 0.85;
 
                 let alt = land.get_height(LuaVec2(target_pos)).unwrap_or(0.);
                 let fire_task = Task::FireAtPoint {
@@ -3237,7 +3436,9 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                     let alive = group.units.into_iter().any(|uid| {
                         ctx.db.persisted.units.get(uid).map(|u| !u.dead).unwrap_or(false)
                     });
-                    if !alive { continue; }
+                    if !alive {
+                        continue;
+                    }
                     let group_name = group.name.clone();
                     let group_pos = ctx.db.group_center(gid).unwrap_or(target_pos);
                     let dist = na::distance(&group_pos.into(), &target_pos.into());
@@ -3260,7 +3461,9 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                         Task::Mission {
                             airborne: Some(false),
                             route: vec![MissionPoint {
-                                action: Some(ActionTyp::Ground(VehicleFormation::OffRoad)),
+                                action: Some(ActionTyp::Ground(
+                                    VehicleFormation::OffRoad,
+                                )),
                                 typ: PointType::TurningPoint,
                                 airdrome_id: None,
                                 helipad: None,
@@ -3285,8 +3488,15 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                                 error!("FireBarrage: set_task {group_name}: {e}");
                             } else {
                                 fired += 1;
-                                let action = if dist <= arty_range { "firing in place" } else { "moving to firing position" };
-                                info!("FireBarrage: {:?} group {group_name} {action}, dist={:.0}m", side, dist);
+                                let action = if dist <= arty_range {
+                                    "firing in place"
+                                } else {
+                                    "moving to firing position"
+                                };
+                                info!(
+                                    "FireBarrage: {:?} group {group_name} {action}, dist={:.0}m",
+                                    side, dist
+                                );
                             }
                         }
                     }
@@ -3299,24 +3509,43 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                         SideFilter::All,
                         mid,
                         CircleSpec {
-                            center: dcso3::LuaVec3(dcso3::Vector3::new(target_pos.x, 0., target_pos.y)),
+                            center: dcso3::LuaVec3(dcso3::Vector3::new(
+                                target_pos.x,
+                                0.,
+                                target_pos.y,
+                            )),
                             radius: 2000.,
                             color: side_color(side),
                             fill_color: Color::new(0., 0., 0., 0.),
                             line_type: LineType::Dashed,
                             read_only: true,
                         },
-                        Some(format_compact!("Fire Support [{:?}] — {} units firing", side, fired).into()),
+                        Some(
+                            format_compact!(
+                                "Fire Support [{:?}] — {} units firing",
+                                side,
+                                fired
+                            )
+                            .into(),
+                        ),
                     );
                     ctx.event_scheduler.register_mark(event_id, mid);
                 }
             }
 
             // D: ALCM / Scud / HIMARS missile strike — fire pre-selected groups at target.
-            EventEffect::FireMissileStrike { event_id, side, shooter_gids, target_pos } => {
+            EventEffect::FireMissileStrike {
+                event_id,
+                side,
+                shooter_gids,
+                target_pos,
+            } => {
                 let land = match Land::singleton(lua) {
                     Ok(l) => l,
-                    Err(e) => { error!("FireMissileStrike: Land singleton: {e}"); continue; }
+                    Err(e) => {
+                        error!("FireMissileStrike: Land singleton: {e}");
+                        continue;
+                    }
                 };
                 let alt = land.get_height(LuaVec2(target_pos)).unwrap_or(0.);
                 let fire_task = Task::FireAtPoint {
@@ -3338,19 +3567,28 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                     let alive = group.units.into_iter().any(|uid| {
                         ctx.db.persisted.units.get(uid).map(|u| !u.dead).unwrap_or(false)
                     });
-                    if !alive { continue; }
+                    if !alive {
+                        continue;
+                    }
                     let group_name = group.name.clone();
                     let center = ctx.db.group_center(gid).unwrap_or(target_pos);
                     let facing = group_facing(&ctx.db, gid);
                     if let Ok(dcs_group) = Group::get_by_name(lua, group_name.as_str()) {
                         if let Ok(controller) = dcs_group.get_controller() {
-                            let task =
-                                aim_and_fire_route(center, target_pos, facing, fire_task.clone());
+                            let task = aim_and_fire_route(
+                                center,
+                                target_pos,
+                                facing,
+                                fire_task.clone(),
+                            );
                             if let Err(e) = controller.set_task(task) {
                                 error!("FireMissileStrike: set_task {group_name}: {e}");
                             } else {
                                 fired += 1;
-                                info!("FireMissileStrike: {:?} group {group_name} launching at {:?}", side, target_pos);
+                                info!(
+                                    "FireMissileStrike: {:?} group {group_name} launching at {:?}",
+                                    side, target_pos
+                                );
                             }
                         }
                     }
@@ -3362,14 +3600,25 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                         SideFilter::All,
                         mid,
                         CircleSpec {
-                            center: dcso3::LuaVec3(dcso3::Vector3::new(target_pos.x, 0., target_pos.y)),
+                            center: dcso3::LuaVec3(dcso3::Vector3::new(
+                                target_pos.x,
+                                0.,
+                                target_pos.y,
+                            )),
                             radius: 3000.,
                             color: side_color(side),
                             fill_color: Color::new(0., 0., 0., 0.),
                             line_type: LineType::Dashed,
                             read_only: true,
                         },
-                        Some(format_compact!("Missile Strike [{:?}] — {} launchers firing", side, fired).into()),
+                        Some(
+                            format_compact!(
+                                "Missile Strike [{:?}] — {} launchers firing",
+                                side,
+                                fired
+                            )
+                            .into(),
+                        ),
                     );
                     ctx.event_scheduler.register_mark(event_id, mid);
                 }
@@ -3378,12 +3627,23 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
             // E: Send the ambush force out of its objective by road to an
             // intercept ahead of the convoy. It used to appear next to the
             // convoy out of nowhere.
-            EventEffect::SpawnAmbush { event_id, ambush_side, spawn_pos, source_objective, convoy_group_id, convoy_pos } => {
-                let template = find_ground_template(&ctx.db, source_objective, ambush_side);
+            EventEffect::SpawnAmbush {
+                event_id,
+                ambush_side,
+                spawn_pos,
+                source_objective,
+                convoy_group_id,
+                convoy_pos,
+            } => {
+                let template =
+                    find_ground_template(&ctx.db, source_objective, ambush_side);
                 let template = match template {
                     Some(t) => t,
                     None => {
-                        info!("SpawnAmbush: no suitable template for {:?} at {:?}", ambush_side, source_objective);
+                        info!(
+                            "SpawnAmbush: no suitable template for {:?} at {:?}",
+                            ambush_side, source_objective
+                        );
                         continue;
                     }
                 };
@@ -3399,7 +3659,10 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                     spawn_pos,
                 ) {
                     Ok(Some((gid, at))) => {
-                        info!("SpawnAmbush: {:?} force {:?} on its way to {:?}", ambush_side, gid, at);
+                        info!(
+                            "SpawnAmbush: {:?} force {:?} on its way to {:?}",
+                            ambush_side, gid, at
+                        );
                         ctx.event_scheduler.ambush_groups.insert(event_id, gid);
                         intercept = at;
                         true
@@ -3419,7 +3682,8 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                         ambush_side, event_id, convoy_pos
                     );
                     ctx.event_scheduler.active_events.retain(|ev| ev.id() != event_id);
-                    if let Some(marks) = ctx.event_scheduler.event_marks.remove(&event_id) {
+                    if let Some(marks) = ctx.event_scheduler.event_marks.remove(&event_id)
+                    {
                         for mid in marks {
                             ctx.db.ephemeral.msgs().delete_mark(mid);
                         }
@@ -3432,7 +3696,11 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                     SideFilter::All,
                     mid,
                     CircleSpec {
-                        center: dcso3::LuaVec3(dcso3::Vector3::new(intercept.x, 0., intercept.y)),
+                        center: dcso3::LuaVec3(dcso3::Vector3::new(
+                            intercept.x,
+                            0.,
+                            intercept.y,
+                        )),
                         radius: 1500.,
                         color: side_color(ambush_side),
                         fill_color: Color::new(0., 0., 0., 0.),
@@ -3451,7 +3719,14 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
             }
 
             // E: Spawn a CAP aircraft patrol over/near an objective
-            EventEffect::SpawnCap { event_id, cap_side, objective, obj_pos, rotary, threat } => {
+            EventEffect::SpawnCap {
+                event_id,
+                cap_side,
+                objective,
+                obj_pos,
+                rotary,
+                threat,
+            } => {
                 // CAP must ground-start from a real airbase (startup + taxi +
                 // takeoff is what gives flights their time separation). If the
                 // objective has no resolvable runtime airbase, don't spawn an
@@ -3477,7 +3752,8 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                         objective
                     );
                     ctx.event_scheduler.active_events.retain(|ev| ev.id() != event_id);
-                    if let Some(marks) = ctx.event_scheduler.event_marks.remove(&event_id) {
+                    if let Some(marks) = ctx.event_scheduler.event_marks.remove(&event_id)
+                    {
                         for mid in marks {
                             ctx.db.ephemeral.msgs().delete_mark(mid);
                         }
@@ -3489,8 +3765,12 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                 // several, weighted and threat-tiered; with no roster this is
                 // just the one legacy name. Trying them in order means a
                 // missing group in the .miz costs that entry, not the scramble.
-                let candidates =
-                    cap_template_candidates(cfg.campaign_events.as_deref(), cap_side, rotary, threat);
+                let candidates = cap_template_candidates(
+                    cfg.campaign_events.as_deref(),
+                    cap_side,
+                    rotary,
+                    threat,
+                );
                 // Spawn directly at the airbase center; template should be a ground hotstart
                 let spawn_pos = obj_pos;
                 let mut spawned: Option<(GroupId, dcso3::String)> = None;
@@ -3516,10 +3796,17 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                             let cold = cfg
                                 .campaign_events
                                 .as_ref()
-                                .map(|c| if rotary { c.helo_cold_start } else { c.cap_cold_start })
+                                .map(|c| {
+                                    if rotary {
+                                        c.helo_cold_start
+                                    } else {
+                                        c.cap_cold_start
+                                    }
+                                })
                                 .unwrap_or(true);
-                            let mut tags: enumflags2::BitFlags<bfprotocols::cfg::UnitTag> =
-                                bfprotocols::cfg::UnitTag::CAP.into();
+                            let mut tags: enumflags2::BitFlags<
+                                bfprotocols::cfg::UnitTag,
+                            > = bfprotocols::cfg::UnitTag::CAP.into();
                             if cold {
                                 tags |= bfprotocols::cfg::UnitTag::ColdStart;
                             }
@@ -3538,7 +3825,10 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                             if rotary { "helicopter-section" } else { "plane-section" },
                             template
                         ),
-                        Err(e) => debug!("SpawnCap: template '{}' still missing ({e:?})", template),
+                        Err(e) => debug!(
+                            "SpawnCap: template '{}' still missing ({e:?})",
+                            template
+                        ),
                     }
                 }
                 match spawned {
@@ -3556,7 +3846,8 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                             gid,
                             crate::db::events::CapSpawnWatch::new(ctx.now()),
                         );
-                        ctx.event_scheduler.cap_groups
+                        ctx.event_scheduler
+                            .cap_groups
                             .entry(event_id)
                             .or_default()
                             .push(gid);
@@ -3568,14 +3859,22 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                         let duration = cfg
                             .campaign_events
                             .as_ref()
-                            .map(|c| if rotary { c.helo_duration_secs } else { c.cap_duration_secs })
+                            .map(|c| {
+                                if rotary {
+                                    c.helo_duration_secs
+                                } else {
+                                    c.cap_duration_secs
+                                }
+                            })
                             .unwrap_or(600);
                         ctx.event_scheduler.cap_hard_expiry.insert(
                             event_id,
                             ctx.now() + chrono::Duration::seconds(2 * duration as i64),
                         );
                         // Queue initial task -- deferred until DCS reports the group alive.
-                        ctx.event_scheduler.pending_cap_tasks.insert(gid, (obj_pos, rotary));
+                        ctx.event_scheduler
+                            .pending_cap_tasks
+                            .insert(gid, (obj_pos, rotary));
                         // F10 mark so players can see the CAP threat
                         let enemy = match cap_side {
                             dcso3::coalition::Side::Red => dcso3::coalition::Side::Blue,
@@ -3591,7 +3890,9 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                             },
                             mid,
                             CircleSpec {
-                                center: dcso3::LuaVec3(dcso3::Vector3::new(obj_pos.x, 5000., obj_pos.y)),
+                                center: dcso3::LuaVec3(dcso3::Vector3::new(
+                                    obj_pos.x, 5000., obj_pos.y,
+                                )),
                                 radius: if rotary { 12_000. } else { 25_000. },
                                 color: side_color(cap_side),
                                 fill_color: Color::new(0., 0., 0., 0.),
@@ -3616,7 +3917,11 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                                  cancelling event (set {} in campaign_events)",
                                 cap_side,
                                 if rotary { "helo patrol" } else { "CAP" },
-                                if rotary { "helo_templates_red/_blue" } else { "cap_templates_red/_blue" }
+                                if rotary {
+                                    "helo_templates_red/_blue"
+                                } else {
+                                    "cap_templates_red/_blue"
+                                }
                             );
                         } else {
                             warn!(
@@ -3627,10 +3932,14 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                             );
                         }
                         // Cancel the event so it doesn't keep retrying
-                        ctx.event_scheduler.active_events.retain(|ev| ev.id() != event_id);
+                        ctx.event_scheduler
+                            .active_events
+                            .retain(|ev| ev.id() != event_id);
                         ctx.event_scheduler.cap_hard_expiry.remove(&event_id);
                         // Clean up any F10 marks that may have been placed
-                        if let Some(marks) = ctx.event_scheduler.event_marks.remove(&event_id) {
+                        if let Some(marks) =
+                            ctx.event_scheduler.event_marks.remove(&event_id)
+                        {
                             for mid in marks {
                                 ctx.db.ephemeral.msgs().delete_mark(mid);
                             }
@@ -3639,13 +3948,15 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                 }
             }
 
-
             EventEffect::DespawnAmbush { event_id } => {
                 if let Some(gid) = ctx.event_scheduler.ambush_groups.remove(&event_id) {
                     if let Err(e) = ctx.db.delete_group(&gid) {
                         error!("DespawnAmbush: could not delete group {:?}: {e:?}", gid);
                     } else {
-                        info!("DespawnAmbush: ambush event {:?} expired, units removed", event_id);
+                        info!(
+                            "DespawnAmbush: ambush event {:?} expired, units removed",
+                            event_id
+                        );
                     }
                 }
             }
@@ -3655,11 +3966,15 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                 let now = ctx.now();
                 // Determine if this was a shootdown (all aircraft dead) or natural expiry.
                 // If shot down, record the time so check_air_threats can enforce a cooldown.
-                let was_shot_down = ctx.event_scheduler.cap_groups.get(&event_id)
+                let was_shot_down = ctx
+                    .event_scheduler
+                    .cap_groups
+                    .get(&event_id)
                     .map(|gids| {
                         gids.iter().all(|gid| {
                             // group_health returns (alive_count, total_count)
-                            ctx.db.group_health(gid)
+                            ctx.db
+                                .group_health(gid)
                                 .map(|(alive, _)| alive == 0)
                                 .unwrap_or(true) // missing group = dead
                         })
@@ -3673,16 +3988,22 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                 // coalition for half an hour, which made the second per-side
                 // slot unreachable in practice. The side-wide throttle is now
                 // the sortie budget in check_air_threats.
-                ctx.event_scheduler
-                    .cap_field_cooldown
-                    .insert((objective, rotary), now);
+                ctx.event_scheduler.cap_field_cooldown.insert((objective, rotary), now);
                 // The commander's own CAP cooldown still reads these, so keep
                 // them current for the fixed-wing case.
                 match (cap_side, rotary) {
-                    (Side::Blue, false) => ctx.event_scheduler.last_commander_cap_ended_blue = Some(now),
-                    (Side::Red, false) => ctx.event_scheduler.last_commander_cap_ended_red = Some(now),
-                    (Side::Blue, true) => ctx.event_scheduler.last_helo_patrol_ended_blue = Some(now),
-                    (Side::Red, true) => ctx.event_scheduler.last_helo_patrol_ended_red = Some(now),
+                    (Side::Blue, false) => {
+                        ctx.event_scheduler.last_commander_cap_ended_blue = Some(now)
+                    }
+                    (Side::Red, false) => {
+                        ctx.event_scheduler.last_commander_cap_ended_red = Some(now)
+                    }
+                    (Side::Blue, true) => {
+                        ctx.event_scheduler.last_helo_patrol_ended_blue = Some(now)
+                    }
+                    (Side::Red, true) => {
+                        ctx.event_scheduler.last_helo_patrol_ended_red = Some(now)
+                    }
                     _ => {}
                 }
                 ctx.event_scheduler.cap_hard_expiry.remove(&event_id);
@@ -3693,8 +4014,6 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                     objective,
                     if was_shot_down { "shot down" } else { "timed out / RTB" }
                 );
-
-
 
                 ctx.event_scheduler.cap_station_by_event.remove(&event_id);
                 // per-event bookkeeping that nothing else ever removed -- one
@@ -3708,7 +4027,10 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                             Some(g) => g.name.clone(),
                             None => continue,
                         };
-                        let dcs_group = match dcso3::group::Group::get_by_name(lua, group_name.as_str()) {
+                        let dcs_group = match dcso3::group::Group::get_by_name(
+                            lua,
+                            group_name.as_str(),
+                        ) {
                             Ok(g) => g,
                             Err(_) => {
                                 // Not in DCS, delete the tracked group immediately
@@ -3716,17 +4038,25 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                                 continue;
                             }
                         };
-                        
-                        let g_pos = match dcs_group.get_unit(1).and_then(|u| u.get_point()) {
-                            Ok(p) => dcso3::Vector2::new(p.x, p.z),
-                            Err(_) => {
-                                let _ = ctx.db.delete_group(&gid);
-                                continue;
-                            }
-                        };
 
-                        let best_obj = ctx.db.persisted.objectives.into_iter()
-                            .filter(|(_, obj)| obj.owner == cap_side && is_launch_field(obj.kind(), rotary))
+                        let g_pos =
+                            match dcs_group.get_unit(1).and_then(|u| u.get_point()) {
+                                Ok(p) => dcso3::Vector2::new(p.x, p.z),
+                                Err(_) => {
+                                    let _ = ctx.db.delete_group(&gid);
+                                    continue;
+                                }
+                            };
+
+                        let best_obj = ctx
+                            .db
+                            .persisted
+                            .objectives
+                            .into_iter()
+                            .filter(|(_, obj)| {
+                                obj.owner == cap_side
+                                    && is_launch_field(obj.kind(), rotary)
+                            })
                             .min_by(|(_, a), (_, b)| {
                                 let ap = a.pos();
                                 let bp = b.pos();
@@ -3745,11 +4075,16 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
 
                         if let Some((_, obj)) = best_obj {
                             if let Ok(controller) = dcs_group.get_controller() {
-                                let _ = controller.set_task(dcso3::controller::Task::Land {
-                                    point: dcso3::LuaVec2(obj.pos()),
-                                    duration: None,
-                                });
-                                info!("DespawnCap: sent {} to RTB at {}", group_name, obj.name());
+                                let _ =
+                                    controller.set_task(dcso3::controller::Task::Land {
+                                        point: dcso3::LuaVec2(obj.pos()),
+                                        duration: None,
+                                    });
+                                info!(
+                                    "DespawnCap: sent {} to RTB at {}",
+                                    group_name,
+                                    obj.name()
+                                );
                                 // Hand the flight to flush_cap_rtb, which deletes
                                 // it once it is down. Without this hand-off the
                                 // RTB order was the last anyone ever heard of it:
@@ -3772,13 +4107,9 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                     event_id
                 );
             }
-
-
         }
     }
 }
-
-
 
 /// Shoot and scoot distance for artillery and launcher fire missions
 /// (`artillery.shoot_and_scoot_m`), when configured.
@@ -3872,9 +4203,8 @@ fn air_station_task(
     use dcso3::attribute::Attribute;
     use dcso3::controller::{OrbitPattern, Task};
     let (speed, altitude, engage, targets) = if rotary {
-        let ground = land
-            .and_then(|l| l.get_height(dcso3::LuaVec2(station)).ok())
-            .unwrap_or(0.);
+        let ground =
+            land.and_then(|l| l.get_height(dcso3::LuaVec2(station)).ok()).unwrap_or(0.);
         (
             cfg.helo_speed_ms,
             ground + cfg.helo_altitude_agl_m,
@@ -3910,18 +4240,26 @@ fn air_station_task(
 
 /// Retry deferred move orders each slow tick until the group appears in DCS.
 fn flush_pending_moves(lua: MizLua, ctx: &mut Context) {
-    use dcso3::controller::{ActionTyp, AltType, MissionPoint, PointType, Task, VehicleFormation};
+    use dcso3::LuaVec2;
+    use dcso3::controller::{
+        ActionTyp, AltType, MissionPoint, PointType, Task, VehicleFormation,
+    };
     use dcso3::group::Group;
     use dcso3::land::Land;
-    use dcso3::LuaVec2;
 
     let land = match Land::singleton(lua) {
         Ok(l) => l,
-        Err(e) => { error!("flush_pending_moves: Land singleton: {e}"); return; }
+        Err(e) => {
+            error!("flush_pending_moves: Land singleton: {e}");
+            return;
+        }
     };
 
     // Process at most one pending move per tick to avoid stalling DCS Lua.
-    let pending: Vec<_> = ctx.event_scheduler.pending_moves.iter()
+    let pending: Vec<_> = ctx
+        .event_scheduler
+        .pending_moves
+        .iter()
         .map(|(gid, route)| (*gid, route.clone()))
         .take(1)
         .collect();
@@ -3972,16 +4310,16 @@ fn flush_pending_moves(lua: MizLua, ctx: &mut Context) {
                 task: Box::new(Task::Hold),
             });
         }
-        let task = Task::Mission {
-            airborne: Some(false),
-            route: route_points,
-        };
+        let task = Task::Mission { airborne: Some(false), route: route_points };
         let target_pos = target_route.last().copied().unwrap_or_default();
         if let Err(e) = controller.set_task(task) {
             error!("flush_pending_moves: set_task for {group_name}: {e}");
         } else {
-            info!("flush_pending_moves: ordered {group_name} to move ({} waypoints) → {:?}",
-                  target_route.len(), target_pos);
+            info!(
+                "flush_pending_moves: ordered {group_name} to move ({} waypoints) → {:?}",
+                target_route.len(),
+                target_pos
+            );
         }
         // Order issued (success or terminal failure) — remove from pending
         ctx.event_scheduler.pending_moves.remove(&gid);
@@ -3996,17 +4334,14 @@ fn flush_pending_moves(lua: MizLua, ctx: &mut Context) {
     // per tick.
     const CAP_TASKS_PER_TICK: usize = 2;
     let mut cap_tasks_issued = 0usize;
-    let pending_cap: Vec<_> = ctx.event_scheduler.pending_cap_tasks.iter()
+    let pending_cap: Vec<_> = ctx
+        .event_scheduler
+        .pending_cap_tasks
+        .iter()
         .map(|(gid, pos)| (*gid, *pos))
         .collect();
 
-    let events_cfg = ctx
-        .db
-        .ephemeral
-        .cfg
-        .campaign_events
-        .clone()
-        .unwrap_or_default();
+    let events_cfg = ctx.db.ephemeral.cfg.campaign_events.clone().unwrap_or_default();
     for (gid, (orbit_center, rotary)) in pending_cap {
         let group_name = match ctx.db.persisted.groups.get(&gid) {
             Some(g) => g.name.clone(),
@@ -4058,7 +4393,6 @@ fn flush_pending_moves(lua: MizLua, ctx: &mut Context) {
             break;
         }
     }
-
 }
 
 /// Each slow tick, station every active CAP flight over the air threat its
@@ -4070,9 +4404,9 @@ fn flush_pending_moves(lua: MizLua, ctx: &mut Context) {
 /// it RTBs. With nothing detected it orbits the defended objective rather than
 /// running a one-shot sweep that completes and sends it home.
 fn retarget_cap_groups(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
-    use dcso3::land::Land;
-    use dcso3::Vector2;
     use crate::db::events::CampaignEvent;
+    use dcso3::Vector2;
+    use dcso3::land::Land;
 
     // Restation only when the target has moved meaningfully -- re-issuing an
     // identical task every tick interrupts an in-progress intercept. A
@@ -4080,13 +4414,7 @@ fn retarget_cap_groups(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
     // too: 15 km of drift is most of a rotary patrol's whole area.
     const RESTATION_THRESHOLD_M: f64 = 15_000.0;
     const ROTARY_RESTATION_THRESHOLD_M: f64 = 5_000.0;
-    let events_cfg = ctx
-        .db
-        .ephemeral
-        .cfg
-        .campaign_events
-        .clone()
-        .unwrap_or_default();
+    let events_cfg = ctx.db.ephemeral.cfg.campaign_events.clone().unwrap_or_default();
     // Terrain lookup for rotary orbit altitudes. Not fatal if it fails -- the
     // patrol just falls back to an orbit measured from sea level.
     let land = Land::singleton(lua).ok();
@@ -4146,11 +4474,8 @@ fn retarget_cap_groups(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
         if !threats.is_empty() {
             ctx.event_scheduler.cap_last_threat_seen.insert(event_id, now);
         } else {
-            let since = *ctx
-                .event_scheduler
-                .cap_last_threat_seen
-                .entry(event_id)
-                .or_insert(now);
+            let since =
+                *ctx.event_scheduler.cap_last_threat_seen.entry(event_id).or_insert(now);
             if (now - since).num_seconds() >= cap_idle_rtb as i64 {
                 for e in ctx.event_scheduler.active_events.iter_mut() {
                     match e {
@@ -4184,9 +4509,9 @@ fn retarget_cap_groups(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
             // Threats but no known objective -- go to their centroid.
             (None, false) => {
                 let n = threats.len() as f64;
-                let sum = threats
-                    .iter()
-                    .fold(Vector2::new(0., 0.), |acc, p| Vector2::new(acc.x + p.x, acc.y + p.y));
+                let sum = threats.iter().fold(Vector2::new(0., 0.), |acc, p| {
+                    Vector2::new(acc.x + p.x, acc.y + p.y)
+                });
                 Some(Vector2::new(sum.x / n, sum.y / n))
             }
             // Nothing detected -- hold over the objective we're defending.
@@ -4218,9 +4543,9 @@ fn retarget_cap_groups(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
         // breaks off for no reason anyone in the air can see.
         let extension = events_cfg.cap_engaged_extension_secs as i64;
         if extension > 0 {
-            let in_contact = threats.iter().any(|t| {
-                na::distance(&(*t).into(), &station.into()) <= engage_radius
-            });
+            let in_contact = threats
+                .iter()
+                .any(|t| na::distance(&(*t).into(), &station.into()) <= engage_radius);
             if in_contact {
                 let hard = ctx.event_scheduler.cap_hard_expiry.get(&event_id).copied();
                 for e in ctx.event_scheduler.active_events.iter_mut() {
@@ -4245,16 +4570,15 @@ fn retarget_cap_groups(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
         }
 
         // Skip if we're already stationed here (within threshold).
-        let threshold = if rotary {
-            ROTARY_RESTATION_THRESHOLD_M
-        } else {
-            RESTATION_THRESHOLD_M
-        };
+        let threshold =
+            if rotary { ROTARY_RESTATION_THRESHOLD_M } else { RESTATION_THRESHOLD_M };
         let restation = ctx
             .event_scheduler
             .cap_station_by_event
             .get(&event_id)
-            .map_or(true, |prev| na::distance(&(*prev).into(), &station.into()) > threshold);
+            .map_or(true, |prev| {
+                na::distance(&(*prev).into(), &station.into()) > threshold
+            });
         if !restation {
             continue;
         }
@@ -4267,10 +4591,11 @@ fn retarget_cap_groups(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
                 Some(g) => g.name.clone(),
                 None => continue,
             };
-            let dcs_group = match dcso3::group::Group::get_by_name(lua, group_name.as_str()) {
-                Ok(g) => g,
-                Err(_) => continue, // not in DCS yet
-            };
+            let dcs_group =
+                match dcso3::group::Group::get_by_name(lua, group_name.as_str()) {
+                    Ok(g) => g,
+                    Err(_) => continue, // not in DCS yet
+                };
             // Wait until the group takes off before retargeting, otherwise
             // set_task interrupts their TakeOffParkingHot task.
             if !dcs_group.get_unit(1).and_then(|u| u.in_air()).unwrap_or(false) {
@@ -4309,12 +4634,8 @@ const CAP_RTB_GIVEUP_SECS: i64 = 1200;
 /// field for the rest of the campaign, eating parking and riding along in the
 /// save file.
 fn flush_cap_rtb(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
-    let pending: Vec<(GroupId, DateTime<Utc>)> = ctx
-        .event_scheduler
-        .cap_rtb
-        .iter()
-        .map(|(g, t)| (*g, *t))
-        .collect();
+    let pending: Vec<(GroupId, DateTime<Utc>)> =
+        ctx.event_scheduler.cap_rtb.iter().map(|(g, t)| (*g, *t)).collect();
     for (gid, ordered_at) in pending {
         let overdue = (now - ordered_at).num_seconds() >= CAP_RTB_GIVEUP_SECS;
         let group_name = match ctx.db.persisted.groups.get(&gid) {
@@ -4365,12 +4686,8 @@ const CAP_WATCH_GIVEUP_SECS: i64 = 240;
 /// is scrapped. Spawn-queue lag therefore can't wave one through the way the
 /// old wall-clock grace window did.
 fn enforce_cap_ground_start(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
-    let checks: Vec<(GroupId, crate::db::events::CapSpawnWatch)> = ctx
-        .event_scheduler
-        .cap_spawn_ts
-        .iter()
-        .map(|(g, w)| (*g, *w))
-        .collect();
+    let checks: Vec<(GroupId, crate::db::events::CapSpawnWatch)> =
+        ctx.event_scheduler.cap_spawn_ts.iter().map(|(g, w)| (*g, *w)).collect();
     for (gid, watch) in checks {
         let age = (now - watch.spawned_at).num_seconds();
         let group_name = match ctx.db.persisted.groups.get(&gid) {
@@ -4382,10 +4699,11 @@ fn enforce_cap_ground_start(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) 
         };
         // None = couldn't query the unit yet (not spawned / not alive). Keep
         // waiting -- do NOT treat "unknown" as "fine".
-        let in_air: Option<bool> = dcso3::group::Group::get_by_name(lua, group_name.as_str())
-            .ok()
-            .and_then(|g| g.get_unit(1).ok())
-            .and_then(|u| u.in_air().ok());
+        let in_air: Option<bool> =
+            dcso3::group::Group::get_by_name(lua, group_name.as_str())
+                .ok()
+                .and_then(|g| g.get_unit(1).ok())
+                .and_then(|u| u.in_air().ok());
         match in_air {
             None => {
                 if age >= CAP_WATCH_GIVEUP_SECS {
@@ -4466,7 +4784,8 @@ fn enemy_players_airborne(db: &db::Db, enemy_side: Side, rotary: bool) -> usize 
                         if rotary {
                             t.contains(UnitTag::Helicopter)
                         } else {
-                            t.contains(UnitTag::Aircraft) && !t.contains(UnitTag::Helicopter)
+                            t.contains(UnitTag::Aircraft)
+                                && !t.contains(UnitTag::Helicopter)
                         }
                     })
                     // Unknown type: assume a jet. Counting it as a helo would
@@ -4564,7 +4883,10 @@ impl ThreatResponseCfg {
 /// True if `kind` is a field the response can launch from. Fixed-wing CAP needs
 /// a runway; helicopters are happy with a FARP pad or, thanks to the
 /// open-ground hot start, a FOB with no pad object at all.
-fn is_launch_field(kind: &bfprotocols::db::objective::ObjectiveKind, rotary: bool) -> bool {
+fn is_launch_field(
+    kind: &bfprotocols::db::objective::ObjectiveKind,
+    rotary: bool,
+) -> bool {
     use bfprotocols::db::objective::ObjectiveKind as K;
     if rotary {
         matches!(kind, K::Airbase | K::Farp { .. } | K::Fob)
@@ -4584,13 +4906,14 @@ fn is_launch_field(kind: &bfprotocols::db::objective::ObjectiveKind, rotary: boo
 /// only changes which config block, which detection filter, which launch
 /// fields and which cooldown are used.
 fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
-    use crate::db::events::{bearing_to_compass, CampaignEvent, EventId};
-    use dcso3::coalition::Side;
+    use crate::db::events::{CampaignEvent, EventId, bearing_to_compass};
     use dcso3::Vector2;
+    use dcso3::coalition::Side;
 
     let events_cfg = match ctx.db.ephemeral.cfg.campaign_events.as_ref() {
         Some(c)
-            if c.enabled && if rotary { c.enemy_helo_enabled } else { c.enemy_cap_enabled } =>
+            if c.enabled
+                && if rotary { c.enemy_helo_enabled } else { c.enemy_cap_enabled } =>
         {
             c.clone()
         }
@@ -4617,8 +4940,12 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
                 continue;
             }
             match cap_side {
-                Side::Red  => { active_red.insert(*objective); }
-                Side::Blue => { active_blue.insert(*objective); }
+                Side::Red => {
+                    active_red.insert(*objective);
+                }
+                Side::Blue => {
+                    active_blue.insert(*objective);
+                }
                 _ => {}
             }
         }
@@ -4646,7 +4973,7 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
     // We iterate Red-defends-against-Blue and Blue-defends-against-Red.
     for defending_side in [Side::Red, Side::Blue] {
         let side_active_count = match defending_side {
-            Side::Red  => active_red.len(),
+            Side::Red => active_red.len(),
             Side::Blue => active_blue.len(),
             _ => continue,
         };
@@ -4677,8 +5004,7 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
         let player_threat_count = if rc.trigger_on_known_players {
             enemy_players_airborne(&ctx.db, attacking, rotary)
         } else {
-            ctx.ewr
-                .detected_enemy_player_count(defending_side, now, &ctx.db, rotary)
+            ctx.ewr.detected_enemy_player_count(defending_side, now, &ctx.db, rotary)
         };
         // Air-balance: scramble for the outnumbered side even without a
         // detected incursion (Blue 4 up, Red 1 up → Red gets one). This is the
@@ -4686,8 +5012,13 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
         let my_air = enemy_players_airborne(&ctx.db, defending_side, rotary);
         let their_air = enemy_players_airborne(&ctx.db, attacking, rotary);
         let outnumbered = rules::outnumbered(my_air, their_air, rc.balance_gap);
-        let scramble =
-            rules::scramble_reason(player_threat_count, min_threat, my_air, their_air, rc.balance_gap);
+        let scramble = rules::scramble_reason(
+            player_threat_count,
+            min_threat,
+            my_air,
+            their_air,
+            rc.balance_gap,
+        );
         if scramble == rules::Scramble::No {
             // This runs every 10s per side, and on a quiet server the answer is
             // the same every time -- unthrottled it was 13% of the whole engine
@@ -4708,13 +5039,15 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
             ];
             // One slot per (side, class) so the jet and helo heartbeats don't
             // overwrite each other's "did the picture change" state.
-            let slot = if defending_side == Side::Red { 0 } else { 1 } + if rotary { 2 } else { 0 };
+            let slot = if defending_side == Side::Red { 0 } else { 1 }
+                + if rotary { 2 } else { 0 };
             let pic = ((player_threat_count.min(255) as u32) << 16)
                 | ((my_air.min(255) as u32) << 8)
                 | their_air.min(255) as u32;
             let secs = now.timestamp();
             let changed = LAST_PIC[slot].swap(pic, Ordering::Relaxed) != pic;
-            let stale = secs.saturating_sub(LAST_LOG[slot].load(Ordering::Relaxed)) >= 600;
+            let stale =
+                secs.saturating_sub(LAST_LOG[slot].load(Ordering::Relaxed)) >= 600;
             if changed || stale {
                 LAST_LOG[slot].store(secs, Ordering::Relaxed);
                 info!(
@@ -4773,13 +5106,17 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
         let mut assigned = vec![false; detected.len()];
         let mut clusters: Vec<(Vector2, usize)> = Vec::new(); // (centroid, count)
         for i in 0..detected.len() {
-            if assigned[i] { continue; }
+            if assigned[i] {
+                continue;
+            }
             assigned[i] = true;
             let mut cx = detected[i].x;
             let mut cz = detected[i].y;
             let mut count = 1usize;
             for j in (i + 1)..detected.len() {
-                if assigned[j] { continue; }
+                if assigned[j] {
+                    continue;
+                }
                 let dx = detected[j].x - detected[i].x;
                 let dz = detected[j].y - detected[i].y;
                 if dx * dx + dz * dz <= cluster_radius_sq {
@@ -4811,9 +5148,7 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
         // an endless conveyor of AI fighters. This is that limit: N launches
         // per rolling hour, counted per class.
         let hour_ago = now - chrono::Duration::hours(1);
-        ctx.event_scheduler
-            .cap_sortie_log
-            .retain(|(_, _, when)| *when > hour_ago);
+        ctx.event_scheduler.cap_sortie_log.retain(|(_, _, when)| *when > hour_ago);
         let mut sorties_left = if rc.max_sorties_per_hour == 0 {
             usize::MAX
         } else {
@@ -4837,7 +5172,8 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
         let slots_remaining = (max_per_side - side_active_count)
             .min(max_concurrent - (active_red.len() + active_blue.len()));
 
-        for (cluster_center, cluster_count) in clusters.into_iter().take(slots_remaining) {
+        for (cluster_center, cluster_count) in clusters.into_iter().take(slots_remaining)
+        {
             if sorties_left == 0 {
                 break; // budget spent on an earlier cluster this pass
             }
@@ -4846,7 +5182,11 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
             // patrol also accepts FARPs and FOBs, which is usually much closer
             // to the rotary fight. Neutral objectives are excluded (owner ==
             // defending_side already ensures non-neutral).
-            let best_obj = ctx.db.persisted.objectives.into_iter()
+            let best_obj = ctx
+                .db
+                .persisted
+                .objectives
+                .into_iter()
                 .filter(|(oid, obj)| {
                     obj.owner() == defending_side
                         && is_launch_field(obj.kind(), rotary)
@@ -4920,7 +5260,10 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
                             ctx.event_scheduler
                                 .cap_hold_until
                                 .insert(key, now + chrono::Duration::seconds(wait));
-                            info!("{}: {defending_side:?} answers this incursion in {wait}s", rc.label);
+                            info!(
+                                "{}: {defending_side:?} answers this incursion in {wait}s",
+                                rc.label
+                            );
                             continue;
                         }
                     }
@@ -4929,7 +5272,7 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
             let obj_name = dcso3::String::from(obj.name.as_str());
             let direction = bearing_to_compass(centroid, cluster_center);
             let attacking_side = match defending_side {
-                Side::Red  => Side::Blue,
+                Side::Red => Side::Blue,
                 Side::Blue => Side::Red,
                 _ => continue,
             };
@@ -4954,8 +5297,12 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
 
             // Track locally so this loop iteration's later clusters don't double-book.
             match defending_side {
-                Side::Red  => { active_red.insert(*oid); }
-                Side::Blue => { active_blue.insert(*oid); }
+                Side::Red => {
+                    active_red.insert(*oid);
+                }
+                Side::Blue => {
+                    active_blue.insert(*oid);
+                }
                 _ => {}
             }
 
@@ -4986,14 +5333,13 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
     }
 }
 
-
 fn side_color(side: dcso3::coalition::Side) -> dcso3::Color {
     crate::mapcolor::side_color(side, 1.)
 }
 
 fn remove_junk_periodic(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
-    use dcso3::world::{SearchVolume, World};
     use dcso3::LuaVec3;
+    use dcso3::world::{SearchVolume, World};
 
     let cfg = match ctx.db.ephemeral.cfg.campaign_events.as_ref() {
         Some(c) if c.enabled && c.junk_removal_interval_secs > 0 => c.clone(),
@@ -5008,14 +5354,21 @@ fn remove_junk_periodic(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
 
     let world = match World::singleton(lua) {
         Ok(w) => w,
-        Err(e) => { error!("remove_junk: World singleton: {e}"); return; }
+        Err(e) => {
+            error!("remove_junk: World singleton: {e}");
+            return;
+        }
     };
     let volume = SearchVolume::Sphere {
         point: LuaVec3(dcso3::Vector3::new(0., 0., 0.)),
         radius: cfg.junk_removal_radius_m,
     };
     match world.remove_junk(volume) {
-        Ok(n) => { if n > 0 { info!("remove_junk: removed {} objects", n); } }
+        Ok(n) => {
+            if n > 0 {
+                info!("remove_junk: removed {} objects", n);
+            }
+        }
         Err(e) => error!("remove_junk: {e}"),
     }
 }
@@ -5050,26 +5403,27 @@ fn maybe_reallocate_navaids(lua: MizLua, ctx: &mut Context) {
         // lit the beacons, but a group that spawned before allocation (or a
         // reload) would be dark -- so sweep every live host once.
         let targets: Vec<_> = if first_run {
-            ctx.db
-                .persisted
-                .navaids
-                .into_iter()
-                .map(|(oid, _)| *oid)
-                .collect()
+            ctx.db.persisted.navaids.into_iter().map(|(oid, _)| *oid).collect()
         } else {
             changed
         };
         if !targets.is_empty() {
             info!("navaids: refreshing {} objective(s)", targets.len());
             for oid in targets {
-                let Some(navs) = ctx.db.persisted.navaids.get(&oid).cloned() else { continue };
+                let Some(navs) = ctx.db.persisted.navaids.get(&oid).cloned() else {
+                    continue;
+                };
                 for nav in &navs {
                     let Some(host) = nav.host_gid else { continue };
-                    let Ok(group) = ctx.db.group(&host).map(|g| g.name.clone()) else { continue };
+                    let Ok(group) = ctx.db.group(&host).map(|g| g.name.clone()) else {
+                        continue;
+                    };
                     match dcso3::group::Group::get_by_name(lua, group.as_str()) {
                         Ok(g) => {
                             if let Err(e) = navaids::activate_on_group(&g, nav) {
-                                warn!("navaids: activate {oid:?} on {group} failed: {e:?}");
+                                warn!(
+                                    "navaids: activate {oid:?} on {group} failed: {e:?}"
+                                );
                             }
                         }
                         Err(_) => { /* culled -- will light on next spawn */ }
@@ -5101,7 +5455,9 @@ fn maybe_reallocate_navaids(lua: MizLua, ctx: &mut Context) {
         })
         .collect();
     for (oid, navs, gname) in jobs {
-        let Ok(g) = dcso3::group::Group::get_by_name(lua, gname.as_str()) else { continue };
+        let Ok(g) = dcso3::group::Group::get_by_name(lua, gname.as_str()) else {
+            continue;
+        };
         let Ok(units) = g.get_units() else { continue };
         let live: Vec<_> = units.into_iter().filter_map(|u| u.ok()).collect();
         let mut all_lit = true;
@@ -5112,15 +5468,28 @@ fn maybe_reallocate_navaids(lua: MizLua, ctx: &mut Context) {
                 (Ok(n), Some(w)) => n.as_str() == w,
                 _ => false,
             });
-            let Some(deck) = deck else { all_lit = false; continue };
-            if dcso3::airbase::Airbase::get_by_name(lua, deck.get_name().unwrap_or_default()).is_err() {
+            let Some(deck) = deck else {
+                all_lit = false;
+                continue;
+            };
+            if dcso3::airbase::Airbase::get_by_name(
+                lua,
+                deck.get_name().unwrap_or_default(),
+            )
+            .is_err()
+            {
                 all_lit = false; // deck not registered as an airbase yet -- retry
                 continue;
             }
             match navaids::activate_carrier(deck, nav) {
-                Ok(()) => info!("navaids: lit carrier deck {:?} for {oid:?}", nav.deck_unit),
+                Ok(()) => {
+                    info!("navaids: lit carrier deck {:?} for {oid:?}", nav.deck_unit)
+                }
                 Err(e) => {
-                    warn!("navaids: carrier {oid:?} deck {:?} activate failed: {e:?}", nav.deck_unit);
+                    warn!(
+                        "navaids: carrier {oid:?} deck {:?} activate failed: {e:?}",
+                        nav.deck_unit
+                    );
                     all_lit = false;
                 }
             }
@@ -5160,7 +5529,14 @@ fn step<R>(
 /// later phase never runs before an earlier one of the same pass (the HQ
 /// still plans before the campaign events apply its effects, and both
 /// before the ground war follows it).
-const SLOW_PHASES: [fn(MizLua, &mut Context, &mut PerfInner, &PathBuf, DateTime<Utc>, DateTime<Utc>) -> Result<AdminResult>; 5] =
+const SLOW_PHASES: [fn(
+    MizLua,
+    &mut Context,
+    &mut PerfInner,
+    &PathBuf,
+    DateTime<Utc>,
+    DateTime<Utc>,
+) -> Result<AdminResult>; 5] =
     [slow_phase_0, slow_phase_1, slow_phase_2, slow_phase_3, slow_phase_4];
 
 /// Environment variable: how many consecutive 1 s ticks the slow pass is
@@ -5219,7 +5595,9 @@ fn run_slow_timed_events(
     let t0 = Utc::now();
     ctx.slow_pass = (bucket + 1 < buckets).then_some((bucket + 1, buckets, start_ts));
     for phase in slow_bucket_phases(bucket, buckets) {
-        if let AdminResult::Shutdown = SLOW_PHASES[phase](lua, ctx, perf, path, ts, start_ts)? {
+        if let AdminResult::Shutdown =
+            SLOW_PHASES[phase](lua, ctx, perf, path, ts, start_ts)?
+        {
             ctx.slow_pass = None;
             return Ok(AdminResult::Shutdown);
         }
@@ -5238,7 +5616,6 @@ fn slow_phase_0(
     ts: DateTime<Utc>,
     start_ts: DateTime<Utc>,
 ) -> Result<AdminResult> {
-
     // Save first. The snapshot used to be taken near the end of this tick,
     // after two dozen subsystems, so any one of them panicking or bailing out
     // early skipped the save -- every tick, for as long as it kept failing.
@@ -5286,7 +5663,9 @@ fn slow_phase_0(
                     }
                 }
             }
-            Err(e) => warn!("failed to get live player list for connection reconciliation {e:?}"),
+            Err(e) => warn!(
+                "failed to get live player list for connection reconciliation {e:?}"
+            ),
         }
     });
 
@@ -5342,7 +5721,8 @@ fn slow_phase_0(
                         killer: killer_ucid,
                     }));
                     // Award interdiction points to the killing player
-                    if let (Some(ucid), Some(points)) = (killer_ucid, cfg.points.as_ref()) {
+                    if let (Some(ucid), Some(points)) = (killer_ucid, cfg.points.as_ref())
+                    {
                         let award = points.convoy_interdiction_points as i32;
                         if award > 0 {
                             ctx.db.earn_points(&ucid, award, "convoy interdiction");
@@ -5475,7 +5855,9 @@ fn slow_phase_1(
                         if let Ok(obj) = ctx.db.objective(&oid) {
                             let (owner, pos, name) =
                                 (obj.owner(), obj.pos(), obj.name().to_string());
-                            ctx.db.ephemeral.on_objective_threatened(pos, owner, &name, ts);
+                            ctx.db
+                                .ephemeral
+                                .on_objective_threatened(pos, owner, &name, ts);
                         }
                     }
                     // Under-attack notification with cooldown
@@ -5488,7 +5870,8 @@ fn slow_phase_1(
                         .map(|c| c.cooldown_secs);
                     if let Some(cooldown_secs) = ua_cooldown {
                         let cooldown = chrono::Duration::seconds(cooldown_secs as i64);
-                        let last = ctx.db.ephemeral.last_under_attack_notif.get(&oid).copied();
+                        let last =
+                            ctx.db.ephemeral.last_under_attack_notif.get(&oid).copied();
                         if last.map(|t| ts - t >= cooldown).unwrap_or(true) {
                             ctx.db.ephemeral.last_under_attack_notif.insert(oid, ts);
                             if let Ok(obj) = ctx.db.objective(&oid) {
@@ -5549,8 +5932,10 @@ fn slow_phase_2(
                 for (oid, name) in completed {
                     if let Ok(obj) = ctx.db.objective(&oid) {
                         let owner = obj.owner();
-                        let msg =
-                            format_compact!("{} has been fully repaired and is operational", name);
+                        let msg = format_compact!(
+                            "{} has been fully repaired and is operational",
+                            name
+                        );
                         ctx.db.ephemeral.msgs().panel_to_side(15, false, owner, msg);
                     }
                 }
@@ -5565,14 +5950,22 @@ fn slow_phase_2(
                 for (oid, old_owner, new_owner) in captures {
                     ctx.event_scheduler.owned_cache_dirty = true;
                     if let Ok(obj) = ctx.db.objective(&oid) {
-                        let msg_old =
-                            format_compact!("{} has been captured by the enemy!", obj.name());
+                        let msg_old = format_compact!(
+                            "{} has been captured by the enemy!",
+                            obj.name()
+                        );
                         let msg_new = format_compact!(
                             "You have captured {} with its aircraft! Carrier at 50% health",
                             obj.name()
                         );
-                        ctx.db.ephemeral.msgs().panel_to_side(20, true, old_owner, msg_old);
-                        ctx.db.ephemeral.msgs().panel_to_side(20, true, new_owner, msg_new);
+                        ctx.db
+                            .ephemeral
+                            .msgs()
+                            .panel_to_side(20, true, old_owner, msg_old);
+                        ctx.db
+                            .ephemeral
+                            .msgs()
+                            .panel_to_side(20, true, new_owner, msg_new);
                     }
                 }
             }
@@ -5751,7 +6144,11 @@ fn run_timed_events(
     });
     step(lua, ctx, "player positions", |ctx| {
         let (ts, perf_ts) = (ctx.now(), Utc::now());
-        match ctx.db.update_player_positions_incremental(lua, ts, ctx.last_player_position) {
+        match ctx.db.update_player_positions_incremental(
+            lua,
+            ts,
+            ctx.last_player_position,
+        ) {
             Err(e) => error!("could not update player positions {e}"),
             Ok((i, dead)) => {
                 ctx.last_player_position = i;
@@ -5785,7 +6182,9 @@ fn run_timed_events(
     // Contested bases flash on the F10 map (once a second, see the pass).
     step(lua, ctx, "flash contested bases", |ctx| ctx.db.flash_contested_objectives(ts));
     // F10 wingman requests, answered within a second of the click.
-    step(lua, ctx, "air life requests", |ctx| airlife::process_requests(lua, ctx, perf, ts));
+    step(lua, ctx, "air life requests", |ctx| {
+        airlife::process_requests(lua, ctx, perf, ts)
+    });
     step(lua, ctx, "spawn queue", |ctx| {
         let now = Utc::now();
         match SpawnCtx::new(lua) {
@@ -5810,16 +6209,15 @@ fn run_timed_events(
         }
     });
     let now = Utc::now();
-    let has_captures = step(lua, ctx, "advise captured", |ctx| {
-        match advise_captured(ctx, lua, ts) {
+    let has_captures =
+        step(lua, ctx, "advise captured", |ctx| match advise_captured(ctx, lua, ts) {
             Ok(captures) => captures,
             Err(e) => {
                 error!("error advise captured {:?}", e);
                 false
             }
-        }
-    })
-    .unwrap_or(false);
+        })
+        .unwrap_or(false);
     record_perf(&mut perf.advise_captured, now);
 
     // Update frontline when objectives are captured
@@ -5939,43 +6337,43 @@ const MSGQ_DRAIN_HZ: usize = 5;
 fn start_msgq_drain(lua: MizLua) -> Result<()> {
     let timer = Timer::singleton(lua)?;
     let period = 1f64 / MSGQ_DRAIN_HZ as f64;
-    timer.schedule_function(timer.get_time()? + period, mlua::Value::Nil, move |lua, _, now| {
-        // Marks and messages can fire events (mark events with no
-        // initiator); they are queued while this holds the state.
-        let Some(mut ctx_guard) = Context::borrow_logged("msgq drain") else {
-            return Ok(Some(now + period));
-        };
-        let ctx = &mut *ctx_guard;
-        ctx.db.ephemeral.clock.advance(now.0);
-        // Round up so a rate that does not divide evenly is never throttled
-        // below its configured value.
-        let per_pass = ctx
-            .db
-            .ephemeral
-            .cfg
-            .max_msgs_per_second
-            .div_ceil(MSGQ_DRAIN_HZ)
-            .max(1);
-        match (Net::singleton(lua), Trigger::singleton(lua).and_then(|t| t.action())) {
-            (Ok(net), Ok(act)) => {
-                if let Err(e) = catch_unwind(AssertUnwindSafe(|| {
-                    ctx.db.ephemeral.msgs().process(per_pass, &net, &act)
-                })) {
-                    error!("msgq drain panicked: {}", bg::panic_msg(&e))
+    timer.schedule_function(
+        timer.get_time()? + period,
+        mlua::Value::Nil,
+        move |lua, _, now| {
+            // Marks and messages can fire events (mark events with no
+            // initiator); they are queued while this holds the state.
+            let Some(mut ctx_guard) = Context::borrow_logged("msgq drain") else {
+                return Ok(Some(now + period));
+            };
+            let ctx = &mut *ctx_guard;
+            ctx.db.ephemeral.clock.advance(now.0);
+            // Round up so a rate that does not divide evenly is never throttled
+            // below its configured value.
+            let per_pass =
+                ctx.db.ephemeral.cfg.max_msgs_per_second.div_ceil(MSGQ_DRAIN_HZ).max(1);
+            match (Net::singleton(lua), Trigger::singleton(lua).and_then(|t| t.action()))
+            {
+                (Ok(net), Ok(act)) => {
+                    if let Err(e) = catch_unwind(AssertUnwindSafe(|| {
+                        ctx.db.ephemeral.msgs().process(per_pass, &net, &act)
+                    })) {
+                        error!("msgq drain panicked: {}", bg::panic_msg(&e))
+                    }
+                }
+                (net, act) => {
+                    if let Err(e) = net {
+                        error!("msgq drain: no net singleton {e:?}")
+                    }
+                    if let Err(e) = act {
+                        error!("msgq drain: no trigger action {e:?}")
+                    }
                 }
             }
-            (net, act) => {
-                if let Err(e) = net {
-                    error!("msgq drain: no net singleton {e:?}")
-                }
-                if let Err(e) = act {
-                    error!("msgq drain: no trigger action {e:?}")
-                }
-            }
-        }
-        drain_deferred_events(lua, ctx);
-        Ok(Some(now + period))
-    })?;
+            drain_deferred_events(lua, ctx);
+            Ok(Some(now + period))
+        },
+    )?;
     Ok(())
 }
 
@@ -5995,34 +6393,42 @@ const ADMIN_DRAIN_HZ: f64 = 10.;
 fn start_admin_drain(lua: MizLua) -> Result<()> {
     let timer = Timer::singleton(lua)?;
     let period = 1. / ADMIN_DRAIN_HZ;
-    timer.schedule_function(timer.get_time()? + period, mlua::Value::Nil, move |lua, _, now| {
-        {
-            let Some(mut ctx) = Context::borrow_logged("admin drain") else {
-                return Ok(Some(now + period));
-            };
-            if ctx.exit_attempts.is_some() {
-                // shutting down: the 1 s tick owns the exit retries
-                return Ok(None);
-            }
-            ctx.db.ephemeral.clock.advance(now.0);
-            let res = step(lua, &mut ctx, "admin commands", |ctx| run_admin_commands(ctx, lua));
-            match res {
-                Some(Err(e)) => error!("failed to run admin commands {e:?}"),
-                Some(Ok(AdminResult::Continue)) | None => (),
-                Some(Ok(AdminResult::Shutdown)) => {
-                    println!("initiating DCS shutdown");
-                    ctx.exit_attempts = Some(0);
-                    try_exit_dcs(lua, &mut ctx);
+    timer.schedule_function(
+        timer.get_time()? + period,
+        mlua::Value::Nil,
+        move |lua, _, now| {
+            {
+                let Some(mut ctx) = Context::borrow_logged("admin drain") else {
+                    return Ok(Some(now + period));
+                };
+                if ctx.exit_attempts.is_some() {
+                    // shutting down: the 1 s tick owns the exit retries
                     return Ok(None);
                 }
+                ctx.db.ephemeral.clock.advance(now.0);
+                let res = step(lua, &mut ctx, "admin commands", |ctx| {
+                    run_admin_commands(ctx, lua)
+                });
+                match res {
+                    Some(Err(e)) => error!("failed to run admin commands {e:?}"),
+                    Some(Ok(AdminResult::Continue)) | None => (),
+                    Some(Ok(AdminResult::Shutdown)) => {
+                        println!("initiating DCS shutdown");
+                        ctx.exit_attempts = Some(0);
+                        try_exit_dcs(lua, &mut ctx);
+                        return Ok(None);
+                    }
+                }
             }
-        }
-        // Last, with the state let go of: the handlers take it themselves.
-        if let Err(e) = catch_unwind(AssertUnwindSafe(|| admin::run_menu_invokes(lua))) {
-            error!("cockpit menu clicks panicked: {}", bg::panic_msg(&e))
-        }
-        Ok(Some(now + period))
-    })?;
+            // Last, with the state let go of: the handlers take it themselves.
+            if let Err(e) =
+                catch_unwind(AssertUnwindSafe(|| admin::run_menu_invokes(lua)))
+            {
+                error!("cockpit menu clicks panicked: {}", bg::panic_msg(&e))
+            }
+            Ok(Some(now + period))
+        },
+    )?;
     Ok(())
 }
 
@@ -6096,7 +6502,9 @@ fn try_exit_dcs(lua: MizLua, ctx: &mut Context) -> bool {
             return true;
         }
         if !done {
-            error!("shutdown: the background thread did not finish in {SHUTDOWN_WAIT:?}, exiting anyway");
+            error!(
+                "shutdown: the background thread did not finish in {SHUTDOWN_WAIT:?}, exiting anyway"
+            );
         }
         ctx.shutdown_wait = None;
     }
@@ -6113,15 +6521,21 @@ fn try_exit_dcs(lua: MizLua, ctx: &mut Context) -> bool {
             false
         }
         Err(e) if attempt < GIVE_UP_AFTER => {
-            error!("shutdown: DCS.exitProcess failed (attempt {attempt}), retrying {e:?}");
+            error!(
+                "shutdown: DCS.exitProcess failed (attempt {attempt}), retrying {e:?}"
+            );
             true
         }
         Err(e) => {
             // The state is saved (or deliberately reset) and the background
             // thread has been shut down; a process that won't exit is worse
             // than one that exits abruptly -- the bot restarts it either way.
-            error!("shutdown: DCS.exitProcess failed {attempt} times, exiting the process {e:?}");
-            bg::fallback_log(b"bflib: DCS.exitProcess kept failing, calling process::exit\n");
+            error!(
+                "shutdown: DCS.exitProcess failed {attempt} times, exiting the process {e:?}"
+            );
+            bg::fallback_log(
+                b"bflib: DCS.exitProcess kept failing, calling process::exit\n",
+            );
             std::process::exit(0)
         }
     }
@@ -6191,7 +6605,10 @@ fn start_clock(lua: MizLua, ctx: &mut Context) -> Result<()> {
     ctx.db.ephemeral.clock.start(campaign, model);
     let behind = wall - campaign;
     if behind > Duration::seconds(1) {
-        info!("campaign clock resumed {}s behind the wall clock (time the simulation stood still)", behind.num_seconds());
+        info!(
+            "campaign clock resumed {}s behind the wall clock (time the simulation stood still)",
+            behind.num_seconds()
+        );
     }
     Ok(())
 }
@@ -6246,21 +6663,22 @@ fn delayed_init_miz(lua: MizLua, ctx: &mut Context) -> Result<()> {
     // of them can be read the mission refuses to start rather than silently
     // beginning a new round.
     let live_save = path.exists();
-    let recover = !live_save && {
-        let backups = bg::backup_saves(&path);
-        if backups.is_empty() {
-            false
-        } else {
-            error!(
-                "THE SAVE FILE {path:?} IS MISSING, but {} backup save file(s) exist: resuming \
+    let recover = !live_save
+        && {
+            let backups = bg::backup_saves(&path);
+            if backups.is_empty() {
+                false
+            } else {
+                error!(
+                    "THE SAVE FILE {path:?} IS MISSING, but {} backup save file(s) exist: resuming \
                  the campaign from the newest readable one instead of starting a new round. To \
                  really start over use the admin reset, or create an empty {:?}.",
-                backups.len(),
-                bg::reset_marker_path(&path)
-            );
-            true
-        }
-    };
+                    backups.len(),
+                    bg::reset_marker_path(&path)
+                );
+                true
+            }
+        };
     let fresh = !live_save && !recover;
     ctx.do_bg_task(Task::CfgLoaded {
         sortie: ctx.sortie.clone(),
@@ -6290,21 +6708,17 @@ fn delayed_init_miz(lua: MizLua, ctx: &mut Context) -> Result<()> {
         // fixed on the next restart without requiring a full campaign reset.
         // Idempotent: it only adds a group where none exists at all, so it
         // can't touch objectives with real (even fully dead) combat damage.
-        let spctx = SpawnCtx::new(lua).context("building spawn ctx for logi coverage check")?;
+        let spctx =
+            SpawnCtx::new(lua).context("building spawn ctx for logi coverage check")?;
         ctx.db
             .ensure_default_logi_coverage(&spctx, &ctx.idx)
             .context("ensure_default_logi_coverage (load path) failed")?;
     }
-    ctx.shutdown = ctx
-        .db
-        .ephemeral
-        .cfg
-        .shutdown
-        .map(|hrs| {
-            // a real-world schedule: wall clock
-            let now = Utc::now();
-            AutoShutdown::scheduled(now + Duration::hours(hrs as i64), now)
-        });
+    ctx.shutdown = ctx.db.ephemeral.cfg.shutdown.map(|hrs| {
+        // a real-world schedule: wall clock
+        let now = Utc::now();
+        AutoShutdown::scheduled(now + Duration::hours(hrs as i64), now)
+    });
     ctx.do_bg_task(Task::Stat(Stat::SessionStart {
         stop: ctx.shutdown.map(|a| a.when),
         cfg: Box::new((*ctx.db.ephemeral.cfg).clone()),
@@ -6352,7 +6766,9 @@ fn delayed_init_miz(lua: MizLua, ctx: &mut Context) -> Result<()> {
                         fuel: obj.fuel(),
                     });
                 }
-                Err(e) => error!("failed to convert objective position for {}: {e:?}", obj.name),
+                Err(e) => {
+                    error!("failed to convert objective position for {}: {e:?}", obj.name)
+                }
             }
         }
         info!("published {} objectives as stats", ctx.db.persisted.objectives.len());
@@ -6366,7 +6782,7 @@ fn delayed_init_miz(lua: MizLua, ctx: &mut Context) -> Result<()> {
             ctx.frontline = Some(frontline);
             // Perform initial frontline calculation
             let now = ctx.now();
-    update_frontline(ctx, now, true);
+            update_frontline(ctx, now, true);
         }
     }
 
@@ -6412,10 +6828,7 @@ fn on_player_disconnect(_: HooksLua, id: PlayerId) -> Result<()> {
         // a kick from inside one of our calls: the holder handles it
         None => DEFERRED.with(|q| q.borrow_mut().push(DeferredEvent::Disconnect(id))),
     }
-    record_perf(
-        &mut Arc::make_mut(&mut Perf::get_mut().inner).dcs_hooks,
-        start_ts,
-    );
+    record_perf(&mut Arc::make_mut(&mut Perf::get_mut().inner).dcs_hooks, start_ts);
     Ok(())
 }
 
@@ -6501,7 +6914,7 @@ fn init_miz(lua: MizLua) -> Result<()> {
     info!("initializing mission");
     log_event_ids(lua);
     let timer = Timer::singleton(lua)?;
-    
+
     // Register the Lua API
     api::register(lua)?;
     let when = timer.get_time()? + 1.;
@@ -6527,7 +6940,8 @@ fn init_miz(lua: MizLua) -> Result<()> {
                     now + 1.,
                     mlua::Value::Nil,
                     move |lua, _, now| {
-                        let Some(mut ctx) = Context::borrow_logged("mission init error") else {
+                        let Some(mut ctx) = Context::borrow_logged("mission init error")
+                        else {
                             return Ok(Some(now + 10.));
                         };
                         let _ = Trigger::singleton(lua)?.action()?.out_text(
@@ -6617,8 +7031,13 @@ mod slow_tick_tests {
     #[test]
     fn every_phase_runs_once_in_order_however_the_pass_is_split() {
         for buckets in 1..=SLOW_PHASES.len() {
-            let ran: Vec<usize> = (0..buckets).flat_map(|b| slow_bucket_phases(b, buckets)).collect();
-            assert_eq!(ran, (0..SLOW_PHASES.len()).collect::<Vec<_>>(), "{buckets} buckets");
+            let ran: Vec<usize> =
+                (0..buckets).flat_map(|b| slow_bucket_phases(b, buckets)).collect();
+            assert_eq!(
+                ran,
+                (0..SLOW_PHASES.len()).collect::<Vec<_>>(),
+                "{buckets} buckets"
+            );
             // no tick is left with nothing to do
             assert!((0..buckets).all(|b| !slow_bucket_phases(b, buckets).is_empty()));
         }

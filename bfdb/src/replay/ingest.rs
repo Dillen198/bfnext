@@ -237,7 +237,8 @@ pub(crate) fn classify(ty: &str) -> Option<Kind> {
     } else if has("Ground") {
         Some(if has("AntiAircraft") {
             Kind::Sam
-        } else if has("Static") || has("Building") || has("Aerodrome") || has("Container") {
+        } else if has("Static") || has("Building") || has("Aerodrome") || has("Container")
+        {
             Kind::Static
         } else if has("Tank") || has("Armor") {
             Kind::Armor
@@ -303,14 +304,20 @@ pub(crate) fn channel_scale(name: &str) -> f64 {
     let n = name.strip_suffix(|c: char| c.is_ascii_digit()).unwrap_or(name);
     let ends = |s: &[&str]| s.iter().any(|x| n.ends_with(x));
     if n.ends_with("Mode")
-        || matches!(n, "LandingGear" | "Tailhook" | "Afterburner" | "AirBrakes" | "Flaps" | "Health")
+        || matches!(
+            n,
+            "LandingGear" | "Tailhook" | "Afterburner" | "AirBrakes" | "Flaps" | "Health"
+        )
         || n.starts_with("Throttle")
     {
         0.001
-    } else if matches!(n, "HDG" | "HDM" | "AOS") || ends(&["Azimuth", "Elevation", "Roll", "Pitch", "Yaw", "Beamwidth"])
+    } else if matches!(n, "HDG" | "HDM" | "AOS")
+        || ends(&["Azimuth", "Elevation", "Roll", "Pitch", "Yaw", "Beamwidth"])
     {
         0.01
-    } else if n.ends_with("Range") || matches!(n, "Radius" | "Length" | "Width" | "Height") {
+    } else if n.ends_with("Range")
+        || matches!(n, "Radius" | "Length" | "Width" | "Height")
+    {
         0.1
     } else if matches!(n, "TAS" | "CAS") {
         0.01
@@ -569,7 +576,11 @@ struct Builder<'a> {
 
 /// The id of channel `name`, registered on first sight. `None` for a name
 /// the format cannot hold (over 255 bytes, or past 65535 channels).
-fn chan_id(chans: &mut Vec<ChanDef>, chan_of: &mut FxHashMap<String, u32>, name: &str) -> Option<u32> {
+fn chan_id(
+    chans: &mut Vec<ChanDef>,
+    chan_of: &mut FxHashMap<String, u32>,
+    name: &str,
+) -> Option<u32> {
     if let Some(id) = chan_of.get(name) {
         return Some(*id);
     }
@@ -577,7 +588,11 @@ fn chan_id(chans: &mut Vec<ChanDef>, chan_of: &mut FxHashMap<String, u32>, name:
         return None;
     }
     let id = chans.len() as u32;
-    chans.push(ChanDef { name: name.to_string(), scale: channel_scale(name), lock: is_lock_channel(name) });
+    chans.push(ChanDef {
+        name: name.to_string(),
+        scale: channel_scale(name),
+        lock: is_lock_channel(name),
+    });
     chan_of.insert(name.to_string(), id);
     Some(id)
 }
@@ -673,7 +688,11 @@ impl<'a> Builder<'a> {
             .iter()
             .filter_map(|id| u64::from_str_radix(id.trim(), 16).ok())
             .find_map(|tid| self.alive.get(&tid).copied());
-        let text = if parts.len() >= 2 { parts.last().map(|s| s.trim()).filter(|s| !s.is_empty()) } else { None };
+        let text = if parts.len() >= 2 {
+            parts.last().map(|s| s.trim()).filter(|s| !s.is_empty())
+        } else {
+            None
+        };
         let text = text.filter(|_| !(id_only && parts.len() == 2)).map(str::to_string);
         self.tv_events.push(TvEv { t: self.now, k, sid, text });
     }
@@ -682,7 +701,9 @@ impl<'a> Builder<'a> {
         let Some(&sid) = self.alive.get(&tid) else { return };
         // A weapon's last look for its target, while everything that was
         // near it is still in the picture.
-        if self.objs[sid as usize].kind.map(Kind::is_weapon).unwrap_or(false) && self.objs[sid as usize].positioned {
+        if self.objs[sid as usize].kind.map(Kind::is_weapon).unwrap_or(false)
+            && self.objs[sid as usize].positioned
+        {
             self.scan(sid, true);
         }
         self.alive.remove(&tid);
@@ -758,7 +779,10 @@ impl<'a> Builder<'a> {
         }
         let at = w.cur;
         let launcher = w.launcher;
-        let side = w.color.clone().or_else(|| launcher.and_then(|l| self.objs[l as usize].color.clone()));
+        let side = w
+            .color
+            .clone()
+            .or_else(|| launcher.and_then(|l| self.objs[l as usize].color.clone()));
         let mut best: Option<(f64, u32)> = None;
         for &c in self.alive.values() {
             if c == sid || Some(c) == launcher {
@@ -1005,7 +1029,8 @@ impl<'a> Builder<'a> {
         let mut entries: Vec<Entry> = Vec::with_capacity(writing.len());
         for sid in writing {
             let o = &mut self.objs[sid as usize];
-            let carry = o.carry.filter(|c| o.buf.first().map(|f| c.t < f.t).unwrap_or(true));
+            let carry =
+                o.carry.filter(|c| o.buf.first().map(|f| c.t < f.t).unwrap_or(true));
             let mut samples = Vec::with_capacity(o.buf.len() + 1);
             samples.extend(carry);
             samples.append(&mut o.buf);
@@ -1019,7 +1044,8 @@ impl<'a> Builder<'a> {
                 cols.push((o.ch_ids[i], col));
             }
             o.carry = samples.last().copied();
-            o.carry_ch = cols.iter().map(|(_, c)| c.last().copied().unwrap_or(-1.0)).collect();
+            o.carry_ch =
+                cols.iter().map(|(_, c)| c.last().copied().unwrap_or(-1.0)).collect();
             let (idx, flags) = (o.idx.unwrap_or_default(), o.flags);
             let objs = &self.objs;
             let ch = cols
@@ -1030,7 +1056,10 @@ impl<'a> Builder<'a> {
                         col.iter()
                             .map(|v| match *v {
                                 v if v < 0.0 => -1,
-                                v => objs.get(v as usize).and_then(|t| t.idx).map_or(-1, i64::from),
+                                v => objs
+                                    .get(v as usize)
+                                    .and_then(|t| t.idx)
+                                    .map_or(-1, i64::from),
                             })
                             .collect()
                     } else {
@@ -1106,7 +1135,11 @@ impl<'a> Builder<'a> {
             }));
             if let Some((_, vsid, th)) = hit {
                 let v = &self.objs[vsid as usize];
-                let window = if v.kind.map(Kind::is_air).unwrap_or(false) { 90_000 } else { 15_000 };
+                let window = if v.kind.map(Kind::is_air).unwrap_or(false) {
+                    90_000
+                } else {
+                    15_000
+                };
                 if v.removed && v.t1 >= th - 2_000 && v.t1 <= th + window {
                     // The hit closest before the death takes the credit.
                     let e = by_victim.entry(vsid).or_insert((th, wsid as u32));
@@ -1125,12 +1158,15 @@ impl<'a> Builder<'a> {
             if dead.contains_key(&ev.sid) {
                 continue;
             }
-            let (td, at) = self.objs[ev.sid as usize].destroyed.unwrap_or((ev.t, S::default()));
+            let (td, at) =
+                self.objs[ev.sid as usize].destroyed.unwrap_or((ev.t, S::default()));
             let w = self
                 .objs
                 .iter()
                 .enumerate()
-                .filter(|(_, w)| w.idx.is_some() && w.kind.map(Kind::is_weapon).unwrap_or(false))
+                .filter(|(_, w)| {
+                    w.idx.is_some() && w.kind.map(Kind::is_weapon).unwrap_or(false)
+                })
                 .filter(|(_, w)| w.t1 >= td - 5_000 && w.t1 <= td + 3_000)
                 .map(|(i, w)| (dist_m(&w.cur, &at), i as u32))
                 .filter(|(d, _)| *d < 300.0)
@@ -1146,7 +1182,8 @@ impl<'a> Builder<'a> {
                 *kills.entry(by).or_default() += 1;
             }
             match wobj {
-                Some(w) => events.push(json!({ "t": td, "k": "kill", "o": o, "by": by, "w": w.idx })),
+                Some(w) => events
+                    .push(json!({ "t": td, "k": "kill", "o": o, "by": by, "w": w.idx })),
                 None => events.push(json!({ "t": td, "k": "destroyed", "o": o })),
             }
         }
@@ -1159,7 +1196,8 @@ impl<'a> Builder<'a> {
                 }
             }
         }
-        let mut nav: Vec<&Ev> = self.events.iter().filter(|e| e.kind != EvKind::Destroyed).collect();
+        let mut nav: Vec<&Ev> =
+            self.events.iter().filter(|e| e.kind != EvKind::Destroyed).collect();
         nav.sort_by_key(|e| e.t);
         for ev in nav {
             let Some(o) = idx_of(ev.sid) else { continue };
@@ -1184,7 +1222,8 @@ impl<'a> Builder<'a> {
                 deaths.entry(i).or_insert(o.t1);
             }
         }
-        let mut by_idx: Vec<&Obj> = self.objs.iter().filter(|o| o.idx.is_some()).collect();
+        let mut by_idx: Vec<&Obj> =
+            self.objs.iter().filter(|o| o.idx.is_some()).collect();
         by_idx.sort_by_key(|o| o.idx);
         let objects: Vec<Value> = by_idx
             .iter()
@@ -1214,7 +1253,8 @@ impl<'a> Builder<'a> {
             if !k.is_air() {
                 continue;
             }
-            let Some(pilot) = o.pilot.as_deref().map(str::trim).filter(|p| !p.is_empty()) else {
+            let Some(pilot) = o.pilot.as_deref().map(str::trim).filter(|p| !p.is_empty())
+            else {
                 continue;
             };
             flights.push(Flight {
@@ -1258,12 +1298,20 @@ impl<'a> Builder<'a> {
             "flights": flights,
         });
         write_gz(&self.out.join("meta.json.gz"), &serde_json::to_vec(&meta)?)?;
-        Ok(Built { title: self.title, start_ms, duration_ms: end, objects: objects.len(), chunks, flights })
+        Ok(Built {
+            title: self.title,
+            start_ms,
+            duration_ms: end,
+            objects: objects.len(),
+            chunks,
+            flights,
+        })
     }
 }
 
 fn write_gz(path: &Path, bytes: &[u8]) -> Result<()> {
-    let f = fs::File::create(path).with_context(|| format!("creating {}", path.display()))?;
+    let f =
+        fs::File::create(path).with_context(|| format!("creating {}", path.display()))?;
     let mut gz = GzEncoder::new(std::io::BufWriter::new(f), Compression::new(6));
     gz.write_all(bytes)?;
     gz.finish()?.flush()?;
@@ -1272,8 +1320,15 @@ fn write_gz(path: &Path, bytes: &[u8]) -> Result<()> {
 
 /// The fixed columns of `s` with these flags, as absolute integers.
 fn base_cols(flags: u8, s: &[S]) -> Vec<Vec<i64>> {
-    let col = |f: fn(&S) -> f64, k: f64| s.iter().map(|x| (f(x) * k).round() as i64).collect::<Vec<i64>>();
-    let mut v = vec![s.iter().map(|x| x.t).collect(), col(|x| x.lon, 1e7), col(|x| x.lat, 1e7), col(|x| x.alt, 10.0)];
+    let col = |f: fn(&S) -> f64, k: f64| {
+        s.iter().map(|x| (f(x) * k).round() as i64).collect::<Vec<i64>>()
+    };
+    let mut v = vec![
+        s.iter().map(|x| x.t).collect(),
+        col(|x| x.lon, 1e7),
+        col(|x| x.lat, 1e7),
+        col(|x| x.alt, 10.0),
+    ];
     if flags & F_ATT != 0 {
         v.push(col(|x| x.roll, 100.0));
         v.push(col(|x| x.pitch, 100.0));
@@ -1328,7 +1383,10 @@ fn encode_entries(entries: &[Entry]) -> Vec<u8> {
     let mut at: FxHashMap<&str, u16> = FxHashMap::default();
     for e in entries {
         for c in &e.ch {
-            if !at.contains_key(c.name.as_str()) && table.len() < u16::MAX as usize && c.name.len() <= 255 {
+            if !at.contains_key(c.name.as_str())
+                && table.len() < u16::MAX as usize
+                && c.name.len() <= 255
+            {
                 at.insert(&c.name, table.len() as u16);
                 table.push((&c.name, c.scale));
             }
@@ -1336,7 +1394,10 @@ fn encode_entries(entries: &[Entry]) -> Vec<u8> {
     }
     let body: usize = entries
         .iter()
-        .map(|e| 11 + 2 * e.ch.len() + 4 * e.cols.first().map_or(0, Vec::len) * (e.cols.len() + e.ch.len()))
+        .map(|e| {
+            11 + 2 * e.ch.len()
+                + 4 * e.cols.first().map_or(0, Vec::len) * (e.cols.len() + e.ch.len())
+        })
         .sum();
     let mut b: Vec<u8> = Vec::with_capacity(16 + table.len() * 24 + body);
     b.extend_from_slice(b"BFR2");
@@ -1356,7 +1417,8 @@ fn encode_entries(entries: &[Entry]) -> Vec<u8> {
     };
     for e in entries {
         let n = e.cols.first().map_or(0, Vec::len);
-        let ch: Vec<&Chan> = e.ch.iter().filter(|c| at.contains_key(c.name.as_str())).collect();
+        let ch: Vec<&Chan> =
+            e.ch.iter().filter(|c| at.contains_key(c.name.as_str())).collect();
         b.extend_from_slice(&e.idx.to_le_bytes());
         b.extend_from_slice(&(n as u32).to_le_bytes());
         b.push(e.flags);
@@ -1435,7 +1497,10 @@ fn read_chunk(b: &[u8], want: Option<u32>) -> Result<Vec<Entry>> {
             }
         }
         let base = ncols(flags);
-        let len = (base + mine.len()).checked_mul(n).and_then(|x| x.checked_mul(4)).context("truncated chunk")?;
+        let len = (base + mine.len())
+            .checked_mul(n)
+            .and_then(|x| x.checked_mul(4))
+            .context("truncated chunk")?;
         let body = r.take(len)?;
         if want.map(|w| w == idx).unwrap_or(true) {
             let col = |c: usize| -> Vec<i64> {
@@ -1443,7 +1508,8 @@ fn read_chunk(b: &[u8], want: Option<u32>) -> Result<Vec<Entry>> {
                 (0..n)
                     .map(|i| {
                         let o = (c * n + i) * 4;
-                        acc += i32::from_le_bytes(body[o..o + 4].try_into().unwrap()) as i64;
+                        acc +=
+                            i32::from_le_bytes(body[o..o + 4].try_into().unwrap()) as i64;
                         acc
                     })
                     .collect()
@@ -1452,7 +1518,11 @@ fn read_chunk(b: &[u8], want: Option<u32>) -> Result<Vec<Entry>> {
             let ch = mine
                 .iter()
                 .enumerate()
-                .map(|(j, &c)| Chan { name: table[c].0.clone(), scale: table[c].1, vals: col(base + j) })
+                .map(|(j, &c)| Chan {
+                    name: table[c].0.clone(),
+                    scale: table[c].1,
+                    vals: col(base + j),
+                })
                 .collect();
             out.push(Entry { idx, flags, cols, ch });
         }
@@ -1461,7 +1531,8 @@ fn read_chunk(b: &[u8], want: Option<u32>) -> Result<Vec<Entry>> {
 }
 
 /// The flag each fixed column belongs to (0: always there), in column order.
-const SLOT_FLAG: [u8; 11] = [0, 0, 0, 0, F_ATT, F_ATT, F_ATT, F_IAS, F_MACH, F_AOA, F_AGL];
+const SLOT_FLAG: [u8; 11] =
+    [0, 0, 0, 0, F_ATT, F_ATT, F_ATT, F_IAS, F_MACH, F_AOA, F_AGL];
 
 /// One object's track being stitched from chunks: every fixed column it
 /// ever had and every channel, all `n` long.
@@ -1513,15 +1584,13 @@ impl Stitch {
                 Some(x) => {
                     let rescale = !lock && (x.scale as f32) != (c.scale as f32);
                     let (from, to) = (c.scale, x.scale);
-                    x.vals.extend(c.vals[skip..].iter().map(
-                        |v| {
-                            if rescale {
-                                quantize(*v as f64 * from, to)
-                            } else {
-                                *v
-                            }
-                        },
-                    ));
+                    x.vals.extend(c.vals[skip..].iter().map(|v| {
+                        if rescale {
+                            quantize(*v as f64 * from, to)
+                        } else {
+                            *v
+                        }
+                    }));
                 }
                 None => {
                     let fill = if lock { -1 } else { c.vals[skip] };
@@ -1533,7 +1602,11 @@ impl Stitch {
         }
         for x in &mut self.ch {
             if x.vals.len() < n + m {
-                let fill = if is_lock_channel(&x.name) { -1 } else { x.vals.last().copied().unwrap_or(0) };
+                let fill = if is_lock_channel(&x.name) {
+                    -1
+                } else {
+                    x.vals.last().copied().unwrap_or(0)
+                };
                 x.vals.resize(n + m, fill);
             }
         }
@@ -1550,7 +1623,12 @@ impl Stitch {
                 flags |= f;
             }
         }
-        Some(Entry { idx, flags, cols: self.slots.into_iter().flatten().collect(), ch: self.ch })
+        Some(Entry {
+            idx,
+            flags,
+            cols: self.slots.into_iter().flatten().collect(),
+            ch: self.ch,
+        })
     }
 }
 
@@ -1559,7 +1637,12 @@ impl Stitch {
 /// returns that file's path. Chunks that disagree on which columns or
 /// channels the object has are joined on the union of them
 /// ([`Stitch::add`]).
-pub(crate) fn object_track(dir: &Path, idx: u32, first: u32, last: u32) -> Result<PathBuf> {
+pub(crate) fn object_track(
+    dir: &Path,
+    idx: u32,
+    first: u32,
+    last: u32,
+) -> Result<PathBuf> {
     use flate2::read::GzDecoder;
     use std::io::Read;
     let path = dir.join(format!("o{idx}.bin.gz"));
@@ -1654,7 +1737,10 @@ mod tests {
         assert_eq!(classify("Misc+Decoy+Chaff"), Some(Kind::Chaff));
         assert_eq!(classify("Misc+Decoy"), Some(Kind::Decoy));
         assert_eq!(classify("Misc+Explosion"), Some(Kind::Explosion));
-        assert_eq!(classify("Ground+Light+Human+Air+Parachutist"), Some(Kind::Parachutist));
+        assert_eq!(
+            classify("Ground+Light+Human+Air+Parachutist"),
+            Some(Kind::Parachutist)
+        );
         assert_eq!(classify("Misc+SmokeGrenade"), Some(Kind::Misc));
         assert_eq!(classify("Navaid+Static+Waypoint"), Some(Kind::Misc));
         assert_eq!(classify("Misc+Shrapnel"), None);
@@ -1673,7 +1759,10 @@ mod tests {
             Kind::Bullseye,
             Kind::Misc,
         ] {
-            assert!(k.is_effect() && !k.is_target() && !k.is_weapon() && !k.is_air(), "{k:?}");
+            assert!(
+                k.is_effect() && !k.is_target() && !k.is_weapon() && !k.is_air(),
+                "{k:?}"
+            );
         }
     }
 
@@ -1723,7 +1812,10 @@ mod tests {
 
     /// Channel values of an entry, as real values.
     fn chan(e: &Entry, name: &str) -> Vec<f64> {
-        let c = e.ch.iter().find(|c| c.name == name).unwrap_or_else(|| panic!("no {name} in {:?}", e.ch));
+        let c =
+            e.ch.iter()
+                .find(|c| c.name == name)
+                .unwrap_or_else(|| panic!("no {name} in {:?}", e.ch));
         c.vals.iter().map(|v| *v as f64 * c.scale).collect()
     }
 
@@ -1751,7 +1843,8 @@ mod tests {
     }
 
     fn idx_by_id(meta: &Value, id: &str) -> u32 {
-        meta["objects"].as_array().unwrap().iter().position(|o| o["id"] == id).unwrap() as u32
+        meta["objects"].as_array().unwrap().iter().position(|o| o["id"] == id).unwrap()
+            as u32
     }
 
     /// Numeric properties come back as channels with their scale; one first
@@ -1759,7 +1852,8 @@ mod tests {
     /// that follows bfweb's `decodeChunk` step by step agrees.
     #[test]
     fn channels_round_trip() {
-        let dir = std::env::temp_dir().join(format!("bfdb-replay-ch-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("bfdb-replay-ch-{}", std::process::id()));
         let mut frames = vec![(
             0.0,
             "a1,T=0.1|0.1|5000|0|0|90,Type=Air+FixedWing,Name=F-16C_50,Pilot=Viper,Color=Blue,\
@@ -1786,7 +1880,11 @@ mod tests {
         let n = e.cols[0].len();
         assert_eq!(n, 11, "one sample per frame: {:?}", e.cols[0]);
         let names: Vec<&str> = e.ch.iter().map(|c| c.name.as_str()).collect();
-        assert_eq!(names, ["TAS", "FuelWeight", "HDG", "Throttle", "RadarRange"], "Squawk is not a channel");
+        assert_eq!(
+            names,
+            ["TAS", "FuelWeight", "HDG", "Throttle", "RadarRange"],
+            "Squawk is not a channel"
+        );
         let scale = |n: &str| e.ch.iter().find(|c| c.name == n).unwrap().scale;
         assert_eq!(
             (scale("TAS"), scale("FuelWeight"), scale("Throttle")),
@@ -1799,7 +1897,10 @@ mod tests {
             assert!((tas[i] - (250.25 + i as f64)).abs() < 0.006, "{tas:?}");
         }
         assert!(chan(e, "HDG").iter().all(|v| (v - 90.5).abs() < 0.006));
-        assert!(chan(e, "Throttle").iter().all(|v| (v - 0.75).abs() < 1e-6), "first value before the first set");
+        assert!(
+            chan(e, "Throttle").iter().all(|v| (v - 0.75).abs() < 1e-6),
+            "first value before the first set"
+        );
         assert!(chan(e, "RadarRange").iter().all(|v| (v - 40000.3).abs() < 0.01));
 
         // The same bytes, read the way data.ts does.
@@ -1820,8 +1921,10 @@ mod tests {
         let mut table = vec![];
         for _ in 0..nchan {
             let len = raw[at] as usize;
-            let name = std::str::from_utf8(&raw[at + 1..at + 1 + len]).unwrap().to_string();
-            let scale = f32::from_le_bytes(raw[at + 1 + len..at + 5 + len].try_into().unwrap());
+            let name =
+                std::str::from_utf8(&raw[at + 1..at + 1 + len]).unwrap().to_string();
+            let scale =
+                f32::from_le_bytes(raw[at + 1 + len..at + 5 + len].try_into().unwrap());
             table.push((name, scale));
             at += 1 + len + 4;
         }
@@ -1838,7 +1941,8 @@ mod tests {
         at += 7 * n * 4;
         let fw = mine.iter().position(|c| table[*c].0 == "FuelWeight").unwrap();
         at += fw * n * 4;
-        let first = i32::from_le_bytes(raw[at..at + 4].try_into().unwrap()) as f64 * table[mine[fw]].1 as f64;
+        let first = i32::from_le_bytes(raw[at..at + 4].try_into().unwrap()) as f64
+            * table[mine[fw]].1 as f64;
         assert!((first - 3000.5).abs() < 0.06, "{first}");
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1847,7 +1951,8 @@ mod tests {
     /// before the first lock and after the unlock.
     #[test]
     fn locked_target_resolves_to_meta_index() {
-        let dir = std::env::temp_dir().join(format!("bfdb-replay-lock-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("bfdb-replay-lock-{}", std::process::id()));
         let mut frames = vec![(
             0.0,
             "a1,T=0.1|0.1|5000|0|0|90,Type=Air+FixedWing,Name=F-16C_50,Pilot=Viper,Color=Blue\n\
@@ -1857,7 +1962,10 @@ mod tests {
         for i in 1..=10 {
             let mut l = format!("a1,T={}||\n", 0.1 + i as f64 * 0.001);
             if i == 2 {
-                l = format!("a1,T={}||,LockedTarget=b2,LockedTargetRange=15000\n", 0.1 + i as f64 * 0.001);
+                l = format!(
+                    "a1,T={}||,LockedTarget=b2,LockedTargetRange=15000\n",
+                    0.1 + i as f64 * 0.001
+                );
             }
             if i == 6 {
                 l = format!("a1,T={}||,LockedTarget=0\n", 0.1 + i as f64 * 0.001);
@@ -1887,7 +1995,8 @@ mod tests {
     /// lock), and nothing is dropped.
     #[test]
     fn object_track_stitches_changing_channels() {
-        let dir = std::env::temp_dir().join(format!("bfdb-replay-stitch-{}", std::process::id()));
+        let dir = std::env::temp_dir()
+            .join(format!("bfdb-replay-stitch-{}", std::process::id()));
         let mut frames = vec![(
             0.0,
             "a1,T=0.1|0.1|5000|0|0|90,Type=Air+FixedWing,Name=F-16C_50,Pilot=Viper,Color=Blue,TAS=200\n\
@@ -1919,7 +2028,10 @@ mod tests {
         assert_eq!(e.cols.len(), ncols(e.flags));
         assert!(e.cols[7].iter().all(|v| *v == 500), "AGL backfilled: {:?}", e.cols[7]);
         let tas = chan(e, "TAS");
-        assert!(tas.iter().enumerate().all(|(i, v)| (v - (200 + i) as f64).abs() < 0.006), "{tas:?}");
+        assert!(
+            tas.iter().enumerate().all(|(i, v)| (v - (200 + i) as f64).abs() < 0.006),
+            "{tas:?}"
+        );
         assert!(chan(e, "FuelWeight").iter().all(|v| (v - 1000.0).abs() < 0.06));
         let lock = chan(e, "LockedTarget");
         for (t, v) in ts.iter().zip(&lock) {
@@ -1933,7 +2045,8 @@ mod tests {
     /// and kill come out as without them.
     #[test]
     fn effects_are_never_shot_parties() {
-        let dir = std::env::temp_dir().join(format!("bfdb-replay-fx-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("bfdb-replay-fx-{}", std::process::id()));
         let mut frames = vec![(
             0.0,
             "a1,T=0.1|0.1|5000|0|0|90,Type=Air+FixedWing,Name=F-16C_50,Pilot=Viper,Color=Blue\n\
@@ -1948,7 +2061,9 @@ mod tests {
                 // A SAM launch with a shell nearer the missile than the SAM
                 // (no aircraft near, so the nearest anything would win).
                 l.push_str("b8,T=0.50005|0.1|10,Type=Projectile+Shell,Color=Red\n");
-                l.push_str("b9,T=0.50005|0.1|10,Type=Weapon+Missile,Name=9M331,Color=Red\n");
+                l.push_str(
+                    "b9,T=0.50005|0.1|10,Type=Weapon+Missile,Name=9M331,Color=Red\n",
+                );
             }
             if i == 10 {
                 // At the rail, there before the missile: closer to it than
@@ -1973,18 +2088,29 @@ mod tests {
         frames.push((11.0, "-b2\n".into()));
         let out = record(&dir, &frames);
         let meta = meta_of(&out);
-        let (f16, mig, aim) = (idx_by_id(&meta, "a1"), idx_by_id(&meta, "b2"), idx_by_id(&meta, "c3"));
+        let (f16, mig, aim) =
+            (idx_by_id(&meta, "a1"), idx_by_id(&meta, "b2"), idx_by_id(&meta, "c3"));
         for id in ["d4", "e5", "f6", "f7", "f8"] {
             let k = &meta["objects"][idx_by_id(&meta, id) as usize]["k"];
-            assert!(["shell", "flare", "chaff", "explosion"].contains(&k.as_str().unwrap()), "{id}: {k}");
+            assert!(
+                ["shell", "flare", "chaff", "explosion"].contains(&k.as_str().unwrap()),
+                "{id}: {k}"
+            );
         }
         assert_eq!(meta["objects"][aim as usize]["par"], f16, "launcher");
         let (sam, sam_msl) = (idx_by_id(&meta, "a9"), idx_by_id(&meta, "b9"));
-        assert_eq!(meta["objects"][sam_msl as usize]["par"], sam, "the SAM, not the shell");
+        assert_eq!(
+            meta["objects"][sam_msl as usize]["par"], sam,
+            "the SAM, not the shell"
+        );
         let ev = meta["events"].as_array().unwrap();
-        let fired: Vec<&Value> = ev.iter().filter(|e| e["k"] == "fired" && e["w"] == aim).collect();
+        let fired: Vec<&Value> =
+            ev.iter().filter(|e| e["k"] == "fired" && e["w"] == aim).collect();
         assert_eq!(fired.len(), 1);
-        assert_eq!((fired[0]["o"].as_u64(), fired[0]["tg"].as_u64()), (Some(f16 as u64), Some(mig as u64)));
+        assert_eq!(
+            (fired[0]["o"].as_u64(), fired[0]["tg"].as_u64()),
+            (Some(f16 as u64), Some(mig as u64))
+        );
         assert_eq!(fired[0]["hit"], true);
         let kill = ev.iter().find(|e| e["k"] == "kill").expect("a kill");
         assert_eq!(
@@ -2001,7 +2127,8 @@ mod tests {
     /// aircraft vanishing in flight with nothing on it.
     #[test]
     fn derives_events_without_event_lines() {
-        let dir = std::env::temp_dir().join(format!("bfdb-replay-dcs-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("bfdb-replay-dcs-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let src = dir.join("dcs.txt.acmi");
@@ -2033,7 +2160,11 @@ mod tests {
             }
             if i > 120 && i <= 130 {
                 let f = (i - 120) as f64 / 10.0;
-                t.push_str(&format!("c3,T={}||{}\n", lon + (0.3 - lon) * f, alt + (5000.0 - alt) * f));
+                t.push_str(&format!(
+                    "c3,T={}||{}\n",
+                    lon + (0.3 - lon) * f,
+                    alt + (5000.0 - alt) * f
+                ));
             }
             if i == 131 {
                 t.push_str("-c3\n");
@@ -2062,7 +2193,8 @@ mod tests {
         fs::write(&src, t).unwrap();
         let out = dir.join("out");
         let built = build(&src, &out).unwrap();
-        let meta: Value = serde_json::from_slice(&gunzip(&out.join("meta.json.gz"))).unwrap();
+        let meta: Value =
+            serde_json::from_slice(&gunzip(&out.join("meta.json.gz"))).unwrap();
         let objs = meta["objects"].as_array().unwrap();
         let idx = |name: &str| objs.iter().position(|o| o["n"] == name).unwrap() as u64;
         let (f16, mig, su) = (idx("F-16C_50"), idx("MiG-29S"), idx("Su-27"));
@@ -2071,7 +2203,10 @@ mod tests {
 
         let takeoff = find("takeoff");
         assert_eq!(takeoff.len(), 1, "{ev:?}");
-        assert!(takeoff[0]["t"].as_i64().unwrap() >= 20_000 && takeoff[0]["t"].as_i64().unwrap() < 30_000);
+        assert!(
+            takeoff[0]["t"].as_i64().unwrap() >= 20_000
+                && takeoff[0]["t"].as_i64().unwrap() < 30_000
+        );
         assert_eq!(find("landing").len(), 1, "{ev:?}");
 
         let fired = find("fired");
@@ -2084,15 +2219,27 @@ mod tests {
 
         let kill = find("kill");
         assert_eq!(kill.len(), 1, "{ev:?}");
-        assert_eq!((kill[0]["o"].as_u64(), kill[0]["by"].as_u64()), (Some(mig), Some(f16)));
+        assert_eq!(
+            (kill[0]["o"].as_u64(), kill[0]["by"].as_u64()),
+            (Some(mig), Some(f16))
+        );
         let lost = find("lost");
         assert_eq!(lost.len(), 1, "{ev:?}");
         assert_eq!(lost[0]["o"].as_u64(), Some(su));
 
         let viper = built.flights.iter().find(|f| f.pilot == "Viper").unwrap();
-        assert_eq!((viper.shots, viper.hits, viper.kills, viper.fate), (2, 1, 1, "landed"));
-        assert_eq!(built.flights.iter().find(|f| f.pilot == "Ivan").unwrap().fate, "destroyed");
-        assert_eq!(built.flights.iter().find(|f| f.pilot == "Boris").unwrap().fate, "destroyed");
+        assert_eq!(
+            (viper.shots, viper.hits, viper.kills, viper.fate),
+            (2, 1, 1, "landed")
+        );
+        assert_eq!(
+            built.flights.iter().find(|f| f.pilot == "Ivan").unwrap().fate,
+            "destroyed"
+        );
+        assert_eq!(
+            built.flights.iter().find(|f| f.pilot == "Boris").unwrap().fate,
+            "destroyed"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -2100,7 +2247,8 @@ mod tests {
     /// enough time to cross a chunk boundary.
     #[test]
     fn builds_tracks_events_and_flights() {
-        let dir = std::env::temp_dir().join(format!("bfdb-replay-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("bfdb-replay-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let src = dir.join("t.txt.acmi");
@@ -2125,20 +2273,31 @@ mod tests {
                 text.push_str("d4,T=0.1|0.1|5000,Type=Projectile+Shell\n");
             }
             if i > 10 {
-                text.push_str(&format!("c3,T={}||\n", 0.1001 + (t - 1.0) * (0.0999 / 9.0)));
+                text.push_str(&format!(
+                    "c3,T={}||\n",
+                    0.1001 + (t - 1.0) * (0.0999 / 9.0)
+                ));
             }
         }
-        text.push_str("0,Event=Destroyed|b2|\n-c3\n-b2\n#400\na1,T=0.2||\n0,Event=Landed|a1|\n");
+        text.push_str(
+            "0,Event=Destroyed|b2|\n-c3\n-b2\n#400\na1,T=0.2||\n0,Event=Landed|a1|\n",
+        );
         fs::write(&src, text).unwrap();
 
         let out = dir.join("out");
         let built = build(&src, &out).unwrap();
         assert_eq!(built.chunks, 2, "400 s spans two 300 s chunks");
         assert_eq!(built.duration_ms, 400_000);
-        assert_eq!(built.start_ms, DateTime::parse_from_rfc3339("2026-10-08T12:00:00Z").unwrap().timestamp_millis());
+        assert_eq!(
+            built.start_ms,
+            DateTime::parse_from_rfc3339("2026-10-08T12:00:00Z")
+                .unwrap()
+                .timestamp_millis()
+        );
         assert_eq!(built.objects, 4, "the shell is kept");
 
-        let meta: Value = serde_json::from_slice(&gunzip(&out.join("meta.json.gz"))).unwrap();
+        let meta: Value =
+            serde_json::from_slice(&gunzip(&out.join("meta.json.gz"))).unwrap();
         let objs = meta["objects"].as_array().unwrap();
         let idx = |name: &str| objs.iter().position(|o| o["n"] == name).unwrap() as u64;
         let (f16, mig, aim) = (idx("F-16C_50"), idx("MiG-29S"), idx("AIM-120C"));
@@ -2147,12 +2306,23 @@ mod tests {
             (&objs[shell as usize]["ty"], &objs[shell as usize]["id"]),
             (&json!("Projectile+Shell"), &json!("d4"))
         );
-        assert_eq!((&objs[f16 as usize]["ty"], &objs[f16 as usize]["id"]), (&json!("Air+FixedWing"), &json!("a1")));
+        assert_eq!(
+            (&objs[f16 as usize]["ty"], &objs[f16 as usize]["id"]),
+            (&json!("Air+FixedWing"), &json!("a1"))
+        );
         assert_eq!(objs[aim as usize]["par"], f16, "launcher found by proximity");
         let ev = meta["events"].as_array().unwrap();
-        let tv = |k: &str| ev.iter().find(|e| e["k"] == k).unwrap_or_else(|| panic!("no {k} in {ev:?}"));
-        assert_eq!((&tv("message")["o"], &tv("message")["text"]), (&json!(f16), &json!("Fox three")));
-        assert_eq!((&tv("bookmark")["o"], &tv("bookmark")["text"]), (&Value::Null, &json!("Merge")));
+        let tv = |k: &str| {
+            ev.iter().find(|e| e["k"] == k).unwrap_or_else(|| panic!("no {k} in {ev:?}"))
+        };
+        assert_eq!(
+            (&tv("message")["o"], &tv("message")["text"]),
+            (&json!(f16), &json!("Fox three"))
+        );
+        assert_eq!(
+            (&tv("bookmark")["o"], &tv("bookmark")["text"]),
+            (&Value::Null, &json!("Merge"))
+        );
         assert_eq!((&tv("left")["o"], &tv("left")["text"]), (&json!(mig), &Value::Null));
         let kill = ev.iter().find(|e| e["k"] == "kill").expect("a kill");
         assert_eq!((kill["o"].as_u64(), kill["by"].as_u64()), (Some(mig), Some(f16)));
@@ -2169,7 +2339,11 @@ mod tests {
         let c1 = chunk(&out.join("c1.bin.gz"));
         let mut live: Vec<u64> = c1.iter().map(|e| e.idx as u64).collect();
         live.sort();
-        assert_eq!(live, vec![f16, shell], "only the F-16 and the never-removed shell are still alive");
+        assert_eq!(
+            live,
+            vec![f16, shell],
+            "only the F-16 and the never-removed shell are still alive"
+        );
         let e = c1.iter().find(|e| e.idx as u64 == f16).unwrap();
         assert_eq!(e.cols[0].len(), 2, "carry + the t=400 s sample");
         assert!(e.cols[0][0] < 300_000);

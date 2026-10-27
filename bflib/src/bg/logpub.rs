@@ -130,7 +130,11 @@ async fn logger_loop(
 pub struct LogPublisher(UnboundedSender<ToLogger>);
 
 impl LogPublisher {
-    pub fn new(publisher: Publisher, file_path: &PathBuf, netidx_path: Path) -> Result<Self> {
+    pub fn new(
+        publisher: Publisher,
+        file_path: &PathBuf,
+        netidx_path: Path,
+    ) -> Result<Self> {
         let (tx, mut rx) = mpsc::unbounded();
         let file_path = file_path.clone();
         task::spawn(async move {

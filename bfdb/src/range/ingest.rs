@@ -59,14 +59,24 @@ enum Pass {
     Idle,
     /// Consumed bytes up to `pos`; `full` = the chunk limit was hit, so more
     /// is waiting.
-    Read { pos: u64, full: bool, lines: Vec<Vec<u8>> },
+    Read {
+        pos: u64,
+        full: bool,
+        lines: Vec<Vec<u8>>,
+    },
     /// Not the file the cursor belongs to any more.
     Replaced(&'static str),
     /// Only an unterminated fragment past the cursor.
-    Partial { len: u64 },
+    Partial {
+        len: u64,
+    },
 }
 
-fn read_pass(path: &Path, pos: u64, known_head: Option<u64>) -> std::io::Result<(Pass, Option<u64>)> {
+fn read_pass(
+    path: &Path,
+    pos: u64,
+    known_head: Option<u64>,
+) -> std::io::Result<(Pass, Option<u64>)> {
     let mut f = match std::fs::File::open(path) {
         Ok(f) => f,
         Err(e) => return Ok((Pass::Missing(e.to_string()), None)),
@@ -107,10 +117,8 @@ fn read_pass(path: &Path, pos: u64, known_head: Option<u64>) -> std::io::Result<
         }
         return Ok((Pass::Partial { len }, head));
     };
-    let lines = buf[..last_nl]
-        .split(|b| *b == b'\n')
-        .map(|l| l.to_vec())
-        .collect::<Vec<_>>();
+    let lines =
+        buf[..last_nl].split(|b| *b == b'\n').map(|l| l.to_vec()).collect::<Vec<_>>();
     let consumed = last_nl as u64 + 1;
     Ok((Pass::Read { pos: pos + consumed, full: want == CHUNK, lines }, head))
 }
@@ -163,7 +171,11 @@ fn head_of(path: &Path) -> Option<u64> {
 /// rotated after it from the top. Empty if no copy matches (the file was
 /// truncated or replaced by hand). Records are deduplicated by id, so a
 /// wrong guess only costs a re-read.
-fn rotated_backlog(path: &Path, pos: u64, known_head: Option<u64>) -> Vec<(PathBuf, u64)> {
+fn rotated_backlog(
+    path: &Path,
+    pos: u64,
+    known_head: Option<u64>,
+) -> Vec<(PathBuf, u64)> {
     let sib = rotated_siblings(path);
     let len = |p: &Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
     let found = sib.iter().rposition(|p| {
@@ -181,7 +193,13 @@ fn rotated_backlog(path: &Path, pos: u64, known_head: Option<u64>) -> Vec<(PathB
 
 /// Read a rotated (finished, no longer written) file from `pos` to the end,
 /// its unterminated last record included if it parses.
-fn drain_rotated(ctx: &RangeCtx, inst: &str, path: &Path, mut pos: u64, t: &mut Tally) -> std::io::Result<()> {
+fn drain_rotated(
+    ctx: &RangeCtx,
+    inst: &str,
+    path: &Path,
+    mut pos: u64,
+    t: &mut Tally,
+) -> std::io::Result<()> {
     loop {
         match read_pass(path, pos, None)?.0 {
             Pass::Read { pos: new_pos, lines, .. } => {
@@ -240,7 +258,8 @@ fn ingest_lines(ctx: &RangeCtx, inst: &str, lines: Vec<Vec<u8>>, t: &mut Tally) 
                 continue;
             }
         };
-        let typed_err = serde_json::from_value::<bfprotocols::range::RangeRecord>(v.clone()).err();
+        let typed_err =
+            serde_json::from_value::<bfprotocols::range::RangeRecord>(v.clone()).err();
         match ctx.store.insert(inst, v) {
             Ok(Insert::Inserted) => {
                 t.inserted += 1;
@@ -306,7 +325,9 @@ pub(crate) async fn ingest_loop(ctx: Arc<RangeCtx>, inst: String, path: PathBuf)
             }
             match pass {
                 Pass::Missing(e) => {
-                    if last_missing_warn.map_or(true, |t| t.elapsed() >= MISSING_WARN_EVERY) {
+                    if last_missing_warn
+                        .map_or(true, |t| t.elapsed() >= MISSING_WARN_EVERY)
+                    {
                         last_missing_warn = Some(Instant::now());
                         warn!(
                             "[{inst}] range: cannot read {} ({e}) -- no range results are being \
@@ -346,7 +367,10 @@ pub(crate) async fn ingest_loop(ctx: Arc<RangeCtx>, inst: String, path: PathBuf)
                     // a restart part-way through finishes the rotated copy
                     // again rather than losing its tail.
                     known_head = head;
-                    let _ = ctx.store.meta_set(&head_key, &head.map(|h| h.to_be_bytes().to_vec()).unwrap_or_default());
+                    let _ = ctx.store.meta_set(
+                        &head_key,
+                        &head.map(|h| h.to_be_bytes().to_vec()).unwrap_or_default(),
+                    );
                     pos = 0;
                     partial = None;
                     if let Err(e) = ctx.store.set_cursor(&inst, 0) {
@@ -358,13 +382,22 @@ pub(crate) async fn ingest_loop(ctx: Arc<RangeCtx>, inst: String, path: PathBuf)
                     match partial {
                         Some((l, since)) if l == len => {
                             if since.elapsed() >= STALE_TAIL {
-                                let tail = tokio::task::block_in_place(|| read_tail(&path, pos));
+                                let tail =
+                                    tokio::task::block_in_place(|| read_tail(&path, pos));
                                 if let Ok(tail) = tail {
-                                    let ok = serde_json::from_slice::<serde_json::Value>(&tail).is_ok();
+                                    let ok = serde_json::from_slice::<serde_json::Value>(
+                                        &tail,
+                                    )
+                                    .is_ok();
                                     if ok {
                                         let mut t = Tally::default();
                                         tokio::task::block_in_place(|| {
-                                            ingest_lines(&ctx, &inst, vec![tail.clone()], &mut t)
+                                            ingest_lines(
+                                                &ctx,
+                                                &inst,
+                                                vec![tail.clone()],
+                                                &mut t,
+                                            )
                                         });
                                         pos += tail.len() as u64;
                                         let _ = ctx.store.set_cursor(&inst, pos);
@@ -387,7 +420,9 @@ pub(crate) async fn ingest_loop(ctx: Arc<RangeCtx>, inst: String, path: PathBuf)
                     partial = None;
                     last_missing_warn = None;
                     let mut t = Tally::default();
-                    tokio::task::block_in_place(|| ingest_lines(&ctx, &inst, lines, &mut t));
+                    tokio::task::block_in_place(|| {
+                        ingest_lines(&ctx, &inst, lines, &mut t)
+                    });
                     if let Err(e) = ctx.store.set_cursor(&inst, new_pos) {
                         error!("[{inst}] range: failed to persist the cursor: {e:?}");
                     }
@@ -436,7 +471,8 @@ mod tests {
 
     #[test]
     fn complete_lines_only_and_rotation() {
-        let dir = std::env::temp_dir().join(format!("bfdb-range-ingest-{}", std::process::id()));
+        let dir = std::env::temp_dir()
+            .join(format!("bfdb-range-ingest-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("range.jsonl");
         let mut f = std::fs::File::create(&p).unwrap();
@@ -476,7 +512,8 @@ mod tests {
 
     #[test]
     fn rotated_copies_are_found() {
-        let dir = std::env::temp_dir().join(format!("bfdb-range-rotate-{}", std::process::id()));
+        let dir = std::env::temp_dir()
+            .join(format!("bfdb-range-rotate-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let live = dir.join("range.jsonl");
@@ -503,7 +540,10 @@ mod tests {
         // no copy has that head: truncated by hand, nothing to finish
         assert!(rotated_backlog(&live, 601, Some(1)).is_empty());
         // no fingerprint yet: the newest copy at least as long as the cursor
-        assert_eq!(rotated_backlog(&live, 650, None), vec![(sib[0].clone(), 650), (sib[1].clone(), 0)]);
+        assert_eq!(
+            rotated_backlog(&live, 650, None),
+            vec![(sib[0].clone(), 650), (sib[1].clone(), 0)]
+        );
         // reading the rest of the first copy gives its last line
         let (pass, _) = read_pass(&sib[0], 601, None).unwrap();
         let Pass::Read { lines, .. } = pass else { panic!("expected a read") };

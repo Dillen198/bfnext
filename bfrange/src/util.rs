@@ -6,14 +6,14 @@
 //! DCS world frame: x = north, y = up, z = east (metres). Headings here are
 //! degrees true, clockwise from north, so `atan2(z, x)`.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use bfprotocols::range::{AtmoLayer, GeoPt};
 use chrono::{Datelike, NaiveDate};
 use dcso3::{
-    coord::{Coord, LLPos},
     LuaEnv, LuaVec3, MizLua, Position3,
+    coord::{Coord, LLPos},
 };
-use mlua::{prelude::*, Value};
+use mlua::{Value, prelude::*};
 
 pub type V3 = nalgebra::Vector3<f64>;
 
@@ -32,7 +32,11 @@ pub fn geo(lua: MizLua, p: V3) -> GeoPt {
 }
 
 pub fn from_latlon(lua: MizLua, lat: f64, lon: f64) -> Result<V3> {
-    let v = Coord::singleton(lua)?.ll_to_lo(LLPos { latitude: lat, longitude: lon, altitude: 0. })?;
+    let v = Coord::singleton(lua)?.ll_to_lo(LLPos {
+        latitude: lat,
+        longitude: lon,
+        altitude: 0.,
+    })?;
     Ok(v.0)
 }
 
@@ -146,7 +150,14 @@ pub fn atmo_at(lua: MizLua, p: V3) -> AtmoLayer {
 /// DCS's atmosphere over (x, z) from `lo_m` to `hi_m` MSL, lowest first:
 /// both ends plus evenly spaced layers at most `max_step_m` apart (and never
 /// more than 32 layers).
-pub fn atmo_profile(lua: MizLua, x: f64, z: f64, lo_m: f64, hi_m: f64, max_step_m: f64) -> Vec<AtmoLayer> {
+pub fn atmo_profile(
+    lua: MizLua,
+    x: f64,
+    z: f64,
+    lo_m: f64,
+    hi_m: f64,
+    max_step_m: f64,
+) -> Vec<AtmoLayer> {
     let (lo, hi) = if lo_m <= hi_m { (lo_m, hi_m) } else { (hi_m, lo_m) };
     let span = hi - lo;
     let n = ((span / max_step_m.max(1.)).ceil() as usize).clamp(1, 31);
@@ -171,8 +182,9 @@ pub fn ground_height(lua: MizLua, p: V3) -> f64 {
 pub fn is_water(lua: MizLua, p: V3) -> bool {
     use dcso3::land::SurfaceType;
     matches!(
-        dcso3::land::Land::singleton(lua)
-            .and_then(|l| l.get_surface_type(dcso3::LuaVec2(nalgebra::Vector2::new(p.x, p.z)))),
+        dcso3::land::Land::singleton(lua).and_then(
+            |l| l.get_surface_type(dcso3::LuaVec2(nalgebra::Vector2::new(p.x, p.z)))
+        ),
         Ok(SurfaceType::Water | SurfaceType::ShallowWater)
     )
 }
@@ -237,7 +249,8 @@ pub fn json_to_lua(lua: &Lua, v: &serde_json::Value) -> LuaResult<Value> {
 }
 
 fn group_controller(lua: MizLua, group: &str) -> Result<dcso3::controller::Controller> {
-    let g = dcso3::group::Group::get_by_name(lua, group).map_err(|e| anyhow!("group {group} does not exist: {e}"))?;
+    let g = dcso3::group::Group::get_by_name(lua, group)
+        .map_err(|e| anyhow!("group {group} does not exist: {e}"))?;
     g.get_controller()
 }
 
@@ -245,22 +258,38 @@ fn group_controller(lua: MizLua, group: &str) -> Result<dcso3::controller::Contr
 /// with the argument built from JSON. dcso3's typed `Task` / `Command` /
 /// `AiOption` don't cover every task the range issues (Orbit, Tanker,
 /// ActivateBeacon, EPLRS ...), so the call itself stays raw.
-pub fn group_controller_call(lua: MizLua, group: &str, method: &str, arg: serde_json::Value) -> Result<()> {
+pub fn group_controller_call(
+    lua: MizLua,
+    group: &str,
+    method: &str,
+    arg: serde_json::Value,
+) -> Result<()> {
     let ctl = group_controller(lua, group)?;
     ctl.call_method::<()>(method, json_to_lua(lua.inner(), &arg)?)?;
     Ok(())
 }
 
 /// Controller:setOption(id, value) on a group.
-pub fn group_set_option(lua: MizLua, group: &str, id: i64, value: serde_json::Value) -> Result<()> {
+pub fn group_set_option(
+    lua: MizLua,
+    group: &str,
+    id: i64,
+    value: serde_json::Value,
+) -> Result<()> {
     let ctl = group_controller(lua, group)?;
     ctl.call_method::<()>("setOption", (id, json_to_lua(lua.inner(), &value)?))?;
     Ok(())
 }
 
 /// Controller:setCommand on one UNIT (TACAN/ICLS/Link-4 are per unit).
-pub fn unit_controller_call(lua: MizLua, unit: &str, method: &str, arg: serde_json::Value) -> Result<()> {
-    let u = dcso3::unit::Unit::get_by_name(lua, unit).map_err(|e| anyhow!("unit {unit} does not exist: {e}"))?;
+pub fn unit_controller_call(
+    lua: MizLua,
+    unit: &str,
+    method: &str,
+    arg: serde_json::Value,
+) -> Result<()> {
+    let u = dcso3::unit::Unit::get_by_name(lua, unit)
+        .map_err(|e| anyhow!("unit {unit} does not exist: {e}"))?;
     u.get_controller()?.call_method::<()>(method, json_to_lua(lua.inner(), &arg)?)?;
     Ok(())
 }
@@ -277,15 +306,14 @@ impl MissionClock {
         let r = (|| -> Result<Self> {
             // dcso3 has no accessors for env.mission's theatre and date
             let m = dcso3::env::miz::Miz::singleton(lua)?;
-            let theatre: String = m.raw_get::<Option<String>>("theatre")?.unwrap_or_default();
-            let date = m
-                .raw_get::<Option<LuaTable>>("date")?
-                .and_then(|d| {
-                    let y: i32 = d.raw_get("Year").ok()?;
-                    let mo: u32 = d.raw_get("Month").ok()?;
-                    let dd: u32 = d.raw_get("Day").ok()?;
-                    NaiveDate::from_ymd_opt(y, mo, dd)
-                });
+            let theatre: String =
+                m.raw_get::<Option<String>>("theatre")?.unwrap_or_default();
+            let date = m.raw_get::<Option<LuaTable>>("date")?.and_then(|d| {
+                let y: i32 = d.raw_get("Year").ok()?;
+                let mo: u32 = d.raw_get("Month").ok()?;
+                let dd: u32 = d.raw_get("Day").ok()?;
+                NaiveDate::from_ymd_opt(y, mo, dd)
+            });
             Ok(Self { theatre, date })
         })();
         r.unwrap_or_default()
@@ -301,7 +329,8 @@ impl MissionClock {
             .map(|d| d + chrono::Duration::days(days))
             .map(|d| format!("{}/{}/{}", d.year(), d.month(), d.day()))
             .unwrap_or_default();
-        let (h, m, s) = ((tod / 3600.) as u32, ((tod % 3600.) / 60.) as u32, (tod % 60.) as u32);
+        let (h, m, s) =
+            ((tod / 3600.) as u32, ((tod % 3600.) / 60.) as u32, (tod % 60.) as u32);
         (date, format!("{h:02}:{m:02}:{s:02}"))
     }
 
@@ -334,12 +363,15 @@ impl MissionClock {
         let doy = date.ordinal() as f64;
         let hours_utc = (abs_s.rem_euclid(86400.)) / 3600. - self.utc_offset_h();
         let g = 2. * std::f64::consts::PI / 365. * (doy - 1. + (hours_utc - 12.) / 24.);
-        let decl = 0.006918 - 0.399912 * g.cos() + 0.070257 * g.sin() - 0.006758 * (2. * g).cos()
+        let decl = 0.006918 - 0.399912 * g.cos() + 0.070257 * g.sin()
+            - 0.006758 * (2. * g).cos()
             + 0.000907 * (2. * g).sin()
             - 0.002697 * (3. * g).cos()
             + 0.00148 * (3. * g).sin();
         let eqtime = 229.18
-            * (0.000075 + 0.001868 * g.cos() - 0.032077 * g.sin() - 0.014615 * (2. * g).cos()
+            * (0.000075 + 0.001868 * g.cos()
+                - 0.032077 * g.sin()
+                - 0.014615 * (2. * g).cos()
                 - 0.040849 * (2. * g).sin());
         let tst = hours_utc * 60. + eqtime + 4. * lon;
         let ha = (tst / 4. - 180.).to_radians();

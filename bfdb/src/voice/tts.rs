@@ -24,7 +24,12 @@ pub(crate) const SRS_RATE: u32 = 16_000;
 pub(crate) enum Tts {
     /// `speaker` picks one voice of a multi-speaker model (libritts has
     /// hundreds); `length_scale` is Piper's speed (above 1 is slower).
-    Piper { exe: PathBuf, model: PathBuf, speaker: Option<u32>, length_scale: Option<f32> },
+    Piper {
+        exe: PathBuf,
+        model: PathBuf,
+        speaker: Option<u32>,
+        length_scale: Option<f32>,
+    },
     /// `rate` is SAPI's -10..10.
     Sapi { voice: Option<String>, rate: i32 },
     /// A speech service, with a local voice to fall back on when it fails
@@ -45,16 +50,15 @@ impl Tts {
                 speaker: None,
                 length_scale: None,
             },
-            _ => Tts::Sapi {
-                voice: voice.cloned(),
-                rate: 0,
-            },
+            _ => Tts::Sapi { voice: voice.cloned(), rate: 0 },
         }
     }
 
     pub(crate) fn describe(&self) -> String {
         match self {
-            Tts::Piper { model, speaker: Some(s), .. } => format!("Piper ({} speaker {s})", model.display()),
+            Tts::Piper { model, speaker: Some(s), .. } => {
+                format!("Piper ({} speaker {s})", model.display())
+            }
             Tts::Piper { model, .. } => format!("Piper ({})", model.display()),
             Tts::Sapi { voice: Some(v), .. } => format!("Windows SAPI ({v})"),
             Tts::Sapi { voice: None, .. } => "Windows SAPI (default voice)".into(),
@@ -89,16 +93,21 @@ impl Tts {
         }
         let mut last_err = None;
         for attempt in 0..2 {
-            let tmp = std::env::temp_dir().join(format!("bfgci-{}.wav", uuid::Uuid::new_v4()));
+            let tmp =
+                std::env::temp_dir().join(format!("bfgci-{}.wav", uuid::Uuid::new_v4()));
             let r = (|| -> Result<Vec<i16>> {
                 match self {
                     Tts::Piper { exe, model, speaker, length_scale } => {
                         run_piper(exe, model, *speaker, *length_scale, text, &tmp)?
                     }
-                    Tts::Sapi { voice, rate } => run_sapi(voice.as_deref(), *rate, text, &tmp)?,
+                    Tts::Sapi { voice, rate } => {
+                        run_sapi(voice.as_deref(), *rate, text, &tmp)?
+                    }
                     Tts::Neural { .. } => unreachable!(),
                 }
-                let (samples, rate) = read_wav_mono(hound::WavReader::open(&tmp).context("opening synth WAV")?)?;
+                let (samples, rate) = read_wav_mono(
+                    hound::WavReader::open(&tmp).context("opening synth WAV")?,
+                )?;
                 Ok(resample_to(&samples, rate, SRS_RATE))
             })();
             let _ = std::fs::remove_file(&tmp);
@@ -116,7 +125,14 @@ impl Tts {
     }
 }
 
-fn run_piper(exe: &Path, model: &Path, speaker: Option<u32>, length_scale: Option<f32>, text: &str, out: &Path) -> Result<()> {
+fn run_piper(
+    exe: &Path,
+    model: &Path,
+    speaker: Option<u32>,
+    length_scale: Option<f32>,
+    text: &str,
+    out: &Path,
+) -> Result<()> {
     let mut cmd = Command::new(exe);
     cmd.arg("--model").arg(model).arg("--output_file").arg(out);
     if let Some(s) = speaker {
@@ -131,11 +147,7 @@ fn run_piper(exe: &Path, model: &Path, speaker: Option<u32>, length_scale: Optio
         .stderr(Stdio::null())
         .spawn()
         .context("spawning piper")?;
-    child
-        .stdin
-        .take()
-        .context("piper stdin")?
-        .write_all(text.as_bytes())?;
+    child.stdin.take().context("piper stdin")?.write_all(text.as_bytes())?;
     let status = child.wait()?;
     if !status.success() {
         anyhow::bail!("piper exited {status}");
@@ -155,7 +167,11 @@ pub(crate) fn sapi_voices() -> Vec<String> {
         .stderr(Stdio::null())
         .output();
     match out {
-        Ok(o) => String::from_utf8_lossy(&o.stdout).lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect(),
+        Ok(o) => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect(),
         Err(_) => vec![],
     }
 }
@@ -184,11 +200,7 @@ fn run_sapi(voice: Option<&str>, rate: i32, text: &str, out: &Path) -> Result<()
         .stderr(Stdio::null())
         .spawn()
         .context("spawning powershell for SAPI")?;
-    child
-        .stdin
-        .take()
-        .context("powershell stdin")?
-        .write_all(text.as_bytes())?;
+    child.stdin.take().context("powershell stdin")?.write_all(text.as_bytes())?;
     let status = child.wait()?;
     if !status.success() {
         anyhow::bail!("SAPI (powershell) exited {status}");
@@ -200,7 +212,9 @@ fn run_sapi(voice: Option<&str>, rate: i32, text: &str, out: &Path) -> Result<()
 }
 
 /// Read a WAV, downmixing to mono `i16`. Returns (samples, rate).
-fn read_wav_mono<R: std::io::Read>(mut reader: hound::WavReader<R>) -> Result<(Vec<i16>, u32)> {
+fn read_wav_mono<R: std::io::Read>(
+    mut reader: hound::WavReader<R>,
+) -> Result<(Vec<i16>, u32)> {
     let spec = reader.spec();
     let ch = spec.channels.max(1) as usize;
     let raw: Vec<i32> = match spec.sample_format {
@@ -277,7 +291,15 @@ const CACHE: usize = 24;
 
 impl Neural {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(api: Api, url: &str, key: Option<String>, model: &str, voice: &str, speed: f32, style: Option<String>) -> Self {
+    pub(crate) fn new(
+        api: Api,
+        url: &str,
+        key: Option<String>,
+        model: &str,
+        voice: &str,
+        speed: f32,
+        style: Option<String>,
+    ) -> Self {
         Neural {
             api,
             url: url.trim_end_matches('/').to_string(),
@@ -286,7 +308,10 @@ impl Neural {
             voice: voice.to_string(),
             speed,
             style,
-            http: reqwest::blocking::Client::builder().timeout(Duration::from_secs(20)).build().unwrap_or_default(),
+            http: reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(20))
+                .build()
+                .unwrap_or_default(),
             cache: Mutex::new(VecDeque::new()),
             last_fail: Mutex::new(None),
         }
@@ -310,7 +335,8 @@ impl Neural {
     }
 
     pub(crate) fn synthesize(&self, text: &str) -> Result<Vec<i16>> {
-        if let Some((_, pcm)) = self.cache.lock().unwrap().iter().find(|(t, _)| t == text) {
+        if let Some((_, pcm)) = self.cache.lock().unwrap().iter().find(|(t, _)| t == text)
+        {
             return Ok(pcm.as_ref().clone());
         }
         let pcm = match self.api {
@@ -347,10 +373,16 @@ impl Neural {
         let res = req.send()?;
         let status = res.status();
         if !status.is_success() {
-            anyhow::bail!("{status} {}", res.text().unwrap_or_default().chars().take(300).collect::<String>());
+            anyhow::bail!(
+                "{status} {}",
+                res.text().unwrap_or_default().chars().take(300).collect::<String>()
+            );
         }
         let bytes = res.bytes()?;
-        let (samples, rate) = read_wav_mono(hound::WavReader::new(std::io::Cursor::new(bytes.to_vec())).context("speech service WAV")?)?;
+        let (samples, rate) = read_wav_mono(
+            hound::WavReader::new(std::io::Cursor::new(bytes.to_vec()))
+                .context("speech service WAV")?,
+        )?;
         Ok(resample_to(&samples, rate, SRS_RATE))
     }
 
@@ -368,7 +400,10 @@ impl Neural {
         });
         let mut req = self
             .http
-            .post(format!("{}/v1/text-to-speech/{}?output_format=pcm_16000", self.url, self.voice))
+            .post(format!(
+                "{}/v1/text-to-speech/{}?output_format=pcm_16000",
+                self.url, self.voice
+            ))
             .json(&body);
         if let Some(k) = &self.key {
             req = req.header("xi-api-key", k);
@@ -376,7 +411,10 @@ impl Neural {
         let res = req.send()?;
         let status = res.status();
         if !status.is_success() {
-            anyhow::bail!("{status} {}", res.text().unwrap_or_default().chars().take(300).collect::<String>());
+            anyhow::bail!(
+                "{status} {}",
+                res.text().unwrap_or_default().chars().take(300).collect::<String>()
+            );
         }
         let b = res.bytes()?;
         Ok(b.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect())
@@ -396,15 +434,24 @@ pub(crate) fn elevenlabs_voices(url: &str, key: &str) -> Vec<(String, String)> {
     struct R {
         voices: Vec<V>,
     }
-    let http = reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().unwrap_or_default();
-    let r = http.get(format!("{}/v1/voices", url.trim_end_matches('/'))).header("xi-api-key", key).send();
-    let mut v: Vec<V> = match r.and_then(|r| r.error_for_status()).and_then(|r| r.json::<R>()) {
-        Ok(r) => r.voices,
-        Err(e) => {
-            log::warn!("tts: could not list ElevenLabs voices: {e}");
-            return vec![];
-        }
-    };
-    v.sort_by_key(|x| !x.labels.get("accent").map_or(false, |a| a.to_lowercase().contains("american")));
+    let http = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap_or_default();
+    let r = http
+        .get(format!("{}/v1/voices", url.trim_end_matches('/')))
+        .header("xi-api-key", key)
+        .send();
+    let mut v: Vec<V> =
+        match r.and_then(|r| r.error_for_status()).and_then(|r| r.json::<R>()) {
+            Ok(r) => r.voices,
+            Err(e) => {
+                log::warn!("tts: could not list ElevenLabs voices: {e}");
+                return vec![];
+            }
+        };
+    v.sort_by_key(|x| {
+        !x.labels.get("accent").map_or(false, |a| a.to_lowercase().contains("american"))
+    });
     v.into_iter().map(|x| (x.voice_id, x.name)).collect()
 }

@@ -423,12 +423,8 @@ pub fn tidy_type(raw: &str) -> String {
     // keep "<letters> <first number block>" -- drop trailing variant letters
     let mut parts = out.split_whitespace();
     let head = parts.next().unwrap_or("").to_string();
-    let num: String = parts
-        .next()
-        .unwrap_or("")
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
+    let num: String =
+        parts.next().unwrap_or("").chars().take_while(|c| c.is_ascii_digit()).collect();
     if head.is_empty() {
         String::new()
     } else if num.is_empty() {

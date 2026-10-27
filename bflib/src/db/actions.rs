@@ -8,7 +8,7 @@ use crate::{
         tasks::TaskId,
     },
     group, group_mut,
-    jtac::{aim_and_fire_route, group_facing, JtId, Jtacs},
+    jtac::{JtId, Jtacs, aim_and_fire_route, group_facing},
     objective,
     spawnctx::{SpawnCtx, SpawnLoc},
     unit_mut,
@@ -16,10 +16,10 @@ use crate::{
 use anyhow::{Context, Ok, Result, anyhow, bail};
 use bfprotocols::{
     cfg::{
-        Action, ActionGeoLimit, ActionKind, AiPlaneCfg, AiPlaneKind, ArtilleryCfg, AwacsCfg, BomberCfg,
-        DeployableCfg, DeployableKind, DroneCfg, LimitEnforceTyp, MoveCfg, NavalCruiseMissileCfg,
-        NukeCfg, ReconCfg, ReinforceCfg, RemoveTaskCfg, TaskCfg, TaskTarget, UnitTag,
-        MATERIEL_ITEM,
+        Action, ActionGeoLimit, ActionKind, AiPlaneCfg, AiPlaneKind, ArtilleryCfg,
+        AwacsCfg, BomberCfg, DeployableCfg, DeployableKind, DroneCfg, LimitEnforceTyp,
+        MATERIEL_ITEM, MoveCfg, NavalCruiseMissileCfg, NukeCfg, ReconCfg, ReinforceCfg,
+        RemoveTaskCfg, TaskCfg, TaskTarget, UnitTag,
     },
     db::{
         group::{GroupId, UnitId},
@@ -37,8 +37,8 @@ use dcso3::{
     coalition::Side,
     controller::{
         ActionTyp, AiOption, AlarmState, AltType, BeaconSystem, BeaconType, Command,
-        GroundOption, GroundRoe, MissionPoint, NavalOption, OrbitPattern, PointType, Task, TacanBand, TurnMethod,
-        VehicleFormation,
+        GroundOption, GroundRoe, MissionPoint, NavalOption, OrbitPattern, PointType,
+        TacanBand, Task, TurnMethod, VehicleFormation,
     },
     env::miz::MizIndex,
     group::Group,
@@ -63,11 +63,7 @@ use std::{cmp::max, vec};
 /// `tacan_callsign` isn't set. `frequency` is a placeholder within the
 /// TACAN L-band -- DCS derives the actual beacon frequency from `channel`
 /// and `mode_channel` when both are present.
-fn tacan_beacon_task(
-    pl: &AiPlaneCfg,
-    name: &str,
-    system: BeaconSystem,
-) -> Option<Task> {
+fn tacan_beacon_task(pl: &AiPlaneCfg, name: &str, system: BeaconSystem) -> Option<Task> {
     let channel = pl.tacan_channel?;
     let band = pl.tacan_band.clone().unwrap_or(TacanBand::Y);
     let callsign = pl.tacan_callsign.clone().unwrap_or_else(|| {
@@ -208,7 +204,12 @@ impl ActionArgs {
         side: Side,
         s: &str,
     ) -> Result<Self> {
-        fn get_key_pos(db: &mut Db, lua: MizLua, side: Side, key: &str) -> Result<Vector2> {
+        fn get_key_pos(
+            db: &mut Db,
+            lua: MizLua,
+            side: Side,
+            key: &str,
+        ) -> Result<Vector2> {
             let mut found: SmallVec<[(MarkId, Vector2); 4]> = smallvec![];
             for mk in World::singleton(lua)?.get_mark_panels()? {
                 let mk = mk?;
@@ -229,7 +230,12 @@ impl ActionArgs {
                 Ok(found[0].1)
             }
         }
-        fn get_closest_base(db: &mut Db, lua: MizLua, side: Side, key: &str) -> Result<Vector2> {
+        fn get_closest_base(
+            db: &mut Db,
+            lua: MizLua,
+            side: Side,
+            key: &str,
+        ) -> Result<Vector2> {
             let mut found: SmallVec<[(MarkId, Vector2); 4]> = smallvec![];
             for mk in World::singleton(lua)?.get_mark_panels()? {
                 let mk = mk?;
@@ -254,7 +260,8 @@ impl ActionArgs {
                     for (_id, obj) in db.objectives() {
                         if obj.is_airbase() {
                             let obj_pos = obj.zone.pos();
-                            let dist = na::distance_squared(&obj_pos.into(), &key_pos.into());
+                            let dist =
+                                na::distance_squared(&obj_pos.into(), &key_pos.into());
                             if dist < min_dist {
                                 min_dist = dist;
                                 closest_base = Some(obj);
@@ -300,21 +307,21 @@ impl ActionArgs {
                 }),
             }
         }
-        fn pos<T>(db: &mut Db, lua: MizLua, side: Side, cfg: T, s: &str) -> Result<WithPos<T>> {
+        fn pos<T>(
+            db: &mut Db,
+            lua: MizLua,
+            side: Side,
+            cfg: T,
+            s: &str,
+        ) -> Result<WithPos<T>> {
             let pos = get_key_pos(db, lua, side, s)?;
             Ok(WithPos { cfg, pos })
         }
         fn jtac<T>(cfg: T, s: &str) -> Result<WithJtac<T>> {
-            Ok(WithJtac {
-                cfg,
-                jtac: s.parse()?,
-            })
+            Ok(WithJtac { cfg, jtac: s.parse()? })
         }
         fn obj<T>(db: &Db, cfg: T, s: &str) -> Result<WithObj<T>> {
-            Ok(WithObj {
-                cfg,
-                oid: admin::get_airbase(db, s)?,
-            })
+            Ok(WithObj { cfg, oid: admin::get_airbase(db, s)? })
         }
         fn from_to<T>(db: &Db, cfg: T, s: &str) -> Result<WithFromTo<T>> {
             match s.split_once(" ") {
@@ -342,14 +349,22 @@ impl ActionArgs {
                 Ok(Self::SeadWaypoint(pos_group(db, lua, side, (), s)?))
             }
             ActionKind::Drone(c) => Ok(Self::Drone(pos(db, lua, side, c, s)?)),
-            ActionKind::DroneWaypoint => Ok(Self::DroneWaypoint(pos_group(db, lua, side, (), s)?)),
+            ActionKind::DroneWaypoint => {
+                Ok(Self::DroneWaypoint(pos_group(db, lua, side, (), s)?))
+            }
             ActionKind::Nuke(c) => Ok(Self::Nuke(pos(db, lua, side, c, s)?)),
-            ActionKind::Paratrooper(c) => Ok(Self::Paratrooper(pos(db, lua, side, c, s)?)),
+            ActionKind::Paratrooper(c) => {
+                Ok(Self::Paratrooper(pos(db, lua, side, c, s)?))
+            }
             ActionKind::Deployable(c) => Ok(Self::Deployable(pos(db, lua, side, c, s)?)),
             ActionKind::FatCow(c) => Ok(Self::FatCow(pos(db, lua, side, c, s)?)),
             ActionKind::LogisticsRepair(c) => Ok(Self::LogisticsRepair(obj(db, c, s)?)),
-            ActionKind::LogisticsTransfer(c) => Ok(Self::LogisticsTransfer(from_to(db, c, s)?)),
-            ActionKind::AwacsWaypoint => Ok(Self::AwacsWaypoint(pos_group(db, lua, side, (), s)?)),
+            ActionKind::LogisticsTransfer(c) => {
+                Ok(Self::LogisticsTransfer(from_to(db, c, s)?))
+            }
+            ActionKind::AwacsWaypoint => {
+                Ok(Self::AwacsWaypoint(pos_group(db, lua, side, (), s)?))
+            }
             ActionKind::TankerWaypoint => {
                 Ok(Self::TankerWaypoint(pos_group(db, lua, side, (), s)?))
             }
@@ -360,17 +375,17 @@ impl ActionArgs {
                 Ok(Self::CruiseMissileSpawn(pos(db, lua, side, c, s)?))
             }
             ActionKind::Rtb => Ok(Self::Rtb(pos_closest_base(db, lua, side, (), s)?)),
-            ActionKind::CruiseMissileWaypoint => Ok(Self::CruiseMissileWaypoint(pos_group(
-                db,
-                lua,
-                side,
-                (),
-                s,
-            )?)),
-            ActionKind::CarrierWaypoint => Ok(Self::CarrierWaypoint(pos_group(db, lua, side, (), s)?)),
+            ActionKind::CruiseMissileWaypoint => {
+                Ok(Self::CruiseMissileWaypoint(pos_group(db, lua, side, (), s)?))
+            }
+            ActionKind::CarrierWaypoint => {
+                Ok(Self::CarrierWaypoint(pos_group(db, lua, side, (), s)?))
+            }
             ActionKind::CarrierRepair => Ok(Self::CarrierRepair(obj(db, (), s)?)),
             ActionKind::CarrierRespawn => Ok(Self::CarrierRespawn(obj(db, (), s)?)),
-            ActionKind::NavalCruiseMissileStrike(c) => Ok(Self::NavalCruiseMissileStrike(obj(db, c, s)?)),
+            ActionKind::NavalCruiseMissileStrike(c) => {
+                Ok(Self::NavalCruiseMissileStrike(obj(db, c, s)?))
+            }
             ActionKind::Artillery(c) => Ok(Self::Artillery(pos(db, lua, side, c, s)?)),
             ActionKind::Recon(c) => Ok(Self::Recon(pos(db, lua, side, c, s)?)),
             ActionKind::AddTask(c) => match s.split_once(" ") {
@@ -385,8 +400,11 @@ impl ActionArgs {
                         .find(|t| t.name.eq_ignore_ascii_case(kind))
                         .ok_or_else(|| anyhow!("no such task type {kind}"))?;
                     let at = match typ.target {
-                        TaskTarget::Position => TaskAt::Pos(get_key_pos(db, lua, side, rest)?),
-                        TaskTarget::CaptureObjective | TaskTarget::SupplyObjective { .. } => {
+                        TaskTarget::Position => {
+                            TaskAt::Pos(get_key_pos(db, lua, side, rest)?)
+                        }
+                        TaskTarget::CaptureObjective
+                        | TaskTarget::SupplyObjective { .. } => {
                             TaskAt::Obj(admin::get_airbase(db, rest)?)
                         }
                     };
@@ -397,10 +415,9 @@ impl ActionArgs {
                     }))
                 }
             },
-            ActionKind::RemoveTask(c) => Ok(Self::RemoveTask(WithTask {
-                cfg: c,
-                task: s.trim().parse()?,
-            })),
+            ActionKind::RemoveTask(c) => {
+                Ok(Self::RemoveTask(WithTask { cfg: c, task: s.trim().parse()? }))
+            }
             ActionKind::Reinforce(c) => Ok(Self::Reinforce(obj(db, c, s)?)),
         }
     }
@@ -467,7 +484,11 @@ impl ActionCmd {
     /// The longest name that prefixes the command wins, case-insensitively,
     /// and the quotes and `:` players copy out of `-action help`'s
     /// `JTAC Drone: <key>` line are tolerated.
-    fn split_name<'a>(db: &Db, side: Side, s: &'a str) -> Result<(String, Action, &'a str)> {
+    fn split_name<'a>(
+        db: &Db,
+        side: Side,
+        s: &'a str,
+    ) -> Result<(String, Action, &'a str)> {
         let s = s.trim().trim_matches('"').trim();
         let actions = db
             .ephemeral
@@ -494,7 +515,9 @@ impl ActionCmd {
             }
             Some((name, action)) => {
                 let args = s[name.len()..]
-                    .trim_start_matches(|c: char| c.is_whitespace() || c == ':' || c == '"')
+                    .trim_start_matches(|c: char| {
+                        c.is_whitespace() || c == ':' || c == '"'
+                    })
                     .trim_end_matches('"')
                     .trim();
                 Ok((name.clone(), action.clone(), args))
@@ -521,10 +544,7 @@ fn racetrack_dist_and_heading(
 /// a scale of 4) -- but this used to divide by `nukes_used * cost_scale`,
 /// which is linear (1000, 250, 125, 83, ...). Never below 1 point.
 fn nuke_cost(base: u32, cost_scale: u8, nukes_used: u32) -> u32 {
-    let div = (cost_scale as u32)
-        .max(1)
-        .checked_pow(nukes_used)
-        .unwrap_or(u32::MAX);
+    let div = (cost_scale as u32).max(1).checked_pow(nukes_used).unwrap_or(u32::MAX);
     max(1, base / div)
 }
 
@@ -663,7 +683,9 @@ impl Db {
         target: Vector2,
     ) -> Result<GroupId> {
         let plane = match &action.kind {
-            ActionKind::Fighters(p) | ActionKind::Attackers(p) | ActionKind::Sead(p) => p.clone(),
+            ActionKind::Fighters(p) | ActionKind::Attackers(p) | ActionKind::Sead(p) => {
+                p.clone()
+            }
             _ => bail!("{name} is not a Fighters, Attackers or SEAD action"),
         };
         let kind = action.kind.clone();
@@ -682,8 +704,12 @@ impl Db {
             move |db, group, pos| {
                 let args = WithPosAndGroup { cfg: (), pos: target, group };
                 match kind {
-                    ActionKind::Fighters(_) => db.ai_fighters_mission(side, None, pos, args),
-                    ActionKind::Attackers(_) => db.ai_attackers_mission(side, None, pos, args),
+                    ActionKind::Fighters(_) => {
+                        db.ai_fighters_mission(side, None, pos, args)
+                    }
+                    ActionKind::Attackers(_) => {
+                        db.ai_attackers_mission(side, None, pos, args)
+                    }
                     _ => db.ai_sead_mission(side, None, pos, args),
                 }
             },
@@ -772,7 +798,9 @@ impl Db {
                         DeployKind::Objective { origin } => {
                             let obj = objective!(self, origin)?;
                             match obj.kind {
-                                ObjectiveKind::Farp { mobile: true, .. } => a.cfg.deployable,
+                                ObjectiveKind::Farp { mobile: true, .. } => {
+                                    a.cfg.deployable
+                                }
                                 _ => bail!("can't move this unit type"),
                             }
                         }
@@ -787,7 +815,8 @@ impl Db {
         };
         // The war-effort bar's tier-2 perk: cheaper actions for the side
         // pushing it.
-        let cost = (cost as f64 * self.persisted.war_effort.action_cost_factor(side)).round() as u32;
+        let cost = (cost as f64 * self.persisted.war_effort.action_cost_factor(side))
+            .round() as u32;
         // the treasury already paid; the owner is charged nothing
         let cost = if treasury_paid { 0 } else { cost };
         if let Some(ucid) = ucid.as_ref() {
@@ -893,7 +922,16 @@ impl Db {
                 .move_cruise_missile(spctx, side, ucid.clone(), args)
                 .context("moving tanker")?,
             ActionArgs::CruiseMissileSpawn(args) => self
-                .cruise_missile(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
+                .cruise_missile(
+                    perf,
+                    spctx,
+                    idx,
+                    side,
+                    ucid.clone(),
+                    name,
+                    cmd.action,
+                    args,
+                )
                 .context("calling cruise missile bomber")?,
             ActionArgs::FatCow(args) => {
                 self.call_ai_fat_cow(
@@ -929,25 +967,41 @@ impl Db {
             ActionArgs::FightersWaypoint(args) => self
                 .move_ai_fighters(spctx, side, ucid.clone(), args)
                 .context("moving ai fighters")?,
-            ActionArgs::Attackers(args) => {
-                self.ai_attackers(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)?
-            }
+            ActionArgs::Attackers(args) => self.ai_attackers(
+                perf,
+                spctx,
+                idx,
+                side,
+                ucid.clone(),
+                name,
+                cmd.action,
+                args,
+            )?,
             ActionArgs::AttackersWaypoint(args) => {
                 self.move_ai_attackers(spctx, side, ucid.clone(), args)?
             }
-            ActionArgs::Sead(args) => {
-                self.ai_sead(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)?
-            }
+            ActionArgs::Sead(args) => self.ai_sead(
+                perf,
+                spctx,
+                idx,
+                side,
+                ucid.clone(),
+                name,
+                cmd.action,
+                args,
+            )?,
             ActionArgs::SeadWaypoint(args) => {
                 self.move_ai_sead(spctx, side, ucid.clone(), args)?
             }
-            ActionArgs::Rtb(args) => self.rtb(spctx, side, args).context("rtbing unit")?,
+            ActionArgs::Rtb(args) => {
+                self.rtb(spctx, side, args).context("rtbing unit")?
+            }
             ActionArgs::CarrierWaypoint(args) => self
                 .carrier_waypoint(lua, side, args)
                 .context("setting carrier waypoint")?,
-            ActionArgs::CarrierRepair(args) => self
-                .carrier_repair(side, args)
-                .context("repairing carrier")?,
+            ActionArgs::CarrierRepair(args) => {
+                self.carrier_repair(side, args).context("repairing carrier")?
+            }
             ActionArgs::CarrierRespawn(args) => self
                 .carrier_respawn(lua, spctx, idx, side, args)
                 .context("respawning carrier")?,
@@ -961,10 +1015,28 @@ impl Db {
                 .move_drone(spctx, side, ucid.clone(), args)
                 .context("moving drone")?,
             ActionArgs::LogisticsRepair(args) => self
-                .ai_logistics_repair(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
+                .ai_logistics_repair(
+                    perf,
+                    spctx,
+                    idx,
+                    side,
+                    ucid.clone(),
+                    name,
+                    cmd.action,
+                    args,
+                )
                 .context("calling ai logi repair")?,
             ActionArgs::LogisticsTransfer(args) => self
-                .ai_logistics_transfer(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
+                .ai_logistics_transfer(
+                    perf,
+                    spctx,
+                    idx,
+                    side,
+                    ucid.clone(),
+                    name,
+                    cmd.action,
+                    args,
+                )
                 .context("calling ai log transfer")?,
             ActionArgs::Reinforce(args) => self
                 .reinforce(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
@@ -989,12 +1061,28 @@ impl Db {
                 .artillery_strike(lua, side, ucid.clone(), args)
                 .context("calling artillery fire support")?,
             ActionArgs::Recon(args) => self
-                .recon_flight(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
+                .recon_flight(
+                    perf,
+                    spctx,
+                    idx,
+                    side,
+                    ucid.clone(),
+                    name,
+                    cmd.action,
+                    args,
+                )
                 .context("calling recon flight")?,
             ActionArgs::AddTask(args) => {
                 match args.at {
                     TaskAt::Pos(pos) => self
-                        .add_task(&args.cfg, side, ucid.clone(), args.kind.as_str(), pos, self.ephemeral.now())
+                        .add_task(
+                            &args.cfg,
+                            side,
+                            ucid.clone(),
+                            args.kind.as_str(),
+                            pos,
+                            self.ephemeral.now(),
+                        )
                         .context("posting task")?,
                     TaskAt::Obj(oid) => self
                         .add_objective_task(
@@ -1068,14 +1156,17 @@ impl Db {
         const RELAUNCH_RADIUS_M: f64 = 4_000.;
         let relaunch = (|| {
             let group = self.persisted.groups.get(&gid)?;
-            let DeployKind::Action { loc: SpawnLoc::InAir { .. }, origin: Some(oid), .. } =
-                &group.origin
+            let DeployKind::Action {
+                loc: SpawnLoc::InAir { .. }, origin: Some(oid), ..
+            } = &group.origin
             else {
                 return None;
             };
             let field = self.persisted.objectives.get(oid)?;
             let here = self.group_center(&gid).ok()?;
-            if field.owner != group.side || (field.zone.pos() - here).norm() > RELAUNCH_RADIUS_M {
+            if field.owner != group.side
+                || (field.zone.pos() - here).norm() > RELAUNCH_RADIUS_M
+            {
                 return None;
             }
             let rotary = group.tags.contains(UnitTag::Helicopter);
@@ -1088,7 +1179,9 @@ impl Db {
             Some(*oid)
         })();
         if let Some(field) = relaunch {
-            info!("[LAUNCH] {gid:?} was still at its field at the restart, it takes off again");
+            info!(
+                "[LAUNCH] {gid:?} was still at its field at the restart, it takes off again"
+            );
             self.ephemeral
                 .launch_requests
                 .insert(gid, LaunchRequest { field, cold: false, open_ground: false });
@@ -1111,20 +1204,9 @@ impl Db {
         let spawn_pos = self.group_center(&gid)?;
         let group = group!(self, gid)?;
         let side = group.side;
-        if let DeployKind::Action {
-            loc,
-            player,
-            spec,
-            time,
-            ..
-        } = &group.origin
-        {
+        if let DeployKind::Action { loc, player, spec, time, .. } = &group.origin {
             if let SpawnLoc::InAir { pos, .. } = loc {
-                let args = WithPosAndGroup {
-                    pos: *pos,
-                    group: gid,
-                    cfg: (),
-                };
+                let args = WithPosAndGroup { pos: *pos, group: gid, cfg: () };
                 macro_rules! delete_expired {
                     ($ai:expr) => {
                         if let Some(d) = $ai.duration {
@@ -1260,10 +1342,16 @@ impl Db {
         // from where it was. If that fails it is refunded like the rest.
         if matches!(
             &group!(self, gid)?.origin,
-            DeployKind::Action { spec: Action { kind: ActionKind::Reinforce(_), .. }, destination: Some(_), .. }
+            DeployKind::Action {
+                spec: Action { kind: ActionKind::Reinforce(_), .. },
+                destination: Some(_),
+                ..
+            }
         ) {
             match self.respawn_reinforcements(perf, spctx, idx, gid) {
-                Err(e) => warn!("could not put reinforcement convoy {gid:?} back on the road: {e:?}"),
+                Err(e) => warn!(
+                    "could not put reinforcement convoy {gid:?} back on the road: {e:?}"
+                ),
                 _ => return Ok(()),
             }
         }
@@ -1374,10 +1462,7 @@ impl Db {
             name,
             action,
             0.,
-            &WithPos {
-                pos: args.pos,
-                cfg: args.cfg.plane,
-            },
+            &WithPos { pos: args.pos, cfg: args.cfg.plane },
             None,
             UnitTag::HotStart.into(),
             move |db, gid, pos| {
@@ -1385,11 +1470,7 @@ impl Db {
                     side,
                     ucid,
                     pos,
-                    WithPosAndGroup {
-                        group: gid,
-                        pos: args.pos,
-                        cfg: (),
-                    },
+                    WithPosAndGroup { group: gid, pos: args.pos, cfg: () },
                 )
             },
         )?))
@@ -1419,10 +1500,7 @@ impl Db {
             name,
             action,
             0.,
-            &WithPos {
-                pos: args.pos,
-                cfg: args.cfg.plane,
-            },
+            &WithPos { pos: args.pos, cfg: args.cfg.plane },
             None,
             BitFlags::empty(),
             move |db, gid, spawn_pos| {
@@ -1430,11 +1508,7 @@ impl Db {
                     side,
                     ucid_for_report,
                     spawn_pos,
-                    WithPosAndGroup {
-                        group: gid,
-                        pos: target_pos,
-                        cfg: (),
-                    },
+                    WithPosAndGroup { group: gid, pos: target_pos, cfg: () },
                 )
             },
         )?;
@@ -1589,11 +1663,7 @@ impl Db {
                     side,
                     ucid,
                     pos,
-                    WithPosAndGroup {
-                        cfg: (),
-                        pos: args.pos,
-                        group: gid,
-                    },
+                    WithPosAndGroup { cfg: (), pos: args.pos, group: gid },
                 )
             },
         )?))
@@ -1686,24 +1756,24 @@ impl Db {
         let main_task = Task::EngageTargets {
             target_types: vec![
                 // Radar-guided SAM systems
-                Attribute::SAM_SR,      // SAM Search Radar
-                Attribute::SAM_TR,      // SAM Tracking Radar
-                Attribute::SAM_LL,      // SAM Launcher
-                Attribute::SAM_CC,      // SAM Command Center
-                Attribute::SR_SAM,      // Short Range SAM
-                Attribute::MR_SAM,      // Medium Range SAM
-                Attribute::LR_SAM,      // Long Range SAM
-                Attribute::SAMElements, // SAM elements
-                Attribute::SAM,         // General SAM
-                Attribute::SAMRelated,  // SAM related
-                Attribute::AirDefence,  // Air Defence
-                Attribute::ArmedAirDefence, // Armed Air Defence
+                Attribute::SAM_SR,             // SAM Search Radar
+                Attribute::SAM_TR,             // SAM Tracking Radar
+                Attribute::SAM_LL,             // SAM Launcher
+                Attribute::SAM_CC,             // SAM Command Center
+                Attribute::SR_SAM,             // Short Range SAM
+                Attribute::MR_SAM,             // Medium Range SAM
+                Attribute::LR_SAM,             // Long Range SAM
+                Attribute::SAMElements,        // SAM elements
+                Attribute::SAM,                // General SAM
+                Attribute::SAMRelated,         // SAM related
+                Attribute::AirDefence,         // Air Defence
+                Attribute::ArmedAirDefence,    // Armed Air Defence
                 Attribute::AirDefenceVehicles, // Air Defence vehicles
                 // EWR (Early Warning Radar) systems
-                Attribute::EWR,         // Early Warning Radar
+                Attribute::EWR, // Early Warning Radar
                 // Static and Mobile AAA that might have radar
-                Attribute::StaticAAA,   // Static AAA
-                Attribute::MobileAAA,   // Mobile AAA
+                Attribute::StaticAAA, // Static AAA
+                Attribute::MobileAAA, // Mobile AAA
             ],
             max_dist: Some(15_000.), // Same range as Attackers
             priority: None,
@@ -1807,11 +1877,7 @@ impl Db {
                     side,
                     ucid,
                     pos,
-                    WithPosAndGroup {
-                        cfg: (),
-                        pos: args.pos,
-                        group,
-                    },
+                    WithPosAndGroup { cfg: (), pos: args.pos, group },
                 )
             },
         )?))
@@ -1845,11 +1911,7 @@ impl Db {
                     side,
                     ucid,
                     pos,
-                    WithPosAndGroup {
-                        cfg: (),
-                        pos: args.pos,
-                        group,
-                    },
+                    WithPosAndGroup { cfg: (), pos: args.pos, group },
                 )
             },
         )?))
@@ -1868,9 +1930,7 @@ impl Db {
         if group.side != side {
             bail!("can't move an enemy unit")
         }
-        self.ephemeral
-            .groups_with_move_missions
-            .insert(args.group, args.pos);
+        self.ephemeral.groups_with_move_missions.insert(args.group, args.pos);
         // Only units in DCS: a dead one put back here has no object to read
         // and was warned about on every position pass.
         for uid in &group.units {
@@ -1880,12 +1940,12 @@ impl Db {
         }
         if penalty > 0 {
             match &mut group.origin {
-                DeployKind::Deployed {
-                    player, moved_by, ..
+                DeployKind::Deployed { player, moved_by, .. }
+                | DeployKind::Troop { player, moved_by, .. }
+                    if ucid != player =>
+                {
+                    *moved_by = Some((ucid.clone(), penalty))
                 }
-                | DeployKind::Troop {
-                    player, moved_by, ..
-                } if ucid != player => *moved_by = Some((ucid.clone(), penalty)),
                 DeployKind::Action { .. }
                 | DeployKind::Crate { .. }
                 | DeployKind::Objective { .. }
@@ -1899,7 +1959,8 @@ impl Db {
         let land = Land::singleton(spctx.lua())?;
         let alt0 = land.get_height(LuaVec2(pos))?;
         let alt1 = land.get_height(LuaVec2(args.pos))?;
-        let group = Group::get_by_name(spctx.lua(), &group.name).context("getting group")?;
+        let group =
+            Group::get_by_name(spctx.lua(), &group.name).context("getting group")?;
         let con = group.get_controller()?;
         let att = Task::EngageTargets {
             target_types: vec![
@@ -1999,10 +2060,7 @@ impl Db {
                 att,
             ])),
         });
-        con.set_task(Task::Mission {
-            airborne: Some(false),
-            route,
-        })?;
+        con.set_task(Task::Mission { airborne: Some(false), route })?;
         Ok(None)
     }
 
@@ -2031,24 +2089,38 @@ impl Db {
         side: Side,
         args: WithPosAndGroup<()>,
     ) -> Result<Option<GroupId>> {
-        info!("[CARRIER_WAYPOINT] Received waypoint command for group {:?} to position {:?}", args.group, args.pos);
+        info!(
+            "[CARRIER_WAYPOINT] Received waypoint command for group {:?} to position {:?}",
+            args.group, args.pos
+        );
 
         // Find carrier objective by group ID. Only our own task forces: this
         // used to match any carrier holding the gid, so a player could steer
         // the enemy carrier.
         let mut carrier_info: Option<(ObjectiveId, dcso3::String)> = None;
         for (id, obj) in &self.persisted.objectives {
-            if let ObjectiveKind::CarrierGroup { carrier_template: template, .. } = &obj.kind {
+            if let ObjectiveKind::CarrierGroup { carrier_template: template, .. } =
+                &obj.kind
+            {
                 if obj.owner != side {
                     continue;
                 }
-                info!("[CARRIER_WAYPOINT] Checking carrier group {} with template {}", obj.name, template);
-                info!("[CARRIER_WAYPOINT] Objective owner: {:?}, all groups: {:?}", obj.owner, obj.groups);
+                info!(
+                    "[CARRIER_WAYPOINT] Checking carrier group {} with template {}",
+                    obj.name, template
+                );
+                info!(
+                    "[CARRIER_WAYPOINT] Objective owner: {:?}, all groups: {:?}",
+                    obj.owner, obj.groups
+                );
                 if !template.is_empty() {
                     if let Some(groups) = obj.groups.get(&obj.owner) {
                         info!("[CARRIER_WAYPOINT] Carrier has groups: {:?}", groups);
                         if groups.contains(&args.group) {
-                            info!("[CARRIER_WAYPOINT] MATCH! Found carrier group for {:?}", args.group);
+                            info!(
+                                "[CARRIER_WAYPOINT] MATCH! Found carrier group for {:?}",
+                                args.group
+                            );
                             carrier_info = Some((*id, template.clone()));
                             break;
                         }
@@ -2058,7 +2130,10 @@ impl Db {
         }
 
         if let Some((obj_id, template)) = carrier_info {
-            info!("[CARRIER_WAYPOINT] Setting waypoint for carrier template: {}", template);
+            info!(
+                "[CARRIER_WAYPOINT] Setting waypoint for carrier template: {}",
+                template
+            );
             // Update waypoint in database
             if let Some(obj) = self.persisted.objectives.get_mut_cow(&obj_id) {
                 if let ObjectiveKind::CarrierGroup { waypoint, .. } = &mut obj.kind {
@@ -2070,15 +2145,19 @@ impl Db {
             // When using Group.activate(), the unit keeps its original name (e.g. "BCARRIER-1")
             // Try to get the group directly by the template name first (for activated groups),
             // then fall back to getting unit by name (for spawned groups)
-            let speed = self.ephemeral.cfg.carrier.as_ref().map(|c| c.movement_speed).unwrap_or(5.0);
+            let speed = self
+                .ephemeral
+                .cfg
+                .carrier
+                .as_ref()
+                .map(|c| c.movement_speed)
+                .unwrap_or(5.0);
 
             // First try to get group directly by template name (works for activated carriers)
-            let group_result = Group::get_by_name(lua, &template)
-                .or_else(|_| {
-                    // Fall back to getting unit then group (works for spawned carriers)
-                    Unit::get_by_name(lua, &template)
-                        .and_then(|u| u.get_group())
-                });
+            let group_result = Group::get_by_name(lua, &template).or_else(|_| {
+                // Fall back to getting unit then group (works for spawned carriers)
+                Unit::get_by_name(lua, &template).and_then(|u| u.get_group())
+            });
 
             match group_result {
                 Result::Ok(dcs_group) => {
@@ -2097,26 +2176,44 @@ impl Db {
                                         Result::Ok(n) => n,
                                         Result::Err(_) => continue,
                                     };
-                                    let uid_match = group.units.into_iter().find_map(|uid| {
-                                        self.persisted.units.get(uid).and_then(|u| {
-                                            if !u.dead && u.template_name.as_str() == dcs_unit_name.as_str() {
-                                                Some((*uid, u))
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                    });
+                                    let uid_match =
+                                        group.units.into_iter().find_map(|uid| {
+                                            self.persisted.units.get(uid).and_then(|u| {
+                                                if !u.dead
+                                                    && u.template_name.as_str()
+                                                        == dcs_unit_name.as_str()
+                                                {
+                                                    Some((*uid, u))
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                        });
                                     if let Some((uid, unit)) = uid_match {
                                         match dcs_unit.object_id() {
                                             Result::Ok(unit_oid) => {
-                                                if !self.ephemeral.object_id_by_uid.contains_key(&uid) {
-                                                    info!("[CARRIER_WAYPOINT] Registering carrier unit '{}' (uid={:?}) with object_id {:?}",
-                                                          unit.name, uid, unit_oid);
-                                                    self.ephemeral.uid_by_object_id.insert(unit_oid.clone(), uid);
-                                                    self.ephemeral.object_id_by_uid.insert(uid, unit_oid);
+                                                if !self
+                                                    .ephemeral
+                                                    .object_id_by_uid
+                                                    .contains_key(&uid)
+                                                {
+                                                    info!(
+                                                        "[CARRIER_WAYPOINT] Registering carrier unit '{}' (uid={:?}) with object_id {:?}",
+                                                        unit.name, uid, unit_oid
+                                                    );
+                                                    self.ephemeral
+                                                        .uid_by_object_id
+                                                        .insert(unit_oid.clone(), uid);
+                                                    self.ephemeral
+                                                        .object_id_by_uid
+                                                        .insert(uid, unit_oid);
                                                 }
-                                                self.ephemeral.units_able_to_move.insert(uid);
-                                                self.ephemeral.units_potentially_close_to_enemies.insert(uid);
+                                                self.ephemeral
+                                                    .units_able_to_move
+                                                    .insert(uid);
+                                                self.ephemeral
+                                                    .units_potentially_close_to_enemies
+                                                    .insert(uid);
                                             }
                                             Result::Err(_) => {}
                                         }
@@ -2132,7 +2229,10 @@ impl Db {
                         }
                     }
 
-                    info!("[CARRIER_WAYPOINT] Found group {}, commanding move to {:?} at speed {}", template, args.pos, speed);
+                    info!(
+                        "[CARRIER_WAYPOINT] Found group {}, commanding move to {:?} at speed {}",
+                        template, args.pos, speed
+                    );
                     let controller = dcs_group.get_controller()?;
                     controller.set_task(Task::Mission {
                         route: vec![MissionPoint {
@@ -2154,10 +2254,15 @@ impl Db {
                         }],
                         airborne: Some(false),
                     })?;
-                    info!("[CARRIER_WAYPOINT] Successfully set waypoint task for carrier group");
+                    info!(
+                        "[CARRIER_WAYPOINT] Successfully set waypoint task for carrier group"
+                    );
                 }
                 Result::Err(e) => {
-                    error!("[CARRIER_WAYPOINT] Failed to get group {}: {:?}", template, e);
+                    error!(
+                        "[CARRIER_WAYPOINT] Failed to get group {}: {:?}",
+                        template, e
+                    );
                 }
             }
         } else {
@@ -2231,7 +2336,8 @@ impl Db {
                             unit.position.p.z += delta.y;
                         }
                         if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid)
-                            && let ObjectiveKind::CarrierGroup { waypoint, .. } = &mut obj.kind
+                            && let ObjectiveKind::CarrierGroup { waypoint, .. } =
+                                &mut obj.kind
                             && waypoint.is_none()
                         {
                             *waypoint = Some(station);
@@ -2250,7 +2356,8 @@ impl Db {
             }
         }
         for gid in gids {
-            let uids: SmallVec<[_; 16]> = group!(self, gid)?.units.into_iter().copied().collect();
+            let uids: SmallVec<[_; 16]> =
+                group!(self, gid)?.units.into_iter().copied().collect();
             let mut any_dead = false;
             for uid in uids {
                 let unit = unit_mut!(self, uid)?;
@@ -2283,7 +2390,11 @@ impl Db {
             .any(|u| u.dead))
     }
 
-    fn carrier_repair(&mut self, side: Side, args: WithObj<()>) -> Result<Option<GroupId>> {
+    fn carrier_repair(
+        &mut self,
+        side: Side,
+        args: WithObj<()>,
+    ) -> Result<Option<GroupId>> {
         let nb_id = self.own_carrier_and_base(side, &args.oid)?;
         // A repair on a healthy task force spent 5000 materiel and respawned
         // every ship for nothing. A sunk one is a respawn, which costs more;
@@ -2294,7 +2405,8 @@ impl Db {
         if !self.carrier_is_damaged(&args.oid)? {
             bail!("the carrier is not damaged")
         }
-        let repair_cost = self.ephemeral.cfg.carrier.as_ref().map(|c| c.repair_cost).unwrap_or(5000);
+        let repair_cost =
+            self.ephemeral.cfg.carrier.as_ref().map(|c| c.repair_cost).unwrap_or(5000);
         let available = objective!(self, nb_id)?
             .warehouse
             .equipment
@@ -2316,7 +2428,11 @@ impl Db {
             // Actually bring the lost ships back, not just the health number.
             self.respawn_dead_carrier_groups(args.oid, None)?;
         } else {
-            bail!("Not enough supplies at Naval Base to repair carrier (need {}, have {})", repair_cost, available);
+            bail!(
+                "Not enough supplies at Naval Base to repair carrier (need {}, have {})",
+                repair_cost,
+                available
+            );
         }
         Ok(None)
     }
@@ -2334,13 +2450,26 @@ impl Db {
         let (nb_id, respawn_cost, available, health) = {
             let cg = objective!(self, &args.oid)?;
             match &cg.kind {
-                ObjectiveKind::CarrierGroup { parent_naval_base: Some(nb_id), .. } => {
-                    let respawn_cost = self.ephemeral.cfg.carrier.as_ref().map(|c| c.respawn_cost).unwrap_or(15000);
+                ObjectiveKind::CarrierGroup {
+                    parent_naval_base: Some(nb_id), ..
+                } => {
+                    let respawn_cost = self
+                        .ephemeral
+                        .cfg
+                        .carrier
+                        .as_ref()
+                        .map(|c| c.respawn_cost)
+                        .unwrap_or(15000);
                     let nb = objective!(self, nb_id)?;
-                    let available = nb.warehouse.equipment.get(MATERIEL_ITEM).map(|inv| inv.stored).unwrap_or(0);
+                    let available = nb
+                        .warehouse
+                        .equipment
+                        .get(MATERIEL_ITEM)
+                        .map(|inv| inv.stored)
+                        .unwrap_or(0);
                     (*nb_id, respawn_cost, available, cg.health)
                 }
-                _ => bail!("Objective is not a carrier group")
+                _ => bail!("Objective is not a carrier group"),
             }
         };
 
@@ -2363,7 +2492,11 @@ impl Db {
             // the health number and the task force stayed sunk.
             self.respawn_dead_carrier_groups(args.oid, Some(lua))?;
         } else {
-            bail!("Not enough supplies at Naval Base to respawn carrier (need {}, have {})", respawn_cost, available);
+            bail!(
+                "Not enough supplies at Naval Base to respawn carrier (need {}, have {})",
+                respawn_cost,
+                available
+            );
         }
         Ok(None)
     }
@@ -2403,7 +2536,9 @@ impl Db {
             .into_iter()
             .filter_map(|cg_id| {
                 let cg = self.persisted.objectives.get(cg_id)?;
-                (cg.owner == side && cg.health > 0).then(|| (*cg_id, na::distance(&cg.zone.pos().into(), &target_pos.into())))
+                (cg.owner == side && cg.health > 0).then(|| {
+                    (*cg_id, na::distance(&cg.zone.pos().into(), &target_pos.into()))
+                })
             })
             .filter(|(_, d)| *d <= args.cfg.max_range as f64)
             .collect();
@@ -2431,9 +2566,11 @@ impl Db {
                 names
             };
             for name in names {
-                let std::result::Result::Ok(dcs_group) = Group::get_by_name(lua, &name).or_else(|_| {
-                    Unit::get_by_name(lua, &name).and_then(|u| u.get_group())
-                }) else {
+                let std::result::Result::Ok(dcs_group) = Group::get_by_name(lua, &name)
+                    .or_else(|_| {
+                        Unit::get_by_name(lua, &name).and_then(|u| u.get_group())
+                    })
+                else {
                     continue;
                 };
                 let mut cruise = 0u32;
@@ -2452,7 +2589,9 @@ impl Db {
                 // as cruise missiles). Red's ships "fired" 157 times a night
                 // with 48 left every time. Don't count or task them again.
                 let now = self.ephemeral.now();
-                if let Some((before, at)) = self.ephemeral.naval_strike_fired.get(&name).copied() {
+                if let Some((before, at)) =
+                    self.ephemeral.naval_strike_fired.get(&name).copied()
+                {
                     if cruise >= before && now - at >= chrono::Duration::minutes(3) {
                         warn!(
                             "Naval cruise missile strike: {name} was told to fire {} min ago and still has {cruise} cruise missiles -- its missiles don't engage land targets, leaving it out of naval strikes",
@@ -2598,11 +2737,7 @@ impl Db {
                     side,
                     ucid,
                     pos,
-                    WithPosAndGroup {
-                        cfg: (),
-                        pos: args.pos,
-                        group: gid,
-                    },
+                    WithPosAndGroup { cfg: (), pos: args.pos, group: gid },
                 )
             },
         )?))
@@ -2655,11 +2790,7 @@ impl Db {
                     side,
                     ucid,
                     pos,
-                    WithPosAndGroup {
-                        cfg: (),
-                        pos: args.pos,
-                        group: gid,
-                    },
+                    WithPosAndGroup { cfg: (), pos: args.pos, group: gid },
                 )
             },
         )?;
@@ -2698,12 +2829,18 @@ impl Db {
                 },
                 Some(args.pos),
                 BitFlags::empty(),
-                |db, gid, pos| db.ai_point_to_point_mission(gid, pos, || Task::ComboTask(vec![])),
+                |db, gid, pos| {
+                    db.ai_point_to_point_mission(gid, pos, || Task::ComboTask(vec![]))
+                },
             )?,
         ))
     }
 
-    fn nuke(&mut self, spctx: &SpawnCtx, args: WithPos<NukeCfg>) -> Result<Option<GroupId>> {
+    fn nuke(
+        &mut self,
+        spctx: &SpawnCtx,
+        args: WithPos<NukeCfg>,
+    ) -> Result<Option<GroupId>> {
         let land = Land::singleton(spctx.lua())?;
         let act = Trigger::singleton(spctx.lua())?.action()?;
         let alt = land.get_height(LuaVec2(args.pos))? + 500.;
@@ -2743,14 +2880,13 @@ impl Db {
             name,
             action,
             0.,
-            &WithPos {
-                cfg: args.cfg.clone(),
-                pos: from,
-            },
+            &WithPos { cfg: args.cfg.clone(), pos: from },
             Some(to),
             BitFlags::empty(),
             Some(args.from),
-            |db, gid, pos| db.ai_point_to_point_mission(gid, pos, || Task::ComboTask(vec![])),
+            |db, gid, pos| {
+                db.ai_point_to_point_mission(gid, pos, || Task::ComboTask(vec![]))
+            },
         )?))
     }
 
@@ -2775,13 +2911,12 @@ impl Db {
             name,
             action,
             0.,
-            &WithPos {
-                pos,
-                cfg: args.cfg.clone(),
-            },
+            &WithPos { pos, cfg: args.cfg.clone() },
             Some(pos),
             BitFlags::empty(),
-            |db, gid, pos| db.ai_point_to_point_mission(gid, pos, || Task::ComboTask(vec![])),
+            |db, gid, pos| {
+                db.ai_point_to_point_mission(gid, pos, || Task::ComboTask(vec![]))
+            },
         )?))
     }
 
@@ -2809,13 +2944,12 @@ impl Db {
                 name,
                 action,
                 0.,
-                &WithPos {
-                    cfg: plane.clone(),
-                    pos: args.pos,
-                },
+                &WithPos { cfg: plane.clone(), pos: args.pos },
                 Some(args.pos),
                 BitFlags::empty(),
-                |db, gid, pos| db.ai_point_to_point_mission(gid, pos, || Task::ComboTask(vec![])),
+                |db, gid, pos| {
+                    db.ai_point_to_point_mission(gid, pos, || Task::ComboTask(vec![]))
+                },
             )?)),
             None => {
                 self.deployable_to_point(
@@ -2844,10 +2978,7 @@ impl Db {
         let group = group!(self, gid)?;
         let (src, tgt, alt, alt_typ, speed) = match &group.origin {
             DeployKind::Action {
-                spec,
-                destination: Some(tgt),
-                rtb: Some(src),
-                ..
+                spec, destination: Some(tgt), rtb: Some(src), ..
             } => match &spec.kind {
                 ActionKind::Bomber(b) => (
                     *src,
@@ -2858,14 +2989,10 @@ impl Db {
                 ),
                 ActionKind::LogisticsRepair(p)
                 | ActionKind::LogisticsTransfer(p)
-                | ActionKind::Paratrooper(DeployableCfg {
-                    name: _,
-                    plane: Some(p),
-                })
-                | ActionKind::Deployable(DeployableCfg {
-                    name: _,
-                    plane: Some(p),
-                }) => (*src, *tgt, p.altitude, p.altitude_typ.clone(), p.speed),
+                | ActionKind::Paratrooper(DeployableCfg { name: _, plane: Some(p) })
+                | ActionKind::Deployable(DeployableCfg { name: _, plane: Some(p) }) => {
+                    (*src, *tgt, p.altitude, p.altitude_typ.clone(), p.speed)
+                }
                 _ => bail!("expected a point to point action"),
             },
             _ => bail!("expected action group with rtb and destination"),
@@ -2954,7 +3081,9 @@ impl Db {
                     bomber_cfg.plane.altitude_typ.clone(),
                     bomber_cfg.plane.speed,
                 ),
-                ActionKind::Strike(s) => (s.plane.altitude, s.plane.altitude_typ.clone(), s.plane.speed),
+                ActionKind::Strike(s) => {
+                    (s.plane.altitude, s.plane.altitude_typ.clone(), s.plane.speed)
+                }
                 ActionKind::CruiseMissileSpawn(ai_plane_cfg) => (
                     ai_plane_cfg.altitude,
                     ai_plane_cfg.altitude_typ.clone(),
@@ -2993,9 +3122,7 @@ impl Db {
         let group = group_mut!(self, gid)?;
 
         match &mut group.origin {
-            DeployKind::Action {
-                marks, rtb, spec, ..
-            } => {
+            DeployKind::Action { marks, rtb, spec, .. } => {
                 *rtb = Some(rtb_pos);
                 (*spec).kind = ActionKind::Rtb;
                 for id in marks.iter() {
@@ -3058,13 +3185,12 @@ impl Db {
             name,
             action,
             0.,
-            &WithPos {
-                cfg: args.cfg.plane,
-                pos: tgt,
-            },
+            &WithPos { cfg: args.cfg.plane, pos: tgt },
             Some(tgt),
             BitFlags::empty(),
-            |db, gid, pos| db.ai_point_to_point_mission(gid, pos, || Task::ComboTask(vec![])),
+            |db, gid, pos| {
+                db.ai_point_to_point_mission(gid, pos, || Task::ComboTask(vec![]))
+            },
         )?))
     }
 
@@ -3118,11 +3244,14 @@ impl Db {
         let enemy = side.opposite();
         let attacks = cfg.attacks.clamp(1, 8) as usize;
         let near_enemy_objective = |radius: f64| {
-            Self::objective_near_point(&self.persisted.objectives, pos, |o| o.owner == enemy)
-                .filter(|(d, _, _)| *d <= radius)
-                .map(|(_, _, o)| o)
+            Self::objective_near_point(&self.persisted.objectives, pos, |o| {
+                o.owner == enemy
+            })
+            .filter(|(d, _, _)| *d <= radius)
+            .map(|(_, _, o)| o)
         };
-        let group_id = |name: &str| Group::get_by_name(lua, name).and_then(|g| g.id()).ok();
+        let group_id =
+            |name: &str| Group::get_by_name(lua, name).and_then(|g| g.id()).ok();
         match cfg.mission {
             M::Precision => {
                 let obj = near_enemy_objective(8_000.)
@@ -3147,7 +3276,9 @@ impl Db {
             M::Runway => {
                 let obj = near_enemy_objective(8_000.)
                     .filter(|o| matches!(o.kind, ObjectiveKind::Airbase))
-                    .ok_or_else(|| anyhow!("pick an enemy airbase for a runway attack"))?;
+                    .ok_or_else(|| {
+                        anyhow!("pick an enemy airbase for a runway attack")
+                    })?;
                 let runways: Vec<StrikeAim> = self
                     .ephemeral
                     .resolve_airbase(lua, &self.persisted, &obj.id)
@@ -3161,13 +3292,19 @@ impl Db {
                             .collect()
                     })
                     .unwrap_or_default();
-                let aims = if runways.is_empty() { vec![StrikeAim::Bomb(obj.pos())] } else { runways };
+                let aims = if runways.is_empty() {
+                    vec![StrikeAim::Bomb(obj.pos())]
+                } else {
+                    runways
+                };
                 Ok((obj.pos(), aims, obj.name.to_string()))
             }
             M::AntiShip => {
                 let obj = near_enemy_objective(40_000.)
                     .filter(|o| o.kind.is_carrier_group())
-                    .ok_or_else(|| anyhow!("pick an enemy carrier group for an anti-ship strike"))?;
+                    .ok_or_else(|| {
+                        anyhow!("pick an enemy carrier group for an anti-ship strike")
+                    })?;
                 let mut names: Vec<std::string::String> = obj
                     .groups
                     .get(&enemy)
@@ -3182,7 +3319,9 @@ impl Db {
                 let mut aims: Vec<StrikeAim> = vec![];
                 for n in names {
                     if let Some(id) = group_id(&n)
-                        && !aims.iter().any(|a| matches!(a, StrikeAim::Group(g) if *g == id))
+                        && !aims
+                            .iter()
+                            .any(|a| matches!(a, StrikeAim::Group(g) if *g == id))
                     {
                         aims.push(StrikeAim::Group(id));
                     }
@@ -3198,7 +3337,9 @@ impl Db {
                 const RADIUS: f64 = 15_000.;
                 let mut best: Option<(f64, std::string::String, Vector2)> = None;
                 for (gid, g) in &self.persisted.groups {
-                    if g.side != enemy || g.kind != Some(dcso3::group::GroupCategory::Ground) {
+                    if g.side != enemy
+                        || g.kind != Some(dcso3::group::GroupCategory::Ground)
+                    {
                         continue;
                     }
                     let alive = g
@@ -3208,19 +3349,27 @@ impl Db {
                     if !alive {
                         continue;
                     }
-                    let std::result::Result::Ok(c) = self.group_center(gid) else { continue };
+                    let std::result::Result::Ok(c) = self.group_center(gid) else {
+                        continue;
+                    };
                     let d = (c - pos).norm();
                     if d <= RADIUS && best.as_ref().map_or(true, |(bd, _, _)| d < *bd) {
                         best = Some((d, g.name.to_string(), c));
                     }
                 }
                 let (_, name, c) = best.ok_or_else(|| {
-                    anyhow!("no enemy convoy or column within {:.0} km of the mark", RADIUS / 1000.)
+                    anyhow!(
+                        "no enemy convoy or column within {:.0} km of the mark",
+                        RADIUS / 1000.
+                    )
                 })?;
-                let id = group_id(&name).ok_or_else(|| anyhow!("{name} is not in DCS right now"))?;
+                let id = group_id(&name)
+                    .ok_or_else(|| anyhow!("{name} is not in DCS right now"))?;
                 Ok((c, vec![StrikeAim::Group(id)], name))
             }
-            M::Carpet => Ok((pos, vec![StrikeAim::Carpet(pos)], "the marked point".into())),
+            M::Carpet => {
+                Ok((pos, vec![StrikeAim::Carpet(pos)], "the marked point".into()))
+            }
         }
     }
 
@@ -3236,15 +3385,22 @@ impl Db {
         aims: Vec<StrikeAim>,
     ) -> Result<Vec<MissionPoint>> {
         use bfprotocols::cfg::StrikeMission as M;
-        use dcso3::controller::{AirOption, AirReactionToThreat, AirRoe, AttackParams, WeaponExpend};
+        use dcso3::controller::{
+            AirOption, AirReactionToThreat, AirRoe, AttackParams, WeaponExpend,
+        };
         let group = group!(self, gid)?;
         let home = match &group.origin {
             DeployKind::Action { rtb: Some(h), .. } => *h,
             _ => launch,
         };
-        let (alt, alt_typ, speed) = (cfg.plane.altitude, cfg.plane.altitude_typ.clone(), cfg.plane.speed);
+        let (alt, alt_typ, speed) =
+            (cfg.plane.altitude, cfg.plane.altitude_typ.clone(), cfg.plane.speed);
         let away = launch - target;
-        let ip = if away.norm() > 25_000. { target + away.normalize() * 20_000. } else { target + away * 0.5 };
+        let ip = if away.norm() > 25_000. {
+            target + away.normalize() * 20_000.
+        } else {
+            target + away * 0.5
+        };
         // DCS weapon flags: 14 guided bombs, 2147485694 any bomb, 65536
         // anti-ship missiles; None lets the AI pick.
         let weapons = cfg.weapon_type.or(match cfg.mission {
@@ -3275,13 +3431,23 @@ impl Db {
         };
         let carpet = cfg.carpet_length_m.max(200.);
         let attack_tasks = move || -> Vec<Task> {
-            let mut v = vec![Task::WrappedOption(AiOption::Air(AirOption::Roe(AirRoe::WeaponFree)))];
+            let mut v = vec![Task::WrappedOption(AiOption::Air(AirOption::Roe(
+                AirRoe::WeaponFree,
+            )))];
             for a in &aims {
                 v.push(match a {
-                    StrikeAim::Bomb(p) => Task::Bombing { point: LuaVec2(*p), params: params() },
-                    StrikeAim::MapObject(p) => Task::AttackMapObject { point: LuaVec2(*p), params: params() },
-                    StrikeAim::Group(g) => Task::AttackGroup { group: *g, params: params() },
-                    StrikeAim::Runway(r) => Task::BombRunway { runway: *r, params: params() },
+                    StrikeAim::Bomb(p) => {
+                        Task::Bombing { point: LuaVec2(*p), params: params() }
+                    }
+                    StrikeAim::MapObject(p) => {
+                        Task::AttackMapObject { point: LuaVec2(*p), params: params() }
+                    }
+                    StrikeAim::Group(g) => {
+                        Task::AttackGroup { group: *g, params: params() }
+                    }
+                    StrikeAim::Runway(r) => {
+                        Task::BombRunway { runway: *r, params: params() }
+                    }
                     StrikeAim::Carpet(p) => Task::CarpetBombing {
                         point: LuaVec2(*p),
                         carpet_length: carpet,
@@ -3310,7 +3476,9 @@ impl Db {
         };
         let quiet = Task::ComboTask(vec![
             Task::WrappedOption(AiOption::Air(AirOption::Roe(AirRoe::WeaponHold))),
-            Task::WrappedOption(AiOption::Air(AirOption::ReactionOnThreat(AirReactionToThreat::EvadeFire))),
+            Task::WrappedOption(AiOption::Air(AirOption::ReactionOnThreat(
+                AirReactionToThreat::EvadeFire,
+            ))),
         ]);
         Ok(vec![
             wpt("takeoff", launch, quiet),
@@ -3333,7 +3501,8 @@ impl Db {
         args: &WithPos<AiPlaneCfg>,
         destination: Option<Vector2>,
         tags: BitFlags<UnitTag>,
-        gen_mission: impl FnOnce(&mut Db, GroupId, Vector2) -> Result<Vec<MissionPoint>> + 'static,
+        gen_mission: impl FnOnce(&mut Db, GroupId, Vector2) -> Result<Vec<MissionPoint>>
+        + 'static,
     ) -> Result<GroupId> {
         self.add_and_spawn_ai_air_from(
             perf,
@@ -3380,7 +3549,8 @@ impl Db {
         destination: Option<Vector2>,
         tags: BitFlags<UnitTag>,
         depart: Option<ObjectiveId>,
-        gen_mission: impl FnOnce(&mut Db, GroupId, Vector2) -> Result<Vec<MissionPoint>> + 'static,
+        gen_mission: impl FnOnce(&mut Db, GroupId, Vector2) -> Result<Vec<MissionPoint>>
+        + 'static,
     ) -> Result<GroupId> {
         let rotary = matches!(args.cfg.kind, AiPlaneKind::Helicopter);
         // Bombers, tankers, AWACS and transports need a large stand to start
@@ -3490,10 +3660,7 @@ impl Db {
                 tags | UnitTag::Driveable,
             )
             .context("creating group")?;
-        info!(
-            "[LAUNCH] {gid:?} ({}) starting up at {}",
-            args.cfg.template, field.name
-        );
+        info!("[LAUNCH] {gid:?} ({}) starting up at {}", args.cfg.template, field.name);
         let spawned = gen_mission(self, gid, pos)
             .context("generating mission for new unit")
             .and_then(|mission| {
@@ -3639,10 +3806,7 @@ impl Db {
             name,
             action,
             0.,
-            &WithPos {
-                cfg: args.cfg.plane,
-                pos: args.pos,
-            },
+            &WithPos { cfg: args.cfg.plane, pos: args.pos },
             None,
             UnitTag::AWACS.into(),
             move |db, gid, pos| {
@@ -3650,11 +3814,7 @@ impl Db {
                     side,
                     ucid,
                     pos,
-                    WithPosAndGroup {
-                        cfg: (),
-                        pos: args.pos,
-                        group: gid,
-                    },
+                    WithPosAndGroup { cfg: (), pos: args.pos, group: gid },
                 )
             },
         )?))
@@ -3684,13 +3844,7 @@ impl Db {
             bail!("can't move the other team's awacs")
         }
         let (altitude, alt_typ, speed, marks, player) = match &mut group.origin {
-            DeployKind::Action {
-                marks,
-                spec,
-                loc,
-                player,
-                ..
-            } => {
+            DeployKind::Action { marks, spec, loc, player, .. } => {
                 if !validator(&spec.kind) {
                     bail!("this move action is not compatible with the selected group")
                 }
@@ -3763,7 +3917,9 @@ impl Db {
                     | ActionKind::RemoveTask(_)
                     | ActionKind::Reinforce(_)
                     | ActionKind::Strike(_)
-                    | ActionKind::NavalCruiseMissileStrike(_) => bail!("not a race tracker"),
+                    | ActionKind::NavalCruiseMissileStrike(_) => {
+                        bail!("not a race tracker")
+                    }
                 }
             }
             DeployKind::Crate { .. }
@@ -3795,7 +3951,8 @@ impl Db {
             }
             OrbitPattern::RaceTrack => {
                 let point1 = args.pos
-                    + pointing_towards2(change_heading(heading, -std::f64::consts::PI)) * 30_000.;
+                    + pointing_towards2(change_heading(heading, -std::f64::consts::PI))
+                        * 30_000.;
                 let point2 = args.pos + pointing_towards2(heading) * 30_000.;
                 marks.insert(self.ephemeral.msgs().mark_to_side(
                     side,
@@ -3955,7 +4112,9 @@ impl Db {
             self.ephemeral.pending_air_station.remove(&gid);
             return self.set_ai_mission(spctx, gid, mission);
         }
-        info!("{name} is still on the ground -- its new station is given once it is airborne");
+        info!(
+            "{name} is still on the ground -- its new station is given once it is airborne"
+        );
         self.ephemeral.pending_air_station.insert(gid, (station, ucid));
         Ok(())
     }
@@ -3998,8 +4157,12 @@ impl Db {
             ActionKind::Awacs(_) => self.awacs_mission(side, ucid, spawn_pos, args),
             ActionKind::Tanker(_) => self.tanker_mission(side, ucid, spawn_pos, args),
             ActionKind::Drone(_) => self.drone_mission(side, ucid, spawn_pos, args),
-            ActionKind::Fighters(_) => self.ai_fighters_mission(side, ucid, spawn_pos, args),
-            ActionKind::Attackers(_) => self.ai_attackers_mission(side, ucid, spawn_pos, args),
+            ActionKind::Fighters(_) => {
+                self.ai_fighters_mission(side, ucid, spawn_pos, args)
+            }
+            ActionKind::Attackers(_) => {
+                self.ai_attackers_mission(side, ucid, spawn_pos, args)
+            }
             ActionKind::Sead(_) => self.ai_sead_mission(side, ucid, spawn_pos, args),
             ActionKind::CruiseMissileSpawn(_) => {
                 self.cruise_missile_mission(side, ucid, spawn_pos, args)
@@ -4042,8 +4205,12 @@ impl Db {
                 .and_then(|pos| self.station_mission(side, ucid, pos, args))
                 .and_then(|mission| self.set_ai_mission(&spctx, gid, mission));
             match res {
-                Err(e) => warn!("{name} is airborne but its held station order failed: {e:?}"),
-                _ => info!("{name} is airborne, flying to the station it was given on the ground"),
+                Err(e) => {
+                    warn!("{name} is airborne but its held station order failed: {e:?}")
+                }
+                _ => info!(
+                    "{name} is airborne, flying to the station it was given on the ground"
+                ),
             }
         }
     }
@@ -4057,15 +4224,9 @@ impl Db {
         let group = group!(self, gid)?;
         let group = Group::get_by_name(spctx.lua(), &group.name)?;
         let con = group.get_controller().context("getting controller")?;
-        con.set_task(Task::Mission {
-            airborne: Some(true),
-            route: mission.clone(),
-        })?;
-        con.set_task(Task::Mission {
-            airborne: Some(true),
-            route: mission,
-        })
-        .context("setting mission")
+        con.set_task(Task::Mission { airborne: Some(true), route: mission.clone() })?;
+        con.set_task(Task::Mission { airborne: Some(true), route: mission })
+            .context("setting mission")
     }
 
     fn bomb_targets(
@@ -4081,7 +4242,8 @@ impl Db {
         let act = Trigger::singleton(lua)?.action()?;
         for (i, (_, ct)) in jtacs.contacts_near_point(side, target, 15_000.).enumerate() {
             if i < cfg.targets as usize {
-                let dir = Vector2::new(rng.gen_range(0. ..1.), rng.gen_range(0. ..1.)).normalize();
+                let dir = Vector2::new(rng.gen_range(0. ..1.), rng.gen_range(0. ..1.))
+                    .normalize();
                 let mag = rng.gen_range(0. ..cfg.accuracy as f64);
                 let pos = Vector2::new(ct.pos.x, ct.pos.z) + dir * mag;
                 let alt = land.get_height(LuaVec2(pos))?;
@@ -4092,10 +4254,17 @@ impl Db {
         Ok(())
     }
 
-    fn repair_target(&mut self, target: Vector2, ucid: Option<Ucid>, side: Side) -> Result<()> {
+    fn repair_target(
+        &mut self,
+        target: Vector2,
+        ucid: Option<Ucid>,
+        side: Side,
+    ) -> Result<()> {
         let (dist, _, obj) =
-            Self::objective_near_point(&self.persisted.objectives, target, |o| o.owner == side)
-                .ok_or_else(|| anyhow!("no friendly objective near drop off point"))?;
+            Self::objective_near_point(&self.persisted.objectives, target, |o| {
+                o.owner == side
+            })
+            .ok_or_else(|| anyhow!("no friendly objective near drop off point"))?;
         if dist > 5_000. {
             bail!("no friendly objective near drop off point")
         }
@@ -4116,25 +4285,25 @@ impl Db {
         side: Side,
     ) -> Result<()> {
         let (dist, _, src) =
-            Self::objective_near_point(&self.persisted.objectives, src, |o| o.owner == side)
-                .ok_or_else(|| anyhow!("no friendly objective near source point"))?;
+            Self::objective_near_point(&self.persisted.objectives, src, |o| {
+                o.owner == side
+            })
+            .ok_or_else(|| anyhow!("no friendly objective near source point"))?;
         if dist > 5_000. {
             bail!("no friendly objective near source point")
         }
         let (dist, _, tgt) =
-            Self::objective_near_point(&self.persisted.objectives, target, |o| o.owner == side)
-                .ok_or_else(|| anyhow!("no friendly objective near target point"))?;
+            Self::objective_near_point(&self.persisted.objectives, target, |o| {
+                o.owner == side
+            })
+            .ok_or_else(|| anyhow!("no friendly objective near target point"))?;
         if dist > 5_000. {
             bail!("no friendly objective near target point")
         }
         let src = src.id;
         let tgt = tgt.id;
         if let Some(ucid) = ucid {
-            self.ephemeral.stat(Stat::SupplyTransfer {
-                from: src,
-                to: tgt,
-                by: ucid,
-            });
+            self.ephemeral.stat(Stat::SupplyTransfer { from: src, to: tgt, by: ucid });
         }
         self.transfer_supplies(lua, src, tgt)
     }
@@ -4186,8 +4355,11 @@ impl Db {
                 self.ephemeral.stat(Stat::DeployFarp {
                     by: ucid,
                     oid,
-                    deployable: spec.path.last()
-                        .ok_or_else(|| anyhow!("deployable has empty path"))?.clone(),
+                    deployable: spec
+                        .path
+                        .last()
+                        .ok_or_else(|| anyhow!("deployable has empty path"))?
+                        .clone(),
                 });
                 Ok(())
             }
@@ -4288,14 +4460,9 @@ impl Db {
             BitFlags::empty(),
             None,
         )?;
-        self.ephemeral.stat(Stat::DeployTroop {
-            troop,
-            by: ucid,
-            gid,
-        });
+        self.ephemeral.stat(Stat::DeployTroop { troop, by: ucid, gid });
         Ok(())
     }
-
 
     pub fn advance_actions(
         &mut self,
@@ -4307,11 +4474,14 @@ impl Db {
         let mut to_delete: SmallVec<[GroupId; 4]> = smallvec![];
         let mut to_bomb: SmallVec<[(BomberCfg, Vector2, Side); 2]> = smallvec![];
         let mut to_repair: SmallVec<[(Vector2, Option<Ucid>, Side); 2]> = smallvec![];
-        let mut to_transfer: SmallVec<[(Vector2, Vector2, Option<Ucid>, Side); 2]> = smallvec![];
-        // the last field is the owner's cost_fraction: 0 for a treasury-paid order
-        let mut to_deploy: SmallVec<[(Vector2, String, Side, Ucid, f32); 2]> = smallvec![];
-        let mut to_paratroop: SmallVec<[(Vector2, String, Side, Ucid, ObjectiveId, f32); 2]> =
+        let mut to_transfer: SmallVec<[(Vector2, Vector2, Option<Ucid>, Side); 2]> =
             smallvec![];
+        // the last field is the owner's cost_fraction: 0 for a treasury-paid order
+        let mut to_deploy: SmallVec<[(Vector2, String, Side, Ucid, f32); 2]> =
+            smallvec![];
+        let mut to_paratroop: SmallVec<
+            [(Vector2, String, Side, Ucid, ObjectiveId, f32); 2],
+        > = smallvec![];
         // (payer, points, group name) for flights that made it home after an
         // RTB order. Applied after the pass, through adjust_points.
         let mut to_refund: SmallVec<[(Ucid, i32, String); 2]> = smallvec![];
@@ -4329,7 +4499,9 @@ impl Db {
                     .units
                     .into_iter()
                     .filter_map(|uid| self.persisted.units.get(uid))
-                    .any(|unit| na::distance_squared(&unit.pos.into(), &$dest.into()) <= r2)
+                    .any(|unit| {
+                        na::distance_squared(&unit.pos.into(), &$dest.into()) <= r2
+                    })
             }};
         }
 
@@ -4350,7 +4522,8 @@ impl Db {
                 ..
             } = &mut group.origin
             {
-                let cost_fraction = if matches!(*paid_by, Some((_, 0))) { 0. } else { 1. };
+                let cost_fraction =
+                    if matches!(*paid_by, Some((_, 0))) { 0. } else { 1. };
                 match &spec.kind {
                     ActionKind::Awacs(AwacsCfg { plane: ai, .. })
                     | ActionKind::Fighters(ai)
@@ -4560,7 +4733,9 @@ impl Db {
                                         && !self.persisted.troops.contains(gid)
                                         && !self.persisted.dismounts.contains(gid)
                                     {
-                                        self.ephemeral.units_able_to_move.swap_remove(uid);
+                                        self.ephemeral
+                                            .units_able_to_move
+                                            .swap_remove(uid);
                                     }
                                 }
                             }
@@ -4583,7 +4758,9 @@ impl Db {
                     5,
                     false,
                     side,
-                    format_compact!("{pname}'s {name} has RTB'd. points refunded: {amount}"),
+                    format_compact!(
+                        "{pname}'s {name} has RTB'd. points refunded: {amount}"
+                    ),
                 );
             }
             self.adjust_points(&ucid, amount, &format!("rtb refund for {name}"));
@@ -4615,9 +4792,16 @@ impl Db {
             }
         }
         for (dst, troop, side, ucid, origin, cost_fraction) in to_paratroop {
-            if let Err(e) =
-                self.paratroops_to_point(lua, idx, dst, troop, side, ucid.clone(), origin, cost_fraction)
-            {
+            if let Err(e) = self.paratroops_to_point(
+                lua,
+                idx,
+                dst,
+                troop,
+                side,
+                ucid.clone(),
+                origin,
+                cost_fraction,
+            ) {
                 self.ephemeral.panel_to_player(
                     &self.persisted,
                     10,
@@ -4627,7 +4811,15 @@ impl Db {
             }
         }
         for (dst, dep, side, ucid, cost_fraction) in to_deploy {
-            if let Err(e) = self.deployable_to_point(lua, idx, dst, dep, side, ucid.clone(), cost_fraction) {
+            if let Err(e) = self.deployable_to_point(
+                lua,
+                idx,
+                dst,
+                dep,
+                side,
+                ucid.clone(),
+                cost_fraction,
+            ) {
                 self.ephemeral.panel_to_player(
                     &self.persisted,
                     10,
@@ -4646,7 +4838,12 @@ impl Db {
     /// side, by the server's own Move action: its price per step of
     /// distance. None if the server has no Move action (nobody may move
     /// them) or the group isn't one that moves.
-    pub(crate) fn move_price(&self, side: Side, gid: &GroupId, pos: Vector2) -> Result<Option<u32>> {
+    pub(crate) fn move_price(
+        &self,
+        side: Side,
+        gid: &GroupId,
+        pos: Vector2,
+    ) -> Result<Option<u32>> {
         let group = group!(self, gid)?;
         let Some(action) = self
             .ephemeral
@@ -4670,13 +4867,21 @@ impl Db {
     /// A commander's Move: drive one of `side`'s deployed groups or troops to
     /// `pos` -- the same route a player's Move gives it, without charging a
     /// player (the caller charges the side).
-    pub(crate) fn command_move_group(&mut self, spctx: &SpawnCtx, side: Side, gid: GroupId, pos: Vector2) -> Result<()> {
+    pub(crate) fn command_move_group(
+        &mut self,
+        spctx: &SpawnCtx,
+        side: Side,
+        gid: GroupId,
+        pos: Vector2,
+    ) -> Result<()> {
         let group = group!(self, gid)?;
         if group.side != side {
             bail!("that isn't ours")
         }
         let owner = match &group.origin {
-            DeployKind::Deployed { player, .. } | DeployKind::Troop { player, .. } => player.clone(),
+            DeployKind::Deployed { player, .. } | DeployKind::Troop { player, .. } => {
+                player.clone()
+            }
             _ => bail!("only deployed units and troops can be moved"),
         };
         self.move_group(
@@ -4701,11 +4906,21 @@ impl Db {
                     && crate::unitdb::fires_indirect(
                         &u.typ.0,
                         u.tags.0,
-                        self.ephemeral.cfg.artillery.as_ref().map_or(false, |c| c.units.contains_key(u.typ.0.as_str())),
+                        self.ephemeral
+                            .cfg
+                            .artillery
+                            .as_ref()
+                            .map_or(false, |c| c.units.contains_key(u.typ.0.as_str())),
                     )
             })
             // (max, min): the reach is the first.
-            .map(|u| crate::unitdb::artillery_range(self.ephemeral.cfg.artillery.as_ref(), &u.typ.0).0)
+            .map(|u| {
+                crate::unitdb::artillery_range(
+                    self.ephemeral.cfg.artillery.as_ref(),
+                    &u.typ.0,
+                )
+                .0
+            })
             .filter(|max| *max > 0.)
             .reduce(f64::max)
     }
@@ -4713,7 +4928,13 @@ impl Db {
     /// A commander's Fire: one battery of `side`'s fires on `target`. It has
     /// to be in range and reloaded (`ArtilleryCfg::cooldown_secs`, the same
     /// clock the Request Fires menu runs on).
-    pub(crate) fn command_fire(&mut self, lua: MizLua, side: Side, gid: GroupId, target: Vector2) -> Result<compact_str::CompactString> {
+    pub(crate) fn command_fire(
+        &mut self,
+        lua: MizLua,
+        side: Side,
+        gid: GroupId,
+        target: Vector2,
+    ) -> Result<compact_str::CompactString> {
         let cfg = self
             .ephemeral
             .cfg
@@ -4725,17 +4946,25 @@ impl Db {
             bail!("that battery isn't ours")
         }
         let name = group.name.clone();
-        let range = self.battery_range(&gid).ok_or_else(|| anyhow!("{name} has no guns left"))?;
+        let range =
+            self.battery_range(&gid).ok_or_else(|| anyhow!("{name} has no guns left"))?;
         let center = self.group_center(&gid)?;
         let d = na::distance(&center.into(), &target.into());
         if d > range {
-            bail!("{name} reaches {:.1} km; that is {:.1} km away", range / 1000., d / 1000.)
+            bail!(
+                "{name} reaches {:.1} km; that is {:.1} km away",
+                range / 1000.,
+                d / 1000.
+            )
         }
         let now = self.ephemeral.now();
         let cooldown = Duration::seconds(cfg.cooldown_secs as i64);
         if let Some(t) = self.ephemeral.arty_last_fired.get(&gid) {
             if now - *t < cooldown {
-                bail!("{name} is reloading: ready in {} s", (cooldown - (now - *t)).num_seconds().max(1))
+                bail!(
+                    "{name} is reloading: ready in {} s",
+                    (cooldown - (now - *t)).num_seconds().max(1)
+                )
             }
         }
         let land = Land::singleton(lua)?;
@@ -4751,7 +4980,8 @@ impl Db {
         };
         let dcs_group = Group::get_by_name(lua, name.as_str())
             .with_context(|| format_compact!("{name} is not in DCS right now"))?;
-        let task = aim_and_fire_route(center, target, group_facing(self, &gid), fire_task);
+        let task =
+            aim_and_fire_route(center, target, group_facing(self, &gid), fire_task);
         dcs_group.get_controller()?.set_task(task)?;
         self.ephemeral.arty_last_fired.insert(gid, now);
         info!("command: {side:?} battery {name} firing at {target:?}");
@@ -4776,9 +5006,7 @@ impl Db {
         // missions; one still reloading is passed over for the next in range.
         let now = self.ephemeral.now();
         let cooldown = Duration::seconds(cfg.cooldown_secs as i64);
-        self.ephemeral
-            .arty_last_fired
-            .retain(|_, t| now - *t < cooldown);
+        self.ephemeral.arty_last_fired.retain(|_, t| now - *t < cooldown);
 
         // Collect groups with alive Artillery/Launcher units within their configured range.
         // Works for ground artillery, missile launchers, and naval units — any unit type
@@ -4813,7 +5041,9 @@ impl Db {
                             )
                     })
                     .map(|u| crate::unitdb::artillery_range(Some(&cfg), u.typ.as_str()))
-                    .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+                    .max_by(|a, b| {
+                        a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal)
+                    });
 
                 let (max_range, min_range) = match best_range {
                     None => continue, // no alive artillery/launcher units in this group
@@ -4847,7 +5077,8 @@ impl Db {
         }
 
         // Sort by distance (closest first) and cap at max_groups.
-        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        candidates
+            .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         candidates.truncate(cfg.max_groups);
 
         let fire_task = Task::FireAtPoint {
@@ -4878,8 +5109,12 @@ impl Db {
                 }
             };
             let center = self.group_center(gid).unwrap_or(target_pos);
-            let aim_task =
-                aim_and_fire_route(center, target_pos, group_facing(self, gid), fire_task.clone());
+            let aim_task = aim_and_fire_route(
+                center,
+                target_pos,
+                group_facing(self, gid),
+                fire_task.clone(),
+            );
             match controller.set_task(aim_task) {
                 std::result::Result::Err(e) => {
                     error!("artillery_strike: set_task {group_name}: {e}");
@@ -4932,7 +5167,8 @@ impl Db {
                 let d = if obj.zone.contains(target_pos) {
                     0.0_f64
                 } else {
-                    let d = na::distance_squared(&obj.zone.pos().into(), &target_pos.into());
+                    let d =
+                        na::distance_squared(&obj.zone.pos().into(), &target_pos.into());
                     if d > fallback_sq {
                         continue;
                     }
@@ -4944,7 +5180,10 @@ impl Db {
             }
             if let Some((oid, _)) = best {
                 self.ephemeral.artillery_targeted.insert(oid, now);
-                info!("artillery_strike: marking objective {:?} as targeted for respawn", oid);
+                info!(
+                    "artillery_strike: marking objective {:?} as targeted for respawn",
+                    oid
+                );
             }
         }
 
@@ -4983,12 +5222,14 @@ mod tests {
     #[test]
     fn split_name_takes_the_longest_matching_action() {
         let db = db_with_actions(&["JTAC", "JTAC Drone", "Tanker"]);
-        let (name, _, args) = ActionCmd::split_name(&db, Side::Blue, "JTAC Drone M1").unwrap();
+        let (name, _, args) =
+            ActionCmd::split_name(&db, Side::Blue, "JTAC Drone M1").unwrap();
         assert_eq!((name.as_str(), args), ("JTAC Drone", "M1"));
         let (name, _, args) = ActionCmd::split_name(&db, Side::Blue, "jtac M1").unwrap();
         assert_eq!((name.as_str(), args), ("JTAC", "M1"));
         // what players paste from `-action help`: quotes and a colon
-        let (name, _, args) = ActionCmd::split_name(&db, Side::Blue, "\"JTAC Drone\": M2").unwrap();
+        let (name, _, args) =
+            ActionCmd::split_name(&db, Side::Blue, "\"JTAC Drone\": M2").unwrap();
         assert_eq!((name.as_str(), args), ("JTAC Drone", "M2"));
         // a prefix of a longer word is not a match
         assert!(ActionCmd::split_name(&db, Side::Blue, "Tankers M1").is_err());
@@ -5020,10 +5261,14 @@ mod tests {
             for (name, a) in actions {
                 let spawns = action_spawns_group(&a.kind);
                 match &a.kind {
-                    ActionKind::Tanker(_) | ActionKind::Awacs(_) | ActionKind::Fighters(_) => {
+                    ActionKind::Tanker(_)
+                    | ActionKind::Awacs(_)
+                    | ActionKind::Fighters(_) => {
                         assert!(spawns, "{side:?} {name}")
                     }
-                    ActionKind::Move(_) | ActionKind::Nuke(_) | ActionKind::Artillery(_) => {
+                    ActionKind::Move(_)
+                    | ActionKind::Nuke(_)
+                    | ActionKind::Artillery(_) => {
                         assert!(!spawns, "{side:?} {name}")
                     }
                     _ => (),

@@ -17,22 +17,18 @@ for more details.
 //! The HQ as one side sees it: the `query-hq` view for the dashboard and
 //! the strategist, and the F10 / chat text for players.
 
-use super::{
-    cfg, dist, picture, planner,
-    requests::RequestStatus,
-    OpStatus,
-};
+use super::{OpStatus, cfg, dist, picture, planner, requests::RequestStatus};
 use crate::Context;
 use bfprotocols::{
     db::objective::ObjectiveId,
     hq::{
-        ContactInfo, DirectiveInfo, HqView, LatLon, LogInfo, ObjInfo, ObjRef, OpInfo, OverrideInfo,
-        PictureInfo, RecordInfo, RequestInfo,
+        ContactInfo, DirectiveInfo, HqView, LatLon, LogInfo, ObjInfo, ObjRef, OpInfo,
+        OverrideInfo, PictureInfo, RecordInfo, RequestInfo,
     },
 };
 use chrono::prelude::*;
-use compact_str::{format_compact, CompactString};
-use dcso3::{coalition::Side, coord::Coord, LuaVec3, MizLua, Vector2, Vector3};
+use compact_str::{CompactString, format_compact};
+use dcso3::{LuaVec3, MizLua, Vector2, Vector3, coalition::Side, coord::Coord};
 use std::fmt::Write;
 
 fn ts(t: DateTime<Utc>) -> String {
@@ -41,7 +37,12 @@ fn ts(t: DateTime<Utc>) -> String {
 
 /// The view of `side`'s HQ, for `viewer` (whether they may command it).
 /// `lua` is only for map coordinates.
-pub(crate) fn view(ctx: &Context, lua: MizLua, side: Side, viewer: Option<&dcso3::net::Ucid>) -> HqView {
+pub(crate) fn view(
+    ctx: &Context,
+    lua: MizLua,
+    side: Side,
+    viewer: Option<&dcso3::net::Ucid>,
+) -> HqView {
     let now = ctx.now();
     let coord = Coord::singleton(lua).ok();
     let ll = |p: Vector2| -> LatLon {
@@ -60,7 +61,11 @@ pub(crate) fn view(ctx: &Context, lua: MizLua, side: Side, viewer: Option<&dcso3
     v.can_command = viewer.map_or(false, |u| super::may_command(ctx, &hq, Some(u)));
     let pic = picture::build(ctx, &hq, side, now);
     let objref = |id: &ObjectiveId| {
-        pic.get(id).map(|o| ObjRef { id: o.id.inner() as u64, name: o.name.to_string(), pos: ll(o.pos) })
+        pic.get(id).map(|o| ObjRef {
+            id: o.id.inner() as u64,
+            name: o.name.to_string(),
+            pos: ll(o.pos),
+        })
     };
     let rt = ctx.hq.sides.get(&side);
     if let Some(plan) = rt.and_then(|r| r.plan.as_ref()) {
@@ -92,11 +97,19 @@ pub(crate) fn view(ctx: &Context, lua: MizLua, side: Side, viewer: Option<&dcso3
     v.record = saved
         .record
         .iter()
-        .map(|(k, r)| RecordInfo { kind: *k, launched: r.launched, succeeded: r.succeeded, failed: r.failed })
+        .map(|(k, r)| RecordInfo {
+            kind: *k,
+            launched: r.launched,
+            succeeded: r.succeeded,
+            failed: r.failed,
+        })
         .collect();
     v.treasury = ctx.db.persisted.treasury(side);
     v.reserve = sc.action_reserve;
-    v.available = planner::available(ctx, &hq, side).into_iter().map(|(k, a)| (k, a.cost)).collect();
+    v.available = planner::available(ctx, &hq, side)
+        .into_iter()
+        .map(|(k, a)| (k, a.cost))
+        .collect();
     if let Some(rt) = rt {
         v.gap_factor = rt.gap;
         v.ops = rt
@@ -133,8 +146,17 @@ pub(crate) fn view(ctx: &Context, lua: MizLua, side: Side, viewer: Option<&dcso3
                 answer: r.answer.to_string(),
             })
             .collect();
-        v.log = rt.log.iter().rev().map(|(t, s)| LogInfo { at: ts(*t), text: s.to_string() }).collect();
-        let every = if pic.own().any(|o| o.being_captured) { hq.emergency_think_secs } else { hq.think_secs };
+        v.log = rt
+            .log
+            .iter()
+            .rev()
+            .map(|(t, s)| LogInfo { at: ts(*t), text: s.to_string() })
+            .collect();
+        let every = if pic.own().any(|o| o.being_captured) {
+            hq.emergency_think_secs
+        } else {
+            hq.think_secs
+        };
         v.next_think_secs = rt
             .last_think
             .map(|t| (every as i64 - (now - t).num_seconds()).max(0))
@@ -171,7 +193,14 @@ pub(crate) fn view(ctx: &Context, lua: MizLua, side: Side, viewer: Option<&dcso3
                 id: o.id.inner() as u64,
                 name: o.name.to_string(),
                 kind: o.kind_label().into(),
-                owner: if o.own { "own" } else if o.neutral { "neutral" } else { "enemy" }.into(),
+                owner: if o.own {
+                    "own"
+                } else if o.neutral {
+                    "neutral"
+                } else {
+                    "enemy"
+                }
+                .into(),
                 pos: ll(o.pos),
                 health: o.health,
                 logi: o.logi,
@@ -180,7 +209,11 @@ pub(crate) fn view(ctx: &Context, lua: MizLua, side: Side, viewer: Option<&dcso3
                 threatened: o.threatened,
                 being_captured: o.being_captured,
                 capturable: o.capturable,
-                front_km: if o.front_m.is_finite() { (o.front_m / 100.).round() / 10. } else { -1. },
+                front_km: if o.front_m.is_finite() {
+                    (o.front_m / 100.).round() / 10.
+                } else {
+                    -1.
+                },
                 inbound: o.inbound,
             })
             .collect(),
@@ -206,7 +239,9 @@ pub(crate) fn view(ctx: &Context, lua: MizLua, side: Side, viewer: Option<&dcso3
         logistics_out: v
             .ops
             .iter()
-            .filter(|o| o.status == "active" && o.line == bfprotocols::hq::Line::Logistics)
+            .filter(|o| {
+                o.status == "active" && o.line == bfprotocols::hq::Line::Logistics
+            })
             .count() as u32,
         troops_out: v
             .ops
@@ -218,7 +253,12 @@ pub(crate) fn view(ctx: &Context, lua: MizLua, side: Side, viewer: Option<&dcso3
 }
 
 fn name(ctx: &Context, id: &ObjectiveId) -> CompactString {
-    ctx.db.persisted.objectives.get(id).map(|o| o.name().into()).unwrap_or_else(|| "?".into())
+    ctx.db
+        .persisted
+        .objectives
+        .get(id)
+        .map(|o| o.name().into())
+        .unwrap_or_else(|| "?".into())
 }
 
 /// The commander's intent, for F10 > Info > HQ and `-hq`.
@@ -245,7 +285,8 @@ pub(crate) fn intent_text(ctx: &Context, side: Side) -> CompactString {
         let _ = writeln!(s, "Hold: {}", v.join(", "));
     }
     if !plan.supply.is_empty() {
-        let v: Vec<CompactString> = plan.supply.iter().take(4).map(|id| name(ctx, id)).collect();
+        let v: Vec<CompactString> =
+            plan.supply.iter().take(4).map(|id| name(ctx, id)).collect();
         let _ = writeln!(s, "Resupply first: {}", v.join(", "));
     }
     let by = match plan.source {
@@ -261,7 +302,8 @@ pub(crate) fn intent_text(ctx: &Context, side: Side) -> CompactString {
         super::strategy::Source::Strategist => "strategist's directive".into(),
         super::strategy::Source::Rules => "HQ's own assessment".into(),
     };
-    let _ = writeln!(s, "({by}{})", if plan.paused { ", HQ planning paused" } else { "" });
+    let _ =
+        writeln!(s, "({by}{})", if plan.paused { ", HQ planning paused" } else { "" });
     let active = rt.active().count();
     let open = rt.requests.iter().filter(|r| r.status == RequestStatus::Open).count();
     let _ = write!(
@@ -290,12 +332,23 @@ pub(crate) fn ops_text(ctx: &Context, side: Side) -> CompactString {
             o.kind.label(),
             o.target_name,
             o.status.label(),
-            if o.status == OpStatus::Active { CompactString::new("") } else { format_compact!(", {}", o.detail) },
+            if o.status == OpStatus::Active {
+                CompactString::new("")
+            } else {
+                format_compact!(", {}", o.detail)
+            },
         );
     }
     for r in rt.requests.iter().filter(|r| r.status == RequestStatus::Open) {
         any = true;
-        let _ = writeln!(s, "request #{} {} at {} by {}: waiting", r.id, r.kind.label(), r.target_name, r.by);
+        let _ = writeln!(
+            s,
+            "request #{} {} at {} by {}: waiting",
+            r.id,
+            r.kind.label(),
+            r.target_name,
+            r.by
+        );
     }
     if !any {
         s.push_str("Nothing under way.");

@@ -33,15 +33,15 @@ for more details.
 //! first day. Instead the overlay renders the same tree DCS renders, and
 //! clicking an item calls the very same handler -- so the cockpit UI is
 //! automatically complete, and stays that way when menus are added or changed.
-use crate::{db::cargo::SlotStats, msgq::FeedTo, Context};
-use anyhow::{anyhow, Result};
+use crate::{Context, db::cargo::SlotStats, msgq::FeedTo};
+use anyhow::{Result, anyhow};
 use dcso3::{
+    LuaVec3, MizLua, Vector2, Vector3,
     coalition::Side,
     coord::Coord,
     env::miz::{GroupId, UnitId},
-    mission_commands::{invoke_mirrored_menu, mirrored_menu, MirroredMenuItem},
+    mission_commands::{MirroredMenuItem, invoke_mirrored_menu, mirrored_menu},
     net::{PlayerId, Ucid},
-    LuaVec3, MizLua, Vector2, Vector3,
 };
 use serde_derive::Serialize;
 
@@ -109,10 +109,7 @@ fn side_str(side: Side) -> &'static str {
 /// best-effort: a player in spectators still gets a valid answer, just with no
 /// `slot`.
 pub(crate) fn context(ctx: &Context, lua: MizLua, ucid: &Ucid) -> Result<CockpitContext> {
-    let player = ctx
-        .db
-        .player(ucid)
-        .ok_or_else(|| anyhow!("unknown player {ucid}"))?;
+    let player = ctx.db.player(ucid).ok_or_else(|| anyhow!("unknown player {ucid}"))?;
 
     let lives = player
         .lives
@@ -165,14 +162,13 @@ fn slot_context(
 
     let objective_name =
         |oid: &bfprotocols::db::objective::ObjectiveId| -> Option<String> {
-            ctx.db
-                .persisted
-                .objectives
-                .get(oid)
-                .map(|o| o.name.to_string())
+            ctx.db.persisted.objectives.get(oid).map(|o| o.name.to_string())
         };
 
-    let nearest = crate::db::Db::objective_near_point(&ctx.db.persisted.objectives, ground, |_| true)
+    let nearest =
+        crate::db::Db::objective_near_point(&ctx.db.persisted.objectives, ground, |_| {
+            true
+        })
         .map(|(dist, bearing_from_obj, obj)| NearbyObjective {
             name: obj.name.to_string(),
             owner: side_str(obj.owner),
@@ -182,9 +178,8 @@ fn slot_context(
             bearing_deg: ((bearing_from_obj + 180.0).rem_euclid(360.0)) as u32,
         });
 
-    let takeoff_ok_in_secs = inst.takeoff_ok_at.map(|t| {
-        (t - ctx.now()).num_seconds().max(0)
-    });
+    let takeoff_ok_in_secs =
+        inst.takeoff_ok_at.map(|t| (t - ctx.now()).num_seconds().max(0));
 
     SlotContext {
         unit_name: inst.unit_name.to_string(),
@@ -208,27 +203,22 @@ fn slot_context(
 
 /// The DCS group whose F10 menu belongs to this player right now.
 fn menu_group(ctx: &Context, ucid: &Ucid) -> Result<dcso3::env::miz::GroupId> {
-    let player = ctx
-        .db
-        .player(ucid)
-        .ok_or_else(|| anyhow!("unknown player {ucid}"))?;
-    let (slot, _) = player
-        .current_slot
-        .as_ref()
-        .ok_or_else(|| anyhow!("you must be in a slot"))?;
-    let si = ctx
-        .db
-        .ephemeral
-        .get_slot_info(slot)
-        .ok_or_else(|| anyhow!("no slot info"))?;
+    let player = ctx.db.player(ucid).ok_or_else(|| anyhow!("unknown player {ucid}"))?;
+    let (slot, _) =
+        player.current_slot.as_ref().ok_or_else(|| anyhow!("you must be in a slot"))?;
+    let si =
+        ctx.db.ephemeral.get_slot_info(slot).ok_or_else(|| anyhow!("no slot info"))?;
     Ok(si.miz_gid)
 }
 
 /// The player's whole F10 menu, in the order they see it.
-pub(crate) fn menu(ctx: &Context, lua: MizLua, ucid: &Ucid) -> Result<Vec<MirroredMenuItem>> {
+pub(crate) fn menu(
+    ctx: &Context,
+    lua: MizLua,
+    ucid: &Ucid,
+) -> Result<Vec<MirroredMenuItem>> {
     mirrored_menu(lua, menu_group(ctx, ucid)?)
 }
-
 
 // ── Message feed ──────────────────────────────────────────────────────────
 //
@@ -266,15 +256,11 @@ struct Audience {
 }
 
 fn audience(ctx: &Context, ucid: &Ucid) -> Result<Audience> {
-    let player = ctx
-        .db
-        .player(ucid)
-        .ok_or_else(|| anyhow!("unknown player {ucid}"))?;
+    let player = ctx.db.player(ucid).ok_or_else(|| anyhow!("unknown player {ucid}"))?;
     let (group, unit) = match player.current_slot.as_ref() {
-        Some((slot, _)) => (
-            ctx.db.ephemeral.get_slot_info(slot).map(|si| si.miz_gid),
-            slot.as_unit_id(),
-        ),
+        Some((slot, _)) => {
+            (ctx.db.ephemeral.get_slot_info(slot).map(|si| si.miz_gid), slot.as_unit_id())
+        }
         None => (None, None),
     };
     Ok(Audience {
@@ -328,7 +314,11 @@ pub(crate) fn messages(ctx: &Context, ucid: &Ucid, since: u64) -> Result<Cockpit
 /// Must be called with nothing holding the campaign state (see
 /// `admin::run_menu_invokes`): the handler takes its own, exactly as when DCS
 /// calls it, so this only borrows the state before and after it runs.
-pub(crate) fn invoke_and_report(lua: MizLua, ucid: &Ucid, path: &[String]) -> Result<Option<String>> {
+pub(crate) fn invoke_and_report(
+    lua: MizLua,
+    ucid: &Ucid,
+    path: &[String],
+) -> Result<Option<String>> {
     let (group, before) = {
         let ctx = Context::borrow("cockpit menu click")?;
         (menu_group(&ctx, ucid)?, ctx.db.ephemeral.msgs_ref().feed_seq())
@@ -411,7 +401,9 @@ fn spawn_paths(
     let under_crates = |it: &MirroredMenuItem| it.path.iter().any(|p| p == "Crates");
     let one = menu
         .iter()
-        .find(|it| it.command && under_crates(it) && (it.name == name || it.name == titled))
+        .find(|it| {
+            it.command && under_crates(it) && (it.name == name || it.name == titled)
+        })
         .map(|it| it.path.clone());
     let xn = format!("{name} xN");
     let n = menu
@@ -433,10 +425,7 @@ fn cargo_crate(menu: &[MirroredMenuItem], cr: &bfprotocols::cfg::Crate) -> Cargo
 }
 
 pub(crate) fn cargo(ctx: &Context, lua: MizLua, ucid: &Ucid) -> Result<CargoInfo> {
-    let player = ctx
-        .db
-        .player(ucid)
-        .ok_or_else(|| anyhow!("unknown player {ucid}"))?;
+    let player = ctx.db.player(ucid).ok_or_else(|| anyhow!("unknown player {ucid}"))?;
     let side = player.side;
     let Some((slot, _)) = player.current_slot.clone() else {
         return Ok(CargoInfo {
@@ -549,8 +538,9 @@ pub(crate) const KEY_CMD: &str = "-cockpitkey ";
 /// Registered keys by player id, with the ucid that registered them so a key
 /// cannot outlive its connection: DCS hands a disconnected player's id to the
 /// next person to join.
-static KEYS: std::sync::LazyLock<std::sync::Mutex<fxhash::FxHashMap<PlayerId, (Ucid, String)>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(fxhash::FxHashMap::default()));
+static KEYS: std::sync::LazyLock<
+    std::sync::Mutex<fxhash::FxHashMap<PlayerId, (Ucid, String)>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(fxhash::FxHashMap::default()));
 
 fn valid_key(key: &str) -> bool {
     (16..=128).contains(&key.len()) && key.bytes().all(|b| b.is_ascii_alphanumeric())

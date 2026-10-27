@@ -20,7 +20,6 @@ impl From<anyhow::Error> for Error {
     }
 }
 
-
 /// A route's query string as a map.
 pub(crate) type Q = std::collections::HashMap<std::string::String, std::string::String>;
 
@@ -46,7 +45,11 @@ pub(crate) fn page<T>(mut rows: Vec<T>, q: &Q, cap: usize) -> (Vec<T>, usize) {
 }
 
 /// [`page`], serialized.
-pub(crate) fn page_json<T: serde::Serialize>(rows: Vec<T>, q: &Q, cap: usize) -> Result<(String, usize)> {
+pub(crate) fn page_json<T: serde::Serialize>(
+    rows: Vec<T>,
+    q: &Q,
+    cap: usize,
+) -> Result<(String, usize)> {
     let (rows, total) = page(rows, q, cap);
     Ok((serde_json::to_string(&rows)?, total))
 }
@@ -69,15 +72,17 @@ pub(crate) fn json_response(data: String) -> impl warp::Reply {
 /// trees (kills, per-round aggregates, points) on every request. Every open
 /// dashboard polls these; five seconds of staleness is invisible, and it turns
 /// N identical full scans a second into one.
-pub(crate) const PUBLIC_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+pub(crate) const PUBLIC_CACHE_TTL: std::time::Duration =
+    std::time::Duration::from_secs(5);
 
 /// How old an answer `cached_json` still hands out while it refreshes it in
 /// the background.
-pub(crate) const PUBLIC_CACHE_MAX_STALE: std::time::Duration = std::time::Duration::from_secs(60);
+pub(crate) const PUBLIC_CACHE_MAX_STALE: std::time::Duration =
+    std::time::Duration::from_secs(60);
 
-pub(crate) static ROUTE_CACHE: std::sync::LazyLock<websec::CacheMap<std::string::String, Arc<std::string::String>>> =
-    std::sync::LazyLock::new(websec::CacheMap::new);
-
+pub(crate) static ROUTE_CACHE: std::sync::LazyLock<
+    websec::CacheMap<std::string::String, Arc<std::string::String>>,
+> = std::sync::LazyLock::new(websec::CacheMap::new);
 
 /// Serve `key` from [`ROUTE_CACHE`], computing it with `f` (a blocking DB
 /// read) at most once per TTL however many requests arrive together. Past
@@ -98,8 +103,9 @@ pub(crate) async fn cached_json(
 
 /// Row lists behind the paged public routes (a pilot's sorties, kills,
 /// deploys), cached like [`cached_json`] and paged per request.
-static ROWS_CACHE: std::sync::LazyLock<websec::CacheMap<std::string::String, Arc<Vec<serde_json::Value>>>> =
-    std::sync::LazyLock::new(websec::CacheMap::new);
+static ROWS_CACHE: std::sync::LazyLock<
+    websec::CacheMap<std::string::String, Arc<Vec<serde_json::Value>>>,
+> = std::sync::LazyLock::new(websec::CacheMap::new);
 
 /// [`cached_json`] for a list that each request pages through.
 pub(crate) async fn cached_rows(
@@ -114,7 +120,11 @@ pub(crate) async fn cached_rows(
 }
 
 /// One page of a cached list, as [`page_json`] would cut it.
-pub(crate) fn page_slice(rows: &[serde_json::Value], q: &Q, cap: usize) -> Result<(String, usize)> {
+pub(crate) fn page_slice(
+    rows: &[serde_json::Value],
+    q: &Q,
+    cap: usize,
+) -> Result<(String, usize)> {
     let total = rows.len();
     let num = |k: &str| q.get(k).and_then(|s| s.trim().parse::<usize>().ok());
     let offset = num("offset").unwrap_or(0).min(total);
@@ -140,7 +150,8 @@ pub(crate) async fn session_player(
     db: &StatsDb,
     bot_cfg: &Option<BotLinkConfig>,
 ) -> std::result::Result<dcso3::net::Ucid, Error> {
-    let sid = session_id.ok_or_else(|| websec::unauthorized("sign in with Discord first"))?;
+    let sid =
+        session_id.ok_or_else(|| websec::unauthorized("sign in with Discord first"))?;
     let session = task::block_in_place(|| db.get_session(sid))?
         .ok_or_else(|| websec::unauthorized("session expired"))?;
     let ucid = resolve_ucid_via_bot(bot_cfg, &session.discord_id).await.ok_or_else(|| {
@@ -154,7 +165,10 @@ pub(crate) async fn session_player(
 /// A full admin: the Discord admin role, or the local password login. Kept
 /// for what no narrower role covers (campaign resets, sessions, the audit
 /// log, shutdown).
-pub(crate) async fn require_admin(session_id: Option<Uuid>, db: StatsDb) -> std::result::Result<SessionData, Error> {
+pub(crate) async fn require_admin(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+) -> std::result::Result<SessionData, Error> {
     let session = require_session(session_id, &db)?;
     if !session.is_admin {
         return Err(websec::forbidden("forbidden").into());
@@ -165,7 +179,11 @@ pub(crate) async fn require_admin(session_id: Option<Uuid>, db: StatsDb) -> std:
 /// A full admin, or a session holding `role` (see `admin::Role` and the
 /// `--discord-*-role-id` flags). Every existing admin has every role, so for
 /// them nothing changed.
-pub(crate) async fn require_role(session_id: Option<Uuid>, db: StatsDb, role: u8) -> std::result::Result<SessionData, Error> {
+pub(crate) async fn require_role(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    role: u8,
+) -> std::result::Result<SessionData, Error> {
     let session = require_session(session_id, &db)?;
     if !admin::has_role(&session, role) {
         return Err(websec::forbidden("forbidden").into());
@@ -173,16 +191,26 @@ pub(crate) async fn require_role(session_id: Option<Uuid>, db: StatsDb, role: u8
     Ok(session)
 }
 
-pub(crate) fn require_session(session_id: Option<Uuid>, db: &StatsDb) -> std::result::Result<SessionData, Error> {
+pub(crate) fn require_session(
+    session_id: Option<Uuid>,
+    db: &StatsDb,
+) -> std::result::Result<SessionData, Error> {
     let Some(id) = session_id else {
         return Err(websec::unauthorized("not logged in").into());
     };
-    Ok(task::block_in_place(|| db.get_session(id))?.ok_or_else(|| websec::unauthorized("session expired"))?)
+    Ok(task::block_in_place(|| db.get_session(id))?
+        .ok_or_else(|| websec::unauthorized("session expired"))?)
 }
 
 /// Record an admin action: the `ADMIN:` log line it always had, plus a row
 /// in the persistent audit log (`GET /api/admin/audit`).
-pub(crate) fn audit(db: &StatsDb, who: &SessionData, action: &str, target: Option<&str>, inst: Option<&str>) {
+pub(crate) fn audit(
+    db: &StatsDb,
+    who: &SessionData,
+    action: &str,
+    target: Option<&str>,
+    inst: Option<&str>,
+) {
     log::info!(
         "ADMIN: {} ({}) {action}{}{}",
         who.username,
@@ -224,10 +252,15 @@ pub(crate) fn bearer_or_query_token(
 
 /// Wrong log/metrics tokens per client IP: 20 in ten minutes locks that
 /// address out of both for ten minutes.
-pub(crate) static TOKEN_FAILS: std::sync::LazyLock<websec::RateLimiter<std::net::IpAddr>> =
-    std::sync::LazyLock::new(|| {
-        websec::RateLimiter::new(20, std::time::Duration::from_secs(600), std::time::Duration::from_secs(600))
-    });
+pub(crate) static TOKEN_FAILS: std::sync::LazyLock<
+    websec::RateLimiter<std::net::IpAddr>,
+> = std::sync::LazyLock::new(|| {
+    websec::RateLimiter::new(
+        20,
+        std::time::Duration::from_secs(600),
+        std::time::Duration::from_secs(600),
+    )
+});
 
 /// `bearer_or_query_token`, rate limited per client IP.
 pub(crate) fn check_static_token(
@@ -237,7 +270,10 @@ pub(crate) fn check_static_token(
     ip: std::net::IpAddr,
 ) -> std::result::Result<(), (warp::http::StatusCode, &'static str)> {
     if TOKEN_FAILS.blocked(&ip).is_some() {
-        return Err((warp::http::StatusCode::TOO_MANY_REQUESTS, "too many bad tokens -- try again later\n"));
+        return Err((
+            warp::http::StatusCode::TOO_MANY_REQUESTS,
+            "too many bad tokens -- try again later\n",
+        ));
     }
     if bearer_or_query_token(q, auth_header, accepted) {
         return Ok(());
@@ -291,14 +327,19 @@ impl Caller {
             command::note_admin(*u);
             return true;
         }
-        task::block_in_place(|| command::may_command(db, inst, u, self.side)).unwrap_or_else(|e| {
-            log::warn!("[{}] commander check for {u}: {e:?}", inst.id);
-            false
-        })
+        task::block_in_place(|| command::may_command(db, inst, u, self.side))
+            .unwrap_or_else(|e| {
+                log::warn!("[{}] commander check for {u}: {e:?}", inst.id);
+                false
+            })
     }
 
     /// This caller's commander standing on `inst`, for the dashboard.
-    pub(crate) fn command_status(&self, db: &StatsDb, inst: &InstanceState) -> serde_json::Value {
+    pub(crate) fn command_status(
+        &self,
+        db: &StatsDb,
+        inst: &InstanceState,
+    ) -> serde_json::Value {
         let Some(u) = self.ucid() else { return serde_json::Value::Null };
         match task::block_in_place(|| command::status_of(db, inst, u)) {
             Ok(s) => serde_json::to_value(s).unwrap_or(serde_json::Value::Null),
@@ -343,7 +384,10 @@ pub(crate) async fn require_coalition(
     }
 }
 
-pub(crate) fn active_round_or_err(db: &StatsDb, inst: &InstanceState) -> std::result::Result<db::RoundId, Error> {
+pub(crate) fn active_round_or_err(
+    db: &StatsDb,
+    inst: &InstanceState,
+) -> std::result::Result<db::RoundId, Error> {
     task::block_in_place(|| db.active_round_id(&inst.id))?
         .ok_or_else(|| websec::not_found("no active round").into())
 }
@@ -356,7 +400,8 @@ pub(crate) fn side_name(side: dcso3::coalition::Side) -> &'static str {
     }
 }
 
-pub(crate) fn extract_session_cookie() -> impl Filter<Extract = (Option<Uuid>,), Error = warp::Rejection> + Clone {
+pub(crate) fn extract_session_cookie(
+) -> impl Filter<Extract = (Option<Uuid>,), Error = warp::Rejection> + Clone {
     warp::header::optional::<String>("cookie").map(|cookie: Option<String>| {
         cookie.and_then(|c| {
             c.split(';').find_map(|part| {
@@ -367,15 +412,18 @@ pub(crate) fn extract_session_cookie() -> impl Filter<Extract = (Option<Uuid>,),
     })
 }
 
-pub(crate) fn with_auth_cfg(cfg: Option<AuthConfig>) -> impl Filter<Extract = (AuthConfig,), Error = warp::Rejection> + Clone {
-    warp::any()
-        .map(move || cfg.clone())
-        .and_then(|cfg: Option<AuthConfig>| async move {
-            cfg.ok_or_else(warp::reject::not_found)
-        })
+pub(crate) fn with_auth_cfg(
+    cfg: Option<AuthConfig>,
+) -> impl Filter<Extract = (AuthConfig,), Error = warp::Rejection> + Clone {
+    warp::any().map(move || cfg.clone()).and_then(|cfg: Option<AuthConfig>| async move {
+        cfg.ok_or_else(warp::reject::not_found)
+    })
 }
 
-pub(crate) fn with_local_admin(cfg: Option<LocalAdminConfig>) -> impl Filter<Extract = (Option<LocalAdminConfig>,), Error = std::convert::Infallible> + Clone {
+pub(crate) fn with_local_admin(
+    cfg: Option<LocalAdminConfig>,
+) -> impl Filter<Extract = (Option<LocalAdminConfig>,), Error = std::convert::Infallible> + Clone
+{
     warp::any().map(move || cfg.clone())
 }
 
@@ -406,23 +454,32 @@ pub(crate) fn admin_ws_gate(
         return Err(websec::ws_refused(warp::http::StatusCode::FORBIDDEN, "admin only"));
     }
     websec::ws_slot(ip).ok_or_else(|| {
-        websec::ws_refused(warp::http::StatusCode::TOO_MANY_REQUESTS, "too many open connections")
+        websec::ws_refused(
+            warp::http::StatusCode::TOO_MANY_REQUESTS,
+            "too many open connections",
+        )
     })
 }
 
 pub(crate) fn with_news_images(
     c: Option<Arc<news_image::ImageCfg>>,
-) -> impl Filter<Extract = (Option<Arc<news_image::ImageCfg>>,), Error = std::convert::Infallible> + Clone {
+) -> impl Filter<
+    Extract = (Option<Arc<news_image::ImageCfg>>,),
+    Error = std::convert::Infallible,
+> + Clone {
     warp::any().map(move || c.clone())
 }
 
-pub(crate) fn with_db(db: StatsDb) -> impl Filter<Extract = (StatsDb,), Error = std::convert::Infallible> + Clone {
+pub(crate) fn with_db(
+    db: StatsDb,
+) -> impl Filter<Extract = (StatsDb,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || db.clone())
 }
 
 pub(crate) fn with_bot_link_cfg(
     cfg: Arc<Option<BotLinkConfig>>,
-) -> impl Filter<Extract = (Arc<Option<BotLinkConfig>>,), Error = std::convert::Infallible> + Clone {
+) -> impl Filter<Extract = (Arc<Option<BotLinkConfig>>,), Error = std::convert::Infallible>
+       + Clone {
     warp::any().map(move || cfg.clone())
 }
 
@@ -441,19 +498,21 @@ pub(crate) fn with_bot_link_cfg(
 /// ever being possible. (The `Rejection` in the signature is only
 /// `warp::query`'s own malformed-query-string rejection, which every route
 /// here already hits on an earlier query filter, before its body is read.)
-pub(crate) fn with_instance(db: StatsDb) -> impl Filter<Extract = (Inst,), Error = warp::Rejection> + Clone {
+pub(crate) fn with_instance(
+    db: StatsDb,
+) -> impl Filter<Extract = (Inst,), Error = warp::Rejection> + Clone {
     warp::query::<std::collections::HashMap<std::string::String, std::string::String>>()
         .and(extract_session_cookie())
         .and(warp::any().map(move || db.clone()))
         .map(
-            |q: std::collections::HashMap<std::string::String, std::string::String>, sid: Option<Uuid>, db: StatsDb| {
+            |q: std::collections::HashMap<std::string::String, std::string::String>,
+             sid: Option<Uuid>,
+             db: StatsDb| {
                 // `?server=` lets a caller that only knows the DCSServerBot
                 // server name (the Discord plugin) address an instance without
                 // having to learn its bfdb id first.
                 let by_server = q.get("server").and_then(|name| {
-                    db.instances()
-                        .by_dcs_server_name(name)
-                        .map(|cfg| cfg.id.clone())
+                    db.instances().by_dcs_server_name(name).map(|cfg| cfg.id.clone())
                 });
                 let requested = by_server
                     .as_deref()
@@ -494,10 +553,24 @@ pub(crate) fn implicit_instance(db: &StatsDb, sid: Option<Uuid>) -> InstanceId {
 /// private-default lock in `bad_instance_guard` leaves alone.
 pub(crate) fn instance_agnostic(path: &str) -> bool {
     const PREFIXES: &[&str] = &[
-        "/api/auth/", "/api/instances", "/api/version", "/api/config", "/api/health",
-        "/api/wiki/pages", "/api/wiki/images", "/api/pilots", "/api/pilot/", "/api/squadrons",
-        "/api/progression/", "/api/cockpit/", "/api/range/", "/api/replay/", "/api/admin/",
-        "/api/metrics", "/api/logs/", "/ws/logs",
+        "/api/auth/",
+        "/api/instances",
+        "/api/version",
+        "/api/config",
+        "/api/health",
+        "/api/wiki/pages",
+        "/api/wiki/images",
+        "/api/pilots",
+        "/api/pilot/",
+        "/api/squadrons",
+        "/api/progression/",
+        "/api/cockpit/",
+        "/api/range/",
+        "/api/replay/",
+        "/api/admin/",
+        "/api/metrics",
+        "/api/logs/",
+        "/ws/logs",
     ];
     PREFIXES.iter().any(|p| path.starts_with(p))
 }
@@ -516,7 +589,9 @@ pub(crate) fn bad_instance_guard(
     db: StatsDb,
 ) -> impl Filter<Extract = (Response,), Error = warp::Rejection> + Clone {
     warp::path::full()
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::query::<
+            std::collections::HashMap<std::string::String, std::string::String>,
+        >())
         .and(extract_session_cookie())
         .and(warp::any().map(move || db.clone()))
         .and(websec::with_client_ip())
@@ -538,7 +613,10 @@ pub(crate) fn bad_instance_guard(
                     // exists), it is locked exactly as if it had been named.
                     // This machine's own callers (the Discord bot) are not.
                     let implicit = implicit_instance(&db, session_id);
-                    let locked = db.instances().get(&implicit).map_or(false, |c| !c.public && !c.is_range())
+                    let locked = db
+                        .instances()
+                        .get(&implicit)
+                        .map_or(false, |c| !c.public && !c.is_range())
                         && !instance_agnostic(path)
                         && !ip.is_loopback()
                         && !session_is_admin(&db, session_id);
@@ -591,7 +669,8 @@ pub(crate) fn bad_instance_guard(
                 if by_instance.is_none() && db.instances().all().len() == 1 {
                     return Err(warp::reject::reject());
                 }
-                let ids: Vec<&str> = db.instances().all().iter().map(|i| i.id.as_str()).collect();
+                let ids: Vec<&str> =
+                    db.instances().all().iter().map(|i| i.id.as_str()).collect();
                 Ok(warp::reply::with_status(
                     warp::reply::json(&serde_json::json!({
                         "error": format!("unknown instance {name:?}"),
@@ -620,11 +699,11 @@ pub(crate) struct InstanceLive {
 pub(crate) type LiveMap = Arc<std::collections::HashMap<InstanceId, InstanceLive>>;
 
 pub(crate) fn live_for(map: &LiveMap, inst: &InstanceState) -> InstanceLive {
-    map.get(&inst.id)
-        .cloned()
-        .expect("every instance gets an InstanceLive at startup")
+    map.get(&inst.id).cloned().expect("every instance gets an InstanceLive at startup")
 }
 
-pub(crate) fn with_live(map: LiveMap) -> impl Filter<Extract = (LiveMap,), Error = std::convert::Infallible> + Clone {
+pub(crate) fn with_live(
+    map: LiveMap,
+) -> impl Filter<Extract = (LiveMap,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || map.clone())
 }

@@ -59,16 +59,16 @@ mod view;
 pub(crate) use chat::{chat, run_chat};
 pub(crate) use view::{intent_text, ops_text, view};
 
-use crate::{db::tasks::TaskId, Context};
+use crate::{Context, db::tasks::TaskId};
 use bfprotocols::{
     cfg::{Cfg, HqCfg, SmartCommanderCfg},
     db::{group::GroupId, objective::ObjectiveId},
     hq::{Directive, HqCommand, HqReply, Line, OpKind, Posture, RequestKind},
     perf::PerfInner,
 };
-use chrono::{prelude::*, Duration};
-use compact_str::{format_compact, CompactString};
-use dcso3::{coalition::Side, net::Ucid, MizLua, Vector2};
+use chrono::{Duration, prelude::*};
+use compact_str::{CompactString, format_compact};
+use dcso3::{MizLua, Vector2, coalition::Side, net::Ucid};
 use fxhash::{FxHashMap, FxHashSet};
 use log::{info, warn};
 use serde_derive::{Deserialize, Serialize};
@@ -95,10 +95,7 @@ pub(crate) fn cfg(ctx: &Context) -> Option<(SmartCommanderCfg, HqCfg)> {
 /// The HQ is running the war (so the older systems it replaces -- the Smart
 /// Commander's four event actions and air_life's packages -- stand down).
 pub(crate) fn active(cfg: &Cfg) -> bool {
-    cfg.smart_commander
-        .as_ref()
-        .and_then(|s| s.hq.as_ref())
-        .map_or(false, |h| h.enabled)
+    cfg.smart_commander.as_ref().and_then(|s| s.hq.as_ref()).map_or(false, |h| h.enabled)
 }
 
 // ---------------------------------------------------------------------------
@@ -118,7 +115,8 @@ impl Record {
     /// less than its value says, one that keeps working a little more.
     /// Laplace-smoothed, so a handful of outcomes only nudge it.
     pub fn trust(&self) -> f64 {
-        let p = (self.succeeded as f64 + 2.) / ((self.succeeded + self.failed) as f64 + 4.);
+        let p =
+            (self.succeeded as f64 + 2.) / ((self.succeeded + self.failed) as f64 + 4.);
         0.5 + p
     }
 }
@@ -336,7 +334,10 @@ impl Hq {
 
     /// The main effort and posture the ground war's AI should follow, when
     /// the HQ steers it.
-    pub(crate) fn ground_steer(&self, side: Side) -> Option<(Posture, Option<ObjectiveId>)> {
+    pub(crate) fn ground_steer(
+        &self,
+        side: Side,
+    ) -> Option<(Posture, Option<ObjectiveId>)> {
         let plan = self.sides.get(&side)?.plan.as_ref()?;
         Some((plan.posture, plan.main_effort))
     }
@@ -350,7 +351,9 @@ fn humans_on(ctx: &Context, side: Side) -> u32 {
     ctx.connected
         .info_by_player_id
         .values()
-        .filter(|ifo| ctx.db.persisted.players.get(&ifo.ucid).map_or(false, |p| p.side == side))
+        .filter(|ifo| {
+            ctx.db.persisted.players.get(&ifo.ucid).map_or(false, |p| p.side == side)
+        })
         .count() as u32
 }
 
@@ -371,7 +374,12 @@ fn gap_factor(cfg: &HqCfg, humans: u32) -> f64 {
 /// planner (`think`); without it, the rules mode (`rules`), which buys one
 /// strategic campaign event per check the way the Smart Commander always
 /// has.
-pub(crate) fn tick(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, now: DateTime<Utc>) {
+pub(crate) fn tick(
+    lua: MizLua,
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    now: DateTime<Utc>,
+) {
     let Some((sc, cfg)) = cfg(ctx) else {
         rules::tick(ctx, now);
         return;
@@ -391,7 +399,8 @@ pub(crate) fn tick(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, now: Da
             rt.gap = gap;
         }
         let emergency = !ctx.db.objectives_being_captured_by(side).is_empty();
-        let every = if emergency { cfg.emergency_think_secs } else { cfg.think_secs }.max(15);
+        let every =
+            if emergency { cfg.emergency_think_secs } else { cfg.think_secs }.max(15);
         let due = ctx
             .hq
             .side(side)
@@ -410,8 +419,13 @@ pub(crate) fn tick(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, now: Da
     // open: it is a full planning pass.
     for side in cfg.sides.iter().copied().filter(|s| *s != Side::Neutral) {
         let rt = ctx.hq.side(side);
-        let wanted = rt.menu_wanted.map_or(false, |t| now - t < Duration::seconds(MENU_WANTED_SECS));
-        let stale = rt.menu.as_ref().map_or(true, |(t, _)| now - *t >= Duration::seconds(MENU_SECS));
+        let wanted = rt
+            .menu_wanted
+            .map_or(false, |t| now - t < Duration::seconds(MENU_WANTED_SECS));
+        let stale = rt
+            .menu
+            .as_ref()
+            .map_or(true, |(t, _)| now - *t >= Duration::seconds(MENU_SECS));
         if wanted && stale {
             let _ = launch_menu(ctx, side, 0, now);
             break;
@@ -479,7 +493,11 @@ fn think(
     // of it when a base is falling.
     let spendable = ctx.db.persisted.treasury(side) - sc.action_reserve.max(0);
     let emergency = pic.own().any(|o| o.being_captured);
-    let share = if emergency { (cfg.max_spend_fraction * 2.).min(1.) } else { cfg.max_spend_fraction };
+    let share = if emergency {
+        (cfg.max_spend_fraction * 2.).min(1.)
+    } else {
+        cfg.max_spend_fraction
+    };
     let mut budget = (spendable as f64 * share.clamp(0., 1.)) as i64;
     let mut left = cfg.max_new_ops_per_think as usize;
     let mut done: Vec<(Line, ObjectiveId)> = vec![];
@@ -502,7 +520,13 @@ fn think(
             continue;
         }
         let key = (cand.kind, cand.anchor);
-        if ctx.hq.side(side).failed.get(&key).map_or(false, |t| (now - *t).num_seconds() < FAILED_RETRY_SECS) {
+        if ctx
+            .hq
+            .side(side)
+            .failed
+            .get(&key)
+            .map_or(false, |t| (now - *t).num_seconds() < FAILED_RETRY_SECS)
+        {
             continue;
         }
         if dispatch::launch(lua, ctx, perf, cfg, side, None, cand, now).is_ok() {
@@ -517,10 +541,7 @@ fn think(
         // guns in range, no money for the airframe) usually stops the next.
         kinds.push(cand.kind);
     }
-    ctx.hq
-        .side(side)
-        .failed
-        .retain(|_, t| (now - *t).num_seconds() < FAILED_RETRY_SECS);
+    ctx.hq.side(side).failed.retain(|_, t| (now - *t).num_seconds() < FAILED_RETRY_SECS);
     // Worth a line when there was money and nothing came of it; a side that
     // is simply broke would say so every pass.
     if left == cfg.max_new_ops_per_think as usize && !ranked.is_empty() && spendable > 0 {
@@ -534,7 +555,13 @@ fn think(
     }
 }
 
-fn announce_effort(ctx: &mut Context, cfg: &HqCfg, side: Side, plan: &strategy::Plan, now: DateTime<Utc>) {
+fn announce_effort(
+    ctx: &mut Context,
+    cfg: &HqCfg,
+    side: Side,
+    plan: &strategy::Plan,
+    now: DateTime<Utc>,
+) {
     let rt = ctx.hq.side(side);
     if rt.announced_effort == plan.main_effort {
         return;
@@ -548,7 +575,8 @@ fn announce_effort(ctx: &mut Context, cfg: &HqCfg, side: Side, plan: &strategy::
         .get(&oid)
         .map(|o| CompactString::from(o.name()))
         .unwrap_or_default();
-    let text = format_compact!("HQ: main effort is now {name} ({}).", plan.posture.label());
+    let text =
+        format_compact!("HQ: main effort is now {name} ({}).", plan.posture.label());
     info!("hq: {side:?} {text}");
     ctx.hq.side(side).note(now, text.clone());
     if cfg.announce {
@@ -563,12 +591,16 @@ fn expire_orders(ctx: &mut Context, cfg: &HqCfg, side: Side, now: DateTime<Utc>)
         saved.human = None;
         changed = true;
     }
-    if saved.directive.as_ref().map_or(false, |d| now >= d.expires) || !cfg.strategist.enabled {
+    if saved.directive.as_ref().map_or(false, |d| now >= d.expires)
+        || !cfg.strategist.enabled
+    {
         changed |= saved.directive.take().is_some();
     }
     if changed {
         ctx.db.ephemeral.dirty();
-        ctx.hq.side(side).note(now, "HQ: standing orders expired, back to own judgement".into());
+        ctx.hq
+            .side(side)
+            .note(now, "HQ: standing orders expired, back to own judgement".into());
     }
 }
 
@@ -593,7 +625,13 @@ fn finish(
         (
             op.kind,
             op.request,
-            format_compact!("HQ: {} on {} {}: {}", op.kind.label(), op.target_name, status.label(), op.detail),
+            format_compact!(
+                "HQ: {} on {} {}: {}",
+                op.kind.label(),
+                op.target_name,
+                status.label(),
+                op.detail
+            ),
             op.support.clone(),
         )
     };
@@ -638,29 +676,81 @@ fn track(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
                 continue;
             }
             match &op.handle {
-                Handle::Fired => finish(lua, ctx, side, i, OpStatus::Succeeded, "fired".into(), now),
+                Handle::Fired => {
+                    finish(lua, ctx, side, i, OpStatus::Succeeded, "fired".into(), now)
+                }
                 Handle::Package { gid, expires } => match group_gone_or_dead(ctx, gid) {
                     Some(_) => {
                         let _ = ctx.db.delete_group(gid);
-                        finish(lua, ctx, side, i, OpStatus::Failed, "package lost".into(), now)
+                        finish(
+                            lua,
+                            ctx,
+                            side,
+                            i,
+                            OpStatus::Failed,
+                            "package lost".into(),
+                            now,
+                        )
                     }
                     None if now >= *expires => {
                         crate::airlife::send_home(lua, ctx, *gid, now);
-                        finish(lua, ctx, side, i, OpStatus::Succeeded, "on station to the end, RTB".into(), now)
+                        finish(
+                            lua,
+                            ctx,
+                            side,
+                            i,
+                            OpStatus::Succeeded,
+                            "on station to the end, RTB".into(),
+                            now,
+                        )
                     }
                     None => (),
                 },
                 Handle::Group(gid) => match group_gone_or_dead(ctx, gid) {
-                    Some(true) => finish(lua, ctx, side, i, OpStatus::Failed, "destroyed".into(), now),
-                    Some(false) => finish(lua, ctx, side, i, OpStatus::Succeeded, "done".into(), now),
+                    Some(true) => finish(
+                        lua,
+                        ctx,
+                        side,
+                        i,
+                        OpStatus::Failed,
+                        "destroyed".into(),
+                        now,
+                    ),
+                    Some(false) => {
+                        finish(lua, ctx, side, i, OpStatus::Succeeded, "done".into(), now)
+                    }
                     None => (),
                 },
                 Handle::Transport(id) => match ctx.db.ephemeral.hq_outcomes.remove(id) {
-                    Some(true) => finish(lua, ctx, side, i, OpStatus::Succeeded, "delivered".into(), now),
-                    Some(false) => finish(lua, ctx, side, i, OpStatus::Failed, "did not deliver".into(), now),
+                    Some(true) => finish(
+                        lua,
+                        ctx,
+                        side,
+                        i,
+                        OpStatus::Succeeded,
+                        "delivered".into(),
+                        now,
+                    ),
+                    Some(false) => finish(
+                        lua,
+                        ctx,
+                        side,
+                        i,
+                        OpStatus::Failed,
+                        "did not deliver".into(),
+                        now,
+                    ),
                     None if (now - op.started).num_seconds() > TRANSPORT_GIVEUP_SECS => {
                         ctx.db.ephemeral.hq_watch.remove(id);
-                        finish(lua, ctx, side, i, OpStatus::Failed, "no word from it".into(), now)
+                        finish(
+                            lua,
+                            ctx,
+                            side,
+                            i,
+                            OpStatus::Failed,
+                            "no word from it".into(),
+                            now,
+                        )
                     }
                     None => (),
                 },
@@ -690,10 +780,10 @@ fn track(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
 /// keeps doing if the two never meet up.
 fn join_escorts(lua: MizLua, ctx: &mut Context, side: Side, now: DateTime<Utc>) {
     use dcso3::{
-        controller::{AirOption, AirRoe, AiOption, FollowParams, Task},
-        group::Group,
-        attribute::Attribute,
         LuaVec3, Vector3,
+        attribute::Attribute,
+        controller::{AiOption, AirOption, AirRoe, FollowParams, Task},
+        group::Group,
     };
     let engage = ctx
         .db
@@ -715,13 +805,16 @@ fn join_escorts(lua: MizLua, ctx: &mut Context, side: Side, now: DateTime<Utc>) 
         );
         let (Some(escort), Some(escorted)) = names else { continue };
         let joined = (|| -> anyhow::Result<bool> {
-            let (Ok(e), Ok(t)) = (Group::get_by_name(lua, escort.as_str()), Group::get_by_name(lua, escorted.as_str()))
-            else {
+            let (Ok(e), Ok(t)) = (
+                Group::get_by_name(lua, escort.as_str()),
+                Group::get_by_name(lua, escorted.as_str()),
+            ) else {
                 return Ok(false);
             };
             // Both have to be off the ground: an escort task set on the
             // ramp is thrown away when the takeoff waypoint starts.
-            let airborne = |g: &Group| g.get_unit(1).and_then(|u| u.in_air()).unwrap_or(false);
+            let airborne =
+                |g: &Group| g.get_unit(1).and_then(|u| u.in_air()).unwrap_or(false);
             if !airborne(&e) || !airborne(&t) {
                 return Ok(false);
             }
@@ -765,15 +858,13 @@ fn reply(ok: bool, message: impl Into<String>) -> HqReply {
 /// inside the allowed range.
 fn sanitize(ctx: &Context, cfg: &HqCfg, side: Side, d: &mut Directive) {
     let owner = |id: u64| {
-        ctx.db
-            .persisted
-            .objectives
-            .get(&ObjectiveId::from(id as i64))
-            .map(|o| o.owner())
+        ctx.db.persisted.objectives.get(&ObjectiveId::from(id as i64)).map(|o| o.owner())
     };
     if let Some(me) = d.main_effort {
         if owner(me).map_or(true, |o| o == side) {
-            warn!("hq: {side:?} directive main effort {me} is not an enemy objective, ignored");
+            warn!(
+                "hq: {side:?} directive main effort {me} is not an enemy objective, ignored"
+            );
             d.main_effort = None;
         }
     }
@@ -820,11 +911,16 @@ pub(crate) fn directive(ctx: &mut Context, side: Side, mut d: Directive) -> HqRe
     let summary = format_compact!(
         "HQ: strategist directive -- posture {}, main effort {}",
         d.posture.map(|p| p.label()).unwrap_or("(HQ's call)"),
-        d.main_effort.map(|m| format_compact!("#{m}")).unwrap_or_else(|| "(HQ's call)".into())
+        d.main_effort
+            .map(|m| format_compact!("#{m}"))
+            .unwrap_or_else(|| "(HQ's call)".into())
     );
     info!("hq: {side:?} {summary}");
-    ctx.db.persisted.hq.side_mut(side).directive =
-        Some(HeldDirective { directive: d, received: now, expires: now + Duration::seconds(ttl as i64) });
+    ctx.db.persisted.hq.side_mut(side).directive = Some(HeldDirective {
+        directive: d,
+        received: now,
+        expires: now + Duration::seconds(ttl as i64),
+    });
     ctx.db.ephemeral.dirty();
     let rt = ctx.hq.side(side);
     rt.note(now, summary);
@@ -842,7 +938,12 @@ const MENU_WANTED_SECS: i64 = 120;
 
 /// The launch menu as last worked out, without working it out again: what the
 /// command map shows. Asking keeps it fresh for a while (`tick`).
-pub(crate) fn launch_menu_cached(ctx: &mut Context, side: Side, n: usize, now: DateTime<Utc>) -> Vec<planner::Cand> {
+pub(crate) fn launch_menu_cached(
+    ctx: &mut Context,
+    side: Side,
+    n: usize,
+    now: DateTime<Utc>,
+) -> Vec<planner::Cand> {
     let rt = ctx.hq.side(side);
     rt.menu_wanted = Some(now);
     rt.menu.as_ref().map(|(_, m)| m.iter().take(n).cloned().collect()).unwrap_or_default()
@@ -853,7 +954,12 @@ pub(crate) fn launch_menu_cached(ctx: &mut Context, side: Side, n: usize, now: D
 /// the HQ's, so a commander can't conjure an operation the HQ has no means
 /// for, aim it somewhere the HQ can't see, or dodge its costs and standing
 /// limits. Empty when the server has no theatre HQ.
-pub(crate) fn launch_menu(ctx: &mut Context, side: Side, n: usize, now: DateTime<Utc>) -> Vec<planner::Cand> {
+pub(crate) fn launch_menu(
+    ctx: &mut Context,
+    side: Side,
+    n: usize,
+    now: DateTime<Utc>,
+) -> Vec<planner::Cand> {
     if let Some((at, m)) = ctx.hq.side(side).menu.as_ref() {
         if now - *at < Duration::seconds(MENU_SECS) {
             return m.iter().take(n).cloned().collect();
@@ -916,20 +1022,33 @@ pub(crate) fn commander_launch(
     // Fresh, not the cached menu: the picture may have moved on.
     ctx.hq.side(side).menu = None;
     let menu = launch_menu(ctx, side, usize::MAX, now);
-    let Some(c) = menu.into_iter().find(|c| c.kind == kind && (c.anchor == objective || c.target == Some(objective)))
-    else {
-        return Err(format_compact!("the HQ has no {} it can run there right now", kind.label()));
+    let Some(c) = menu.into_iter().find(|c| {
+        c.kind == kind && (c.anchor == objective || c.target == Some(objective))
+    }) else {
+        return Err(format_compact!(
+            "the HQ has no {} it can run there right now",
+            kind.label()
+        ));
     };
     if planner::room(&cfg, ctx, side, kind) == 0 {
-        return Err(format_compact!("the HQ already has as many {} running as it may", kind.label()));
+        return Err(format_compact!(
+            "the HQ already has as many {} running as it may",
+            kind.label()
+        ));
     }
     let treasury = ctx.db.persisted.treasury(side);
     if treasury < c.cost {
-        return Err(format_compact!("that costs {} and the treasury has {treasury}", c.cost));
+        return Err(format_compact!(
+            "that costs {} and the treasury has {treasury}",
+            c.cost
+        ));
     }
     let detail = dispatch::launch(lua, ctx, perf, &cfg, side, ucid, &c, now)?;
     ctx.hq.side(side).menu = None;
-    ctx.hq.side(side).note(now, format_compact!("{who} ordered {} on {}: {detail}", kind.label(), c.name));
+    ctx.hq.side(side).note(
+        now,
+        format_compact!("{who} ordered {} on {}: {detail}", kind.label(), c.name),
+    );
     // `command::order` tells the side who ordered it.
     Ok(format_compact!("{} on {}: {detail}", kind.label(), c.name))
 }
@@ -1042,7 +1161,10 @@ pub(crate) fn command(
             };
             let text = format_compact!(
                 "HQ: {name} has taken command{}{}",
-                o.directive.posture.map(|p| format_compact!(", posture {}", p.label())).unwrap_or_default(),
+                o.directive
+                    .posture
+                    .map(|p| format_compact!(", posture {}", p.label()))
+                    .unwrap_or_default(),
                 if o.paused { ", HQ planning paused" } else { "" }
             );
             ctx.db.persisted.hq.side_mut(side).human = Some(o);
@@ -1077,7 +1199,9 @@ pub(crate) fn command(
                 return reply(false, format!("no active operation {op}"));
             };
             match ctx.hq.side(side).ops[i].handle.clone() {
-                Handle::Package { gid, .. } => crate::airlife::send_home(lua, ctx, gid, now),
+                Handle::Package { gid, .. } => {
+                    crate::airlife::send_home(lua, ctx, gid, now)
+                }
                 Handle::Group(gid) => {
                     let _ = ctx.db.delete_group(&gid);
                 }
@@ -1088,7 +1212,15 @@ pub(crate) fn command(
                 }
                 Handle::Fired => (),
             }
-            finish(lua, ctx, side, i, OpStatus::Cancelled, format_compact!("called off by {name}"), now);
+            finish(
+                lua,
+                ctx,
+                side,
+                i,
+                OpStatus::Cancelled,
+                format_compact!("called off by {name}"),
+                now,
+            );
             reply(true, "operation called off")
         }
     }
@@ -1134,7 +1266,10 @@ pub(crate) fn player_request(
         ctx,
         side,
         Some(ucid),
-        HqCommand::Request { request: kind, objective: objective.map(|o| o.inner() as u64) },
+        HqCommand::Request {
+            request: kind,
+            objective: objective.map(|o| o.inner() as u64),
+        },
         from,
     )
 }

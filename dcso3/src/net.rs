@@ -11,11 +11,9 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
-use crate::simple_enum_unknown;
 use super::{as_tbl, coalition::Side, String};
-use crate::{
-    wrapped_prim, wrapped_table, LuaEnv, Sequence,
-};
+use crate::simple_enum_unknown;
+use crate::{wrapped_prim, wrapped_table, LuaEnv, Sequence};
 use anyhow::Result;
 use core::fmt;
 use mlua::{prelude::*, Value};
@@ -133,9 +131,7 @@ impl Net {
         player: PlayerId,
         from_id: Option<PlayerId>,
     ) -> Result<()> {
-        Ok(self
-            .t
-            .call_function("send_chat_to", (message, player, from_id))?)
+        Ok(self.t.call_function("send_chat_to", (message, player, from_id))?)
     }
 
     pub fn get_player_list(&self) -> Result<Sequence<PlayerId>> {
@@ -170,10 +166,13 @@ impl Net {
         Ok(self.t.call_function("get_slot", id)?)
     }
 
-    pub fn force_player_slot(&self, id: PlayerId, side: Side, slot: SlotId) -> Result<()> {
-        Ok(self
-            .t
-            .call_function("force_player_slot", (id, side, slot))?)
+    pub fn force_player_slot(
+        &self,
+        id: PlayerId,
+        side: Side,
+        slot: SlotId,
+    ) -> Result<()> {
+        Ok(self.t.call_function("force_player_slot", (id, side, slot))?)
     }
 
     pub fn lua2json<T: IntoLua>(&self, v: T) -> Result<String> {

@@ -199,7 +199,12 @@ pub(super) fn default_modulation_fm() -> String {
     String::from("FM")
 }
 
-pub(super) fn ch(preset: u8, label: &str, freq_mhz: f64, purpose: &str) -> CommsChannelCfg {
+pub(super) fn ch(
+    preset: u8,
+    label: &str,
+    freq_mhz: f64,
+    purpose: &str,
+) -> CommsChannelCfg {
     CommsChannelCfg {
         preset: Some(preset),
         label: String::from(label),
@@ -209,7 +214,12 @@ pub(super) fn ch(preset: u8, label: &str, freq_mhz: f64, purpose: &str) -> Comms
     }
 }
 
-pub(super) fn ch_fm(preset: u8, label: &str, freq_mhz: f64, purpose: &str) -> CommsChannelCfg {
+pub(super) fn ch_fm(
+    preset: u8,
+    label: &str,
+    freq_mhz: f64,
+    purpose: &str,
+) -> CommsChannelCfg {
     CommsChannelCfg {
         preset: Some(preset),
         label: String::from(label),
@@ -221,35 +231,85 @@ pub(super) fn ch_fm(preset: u8, label: &str, freq_mhz: f64, purpose: &str) -> Co
 
 pub(super) fn default_blue_comms() -> Vec<CommsChannelCfg> {
     vec![
-        ch(1, "AWACS / GCI -- MAGIC", 251.0, "Primary control: picture, bogey dope, commit, declare"),
+        ch(
+            1,
+            "AWACS / GCI -- MAGIC",
+            251.0,
+            "Primary control: picture, bogey dope, commit, declare",
+        ),
         ch(2, "GCI VHF relay -- MAGIC", 119.0, "Same controller for VHF-only airframes"),
-        ch(3, "AWACS alternate -- DARKSTAR", 252.0, "Second controller / overflow when MAGIC is saturated"),
-        ch(4, "Tanker TEXACO (boom)", 253.0, "Pre-strike and post-strike refuel, fixed-wing boom"),
+        ch(
+            3,
+            "AWACS alternate -- DARKSTAR",
+            252.0,
+            "Second controller / overflow when MAGIC is saturated",
+        ),
+        ch(
+            4,
+            "Tanker TEXACO (boom)",
+            253.0,
+            "Pre-strike and post-strike refuel, fixed-wing boom",
+        ),
         ch(5, "Tanker ARCO (boom)", 254.0, "Second boom track"),
-        ch(6, "Tanker SHELL (drogue)", 255.0, "Probe-and-drogue: Hornet, Tomcat, Harrier, Viggen"),
+        ch(
+            6,
+            "Tanker SHELL (drogue)",
+            255.0,
+            "Probe-and-drogue: Hornet, Tomcat, Harrier, Viggen",
+        ),
         ch(7, "JTAC 1", 256.0, "Nine-line, talk-on, laser for the first active JTAC"),
         ch(8, "JTAC 2", 257.0, "Second active JTAC"),
         ch(9, "JTAC 3", 258.0, "Third active JTAC"),
         ch(10, "JTAC 4", 259.0, "Fourth active JTAC"),
-        ch(11, "CSAR -- SANDY", 260.0, "Downed-pilot pickup: on-scene commander and the helo"),
+        ch(
+            11,
+            "CSAR -- SANDY",
+            260.0,
+            "Downed-pilot pickup: on-scene commander and the helo",
+        ),
         ch(12, "Package common -- STRIKE", 265.0, "Strike package internal, all flights"),
         ch(13, "Package common -- SEAD", 266.0, "SEAD/DEAD package internal"),
         ch(14, "Package common -- CAP", 267.0, "Sweep and escort internal"),
         ch(15, "Package common -- CAS", 268.0, "CAS stack check-in and deconfliction"),
-        ch(16, "Carrier MARSHAL", 270.0, "Carrier approach control, marshal stack, case II/III"),
+        ch(
+            16,
+            "Carrier MARSHAL",
+            270.0,
+            "Carrier approach control, marshal stack, case II/III",
+        ),
         ch(17, "Carrier TOWER / LSO", 127.5, "Ball call, paddles, deck ops"),
         ch(18, "GUARD (UHF)", 243.0, "Emergency only -- never used for traffic"),
         ch(19, "GUARD (VHF)", 121.5, "Emergency only"),
-        ch_fm(20, "Ground / logistics net", 30.0, "Convoy, crate and warehouse coordination"),
+        ch_fm(
+            20,
+            "Ground / logistics net",
+            30.0,
+            "Convoy, crate and warehouse coordination",
+        ),
         ch_fm(21, "Troop & crate ops", 31.0, "Helo lift working channel, troop drops"),
     ]
 }
 
 pub(super) fn default_red_comms() -> Vec<CommsChannelCfg> {
     vec![
-        ch(1, "GCI -- OVERLORD", 124.0, "Primary control: picture, bogey dope, commit, declare"),
-        ch(2, "GCI UHF relay -- OVERLORD", 228.0, "Same controller for UHF-preferred airframes"),
-        ch(3, "AWACS A-50 -- DRAGNET", 125.0, "Airborne early warning when an A-50 is up"),
+        ch(
+            1,
+            "GCI -- OVERLORD",
+            124.0,
+            "Primary control: picture, bogey dope, commit, declare",
+        ),
+        ch(
+            2,
+            "GCI UHF relay -- OVERLORD",
+            228.0,
+            "Same controller for UHF-preferred airframes",
+        ),
+        ch(
+            3,
+            "AWACS A-50 -- DRAGNET",
+            125.0,
+            "Airborne early warning when an A-50 is up",
+        ),
         ch(4, "Tanker IL-78 -- KUZNETS", 126.0, "Probe-and-drogue refuel"),
         ch(5, "JTAC 1", 133.0, "Nine-line, talk-on, laser for the first active JTAC"),
         ch(6, "JTAC 2", 134.0, "Second active JTAC"),
@@ -262,7 +322,12 @@ pub(super) fn default_red_comms() -> Vec<CommsChannelCfg> {
         ch(13, "Package common -- CAS", 145.0, "CAS stack check-in and deconfliction"),
         ch(14, "GUARD (UHF)", 243.0, "Emergency only -- never used for traffic"),
         ch(15, "GUARD (VHF)", 121.5, "Emergency only"),
-        ch_fm(16, "Ground / logistics net", 40.0, "Convoy, crate and warehouse coordination"),
+        ch_fm(
+            16,
+            "Ground / logistics net",
+            40.0,
+            "Convoy, crate and warehouse coordination",
+        ),
         ch_fm(17, "Troop & crate ops", 41.0, "Helo lift working channel, troop drops"),
     ]
 }
@@ -313,10 +378,7 @@ impl CommsPlanCfg {
         };
         (0..self.flight_count)
             .map(|i| {
-                (
-                    format!("FLIGHT {}", i + 1),
-                    base + self.flight_step_mhz * i as f64,
-                )
+                (format!("FLIGHT {}", i + 1), base + self.flight_step_mhz * i as f64)
             })
             .collect()
     }

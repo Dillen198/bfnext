@@ -61,9 +61,11 @@ impl XpEvent {
             XpEvent::AiAirKill => Some(Counter::AirKills),
             XpEvent::AiGroundKill => Some(Counter::GroundKills),
             XpEvent::Capture => Some(Counter::Captures),
-            XpEvent::Repair | XpEvent::Supply | XpEvent::Troops | XpEvent::Deploy | XpEvent::Farp => {
-                Some(Counter::Logistics)
-            }
+            XpEvent::Repair
+            | XpEvent::Supply
+            | XpEvent::Troops
+            | XpEvent::Deploy
+            | XpEvent::Farp => Some(Counter::Logistics),
             XpEvent::Bonus(_) => None,
         }
     }
@@ -129,19 +131,69 @@ struct Challenge {
 }
 
 const DAILY: &[Challenge] = &[
-    Challenge { counter: Counter::AirKills, goal: 2, label: "Shoot down 2 aircraft", xp: 500 },
-    Challenge { counter: Counter::GroundKills, goal: 5, label: "Destroy 5 ground targets", xp: 400 },
-    Challenge { counter: Counter::Captures, goal: 1, label: "Capture an objective", xp: 600 },
-    Challenge { counter: Counter::Logistics, goal: 3, label: "Fly 3 logistics jobs", xp: 500 },
-    Challenge { counter: Counter::PlayerKills, goal: 1, label: "Down an enemy pilot", xp: 600 },
+    Challenge {
+        counter: Counter::AirKills,
+        goal: 2,
+        label: "Shoot down 2 aircraft",
+        xp: 500,
+    },
+    Challenge {
+        counter: Counter::GroundKills,
+        goal: 5,
+        label: "Destroy 5 ground targets",
+        xp: 400,
+    },
+    Challenge {
+        counter: Counter::Captures,
+        goal: 1,
+        label: "Capture an objective",
+        xp: 600,
+    },
+    Challenge {
+        counter: Counter::Logistics,
+        goal: 3,
+        label: "Fly 3 logistics jobs",
+        xp: 500,
+    },
+    Challenge {
+        counter: Counter::PlayerKills,
+        goal: 1,
+        label: "Down an enemy pilot",
+        xp: 600,
+    },
 ];
 
 const WEEKLY: &[Challenge] = &[
-    Challenge { counter: Counter::AirKills, goal: 15, label: "Shoot down 15 aircraft", xp: 2_500 },
-    Challenge { counter: Counter::GroundKills, goal: 40, label: "Destroy 40 ground targets", xp: 2_000 },
-    Challenge { counter: Counter::Captures, goal: 5, label: "Capture 5 objectives", xp: 3_000 },
-    Challenge { counter: Counter::Logistics, goal: 20, label: "Fly 20 logistics jobs", xp: 2_500 },
-    Challenge { counter: Counter::PlayerKills, goal: 8, label: "Down 8 enemy pilots", xp: 3_000 },
+    Challenge {
+        counter: Counter::AirKills,
+        goal: 15,
+        label: "Shoot down 15 aircraft",
+        xp: 2_500,
+    },
+    Challenge {
+        counter: Counter::GroundKills,
+        goal: 40,
+        label: "Destroy 40 ground targets",
+        xp: 2_000,
+    },
+    Challenge {
+        counter: Counter::Captures,
+        goal: 5,
+        label: "Capture 5 objectives",
+        xp: 3_000,
+    },
+    Challenge {
+        counter: Counter::Logistics,
+        goal: 20,
+        label: "Fly 20 logistics jobs",
+        xp: 2_500,
+    },
+    Challenge {
+        counter: Counter::PlayerKills,
+        goal: 8,
+        label: "Down 8 enemy pilots",
+        xp: 3_000,
+    },
 ];
 
 /// How many of each pool are active at once.
@@ -181,7 +233,9 @@ pub(crate) struct PilotProgress {
 
 pub(crate) fn level_of(xp: u64) -> u64 {
     // Largest L with LEVEL_STEP * L * (L - 1) <= xp.
-    let mut l = (((1. + (1. + 4. * xp as f64 / LEVEL_STEP as f64).sqrt()) / 2.).floor() as u64).max(1);
+    let mut l = (((1. + (1. + 4. * xp as f64 / LEVEL_STEP as f64).sqrt()) / 2.).floor()
+        as u64)
+        .max(1);
     while LEVEL_STEP * l * (l - 1) > xp {
         l -= 1;
     }
@@ -207,7 +261,12 @@ impl Progression {
 
     /// Score `ev` for `ucid` at `ts`. Returns the XP actually awarded,
     /// challenge rewards included.
-    pub(crate) fn award(&self, ucid: Ucid, ev: XpEvent, ts: DateTime<Utc>) -> Result<u64> {
+    pub(crate) fn award(
+        &self,
+        ucid: Ucid,
+        ev: XpEvent,
+        ts: DateTime<Utc>,
+    ) -> Result<u64> {
         let mut gained = 0u64;
         self.tree.fetch_and_update(&ucid, |p| {
             let mut p = p.unwrap_or_default();
@@ -239,14 +298,20 @@ impl Progression {
                 p.week_counts.bump(c);
                 for i in active(DAILY.len(), day) {
                     let ch = &DAILY[i];
-                    if p.day_done & (1 << i) == 0 && feeds(ch.counter, c) && p.day_counts.get(ch.counter) >= ch.goal {
+                    if p.day_done & (1 << i) == 0
+                        && feeds(ch.counter, c)
+                        && p.day_counts.get(ch.counter) >= ch.goal
+                    {
                         p.day_done |= 1 << i;
                         xp += ch.xp as u64;
                     }
                 }
                 for i in active(WEEKLY.len(), week) {
                     let ch = &WEEKLY[i];
-                    if p.week_done & (1 << i) == 0 && feeds(ch.counter, c) && p.week_counts.get(ch.counter) >= ch.goal {
+                    if p.week_done & (1 << i) == 0
+                        && feeds(ch.counter, c)
+                        && p.week_counts.get(ch.counter) >= ch.goal
+                    {
                         p.week_done |= 1 << i;
                         xp += ch.xp as u64;
                     }
@@ -260,13 +325,30 @@ impl Progression {
     }
 
     /// Everything the pilot page shows, as JSON.
-    pub(crate) fn report(&self, ucid: &Ucid, total: &Aggregates, now: DateTime<Utc>) -> Result<serde_json::Value> {
+    pub(crate) fn report(
+        &self,
+        ucid: &Ucid,
+        total: &Aggregates,
+        now: DateTime<Utc>,
+    ) -> Result<serde_json::Value> {
         let p = self.tree.get(ucid)?.unwrap_or_default();
         let level = level_of(p.xp);
         let (day, week) = (day_of(now), week_of(now));
-        let (dc, dd) = if p.day == day { (p.day_counts, p.day_done) } else { (Counts::default(), 0) };
-        let (wc, wd) = if p.week == week { (p.week_counts, p.week_done) } else { (Counts::default(), 0) };
-        let list = |pool: &[Challenge], n: i64, c: &Counts, done: u32| -> Vec<serde_json::Value> {
+        let (dc, dd) = if p.day == day {
+            (p.day_counts, p.day_done)
+        } else {
+            (Counts::default(), 0)
+        };
+        let (wc, wd) = if p.week == week {
+            (p.week_counts, p.week_done)
+        } else {
+            (Counts::default(), 0)
+        };
+        let list = |pool: &[Challenge],
+                    n: i64,
+                    c: &Counts,
+                    done: u32|
+         -> Vec<serde_json::Value> {
             active(pool.len(), n)
                 .map(|i| {
                     let ch = &pool[i];
@@ -321,7 +403,11 @@ fn achievements(t: &Aggregates) -> Vec<serde_json::Value> {
         ("ace", "Fighter Ace (air kills)", t.air_kills),
         ("mud_mover", "Mud Mover (ground kills)", t.ground_kills),
         ("conqueror", "Conqueror (captures)", t.captures),
-        ("lifeline", "Lifeline (repairs and supply runs)", t.repairs + t.supply_transfers),
+        (
+            "lifeline",
+            "Lifeline (repairs and supply runs)",
+            t.repairs + t.supply_transfers,
+        ),
         ("air_assault", "Air Assault (troop insertions)", t.troops),
         ("builder", "Builder (FARPs and deployments)", t.farps + t.deploys),
         ("veteran", "Veteran (flight hours)", t.hours as u32),

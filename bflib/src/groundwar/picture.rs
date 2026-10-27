@@ -28,21 +28,24 @@ for more details.
 
 use super::{at_sea, cfg};
 use crate::{
+    Context,
     db::{
         formation::{Formation, Order, Posture},
         objective::ObjGroupClass,
     },
-    Context,
 };
 use bfprotocols::{
     cfg::UnitTag,
     db::objective::ObjectiveKind,
     groundwar::{
-        BattleInfo, EnemyContact, FormationInfo, GroundEvent, GroundObjective, GroundPicture,
-        GroundUnit, LatLon, LivePlayer,
+        BattleInfo, EnemyContact, FormationInfo, GroundEvent, GroundObjective,
+        GroundPicture, GroundUnit, LatLon, LivePlayer,
     },
 };
-use dcso3::{coalition::Side, coord::Coord, group::GroupCategory, unit::Unit, LuaVec3, MizLua, Vector2, Vector3};
+use dcso3::{
+    LuaVec3, MizLua, Vector2, Vector3, coalition::Side, coord::Coord,
+    group::GroupCategory, unit::Unit,
+};
 use std::collections::BTreeMap;
 
 /// Path points sent to the dashboard: about one a kilometre...
@@ -118,7 +121,11 @@ impl Local {
     }
 }
 
-fn units_of(ctx: &Context, f: &Formation, local: &Local) -> (Vec<GroundUnit>, BTreeMap<String, u32>) {
+fn units_of(
+    ctx: &Context,
+    f: &Formation,
+    local: &Local,
+) -> (Vec<GroundUnit>, BTreeMap<String, u32>) {
     let db = &ctx.db;
     let mut units = vec![];
     let mut make_up: BTreeMap<String, u32> = BTreeMap::new();
@@ -154,7 +161,8 @@ fn players(ctx: &Context, lua: MizLua, geo: &Geo, side: Side) -> Vec<LivePlayer>
                 let air = u.in_air().unwrap_or(i.in_air);
                 Some((pos, vel, air))
             });
-            let (pos, vel, in_air) = live.unwrap_or((i.position.clone(), i.velocity, i.in_air));
+            let (pos, vel, in_air) =
+                live.unwrap_or((i.position.clone(), i.velocity, i.in_air));
             let tags = db.ephemeral.cfg.unit_classification.get(&i.typ).map(|t| t.0);
             let category = match tags {
                 Some(t) if t.contains(UnitTag::Helicopter) => "helicopter",
@@ -235,7 +243,8 @@ pub(crate) fn picture(ctx: &Context, lua: MizLua, side: Side) -> GroundPicture {
             let local = geo.local(f.pos);
             let (units, make_up) = units_of(ctx, f, &local);
             let (power, power_full) = db.formation_power(&cfg.combat, f);
-            let trail: Vec<LatLon> = f.trail.iter().rev().take(25).rev().map(|p| geo.ll(*p)).collect();
+            let trail: Vec<LatLon> =
+                f.trail.iter().rev().take(25).rev().map(|p| geo.ll(*p)).collect();
             FormationInfo {
                 id: f.id,
                 roe: f.roe,
@@ -272,7 +281,8 @@ pub(crate) fn picture(ctx: &Context, lua: MizLua, side: Side) -> GroundPicture {
                 },
                 path: if moving { path } else { vec![] },
                 km_to_go: if moving { km } else { 0. },
-                eta_mins: (moving && !halted && speed > 0.5).then(|| (km / speed * 60.).round() as u32),
+                eta_mins: (moving && !halted && speed > 0.5)
+                    .then(|| (km / speed * 60.).round() as u32),
                 kind: db.formation_kind(f).into(),
                 units,
                 make_up,
@@ -283,7 +293,11 @@ pub(crate) fn picture(ctx: &Context, lua: MizLua, side: Side) -> GroundPicture {
                 morale_pct: (f.morale * 100.).round().clamp(0., 100.) as u8,
                 broken: f.broken,
                 deployment: f.deployment.name().into(),
-                speed_kph: if moving && !halted { (speed * 10.).round() / 10. } else { 0. },
+                speed_kph: if moving && !halted {
+                    (speed * 10.).round() / 10.
+                } else {
+                    0.
+                },
                 trail,
                 losses: f.losses,
                 kills: f.kills,
@@ -311,7 +325,11 @@ pub(crate) fn picture(ctx: &Context, lua: MizLua, side: Side) -> GroundPicture {
                 approx_vehicles: ((alive + 2) / 5 * 5).max(alive.min(5)),
                 heading: deg(s.heading),
                 id,
-                last_seen_secs: if in_sight { 0 } else { (now - s.at).num_seconds().max(0) as u32 },
+                last_seen_secs: if in_sight {
+                    0
+                } else {
+                    (now - s.at).num_seconds().max(0) as u32
+                },
                 moving: s.moving,
                 units,
             })
@@ -362,10 +380,15 @@ pub(crate) fn picture(ctx: &Context, lua: MizLua, side: Side) -> GroundPicture {
                             .filter_map(|g| db.persisted.groups.get(g))
                             .filter(|g| {
                                 g.kind == Some(GroupCategory::Ground)
-                                    && !matches!(g.class, ObjGroupClass::Logi | ObjGroupClass::Services)
+                                    && !matches!(
+                                        g.class,
+                                        ObjGroupClass::Logi | ObjGroupClass::Services
+                                    )
                             })
                             .flat_map(|g| g.units.into_iter())
-                            .filter(|u| db.persisted.units.get(u).map_or(false, |u| !u.dead))
+                            .filter(|u| {
+                                db.persisted.units.get(u).map_or(false, |u| !u.dead)
+                            })
                             .count() as u32
                     })
                     .unwrap_or(0)
@@ -379,7 +402,9 @@ pub(crate) fn picture(ctx: &Context, lua: MizLua, side: Side) -> GroundPicture {
                 health: own.then(|| o.health()),
                 threatened: own.then(|| o.threatened()),
                 can_raise: own.then(|| {
-                    db.formation_candidates(&cfg, id, side).map(|g| g.len() as u32).unwrap_or(0)
+                    db.formation_candidates(&cfg, id, side)
+                        .map(|g| g.len() as u32)
+                        .unwrap_or(0)
                 }),
                 being_captured: db.capture_in_progress(id),
                 supply: own.then(|| o.supply()),

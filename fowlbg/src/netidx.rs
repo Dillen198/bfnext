@@ -75,7 +75,9 @@ impl Tls {
                 bail!("netidx_tls.{key} is empty")
             }
         }
-        if self.resolver_name.contains(char::is_whitespace) || self.resolver_name.starts_with('.') {
+        if self.resolver_name.contains(char::is_whitespace)
+            || self.resolver_name.starts_with('.')
+        {
             bail!("netidx_tls.resolver_name {:?} is not a DNS name", self.resolver_name)
         }
         let domain = self.domain();
@@ -224,7 +226,8 @@ mod tests {
     }
 
     fn scratch(name: &str, body: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("fowlbg-netidx-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir()
+            .join(format!("fowlbg-netidx-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let p = dir.join("client.json");
@@ -284,7 +287,10 @@ mod tests {
         assert!(matches!(f.default_auth, DefaultAuthMech::Tls));
         assert_eq!(f.addrs.len(), 2);
         for (_, a) in &f.addrs {
-            assert!(matches!(a, file::Auth::Tls(n) if n == "resolver.range.fowl"), "{a:?}");
+            assert!(
+                matches!(a, file::Auth::Tls(n) if n == "resolver.range.fowl"),
+                "{a:?}"
+            );
         }
         assert_eq!(f.default_bind_config.as_deref(), Some("192.168.1.0/24"));
         let t = f.tls.unwrap();
@@ -328,7 +334,8 @@ mod tests {
         let mut t = tls();
         t.domain = Some("example.com".into());
         // the client config path does not exist either: validate runs first
-        let e = load_config(Some(Path::new("Z:/no/such/client.json")), Some(&t)).unwrap_err();
+        let e =
+            load_config(Some(Path::new("Z:/no/such/client.json")), Some(&t)).unwrap_err();
         assert!(e.to_string().contains("not under"), "{e}");
     }
 
@@ -349,10 +356,11 @@ mod tests {
         #[test]
         fn stops_at_the_first_success() {
             let calls = AtomicUsize::new(0);
-            let r: std::result::Result<usize, String> = rt().block_on(retry("t", FAST, || {
-                let n = calls.fetch_add(1, Ordering::SeqCst);
-                async move { if n < 2 { Err(format!("fail {n}")) } else { Ok(n) } }
-            }));
+            let r: std::result::Result<usize, String> =
+                rt().block_on(retry("t", FAST, || {
+                    let n = calls.fetch_add(1, Ordering::SeqCst);
+                    async move { if n < 2 { Err(format!("fail {n}")) } else { Ok(n) } }
+                }));
             assert_eq!(r, Ok(2));
             assert_eq!(calls.load(Ordering::SeqCst), 3);
         }
@@ -360,10 +368,11 @@ mod tests {
         #[test]
         fn gives_up_with_the_last_error() {
             let calls = AtomicUsize::new(0);
-            let r: std::result::Result<(), String> = rt().block_on(retry("t", FAST, || {
-                let n = calls.fetch_add(1, Ordering::SeqCst);
-                async move { Err(format!("fail {n}")) }
-            }));
+            let r: std::result::Result<(), String> =
+                rt().block_on(retry("t", FAST, || {
+                    let n = calls.fetch_add(1, Ordering::SeqCst);
+                    async move { Err(format!("fail {n}")) }
+                }));
             assert_eq!(r, Err("fail 3".to_string()), "one try plus one per backoff step");
             assert_eq!(calls.load(Ordering::SeqCst), 4);
         }
@@ -371,10 +380,11 @@ mod tests {
         #[test]
         fn no_backoff_is_one_try() {
             let calls = AtomicUsize::new(0);
-            let r: std::result::Result<(), String> = rt().block_on(retry("t", &[], || {
-                calls.fetch_add(1, Ordering::SeqCst);
-                async move { Err("no".to_string()) }
-            }));
+            let r: std::result::Result<(), String> =
+                rt().block_on(retry("t", &[], || {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    async move { Err("no".to_string()) }
+                }));
             assert!(r.is_err());
             assert_eq!(calls.load(Ordering::SeqCst), 1);
         }
@@ -399,7 +409,10 @@ mod tests {
                 .await
                 .expect("bound once the old listener let go");
                 assert_eq!(new.local_addr().unwrap(), addr);
-                assert!(tries.load(Ordering::SeqCst) > 1, "the first bind should have hit the held port");
+                assert!(
+                    tries.load(Ordering::SeqCst) > 1,
+                    "the first bind should have hit the held port"
+                );
                 release.await.unwrap();
             });
         }
@@ -407,7 +420,10 @@ mod tests {
         #[test]
         fn bind_backoff_is_bounded() {
             let total: Duration = BIND_BACKOFF.iter().sum();
-            assert!(total >= Duration::from_secs(5) && total <= Duration::from_secs(30), "{total:?}");
+            assert!(
+                total >= Duration::from_secs(5) && total <= Duration::from_secs(30),
+                "{total:?}"
+            );
         }
     }
 }

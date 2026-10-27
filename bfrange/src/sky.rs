@@ -63,11 +63,17 @@ pub fn read(lua: MizLua, ground_m: f64) -> Option<SkyInfo> {
     let r = (|| -> LuaResult<SkyInfo> {
         let g = lua.inner().globals();
         // dcso3 wraps the mission's weather table but has no accessors for its fields
-        let wx = dcso3::env::miz::Miz::singleton(lua).and_then(|m| m.weather()).map_err(LuaError::external)?;
+        let wx = dcso3::env::miz::Miz::singleton(lua)
+            .and_then(|m| m.weather())
+            .map_err(LuaError::external)?;
         let clouds: Option<LuaTable> = wx.raw_get("clouds").ok();
-        let num = |k: &str| clouds.as_ref().and_then(|c| c.raw_get::<Option<f64>>(k).ok().flatten());
-        let preset_key: Option<String> =
-            clouds.as_ref().and_then(|c| c.raw_get::<Option<String>>("preset").ok().flatten()).filter(|s| !s.is_empty());
+        let num = |k: &str| {
+            clouds.as_ref().and_then(|c| c.raw_get::<Option<f64>>(k).ok().flatten())
+        };
+        let preset_key: Option<String> = clouds
+            .as_ref()
+            .and_then(|c| c.raw_get::<Option<String>>("preset").ok().flatten())
+            .filter(|s| !s.is_empty());
         let named = preset_key.as_deref().and_then(preset);
         let cover = match (&preset_key, named) {
             (Some(_), Some((_, c))) => Some(c),
@@ -84,7 +90,9 @@ pub fn read(lua: MizLua, ground_m: f64) -> Option<SkyInfo> {
             4 => "snowstorm",
             _ => "none",
         };
-        if precip == "none" && preset_key.as_deref().is_some_and(|p| p.starts_with("Rainy")) {
+        if precip == "none"
+            && preset_key.as_deref().is_some_and(|p| p.starts_with("Rainy"))
+        {
             precip = "rain";
         }
         let mut vis: f64 = wx
@@ -106,9 +114,17 @@ pub fn read(lua: MizLua, ground_m: f64) -> Option<SkyInfo> {
                 // no live fog API: the mission's own setting
                 let on: bool = wx.raw_get::<Option<bool>>("enable_fog")?.unwrap_or(false);
                 let fog: Option<LuaTable> = wx.raw_get("fog").ok();
-                let v = fog.as_ref().and_then(|f| f.raw_get::<Option<f64>>("visibility").ok().flatten());
-                let t = fog.as_ref().and_then(|f| f.raw_get::<Option<f64>>("thickness").ok().flatten());
-                if on { (v.filter(|v| *v > 0.), t.filter(|t| *t > 0.)) } else { (None, None) }
+                let v = fog
+                    .as_ref()
+                    .and_then(|f| f.raw_get::<Option<f64>>("visibility").ok().flatten());
+                let t = fog
+                    .as_ref()
+                    .and_then(|f| f.raw_get::<Option<f64>>("thickness").ok().flatten());
+                if on {
+                    (v.filter(|v| *v > 0.), t.filter(|t| *t > 0.))
+                } else {
+                    (None, None)
+                }
             }
         };
         if let Some(f) = fog_vis {
@@ -126,7 +142,11 @@ pub fn read(lua: MizLua, ground_m: f64) -> Option<SkyInfo> {
             preset: named.map(|(n, _)| n.to_string()).or(preset_key),
             cover: cover.map(str::to_string),
             base_m: cover.and(base),
-            tops_m: if named.is_none() && cover.is_some() { base.zip(thick).map(|(b, t)| b + t) } else { None },
+            tops_m: if named.is_none() && cover.is_some() {
+                base.zip(thick).map(|(b, t)| b + t)
+            } else {
+                None
+            },
             precip: precip.into(),
             visibility_m: vis,
             fog_visibility_m: fog_vis,

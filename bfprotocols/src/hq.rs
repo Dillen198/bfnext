@@ -38,7 +38,9 @@ impl Posture {
 }
 
 /// A line of effort: what a share of the treasury goes on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Line {
     Air,
@@ -49,7 +51,8 @@ pub enum Line {
 }
 
 impl Line {
-    pub const ALL: [Line; 5] = [Line::Air, Line::Fires, Line::Logistics, Line::Troops, Line::Ground];
+    pub const ALL: [Line; 5] =
+        [Line::Air, Line::Fires, Line::Logistics, Line::Troops, Line::Ground];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -63,7 +66,9 @@ impl Line {
 }
 
 /// One kind of operation the HQ can run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum OpKind {
     Cap,
@@ -111,10 +116,16 @@ impl OpKind {
 
     pub fn line(self) -> Line {
         match self {
-            Self::Cap | Self::Strike | Self::Sead | Self::Recon | Self::Bomber | Self::Awacs | Self::Tanker => {
-                Line::Air
+            Self::Cap
+            | Self::Strike
+            | Self::Sead
+            | Self::Recon
+            | Self::Bomber
+            | Self::Awacs
+            | Self::Tanker => Line::Air,
+            Self::Artillery | Self::MissileStrike | Self::Ambush | Self::NavalStrike => {
+                Line::Fires
             }
-            Self::Artillery | Self::MissileStrike | Self::Ambush | Self::NavalStrike => Line::Fires,
             Self::Convoy | Self::HeloSupply | Self::AirRepair => Line::Logistics,
             Self::HeloTroops => Line::Troops,
             Self::Reinforce => Line::Ground,
@@ -144,7 +155,9 @@ impl OpKind {
 }
 
 /// What a player can ask the HQ for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RequestKind {
     /// Air support on an enemy objective.
@@ -187,7 +200,9 @@ impl RequestKind {
             Self::Cap => &[OpKind::Cap],
             Self::Sead => &[OpKind::Sead],
             Self::Recon => &[OpKind::Recon],
-            Self::Fires => &[OpKind::Artillery, OpKind::MissileStrike, OpKind::NavalStrike],
+            Self::Fires => {
+                &[OpKind::Artillery, OpKind::MissileStrike, OpKind::NavalStrike]
+            }
             Self::Supply => &[OpKind::Convoy, OpKind::HeloSupply, OpKind::AirRepair],
             Self::Troops => &[OpKind::HeloTroops, OpKind::Reinforce],
             Self::Tanker => &[OpKind::Tanker],
@@ -293,14 +308,18 @@ pub enum HqCommand {
     },
     ClearOverride,
     /// Call off one of the HQ's operations.
-    CancelOp { op: u64 },
+    CancelOp {
+        op: u64,
+    },
     /// Ask for support. `objective` defaults to the one nearest the player.
     Request {
         request: RequestKind,
         #[serde(default)]
         objective: Option<u64>,
     },
-    CancelRequest { request_id: u64 },
+    CancelRequest {
+        request_id: u64,
+    },
 }
 
 impl<'de> serde::Deserialize<'de> for HqCommand {
@@ -342,7 +361,11 @@ impl<'de> serde::Deserialize<'de> for HqCommand {
         Ok(match kind.as_str() {
             "override" => {
                 let a: OverrideArgs = serde_json::from_value(v).map_err(e)?;
-                Self::Override { directive: a.directive, disabled_ops: a.disabled_ops, paused: a.paused }
+                Self::Override {
+                    directive: a.directive,
+                    disabled_ops: a.disabled_ops,
+                    paused: a.paused,
+                }
             }
             "clear_override" => Self::ClearOverride,
             "cancel_op" => {
@@ -560,16 +583,24 @@ mod tests {
             }
             _ => panic!("wrong command"),
         }
-        let c: HqCommand = serde_json::from_str(r#"{"kind":"request","request":"cas"}"#).unwrap();
-        assert!(matches!(c, HqCommand::Request { request: RequestKind::Cas, objective: None }));
+        let c: HqCommand =
+            serde_json::from_str(r#"{"kind":"request","request":"cas"}"#).unwrap();
+        assert!(matches!(
+            c,
+            HqCommand::Request { request: RequestKind::Cas, objective: None }
+        ));
         assert!(serde_json::from_str::<HqCommand>(r#"{"kind":"nuke"}"#).is_err());
         // And back: what the engine would send out round-trips.
         let c = HqCommand::Override {
-            directive: Directive { weights: [(Line::Fires, 0.5)].into_iter().collect(), ..Default::default() },
+            directive: Directive {
+                weights: [(Line::Fires, 0.5)].into_iter().collect(),
+                ..Default::default()
+            },
             disabled_ops: vec![],
             paused: true,
         };
-        let back: HqCommand = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        let back: HqCommand =
+            serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
         assert!(matches!(back, HqCommand::Override { paused: true, .. }));
     }
 

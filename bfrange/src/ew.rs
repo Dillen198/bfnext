@@ -18,8 +18,11 @@ use crate::{
     util::{self, V3},
 };
 use anyhow::Result;
-use bfprotocols::range::{cfg::{JammerCfg, RangeCfg}, LiveJammer};
-use dcso3::{coalition::Side, MizLua};
+use bfprotocols::range::{
+    LiveJammer,
+    cfg::{JammerCfg, RangeCfg},
+};
+use dcso3::{MizLua, coalition::Side};
 use fxhash::FxHashMap;
 use log::{info, warn};
 use serde_json::json;
@@ -79,19 +82,28 @@ pub struct Ew {
 }
 
 fn activate(lua: MizLua, j: &Jam, spawns: &mut Spawns, now: f64) -> Result<()> {
-    let country = spawn::country_id(j.cfg.country.as_deref().unwrap_or(spawn::default_country(j.side)))?;
-    let jammer = if j.side == Side::Blue { "GPS_Spoofer_Blue" } else { "GPS_Spoofer_Red" };
+    let country = spawn::country_id(
+        j.cfg.country.as_deref().unwrap_or(spawn::default_country(j.side)),
+    )?;
+    let jammer =
+        if j.side == Side::Blue { "GPS_Spoofer_Blue" } else { "GPS_Spoofer_Red" };
     let support = if j.side == Side::Blue { "M 818" } else { "Ural-375" };
-    let units: Vec<(String, V3, f64)> = [(jammer, 0., 0.), (support, 40., 90.), (support, 40., 200.)]
-        .iter()
-        .map(|(t, r, a)| {
-            let p = util::offset(j.pos, *a, *r, 0.);
-            let mut q = util::nearest_land(lua, p, 200.).unwrap_or(p);
-            q.y = util::ground_height(lua, q);
-            (t.to_string(), q, 0.)
-        })
-        .collect();
-    let g = spawn::surface_group(&j.group, &units, "Excellent", vec![spawn::ground_waypoint(j.pos, 0., false, vec![])]);
+    let units: Vec<(String, V3, f64)> =
+        [(jammer, 0., 0.), (support, 40., 90.), (support, 40., 200.)]
+            .iter()
+            .map(|(t, r, a)| {
+                let p = util::offset(j.pos, *a, *r, 0.);
+                let mut q = util::nearest_land(lua, p, 200.).unwrap_or(p);
+                q.y = util::ground_height(lua, q);
+                (t.to_string(), q, 0.)
+            })
+            .collect();
+    let g = spawn::surface_group(
+        &j.group,
+        &units,
+        "Excellent",
+        vec![spawn::ground_waypoint(j.pos, 0., false, vec![])],
+    );
     spawn::add_group(lua, country, spawn::GROUND, &g)?;
     // the Mission Editor always writes the spoof point when GPS or GLONASS
     // is on (it defaults to 5 km off the group); radio bands are MHz
@@ -108,8 +120,17 @@ fn activate(lua: MizLua, j: &Jam, spawns: &mut Spawns, now: f64) -> Result<()> {
         params["jammingStart"] = json!(a);
         params["jammingEnd"] = json!(b);
     }
-    spawns.defer(now + 3., spawn::Pending::GroupCommand { group: j.group.clone(), cmd: json!({ "id": "ActivateJammer", "params": params }) });
-    spawns.defer(now + 2., spawn::Pending::GroupOption { group: j.group.clone(), id: 0, value: json!(4) });
+    spawns.defer(
+        now + 3.,
+        spawn::Pending::GroupCommand {
+            group: j.group.clone(),
+            cmd: json!({ "id": "ActivateJammer", "params": params }),
+        },
+    );
+    spawns.defer(
+        now + 2.,
+        spawn::Pending::GroupOption { group: j.group.clone(), id: 0, value: json!(4) },
+    );
     Ok(())
 }
 
@@ -137,7 +158,13 @@ impl Ew {
                 warn!("jammer {}: {e:?}", c.id);
                 j.alive = false;
             }
-            info!("jammer {} ({}): {} within {:.0} nm", c.id, c.name, j.describe(), c.radius_nm);
+            info!(
+                "jammer {} ({}): {} within {:.0} nm",
+                c.id,
+                c.name,
+                j.describe(),
+                c.radius_nm
+            );
             self.jams.push(j);
         }
     }
@@ -165,7 +192,13 @@ impl Ew {
     }
 
     /// Warnings in and out of jammer radii, rebuilding; every 2 s.
-    pub fn tick(&mut self, lua: MizLua, players: &Players, spawns: &mut Spawns, now: f64) {
+    pub fn tick(
+        &mut self,
+        lua: MizLua,
+        players: &Players,
+        spawns: &mut Spawns,
+        now: f64,
+    ) {
         if now - self.last < 2. || self.jams.is_empty() {
             return;
         }
@@ -194,7 +227,9 @@ impl Ew {
                 .jams
                 .iter()
                 .enumerate()
-                .filter(|(_, j)| j.alive && j.side != f.side && util::dist2(f.pos, j.pos) <= j.radius())
+                .filter(|(_, j)| {
+                    j.alive && j.side != f.side && util::dist2(f.pos, j.pos) <= j.radius()
+                })
                 .map(|(i, _)| i)
                 .next();
             let before = self.inside.insert(f.unit_name.clone(), now_in);

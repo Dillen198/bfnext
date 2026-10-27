@@ -16,11 +16,11 @@ FITNESS FOR A PARTICULAR PURPOSE.
 compile_error!("dcso3's vendored-lua feature is for tests, not release builds");
 
 extern crate nalgebra as na;
-pub use schemars;
 use anyhow::{anyhow, bail, Result};
 use fxhash::FxHashMap;
 use log::error;
 use mlua::{prelude::*, Value};
+pub use schemars;
 use serde_derive::{Deserialize, Serialize};
 use std::{
     backtrace::Backtrace,
@@ -67,7 +67,8 @@ pub mod world;
 pub use dcso3_core::{
     atomic_id,
     lua::{cvt_err, err, lua_err},
-    simple_enum, simple_enum_unknown, string_enum, wrapped_prim, String, Vector2, Vector3,
+    simple_enum, simple_enum_unknown, string_enum, wrapped_prim, String, Vector2,
+    Vector3,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -317,7 +318,9 @@ where
         }
         Err(e) => {
             match e.downcast_ref::<anyhow::Error>() {
-                Some(e) => error!("{name} panicked {e:?}, denying {}", Backtrace::capture()),
+                Some(e) => {
+                    error!("{name} panicked {e:?}, denying {}", Backtrace::capture())
+                }
                 None => error!("{name} panicked {e:?}, denying {}", Backtrace::capture()),
             }
             deny()
@@ -476,10 +479,7 @@ macro_rules! bitflags_enum {
     };
 }
 
-pub fn as_tbl_ref<'a>(
-    to: &'static str,
-    value: &'a Value,
-) -> Result<&'a mlua::Table> {
+pub fn as_tbl_ref<'a>(to: &'static str, value: &'a Value) -> Result<&'a mlua::Table> {
     value.as_table().ok_or_else(|| anyhow!("can't convert {:?} to {}", value, to))
 }
 
@@ -785,7 +785,6 @@ impl DcsTableExt for mlua::Table {
     }
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
 pub struct LuaVec2(pub na::base::Vector2<f64>);
 
@@ -824,7 +823,6 @@ impl LuaVec2 {
         LuaVec2(na::base::Vector2::new(x, y))
     }
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
 pub struct LuaVec3(pub na::base::Vector3<f64>);
@@ -975,7 +973,9 @@ impl<T: FromLua> FromLua for Sequence<T> {
     fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         match value {
             Value::Table(t) => Ok(Self { t, lua: lua.clone(), ph: PhantomData }),
-            Value::Nil => Ok(Self { t: lua.create_table()?, lua: lua.clone(), ph: PhantomData }),
+            Value::Nil => {
+                Ok(Self { t: lua.create_table()?, lua: lua.clone(), ph: PhantomData })
+            }
             _ => Err(cvt_err("Sequence")),
         }
     }

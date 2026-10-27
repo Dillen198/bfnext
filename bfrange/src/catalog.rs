@@ -4,10 +4,10 @@
 //! What players can spawn, for the range site's spawn page. The same items
 //! back the F10 menus, so the website and the cockpit offer the same things.
 
-use crate::{aa, antiship, helo::Helo, ground::Ground};
+use crate::{aa, antiship, ground::Ground, helo::Helo};
 use bfprotocols::range::{
-    cfg::{tanker_type, RangeCfg, TANKER_TYPES},
     CatalogItem, ParamKind, ParamOption, ParamSpec, SpawnCatalog, SpawnCategory,
+    cfg::{RangeCfg, TANKER_TYPES, tanker_type},
 };
 
 fn choice(key: &str, label: &str, opts: &[(&str, &str)], default: &str) -> ParamSpec {
@@ -15,7 +15,10 @@ fn choice(key: &str, label: &str, opts: &[(&str, &str)], default: &str) -> Param
         key: key.into(),
         label: label.into(),
         kind: ParamKind::Choice {
-            options: opts.iter().map(|(v, l)| ParamOption { value: v.to_string(), label: l.to_string() }).collect(),
+            options: opts
+                .iter()
+                .map(|(v, l)| ParamOption { value: v.to_string(), label: l.to_string() })
+                .collect(),
         },
         default: default.into(),
     }
@@ -26,12 +29,25 @@ fn choice_owned(key: &str, label: &str, opts: Vec<(String, String)>) -> ParamSpe
     ParamSpec {
         key: key.into(),
         label: label.into(),
-        kind: ParamKind::Choice { options: opts.into_iter().map(|(value, label)| ParamOption { value, label }).collect() },
+        kind: ParamKind::Choice {
+            options: opts
+                .into_iter()
+                .map(|(value, label)| ParamOption { value, label })
+                .collect(),
+        },
         default,
     }
 }
 
-fn number(key: &str, label: &str, min: f64, max: f64, step: f64, unit: &str, default: f64) -> ParamSpec {
+fn number(
+    key: &str,
+    label: &str,
+    min: f64,
+    max: f64,
+    step: f64,
+    unit: &str,
+    default: f64,
+) -> ParamSpec {
     ParamSpec {
         key: key.into(),
         label: label.into(),
@@ -40,7 +56,12 @@ fn number(key: &str, label: &str, min: f64, max: f64, step: f64, unit: &str, def
     }
 }
 
-pub const SKILLS: &[(&str, &str)] = &[("Average", "Average"), ("Good", "Good"), ("High", "High"), ("Excellent", "Excellent")];
+pub const SKILLS: &[(&str, &str)] = &[
+    ("Average", "Average"),
+    ("Good", "Good"),
+    ("High", "High"),
+    ("Excellent", "Excellent"),
+];
 pub const WEAPONS: &[(&str, &str)] = &[
     ("guns", "Guns only"),
     ("fox2", "Fox 2 (IR missiles)"),
@@ -51,17 +72,42 @@ pub const WEAPONS: &[(&str, &str)] = &[
 pub const GROUND_COMPOSITIONS: &[(&str, &str, &[&str])] = &[
     ("armor", "Armour platoon (4x T-72B)", &["T-72B", "T-72B", "T-72B", "T-72B"]),
     ("soft", "Trucks (4x Ural-375)", &["Ural-375", "Ural-375", "Ural-375", "Ural-375"]),
-    ("mixed", "Mech. section (2x BMP-2, 2x Ural)", &["BMP-2", "BMP-2", "Ural-375", "Ural-375"]),
-    ("shilka", "Convoy with ZSU-23-4", &["ZSU-23-4 Shilka", "Ural-375", "Ural-375", "BTR-80"]),
+    (
+        "mixed",
+        "Mech. section (2x BMP-2, 2x Ural)",
+        &["BMP-2", "BMP-2", "Ural-375", "Ural-375"],
+    ),
+    (
+        "shilka",
+        "Convoy with ZSU-23-4",
+        &["ZSU-23-4 Shilka", "Ural-375", "Ural-375", "BTR-80"],
+    ),
 ];
 
 pub const SAMS: &[(&str, &str, &[&str])] = &[
     ("sa8", "SA-8 Osa", &["Osa 9A33 ln"]),
     ("sa15", "SA-15 Tor", &["Tor 9A331"]),
     ("sa6", "SA-6 Kub", &["Kub 1S91 str", "Kub 2P25 ln", "Kub 2P25 ln"]),
-    ("sa11", "SA-11 Buk", &["SA-11 Buk SR 9S18M1", "SA-11 Buk CC 9S470M1", "SA-11 Buk LN 9A310M1", "SA-11 Buk LN 9A310M1"]),
-    ("sa3", "SA-3 Goa", &["p-19 s-125 sr", "snr s-125 tr", "5p73 s-125 ln", "5p73 s-125 ln"]),
-    ("sa2", "SA-2 Guideline", &["p-19 s-125 sr", "SNR_75V", "S_75M_Volhov", "S_75M_Volhov"]),
+    (
+        "sa11",
+        "SA-11 Buk",
+        &[
+            "SA-11 Buk SR 9S18M1",
+            "SA-11 Buk CC 9S470M1",
+            "SA-11 Buk LN 9A310M1",
+            "SA-11 Buk LN 9A310M1",
+        ],
+    ),
+    (
+        "sa3",
+        "SA-3 Goa",
+        &["p-19 s-125 sr", "snr s-125 tr", "5p73 s-125 ln", "5p73 s-125 ln"],
+    ),
+    (
+        "sa2",
+        "SA-2 Guideline",
+        &["p-19 s-125 sr", "SNR_75V", "S_75M_Volhov", "S_75M_Volhov"],
+    ),
     ("zsu", "ZSU-23-4 Shilka pair", &["ZSU-23-4 Shilka", "ZSU-23-4 Shilka"]),
 ];
 
@@ -71,7 +117,8 @@ pub fn build(cfg: &RangeCfg, helo: &Helo, ground: &Ground) -> SpawnCatalog {
     } else {
         cfg.air_to_air.adversaries.clone()
     };
-    let adv_opts: Vec<(String, String)> = advs.iter().map(|a| (a.typ.clone(), a.label.clone())).collect();
+    let adv_opts: Vec<(String, String)> =
+        advs.iter().map(|a| (a.typ.clone(), a.label.clone())).collect();
     let instructor = |id: &str| cfg.spawn.instructor_only.iter().any(|i| i == id);
     let mut items = vec![
         CatalogItem {
@@ -211,7 +258,9 @@ pub fn build(cfg: &RangeCfg, helo: &Helo, ground: &Ground) -> SpawnCatalog {
             id: "sling_course".into(),
             category: SpawnCategory::Helo,
             label: "Sling-load course".into(),
-            description: "Spawns a cargo load at the course pickup; set it down in the drop zone.".into(),
+            description:
+                "Spawns a cargo load at the course pickup; set it down in the drop zone."
+                    .into(),
             params: vec![choice_owned("course", "Course", sling)],
             instructor_only: instructor("sling_course"),
             relative_to_player: false,

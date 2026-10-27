@@ -112,7 +112,8 @@ mod tests {
     #[test]
     fn every_range_icon_is_in_the_shared_set_and_renders() {
         for (name, key) in RANGE_ICONS {
-            let svg = emoji_svg(name, 128).unwrap_or_else(|| panic!("{name} is not in shared/icons/index.tsx"));
+            let svg = emoji_svg(name, 128)
+                .unwrap_or_else(|| panic!("{name} is not in shared/icons/index.tsx"));
             assert!(!svg.contains("data-a"), "{key}");
             let png = super::super::cards::png(&svg).unwrap();
             assert!(png.len() > 400, "{key} rendered blank");
@@ -125,7 +126,10 @@ mod tests {
         if std::env::var("WRITE_RANGE_ICONS").is_err() {
             return;
         }
-        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../DCSServerBot/plugins/fowlengine/assets/icons");
+        let dir = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../DCSServerBot/plugins/fowlengine/assets/icons"
+        );
         for (name, key) in RANGE_ICONS {
             let png = super::super::cards::png(&emoji_svg(name, 128).unwrap()).unwrap();
             std::fs::write(format!("{dir}/vs_{key}.png"), png).unwrap();

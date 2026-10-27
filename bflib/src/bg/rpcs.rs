@@ -4,7 +4,11 @@ use arcstr::ArcStr;
 use bfprotocols::db::group::GroupId;
 use chrono::prelude::*;
 use crossbeam::queue::SegQueue;
-use dcso3::{coalition::Side, net::{PlayerId, Ucid}, Vector2};
+use dcso3::{
+    Vector2,
+    coalition::Side,
+    net::{PlayerId, Ucid},
+};
 use futures::{
     channel::mpsc,
     select_biased,

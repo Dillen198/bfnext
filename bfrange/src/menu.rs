@@ -12,9 +12,9 @@
 
 use anyhow::{Context, Result};
 use dcso3::{
+    MizLua, String,
     env::miz::GroupId,
     mission_commands::{GroupSubMenu, MissionCommands},
-    MizLua, String,
 };
 
 const PAGE_ITEMS: u32 = 10;
@@ -33,7 +33,11 @@ impl Pager {
     fn page(&mut self, mc: &MissionCommands) -> Result<GroupSubMenu> {
         if self.used + 1 >= PAGE_ITEMS {
             self.cur = mc
-                .add_submenu_for_group(self.group, "More >>".into(), Some(self.cur.clone()))
+                .add_submenu_for_group(
+                    self.group,
+                    "More >>".into(),
+                    Some(self.cur.clone()),
+                )
                 .context("adding More >> page")?;
             self.used = 0;
         }
@@ -41,7 +45,12 @@ impl Pager {
         Ok(self.cur.clone())
     }
 
-    fn cmd(&mut self, mc: &MissionCommands, label: &str, action: std::string::String) -> Result<()> {
+    fn cmd(
+        &mut self,
+        mc: &MissionCommands,
+        label: &str,
+        action: std::string::String,
+    ) -> Result<()> {
         let parent = self.page(mc)?;
         cmd(mc, self.group, parent, label, action)
     }
@@ -52,7 +61,13 @@ impl Pager {
     }
 }
 
-fn cmd(mc: &MissionCommands, gid: GroupId, parent: GroupSubMenu, label: &str, action: std::string::String) -> Result<()> {
+fn cmd(
+    mc: &MissionCommands,
+    gid: GroupId,
+    parent: GroupSubMenu,
+    label: &str,
+    action: std::string::String,
+) -> Result<()> {
     mc.add_command_for_group(
         gid,
         label.into(),
@@ -88,7 +103,9 @@ pub struct MenuData {
 pub fn build(lua: MizLua, gid: GroupId, d: &MenuData) -> Result<()> {
     let mc = MissionCommands::singleton(lua)?;
     let root = mc.add_submenu_for_group(gid, "Range".into(), None)?;
-    let r = |parent: &GroupSubMenu, label: &str, action: &str| cmd(&mc, gid, parent.clone(), label, action.to_string());
+    let r = |parent: &GroupSubMenu, label: &str, action: &str| {
+        cmd(&mc, gid, parent.clone(), label, action.to_string())
+    };
     let sub = |parent: &GroupSubMenu, label: &str| -> Result<GroupSubMenu> {
         Ok(mc.add_submenu_for_group(gid, label.into(), Some(parent.clone()))?)
     };
@@ -131,7 +148,11 @@ pub fn build(lua: MizLua, gid: GroupId, d: &MenuData) -> Result<()> {
         let cas = sub(&ag, "CAS / JTAC")?;
         let mut p = Pager::new(gid, cas);
         for (k, l) in &d.jtacs {
-            p.cmd(&mc, &format!("Check in with {l}"), format!("spawn:cas_drill:jtac={k}"))?;
+            p.cmd(
+                &mc,
+                &format!("Check in with {l}"),
+                format!("spawn:cas_drill:jtac={k}"),
+            )?;
         }
     }
 
@@ -200,7 +221,11 @@ pub fn build(lua: MizLua, gid: GroupId, d: &MenuData) -> Result<()> {
     // 6. anti-ship
     let sh = sub(&root, "Anti-ship")?;
     for (k, l) in &d.ships {
-        r(&sh, &format!("{l} 30 nm ahead"), &format!("spawn:ship_target:type={k}&count=1&dist_nm=30&moving=yes"))?;
+        r(
+            &sh,
+            &format!("{l} 30 nm ahead"),
+            &format!("spawn:ship_target:type={k}&count=1&dist_nm=30&moving=yes"),
+        )?;
     }
 
     // 7. helicopter

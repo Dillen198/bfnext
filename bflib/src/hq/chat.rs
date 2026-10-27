@@ -19,13 +19,13 @@ for more details.
 //! the next 1 Hz tick from the mission state (`run_chat`).
 
 use super::{cfg, command, intent_text, ops_text};
-use crate::{msgq::MsgTyp, Context};
+use crate::{Context, msgq::MsgTyp};
 use bfprotocols::{
     db::objective::ObjectiveId,
     hq::{Directive, HqCommand, Posture, RequestKind},
 };
-use compact_str::{format_compact, CompactString};
-use dcso3::{coalition::Side, net::PlayerId, MizLua, Vector2};
+use compact_str::{CompactString, format_compact};
+use dcso3::{MizLua, Vector2, coalition::Side, net::PlayerId};
 
 const HELP: [&str; 9] = [
     " -hq: your side's commander's intent",
@@ -68,11 +68,16 @@ fn find_objective(ctx: &Context, s: &str) -> Result<ObjectiveId, CompactString> 
         &(|n: &str| n.starts_with(want.as_str())) as &dyn Fn(&str) -> bool,
         &(|n: &str| n.contains(want.as_str())),
     ] {
-        let hits: Vec<&(ObjectiveId, String)> = all.iter().filter(|(_, n)| pred(n)).collect();
+        let hits: Vec<&(ObjectiveId, String)> =
+            all.iter().filter(|(_, n)| pred(n)).collect();
         match hits.len() {
             0 => continue,
             1 => return Ok(hits[0].0),
-            n => return Err(format_compact!("{n} objectives match '{s}', be more specific")),
+            n => {
+                return Err(format_compact!(
+                    "{n} objectives match '{s}', be more specific"
+                ));
+            }
         }
     }
     Err(format_compact!("no objective called '{s}'"))
@@ -116,11 +121,18 @@ fn parse(ctx: &Context, request: bool, s: &str) -> Result<HqCommand, CompactStri
     let rest = rest.join(" ");
     if request {
         if verb == "cancel" {
-            let id = rest.trim().trim_start_matches('#').parse::<u64>().map_err(|_| CompactString::from("-request cancel <id>"))?;
+            let id = rest
+                .trim()
+                .trim_start_matches('#')
+                .parse::<u64>()
+                .map_err(|_| CompactString::from("-request cancel <id>"))?;
             return Ok(HqCommand::CancelRequest { request_id: id });
         }
-        let kind = RequestKind::parse(&verb)
-            .ok_or_else(|| format_compact!("unknown request '{verb}', try cas cap sead recon fires supply troops"))?;
+        let kind = RequestKind::parse(&verb).ok_or_else(|| {
+            format_compact!(
+                "unknown request '{verb}', try cas cap sead recon fires supply troops"
+            )
+        })?;
         let objective = if rest.trim().is_empty() {
             None
         } else {
@@ -141,7 +153,9 @@ fn parse(ctx: &Context, request: bool, s: &str) -> Result<HqCommand, CompactStri
                 _ => return Err("-hq posture <offensive|balanced|defensive>".into()),
             })
         }
-        "effort" | "main" | "attack" => d.main_effort = Some(find_objective(ctx, &rest)?.inner() as u64),
+        "effort" | "main" | "attack" => {
+            d.main_effort = Some(find_objective(ctx, &rest)?.inner() as u64)
+        }
         "defend" | "hold" => d.defend = vec![find_objective(ctx, &rest)?.inner() as u64],
         "supply" => d.supply_priority = vec![find_objective(ctx, &rest)?.inner() as u64],
         "avoid" => d.avoid = vec![find_objective(ctx, &rest)?.inner() as u64],
@@ -149,10 +163,18 @@ fn parse(ctx: &Context, request: bool, s: &str) -> Result<HqCommand, CompactStri
         "resume" => (),
         "clear" | "release" => return Ok(HqCommand::ClearOverride),
         "cancel" => {
-            let op = rest.trim().trim_start_matches('#').parse::<u64>().map_err(|_| CompactString::from("-hq cancel <op id>"))?;
+            let op = rest
+                .trim()
+                .trim_start_matches('#')
+                .parse::<u64>()
+                .map_err(|_| CompactString::from("-hq cancel <op id>"))?;
             return Ok(HqCommand::CancelOp { op });
         }
-        _ => return Err(format_compact!("unknown HQ command '{verb}', -hq help for the list")),
+        _ => {
+            return Err(format_compact!(
+                "unknown HQ command '{verb}', -hq help for the list"
+            ));
+        }
     }
     Ok(HqCommand::Override { directive: d, disabled_ops: vec![], paused })
 }

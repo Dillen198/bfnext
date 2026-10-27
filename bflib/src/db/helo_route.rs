@@ -51,10 +51,10 @@ for more details.
 //! only the defensive AI options and the landing spot differ.
 
 use super::{
-    logistics::{plan_helo_route, HeloMissionId, HeloMissionState, HeloRoutePlan},
+    Db,
+    logistics::{HeloMissionId, HeloMissionState, HeloRoutePlan, plan_helo_route},
     markup::objective_visible_to,
     objective::Objective,
-    Db,
 };
 use crate::{db::intel::IntelUnitClass, unitdb::UnitDb};
 use anyhow::Result;
@@ -65,14 +65,14 @@ use bfprotocols::{
 use chrono::prelude::*;
 use compact_str::format_compact;
 use dcso3::{
+    LuaVec2, MizLua, Vector2,
     coalition::Side,
     controller::{
-        ActionTyp, AiOption, AirEcmUsing, AirFlareUsing, AirOption, AirReactionToThreat, AirRoe,
-        AltType, MissionPoint, PointType, Task, TurnMethod,
+        ActionTyp, AiOption, AirEcmUsing, AirFlareUsing, AirOption, AirReactionToThreat,
+        AirRoe, AltType, MissionPoint, PointType, Task, TurnMethod,
     },
     land::Land,
     object::DcsObject,
-    LuaVec2, MizLua, Vector2,
 };
 use enumflags2::BitFlags;
 use log::{info, warn};
@@ -209,10 +209,7 @@ fn chord_inside(a: Vector2, b: Vector2, c: Vector2, r: f64) -> f64 {
 /// circles count once each: two sites covering the same stretch are twice
 /// the danger.
 fn exposure(a: Vector2, b: Vector2, threats: &[Threat]) -> f64 {
-    threats
-        .iter()
-        .map(|t| t.lethality * chord_inside(a, b, t.pos, t.radius))
-        .sum()
+    threats.iter().map(|t| t.lethality * chord_inside(a, b, t.pos, t.radius)).sum()
 }
 
 fn track_exposure(track: &[Vector2], threats: &[Threat]) -> f64 {
@@ -262,14 +259,20 @@ impl PartialOrd for Open {
 /// Plan a ground track from `start` to `goal` around `threats`. See the
 /// module docs. Always returns a route: at worst the straight line, which is
 /// always inside the length limit.
-pub(super) fn plan_track(start: Vector2, goal: Vector2, threats: &[Threat]) -> PlannedTrack {
+pub(super) fn plan_track(
+    start: Vector2,
+    goal: Vector2,
+    threats: &[Threat],
+) -> PlannedTrack {
     let direct = (goal - start).norm();
     let max_len = direct * MAX_DETOUR_FACTOR + MAX_DETOUR_EXTRA_M;
     // Only a circle an acceptable route could touch matters, and of those
     // the ones nearest the straight line matter most.
     let mut relevant: Vec<(f64, Threat)> = threats
         .iter()
-        .filter(|t| (t.pos - start).norm() + (t.pos - goal).norm() - 2. * t.radius <= max_len)
+        .filter(|t| {
+            (t.pos - start).norm() + (t.pos - goal).norm() - 2. * t.radius <= max_len
+        })
         .map(|t| (seg_dist(start, goal, t.pos) - t.radius, *t))
         .collect();
     relevant.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -382,10 +385,7 @@ impl ProfileHint {
     /// Whether the route is flown nap-of-the-earth at `p`.
     pub fn is_noe(&self, p: Vector2) -> bool {
         (p - self.land_pos).norm() <= NOE_FINAL_M
-            || self
-                .threats
-                .iter()
-                .any(|t| (p - t.pos).norm() <= t.radius + NOE_BUFFER_M)
+            || self.threats.iter().any(|t| (p - t.pos).norm() <= t.radius + NOE_BUFFER_M)
     }
 
     /// Whether any part of the leg `a`..`b` is flown nap-of-the-earth, so it
@@ -421,10 +421,8 @@ pub(super) fn choose_landing_point(
         if hazards.is_empty() {
             -(p - center).norm()
         } else {
-            let clear = hazards
-                .iter()
-                .map(|h| (p - *h).norm())
-                .fold(f64::INFINITY, f64::min);
+            let clear =
+                hazards.iter().map(|h| (p - *h).norm()).fold(f64::INFINITY, f64::min);
             clear - 0.05 * (p - inbound_from).norm()
         }
     };
@@ -466,12 +464,19 @@ pub(super) struct ReplanGate {
 }
 
 impl ReplanGate {
-    pub fn check(&self, now: DateTime<Utc>, min_secs: u32, max: u32) -> Result<(), ReplanBlocked> {
+    pub fn check(
+        &self,
+        now: DateTime<Utc>,
+        min_secs: u32,
+        max: u32,
+    ) -> Result<(), ReplanBlocked> {
         if self.count >= max {
             return Err(ReplanBlocked::Exhausted);
         }
         match self.last {
-            Some(last) if (now - last).num_seconds() < min_secs as i64 => Err(ReplanBlocked::TooSoon),
+            Some(last) if (now - last).num_seconds() < min_secs as i64 => {
+                Err(ReplanBlocked::TooSoon)
+            }
             _ => Ok(()),
         }
     }
@@ -577,7 +582,9 @@ fn defensive_options() -> [AiOption; 6] {
 /// or nothing when threat avoidance is off.
 pub(super) fn defensive_task(cfg: &HeloInsertionCfg) -> Task {
     if cfg.threat_avoidance.enabled {
-        Task::ComboTask(defensive_options().into_iter().map(Task::WrappedOption).collect())
+        Task::ComboTask(
+            defensive_options().into_iter().map(Task::WrappedOption).collect(),
+        )
     } else {
         Task::ComboTask(vec![])
     }
@@ -627,7 +634,12 @@ fn push_route(
     for (p, a) in plan.cruise.iter().copied() {
         route.push(air_point(p, a, speed, Task::ComboTask(vec![])));
     }
-    route.push(air_point(plan.approach.0, plan.approach.1, speed, Task::ComboTask(vec![])));
+    route.push(air_point(
+        plan.approach.0,
+        plan.approach.1,
+        speed,
+        Task::ComboTask(vec![]),
+    ));
     route.push(land_point(land_pos, land_alt, speed));
     con.set_task(Task::Mission { airborne: Some(true), route })?;
     Ok(())
@@ -668,7 +680,9 @@ impl Db {
             .units
             .into_iter()
             .filter(|(_, u)| u.side == enemy && !u.dead)
-            .filter_map(|(_, u)| ad_range_m(u.typ.0.as_str(), u.tags.0, &udb).map(|r| (u.pos, r)))
+            .filter_map(|(_, u)| {
+                ad_range_m(u.typ.0.as_str(), u.tags.0, &udb).map(|r| (u.pos, r))
+            })
             .collect()
     }
 
@@ -728,7 +742,10 @@ impl Db {
         }
         if ta.garrison_radius_m > 0. {
             for (_, o) in self.objectives() {
-                if o.owner != side.opposite() || o.health() == 0 || !objective_visible_to(o, side) {
+                if o.owner != side.opposite()
+                    || o.health() == 0
+                    || !objective_visible_to(o, side)
+                {
                     continue;
                 }
                 out.push(Threat {
@@ -745,7 +762,12 @@ impl Db {
 
     /// Positions to keep the landing spot away from: every known threat and
     /// every enemy contact of any kind near `dest`.
-    fn landing_hazards(&self, side: Side, dest: &Objective, threats: &[Threat]) -> Vec<Vector2> {
+    fn landing_hazards(
+        &self,
+        side: Side,
+        dest: &Objective,
+        threats: &[Threat],
+    ) -> Vec<Vector2> {
         let center = dest.zone.pos();
         let reach = dest.zone.radius() + HAZARD_SEARCH_M;
         let near = |p: Vector2| (p - center).norm() <= reach;
@@ -829,7 +851,13 @@ impl Db {
             noe_agl_m: ta.noe_agl_m.max(10.),
             land_pos,
         });
-        Some(SmartRoute { land_pos, hint, planned, threats, direct: (land_pos - from).norm() })
+        Some(SmartRoute {
+            land_pos,
+            hint,
+            planned,
+            threats,
+            direct: (land_pos - from).norm(),
+        })
     }
 
     /// Record a just-spawned mission's route, stretch its deadline to cover
@@ -865,7 +893,11 @@ impl Db {
             route.planned.avoided,
             route.planned.exposure / 1000.,
             route.planned.avoidable / 1000.,
-            if route.planned.avoidable > 0. { " -- no threat-free route, least exposure taken" } else { "" },
+            if route.planned.avoidable > 0. {
+                " -- no threat-free route, least exposure taken"
+            } else {
+                ""
+            },
             dest_center.map(|c| (route.land_pos - c).norm()).unwrap_or(0.)
         );
         let msg = if route.hint.is_none() {
@@ -920,9 +952,17 @@ impl Db {
             if m.side != side.opposite() || d > (reach * 1.2).min(LAUNCH_SEEN_M) {
                 continue;
             }
-            st.observe(Threat { pos, radius: reach * margin, lethality: 1., kind: ThreatKind::Observed });
-            let fresh = st.under_fire.is_none_or(|(t, _)| (now - t).num_seconds() > FIRE_MEMORY_SECS);
-            st.under_fire = Some((now, if what == "SAM" { "SAM launch" } else { "AAA fire" }));
+            st.observe(Threat {
+                pos,
+                radius: reach * margin,
+                lethality: 1.,
+                kind: ThreatKind::Observed,
+            });
+            let fresh = st
+                .under_fire
+                .is_none_or(|(t, _)| (now - t).num_seconds() > FIRE_MEMORY_SECS);
+            st.under_fire =
+                Some((now, if what == "SAM" { "SAM launch" } else { "AAA fire" }));
             if fresh {
                 info!("[HELO_ROUTE] {} under fire: {} {:.1}km away", id, what, d / 1000.);
             }
@@ -933,11 +973,17 @@ impl Db {
     /// `shooter`. Anything else -- a fighter, a player, an unknown -- is not
     /// something a new route gets it away from, so it is left to the AI's
     /// own evasion.
-    pub fn note_helo_hit(&mut self, target: &UnitId, shooter: Option<UnitId>, now: DateTime<Utc>) {
+    pub fn note_helo_hit(
+        &mut self,
+        target: &UnitId,
+        shooter: Option<UnitId>,
+        now: DateTime<Utc>,
+    ) {
         if self.ephemeral.helo_routes.is_empty() {
             return;
         }
-        let (Some(shooter), Some(gid)) = (shooter, self.persisted.units.get(target).map(|u| u.group))
+        let (Some(shooter), Some(gid)) =
+            (shooter, self.persisted.units.get(target).map(|u| u.group))
         else {
             return;
         };
@@ -957,10 +1003,17 @@ impl Db {
                 .filter(|u| !u.tags.0.intersects(UnitTag::Aircraft | UnitTag::Helicopter))
                 .map(|u| (u.pos, GROUND_FIRE_M, u.side, "ground fire"))
         });
-        let Some((pos, reach, _, what)) = site.filter(|s| s.2 == side.opposite()) else { return };
+        let Some((pos, reach, _, what)) = site.filter(|s| s.2 == side.opposite()) else {
+            return;
+        };
         let margin = self.helo_threat_margin().unwrap_or(1.);
         let Some(st) = self.ephemeral.helo_routes.get_mut(&id) else { return };
-        st.observe(Threat { pos, radius: reach * margin, lethality: 1., kind: ThreatKind::Observed });
+        st.observe(Threat {
+            pos,
+            radius: reach * margin,
+            lethality: 1.,
+            kind: ThreatKind::Observed,
+        });
         st.under_fire = Some((now, "hit"));
         info!("[HELO_ROUTE] {} hit by {}", id, what);
     }
@@ -977,20 +1030,29 @@ impl Db {
     /// What the helo's own radar warning receiver has on it: enemy
     /// air-defence radars whose site can reach it become observed threats.
     /// An airframe without one simply reports nothing.
-    fn scan_rwr(&mut self, lua: MizLua, id: &HeloMissionId, group_name: &str, pos: Vector2) {
+    fn scan_rwr(
+        &mut self,
+        lua: MizLua,
+        id: &HeloMissionId,
+        group_name: &str,
+        pos: Vector2,
+    ) {
         use dcso3::controller::Detection;
         let Some(margin) = self.helo_threat_margin() else { return };
         let seen: Result<SmallVec<[(Vector2, f64); 4]>> = (|| {
-            let con = dcso3::group::Group::get_by_name(lua, group_name)?.get_controller()?;
+            let con =
+                dcso3::group::Group::get_by_name(lua, group_name)?.get_controller()?;
             let mut out = SmallVec::new();
-            for t in con.get_detected_targets(BitFlags::from(Detection::Rwr))?.into_iter().take(16) {
+            for t in con
+                .get_detected_targets(BitFlags::from(Detection::Rwr))?
+                .into_iter()
+                .take(16)
+            {
                 let Ok(t) = t else { continue };
-                let Some(uid) = t
-                    .object
-                    .as_unit()
-                    .ok()
-                    .and_then(|u| u.object_id().ok())
-                    .and_then(|oid| self.ephemeral.get_uid_by_object_id(&oid).copied())
+                let Some(uid) =
+                    t.object.as_unit().ok().and_then(|u| u.object_id().ok()).and_then(
+                        |oid| self.ephemeral.get_uid_by_object_id(&oid).copied(),
+                    )
                 else {
                     continue;
                 };
@@ -1011,7 +1073,12 @@ impl Db {
         };
         if let Some(st) = self.ephemeral.helo_routes.get_mut(id) {
             for (p, reach) in seen {
-                st.observe(Threat { pos: p, radius: reach * margin, lethality: 1., kind: ThreatKind::Observed });
+                st.observe(Threat {
+                    pos: p,
+                    radius: reach * margin,
+                    lethality: 1.,
+                    kind: ThreatKind::Observed,
+                });
             }
         }
     }
@@ -1029,17 +1096,26 @@ impl Db {
             return;
         }
         let speed = (cfg.speed_kph / 3.6).max(10.);
-        let ids: SmallVec<[HeloMissionId; 4]> = self.ephemeral.helo_routes.keys().cloned().collect();
+        let ids: SmallVec<[HeloMissionId; 4]> =
+            self.ephemeral.helo_routes.keys().cloned().collect();
         for id in ids {
             let Some(m) = self.ephemeral.active_helo_missions.get(&id) else { continue };
             // Only on the ticks `tick_helo_missions` actually polled this
             // mission (every ~10s), so `last_pos` is fresh and the warning
             // receiver isn't read every frame.
-            if m.last_check != now || m.state != HeloMissionState::InTransit || m.airborne_at.is_none() {
+            if m.last_check != now
+                || m.state != HeloMissionState::InTransit
+                || m.airborne_at.is_none()
+            {
                 continue;
             }
-            let (side, pos, dest, player, gid) = (m.side, m.last_pos, m.destination, m.player, m.group_id);
-            let Some(group_name) = self.persisted.groups.get(&gid).map(|g| g.name.clone()) else { continue };
+            let (side, pos, dest, player, gid) =
+                (m.side, m.last_pos, m.destination, m.player, m.group_id);
+            let Some(group_name) =
+                self.persisted.groups.get(&gid).map(|g| g.name.clone())
+            else {
+                continue;
+            };
             self.scan_rwr(lua, &id, &group_name, pos);
             let Some(st) = self.ephemeral.helo_routes.get(&id) else { continue };
             if (pos - st.land_pos).norm() < FINAL_NO_REPLAN_M {
@@ -1095,13 +1171,20 @@ impl Db {
                     continue;
                 }
             };
-            let Some(route) = self.plan_helo_threat_route(&land, side, pos, &dest, &cfg, &observed) else {
+            let Some(route) =
+                self.plan_helo_threat_route(&land, side, pos, &dest, &cfg, &observed)
+            else {
                 continue;
             };
-            let plan = plan_helo_route(&land, pos, route.land_pos, &cfg, route.hint.as_ref());
+            let plan =
+                plan_helo_route(&land, pos, route.land_pos, &cfg, route.hint.as_ref());
             let land_alt = land.get_height(LuaVec2(route.land_pos)).unwrap_or(0.);
-            if let Err(e) = push_route(lua, &group_name, &plan, pos, route.land_pos, land_alt, speed) {
-                warn!("[HELO_ROUTE] {id} re-route ({reason}) could not be handed to the AI: {e:?}");
+            if let Err(e) =
+                push_route(lua, &group_name, &plan, pos, route.land_pos, land_alt, speed)
+            {
+                warn!(
+                    "[HELO_ROUTE] {id} re-route ({reason}) could not be handed to the AI: {e:?}"
+                );
                 continue;
             }
             let track = match &route.hint {
@@ -1119,7 +1202,9 @@ impl Db {
             );
             // Whatever is left of the flight, plus the time on the ground.
             let need = now
-                + chrono::Duration::seconds((route.planned.length / speed * 1.5) as i64 + 12 * 60);
+                + chrono::Duration::seconds(
+                    (route.planned.length / speed * 1.5) as i64 + 12 * 60,
+                );
             if let Some(m) = self.ephemeral.active_helo_missions.get_mut(&id)
                 && let Some(d) = m.deadline.as_mut()
                 && *d < need
@@ -1137,7 +1222,9 @@ impl Db {
             let msg = if under_fire {
                 format_compact!("your helo to {dest_name} is under fire -- re-routing")
             } else {
-                format_compact!("your helo to {dest_name} is re-routing around newly reported air defence")
+                format_compact!(
+                    "your helo to {dest_name} is re-routing around newly reported air defence"
+                )
             };
             self.ephemeral.panel_to_player(&self.persisted, 10, &player, msg);
         }
@@ -1181,7 +1268,10 @@ mod tests {
         assert_eq!(p.exposure, 0.);
         assert_eq!(p.avoided, 1);
         assert!(p.track.len() > 2);
-        assert!(p.length > 50_000. && p.length < 50_000. * MAX_DETOUR_FACTOR + MAX_DETOUR_EXTRA_M);
+        assert!(
+            p.length > 50_000.
+                && p.length < 50_000. * MAX_DETOUR_FACTOR + MAX_DETOUR_EXTRA_M
+        );
         for w in p.track.windows(2) {
             assert_eq!(chord_inside(w[0], w[1], t[0].pos, t[0].radius), 0.);
         }
@@ -1272,10 +1362,18 @@ mod tests {
     fn landing_skips_unusable_ground() {
         // Centre and everything east of it is water.
         let center = v(0., 0.);
-        let p = choose_landing_point(center, 800., &[], v(0., 0.), |_| true, |q| q.x < -100.);
+        let p =
+            choose_landing_point(center, 800., &[], v(0., 0.), |_| true, |q| q.x < -100.);
         assert!(p.x < -100.);
         // Nothing usable at all: the centre, as before.
-        let p = choose_landing_point(center, 800., &[v(0., 500.)], v(0., 0.), |_| true, |_| false);
+        let p = choose_landing_point(
+            center,
+            800.,
+            &[v(0., 500.)],
+            v(0., 0.),
+            |_| true,
+            |_| false,
+        );
         assert_eq!(p, center);
     }
 
@@ -1285,10 +1383,16 @@ mod tests {
         let mut g = ReplanGate::default();
         assert_eq!(g.check(t0, 20, 2), Ok(()));
         g.record(t0);
-        assert_eq!(g.check(t0 + chrono::Duration::seconds(10), 20, 2), Err(ReplanBlocked::TooSoon));
+        assert_eq!(
+            g.check(t0 + chrono::Duration::seconds(10), 20, 2),
+            Err(ReplanBlocked::TooSoon)
+        );
         assert_eq!(g.check(t0 + chrono::Duration::seconds(20), 20, 2), Ok(()));
         g.record(t0 + chrono::Duration::seconds(20));
-        assert_eq!(g.check(t0 + chrono::Duration::seconds(300), 20, 2), Err(ReplanBlocked::Exhausted));
+        assert_eq!(
+            g.check(t0 + chrono::Duration::seconds(300), 20, 2),
+            Err(ReplanBlocked::Exhausted)
+        );
     }
 
     #[test]

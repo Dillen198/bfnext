@@ -15,7 +15,11 @@ use crate::*;
 /// A dashboard can drive a three-state badge off this -- LIVE / ENGINE
 /// UNREACHABLE / OFFLINE -- instead of inferring liveness from the mere
 /// existence of a round row.
-pub(crate) async fn health(db: StatsDb, inst: Inst, detail: bool) -> std::result::Result<warp::reply::Json, Error> {
+pub(crate) async fn health(
+    db: StatsDb,
+    inst: Inst,
+    detail: bool,
+) -> std::result::Result<warp::reply::Json, Error> {
     // Served from a short cache. Without one, every open dashboard tab fires
     // its own engine RPC every 30s, and this endpoint would itself become a
     // source of the poll contention it is meant to measure.
@@ -42,7 +46,8 @@ pub(crate) async fn health(db: StatsDb, inst: Inst, detail: bool) -> std::result
             let started = std::time::Instant::now();
             // a range server runs bfrange, which has no campaign state: its
             // equivalent cheap in-memory query is the live range picture
-            let probe_rpc = if inst.cfg.is_range() { "query-range" } else { "query-campaign-state" };
+            let probe_rpc =
+                if inst.cfg.is_range() { "query-range" } else { "query-campaign-state" };
             let probe = tokio::time::timeout(
                 PROBE_TIMEOUT,
                 call_engine_rpc_str(&db, &inst, probe_rpc, vec![]),
@@ -81,7 +86,8 @@ pub(crate) async fn health(db: StatsDb, inst: Inst, detail: bool) -> std::result
             } else if prev_ok == Some(false) {
                 log::info!("[{}] api_health: {probe_rpc} probe answering again", inst.id);
             }
-            *inst.health_cache.lock().await = Some((std::time::Instant::now(), ok, err.clone()));
+            *inst.health_cache.lock().await =
+                Some((std::time::Instant::now(), ok, err.clone()));
             (ok, err, elapsed_ms)
         }
     };
@@ -90,14 +96,13 @@ pub(crate) async fn health(db: StatsDb, inst: Inst, detail: bool) -> std::result
     // server dying. Reported separately so a caller can tell the two apart.
     let round = task::block_in_place(|| -> Result<Option<serde_json::Value>> {
         let rounds = db.latest_rounds_for(&inst.id)?;
-        Ok(rounds
-            .iter()
-            .find(|(_, _, r)| r.end.is_none())
-            .map(|(_, rid, r)| serde_json::json!({
+        Ok(rounds.iter().find(|(_, _, r)| r.end.is_none()).map(|(_, rid, r)| {
+            serde_json::json!({
                 "id": rid.0,
                 "number": db.round_number(*rid),
                 "start": r.start.to_rfc3339(),
-            })))
+            })
+        }))
     })?;
 
     // Public: only what the site, the dashboard and the bot read. The
@@ -152,7 +157,10 @@ pub(crate) async fn api_admin_health(
     Ok(health(db, inst, true).await?.into_response())
 }
 
-pub(crate) async fn api_health(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
+pub(crate) async fn api_health(
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
     health(db, inst, false).await
 }
 
@@ -168,7 +176,9 @@ pub(crate) async fn api_admin_shutdown(
     shutdown: maint::Shutdown,
 ) -> std::result::Result<impl warp::Reply, Error> {
     if !direct_loopback {
-        return Err(websec::forbidden("shutdown is only accepted from this machine").into());
+        return Err(
+            websec::forbidden("shutdown is only accepted from this machine").into()
+        );
     }
     let bearer_ok = match (token.as_deref(), auth_header.as_deref()) {
         (Some(want), Some(h)) => h
@@ -215,18 +225,27 @@ pub(crate) async fn api_metrics(
             .into_response()
     };
     // --metrics-token, or the log-read token as before.
-    let accepted: Vec<&str> = [tokens.0.as_deref(), tokens.1.as_deref()].into_iter().flatten().collect();
+    let accepted: Vec<&str> =
+        [tokens.0.as_deref(), tokens.1.as_deref()].into_iter().flatten().collect();
     if accepted.is_empty() {
-        return text(warp::http::StatusCode::NOT_FOUND, "metrics disabled (no --metrics-token or --log-read-token)\n".into());
+        return text(
+            warp::http::StatusCode::NOT_FOUND,
+            "metrics disabled (no --metrics-token or --log-read-token)\n".into(),
+        );
     }
-    if let Err((status, why)) = check_static_token(&q, auth_header.as_deref(), &accepted, ip) {
+    if let Err((status, why)) =
+        check_static_token(&q, auth_header.as_deref(), &accepted, ip)
+    {
         return text(status, why.into());
     }
     let mut out = std::string::String::new();
     let size = db.sled().size_on_disk().unwrap_or(0);
     let _ = writeln!(out, "# TYPE bfdb_db_size_bytes gauge\nbfdb_db_size_bytes {size}");
     if let Some(free) = DB_PATH.get().and_then(|p| maint::disk_free(p)) {
-        let _ = writeln!(out, "# TYPE bfdb_disk_free_bytes gauge\nbfdb_disk_free_bytes {free}");
+        let _ = writeln!(
+            out,
+            "# TYPE bfdb_disk_free_bytes gauge\nbfdb_disk_free_bytes {free}"
+        );
     }
     let _ = writeln!(out, "# TYPE bfdb_ingest_lag_seconds gauge");
     let _ = writeln!(out, "# TYPE bfdb_engine_reachable gauge");
@@ -238,7 +257,8 @@ pub(crate) async fn api_metrics(
         }
         let reachable = st.health_cache.lock().await.as_ref().map(|(_, ok, _)| *ok);
         if let Some(ok) = reachable {
-            let _ = writeln!(out, "bfdb_engine_reachable{{instance=\"{id}\"}} {}", ok as u8);
+            let _ =
+                writeln!(out, "bfdb_engine_reachable{{instance=\"{id}\"}} {}", ok as u8);
         }
     }
     {
@@ -246,7 +266,10 @@ pub(crate) async fn api_metrics(
         if !g.is_empty() {
             let _ = writeln!(out, "# TYPE bfdb_cockpit_plugin_requests_total counter");
             for (v, (n, _)) in g.iter() {
-                let _ = writeln!(out, "bfdb_cockpit_plugin_requests_total{{version=\"{v}\"}} {n}");
+                let _ = writeln!(
+                    out,
+                    "bfdb_cockpit_plugin_requests_total{{version=\"{v}\"}} {n}"
+                );
             }
         }
     }
@@ -385,7 +408,9 @@ pub(crate) async fn api_admin_perf(
     let live: Option<SessionEnd> = match tokio::time::timeout(
         std::time::Duration::from_secs(3),
         call_engine_rpc_str(&db, &inst, "query-perf", vec![]),
-    ).await {
+    )
+    .await
+    {
         Ok(Ok(json)) => match serde_json::from_str(&json) {
             Ok(e) => Some(e),
             Err(e) => {
@@ -423,20 +448,37 @@ pub(crate) async fn api_admin_perf(
                     })
                 }
                 let engine_rows: Vec<serde_json::Value> = vec![
-                    row(&ps.frame), row(&ps.timed_events), row(&ps.slow_timed),
-                    row(&ps.dcs_events), row(&ps.dcs_hooks),
-                    row(&ps.unit_positions), row(&ps.player_positions),
-                    row(&ps.ewr_tracks), row(&ps.ewr_reports),
-                    row(&ps.unit_culling), row(&ps.remark_objectives),
-                    row(&ps.update_jtac_contacts), row(&ps.do_repairs),
-                    row(&ps.spawn_queue), row(&ps.spawn), row(&ps.despawn),
-                    row(&ps.advise_captured), row(&ps.advise_capturable),
-                    row(&ps.jtac_target_positions), row(&ps.process_messages),
-                    row(&ps.snapshot), row(&ps.logistics), row(&ps.logistics_distribute),
-                    row(&ps.logistics_deliver), row(&ps.logistics_transfer),
-                    row(&ps.logistics_sync_from), row(&ps.logistics_sync_to),
-                    row(&ps.logistics_convoy), row(&ps.logistics_air_routes),
-                    row(&ps.logistics_sea_routes), row(&ps.frontline),
+                    row(&ps.frame),
+                    row(&ps.timed_events),
+                    row(&ps.slow_timed),
+                    row(&ps.dcs_events),
+                    row(&ps.dcs_hooks),
+                    row(&ps.unit_positions),
+                    row(&ps.player_positions),
+                    row(&ps.ewr_tracks),
+                    row(&ps.ewr_reports),
+                    row(&ps.unit_culling),
+                    row(&ps.remark_objectives),
+                    row(&ps.update_jtac_contacts),
+                    row(&ps.do_repairs),
+                    row(&ps.spawn_queue),
+                    row(&ps.spawn),
+                    row(&ps.despawn),
+                    row(&ps.advise_captured),
+                    row(&ps.advise_capturable),
+                    row(&ps.jtac_target_positions),
+                    row(&ps.process_messages),
+                    row(&ps.snapshot),
+                    row(&ps.logistics),
+                    row(&ps.logistics_distribute),
+                    row(&ps.logistics_deliver),
+                    row(&ps.logistics_transfer),
+                    row(&ps.logistics_sync_from),
+                    row(&ps.logistics_sync_to),
+                    row(&ps.logistics_convoy),
+                    row(&ps.logistics_air_routes),
+                    row(&ps.logistics_sea_routes),
+                    row(&ps.frontline),
                 ];
                 use dcso3::perf::HistStat as HS;
                 let a = &e.api;
@@ -447,14 +489,26 @@ pub(crate) async fn api_admin_perf(
                     row(&HS::new(&a.in_air, "Unit.inAir", false)),
                     row(&HS::new(&a.get_ammo, "Unit.getAmmo", false)),
                     row(&HS::new(&a.add_group, "Coalition.addGroup", false)),
-                    row(&HS::new(&a.add_static_object, "Coalition.addStaticObject", false)),
+                    row(&HS::new(
+                        &a.add_static_object,
+                        "Coalition.addStaticObject",
+                        false,
+                    )),
                     row(&HS::new(&a.unit_is_exist, "Unit.isExist", false)),
                     row(&HS::new(&a.unit_get_by_name, "Unit.getByName", false)),
                     row(&HS::new(&a.unit_get_desc, "Unit.getDesc", false)),
                     row(&HS::new(&a.land_is_visible, "Land.isVisible", false)),
                     row(&HS::new(&a.land_get_height, "Land.getHeight", false)),
-                    row(&HS::new(&a.timer_schedule_function, "Timer.scheduleFunction", false)),
-                    row(&HS::new(&a.timer_remove_function, "Timer.removeFunction", false)),
+                    row(&HS::new(
+                        &a.timer_schedule_function,
+                        "Timer.scheduleFunction",
+                        false,
+                    )),
+                    row(&HS::new(
+                        &a.timer_remove_function,
+                        "Timer.removeFunction",
+                        false,
+                    )),
                     row(&HS::new(&a.timer_get_time, "Timer.getTime", false)),
                     row(&HS::new(&a.timer_get_abs_time, "Timer.getAbsTime", false)),
                     row(&HS::new(&a.timer_get_time0, "Timer.getTime0", false)),
@@ -505,21 +559,41 @@ pub(crate) async fn api_admin_perf_history(
             })
         }).collect();
         // Also include per-metric rows for full detail view
-        let full: Vec<_> = history.iter().map(|e| {
-            let ps = e.engine.stat(&e.frame);
-            let engine_rows: Vec<serde_json::Value> = vec![
-                row(&ps.frame), row(&ps.timed_events), row(&ps.slow_timed),
-                row(&ps.dcs_events), row(&ps.dcs_hooks),
-                row(&ps.unit_positions), row(&ps.player_positions),
-                row(&ps.spawn_queue), row(&ps.spawn), row(&ps.despawn),
-                row(&ps.logistics), row(&ps.logistics_deliver), row(&ps.logistics_distribute),
-                row(&ps.logistics_convoy), row(&ps.logistics_air_routes), row(&ps.logistics_sea_routes),
-                row(&ps.frontline), row(&ps.snapshot), row(&ps.ewr_tracks), row(&ps.ewr_reports),
-                row(&ps.jtac_target_positions), row(&ps.update_jtac_contacts), row(&ps.do_repairs),
-            ];
-            serde_json::json!({ "time": e.time.to_rfc3339(), "metrics": engine_rows })
-        }).collect();
-        Ok(serde_json::to_string(&serde_json::json!({ "timeline": entries, "sessions": full }))?)
+        let full: Vec<_> = history
+            .iter()
+            .map(|e| {
+                let ps = e.engine.stat(&e.frame);
+                let engine_rows: Vec<serde_json::Value> = vec![
+                    row(&ps.frame),
+                    row(&ps.timed_events),
+                    row(&ps.slow_timed),
+                    row(&ps.dcs_events),
+                    row(&ps.dcs_hooks),
+                    row(&ps.unit_positions),
+                    row(&ps.player_positions),
+                    row(&ps.spawn_queue),
+                    row(&ps.spawn),
+                    row(&ps.despawn),
+                    row(&ps.logistics),
+                    row(&ps.logistics_deliver),
+                    row(&ps.logistics_distribute),
+                    row(&ps.logistics_convoy),
+                    row(&ps.logistics_air_routes),
+                    row(&ps.logistics_sea_routes),
+                    row(&ps.frontline),
+                    row(&ps.snapshot),
+                    row(&ps.ewr_tracks),
+                    row(&ps.ewr_reports),
+                    row(&ps.jtac_target_positions),
+                    row(&ps.update_jtac_contacts),
+                    row(&ps.do_repairs),
+                ];
+                serde_json::json!({ "time": e.time.to_rfc3339(), "metrics": engine_rows })
+            })
+            .collect();
+        Ok(serde_json::to_string(
+            &serde_json::json!({ "timeline": entries, "sessions": full }),
+        )?)
     })?;
     Ok(json_response(data))
 }

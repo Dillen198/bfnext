@@ -19,9 +19,9 @@
 //! When the hooks state has no bomb tables, the mission state is tried once
 //! the range starts (`bombs_from_mission`).
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use bfprotocols::range::{WeaponBallistics, WeaponDb};
-use dcso3::{dcs::Dcs, HooksLua, LuaEnv, MizLua};
+use dcso3::{HooksLua, LuaEnv, MizLua, dcs::Dcs};
 use fxhash::FxHashMap;
 use log::{info, warn};
 use mlua::prelude::*;
@@ -69,7 +69,11 @@ pub fn static_shape(typ: &str) -> Option<String> {
 /// `wanted` that each pylon of `typ` actually accepts, up to `max` stores.
 /// Anything DCS's own pylon table doesn't list is skipped, so a guessed CLSID
 /// can never produce an illegal loadout.
-pub fn auto_loadout(typ: &str, wanted: &[&str], max: usize) -> std::collections::BTreeMap<u8, String> {
+pub fn auto_loadout(
+    typ: &str,
+    wanted: &[&str],
+    max: usize,
+) -> std::collections::BTreeMap<u8, String> {
     let mut out = std::collections::BTreeMap::new();
     let Some(h) = get() else { return out };
     let Some(pylons) = h.pylons.get(typ) else { return out };
@@ -78,7 +82,8 @@ pub fn auto_loadout(typ: &str, wanted: &[&str], max: usize) -> std::collections:
             if out.len() >= max {
                 return out;
             }
-            if !out.contains_key(n) && clsids.iter().any(|c| c.eq_ignore_ascii_case(want)) {
+            if !out.contains_key(n) && clsids.iter().any(|c| c.eq_ignore_ascii_case(want))
+            {
                 out.insert(*n, want.to_string());
             }
         }
@@ -93,18 +98,28 @@ pub fn aam_class(name: &str) -> Option<&'static str> {
     let n = name.to_ascii_uppercase().replace(' ', "");
     let has = |k: &[&str]| k.iter().any(|x| n.contains(x));
     if has(&[
-        "R-27T", "R-27ET", "R-73", "R-60", "R-3S", "R-13", "AIM-9", "AIM9", "PL-5", "PL-8", "PL-9",
-        "MAGIC", "MICA-IR", "IRIS-T", "ASRAAM", "PYTHON", "SHAFRIR", "R550",
+        "R-27T", "R-27ET", "R-73", "R-60", "R-3S", "R-13", "AIM-9", "AIM9", "PL-5",
+        "PL-8", "PL-9", "MAGIC", "MICA-IR", "IRIS-T", "ASRAAM", "PYTHON", "SHAFRIR",
+        "R550",
     ]) {
         Some("fox2")
     } else if has(&[
-        "R-27R", "R-27ER", "R-27", "AIM-7", "AIM7", "SUPER530", "SUPER_530", "SKYFLASH", "ASPIDE",
-        "R-24R", "R-23R",
+        "R-27R",
+        "R-27ER",
+        "R-27",
+        "AIM-7",
+        "AIM7",
+        "SUPER530",
+        "SUPER_530",
+        "SKYFLASH",
+        "ASPIDE",
+        "R-24R",
+        "R-23R",
     ]) {
         Some("fox1")
     } else if has(&[
-        "R-77", "AIM-120", "AIM120", "SD-10", "SD10", "PL-12", "PL12", "PL-15", "PL15", "METEOR",
-        "MICA-EM", "MICA_EM", "R-37", "AIM-54", "AIM54",
+        "R-77", "AIM-120", "AIM120", "SD-10", "SD10", "PL-12", "PL12", "PL-15", "PL15",
+        "METEOR", "MICA-EM", "MICA_EM", "R-37", "AIM-54", "AIM54",
     ]) {
         Some("fox3")
     } else {
@@ -114,7 +129,11 @@ pub fn aam_class(name: &str) -> Option<&'static str> {
 
 /// Loadout of `class` ("fox1", "fox2", "fox3") for `typ`, chosen from the
 /// stores its pylons accept by their DCS names, `max` stores.
-pub fn loadout_by_class(typ: &str, class: &str, max: usize) -> std::collections::BTreeMap<u8, String> {
+pub fn loadout_by_class(
+    typ: &str,
+    class: &str,
+    max: usize,
+) -> std::collections::BTreeMap<u8, String> {
     let mut out = std::collections::BTreeMap::new();
     let Some(h) = get() else { return out };
     let Some(pylons) = h.pylons.get(typ) else { return out };
@@ -213,17 +232,27 @@ fn harvest_pylons(g: &LuaTable) -> FxHashMap<String, Vec<(u8, Vec<String>)>> {
         let Ok(Some(list)) = c.raw_get::<Option<LuaTable>>(sub) else { continue };
         for v in list.sequence_values::<LuaTable>() {
             let Ok(t) = v else { continue };
-            let Some(typ) = t.raw_get::<Option<String>>("type").ok().flatten() else { continue };
-            let Some(pyl) = t.raw_get::<Option<LuaTable>>("Pylons").ok().flatten() else { continue };
+            let Some(typ) = t.raw_get::<Option<String>>("type").ok().flatten() else {
+                continue;
+            };
+            let Some(pyl) = t.raw_get::<Option<LuaTable>>("Pylons").ok().flatten() else {
+                continue;
+            };
             let mut ps = vec![];
             for p in pyl.sequence_values::<LuaTable>() {
                 let Ok(p) = p else { continue };
-                let Some(n) = p.raw_get::<Option<i64>>("Number").ok().flatten() else { continue };
+                let Some(n) = p.raw_get::<Option<i64>>("Number").ok().flatten() else {
+                    continue;
+                };
                 let mut clsids = vec![];
-                if let Some(ls) = p.raw_get::<Option<LuaTable>>("Launchers").ok().flatten() {
+                if let Some(ls) =
+                    p.raw_get::<Option<LuaTable>>("Launchers").ok().flatten()
+                {
                     for l in ls.sequence_values::<LuaTable>() {
                         if let Ok(l) = l {
-                            if let Some(c) = l.raw_get::<Option<String>>("CLSID").ok().flatten() {
+                            if let Some(c) =
+                                l.raw_get::<Option<String>>("CLSID").ok().flatten()
+                            {
                                 clsids.push(c);
                             }
                         }
@@ -255,9 +284,14 @@ fn harvest_clsid_names(g: &LuaTable) -> FxHashMap<String, String> {
     }
     if let Ok(Some(cats)) = w.raw_get::<Option<LuaTable>>("Categories") {
         for c in cats.sequence_values::<LuaTable>().flatten() {
-            let Some(ls) = c.raw_get::<Option<LuaTable>>("Launchers").ok().flatten() else { continue };
+            let Some(ls) = c.raw_get::<Option<LuaTable>>("Launchers").ok().flatten()
+            else {
+                continue;
+            };
             for l in ls.sequence_values::<LuaTable>().flatten() {
-                if let (Some(clsid), Some(n)) = (l.raw_get::<Option<String>>("CLSID").ok().flatten(), name_of(&l)) {
+                if let (Some(clsid), Some(n)) =
+                    (l.raw_get::<Option<String>>("CLSID").ok().flatten(), name_of(&l))
+                {
                     m.entry(clsid).or_insert(n);
                 }
             }
@@ -274,7 +308,9 @@ fn harvest_shapes(g: &LuaTable) -> FxHashMap<String, String> {
     for (_, cat) in units.pairs::<LuaValue, LuaTable>().flatten() {
         for (_, list) in cat.pairs::<LuaValue, LuaTable>().flatten() {
             for t in list.sequence_values::<LuaTable>().flatten() {
-                let Some(typ) = t.raw_get::<Option<String>>("type").ok().flatten() else { continue };
+                let Some(typ) = t.raw_get::<Option<String>>("type").ok().flatten() else {
+                    continue;
+                };
                 let shape = ["ShapeName", "shape_name"]
                     .iter()
                     .find_map(|k| t.raw_get::<Option<String>>(*k).ok().flatten());
@@ -298,7 +334,8 @@ fn bomb_sources(g: &LuaTable) -> String {
             .and_then(|t| t.raw_get::<Option<LuaTable>>("weapons").ok().flatten())
             .and_then(|w| w.raw_get::<Option<LuaTable>>("bombs").ok().flatten()),
     );
-    let show = |c: Option<usize>| c.map(|c| format!("{c} entries")).unwrap_or("absent".into());
+    let show =
+        |c: Option<usize>| c.map(|c| format!("{c} entries")).unwrap_or("absent".into());
     format!(
         "_G.bombs {}, weapons_table {}, weapons_table.weapons.bombs {}",
         show(bombs),
@@ -341,7 +378,9 @@ fn harvest_fuel(g: &LuaTable) -> FxHashMap<String, f64> {
         let Ok(Some(list)) = c.raw_get::<Option<LuaTable>>(sub) else { continue };
         for v in list.sequence_values::<LuaTable>() {
             let Ok(t) = v else { continue };
-            let Some(typ) = t.raw_get::<Option<String>>("type").ok().flatten() else { continue };
+            let Some(typ) = t.raw_get::<Option<String>>("type").ok().flatten() else {
+                continue;
+            };
             if let Some(f) = num(&t, "MaxFuelWeight") {
                 m.insert(typ, f);
             }
@@ -375,9 +414,18 @@ pub fn init(lua: HooksLua) -> Result<()> {
         shapes.len()
     );
     if bombs.is_empty() {
-        info!("no bomb tables in the hooks state ({}); the mission state is tried at range start", bomb_sources(&g));
+        info!(
+            "no bomb tables in the hooks state ({}); the mission state is tried at range start",
+            bomb_sources(&g)
+        );
     }
-    let h = Harvest { weapons: WeaponDb { dcs_version, bombs }, max_fuel_kg, pylons, clsid_names, shapes };
+    let h = Harvest {
+        weapons: WeaponDb { dcs_version, bombs },
+        max_fuel_kg,
+        pylons,
+        clsid_names,
+        shapes,
+    };
     match HARVEST.write() {
         Ok(mut w) => *w = Some(Arc::new(h)),
         Err(_) => warn!("harvest lock poisoned"),

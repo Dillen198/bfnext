@@ -23,16 +23,24 @@ pub(crate) async fn api_gci_transmit(
         || c.session.is_admin
         || c.ucid
             .as_ref()
-            .map(|u| task::block_in_place(|| command::is_commander(&db, &inst, u, c.side)).unwrap_or(false))
+            .map(|u| {
+                task::block_in_place(|| command::is_commander(&db, &inst, u, c.side))
+                    .unwrap_or(false)
+            })
             .unwrap_or(false);
     if !allowed {
-        return Err(websec::forbidden("only your side's commanders and admins can take the GCI seat").into());
+        return Err(websec::forbidden(
+            "only your side's commanders and admins can take the GCI seat",
+        )
+        .into());
     }
     let text = body.text.trim();
     if text.is_empty() || text.chars().count() > 200 {
         return Err(websec::bad_request("a call is 1 to 200 characters").into());
     }
-    crate::worker::hub::gci_transmit(&inst.id, c.side, text).await.map_err(websec::bad_request)?;
+    crate::worker::hub::gci_transmit(&inst.id, c.side, text)
+        .await
+        .map_err(websec::bad_request)?;
     log::info!("[{}] human GCI ({}, {:?}): {text}", inst.id, c.session.username, c.side);
     Ok(json_response(r#"{"ok":true}"#.into()))
 }
@@ -40,18 +48,18 @@ pub(crate) async fn api_gci_transmit(
 /// A single unit record from the DCS Export.lua UDP feed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct LiveUnit {
-    pub(crate) id:   String,
-    pub(crate) nm:   String,
-    pub(crate) typ:  String,
+    pub(crate) id: String,
+    pub(crate) nm: String,
+    pub(crate) typ: String,
     /// 1=Plane 2=Helo 3=Ground 4=Ship
-    pub(crate) cat:  u8,
+    pub(crate) cat: u8,
     /// 1=Red 2=Blue
-    pub(crate) coa:  u8,
-    pub(crate) lat:  f64,
-    pub(crate) lon:  f64,
-    pub(crate) alt:  f64,
-    pub(crate) hdg:  f64,
-    pub(crate) spd:  f64,
+    pub(crate) coa: u8,
+    pub(crate) lat: f64,
+    pub(crate) lon: f64,
+    pub(crate) alt: f64,
+    pub(crate) hdg: f64,
+    pub(crate) spd: f64,
     /// Vertical speed m/s (positive = climbing), optional
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) vspd: Option<f64>,
@@ -65,8 +73,8 @@ pub(crate) struct LiveUnit {
 pub(crate) struct Bullseye {
     /// 1=Red 2=Blue
     pub(crate) side: u8,
-    pub(crate) lat:  f64,
-    pub(crate) lon:  f64,
+    pub(crate) lat: f64,
+    pub(crate) lon: f64,
 }
 
 /// One UDP message from Export.lua.
@@ -74,15 +82,15 @@ pub(crate) struct Bullseye {
 #[derive(Debug, Deserialize)]
 pub(crate) struct ExportMsg {
     /// DCS model time
-    pub(crate) t:    f64,
+    pub(crate) t: f64,
     /// Batch sequence index within this tick
-    pub(crate) seq:  u32,
+    pub(crate) seq: u32,
     /// True if this is the last batch for this tick
     pub(crate) last: bool,
     /// Total unit count for this tick (across all batches)
-    pub(crate) n:    u32,
+    pub(crate) n: u32,
     /// Units in this batch
-    pub(crate) u:    Vec<LiveUnit>,
+    pub(crate) u: Vec<LiveUnit>,
     /// Bullseye points (only present on the last batch)
     #[serde(default)]
     pub(crate) bull: Vec<Bullseye>,
@@ -102,9 +110,9 @@ pub(crate) struct ExportListenCfg {
 /// Message broadcast to all WebSocket clients.
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct WsUnitsMsg<'a> {
-    pub(crate) t:     f64,
+    pub(crate) t: f64,
     pub(crate) units: &'a [LiveUnit],
-    pub(crate) bull:  &'a [Bullseye],
+    pub(crate) bull: &'a [Bullseye],
 }
 
 pub(crate) type LiveState = Arc<tokio::sync::RwLock<(f64, Vec<LiveUnit>, Vec<Bullseye>)>>;
@@ -153,9 +161,9 @@ pub(crate) async fn udp_export_listener(
 
     let mut buf = vec![0u8; 65536];
     // Accumulate batches for one tick before broadcasting
-    let mut pending:      Vec<LiveUnit> = Vec::new();
+    let mut pending: Vec<LiveUnit> = Vec::new();
     let mut pending_bull: Vec<Bullseye> = Vec::new();
-    let mut pending_t:    f64;
+    let mut pending_t: f64;
     let mut last_trail: Option<std::time::Instant> = None;
 
     loop {
@@ -164,8 +172,11 @@ pub(crate) async fn udp_export_listener(
             Err(_) => continue,
         };
         // Strip trailing newline/whitespace
-        let slice = buf[..len].iter().rposition(|&b| b > b' ')
-            .map(|i| &buf[..=i]).unwrap_or(&buf[..len]);
+        let slice = buf[..len]
+            .iter()
+            .rposition(|&b| b > b' ')
+            .map(|i| &buf[..=i])
+            .unwrap_or(&buf[..len]);
         let msg: ExportMsg = match serde_json::from_slice(slice) {
             Ok(m) => m,
             Err(_) => continue,
@@ -190,7 +201,11 @@ pub(crate) async fn udp_export_listener(
             // Full tick received — update state and broadcast
             let json = {
                 let mut w = state.write().await;
-                *w = (pending_t, std::mem::take(&mut pending), std::mem::take(&mut pending_bull));
+                *w = (
+                    pending_t,
+                    std::mem::take(&mut pending),
+                    std::mem::take(&mut pending_bull),
+                );
                 let broadcast_msg = WsUnitsMsg { t: w.0, units: &w.1, bull: &w.2 };
                 serde_json::to_string(&broadcast_msg).unwrap_or_default()
             };
@@ -211,7 +226,9 @@ pub(crate) async fn udp_export_listener(
                 task::spawn_blocking(move || {
                     let rounds = db2.latest_rounds_for(&inst2.id).ok();
                     let rid = rounds.as_deref().and_then(|rs| {
-                        rs.iter().find(|(_, _, r)| r.end.is_none()).map(|(_, rid, _)| *rid)
+                        rs.iter()
+                            .find(|(_, _, r)| r.end.is_none())
+                            .map(|(_, rid, _)| *rid)
                     });
                     if let Some(rid) = rid {
                         for u in &units_snapshot {
@@ -250,7 +267,11 @@ pub(crate) async fn ws_units_handler(
     .into_response()
 }
 
-pub(crate) async fn ws_units(ws: WebSocket, state: LiveState, mut rx: broadcast::Receiver<String>) {
+pub(crate) async fn ws_units(
+    ws: WebSocket,
+    state: LiveState,
+    mut rx: broadcast::Receiver<String>,
+) {
     let (mut sink, mut stream) = ws.split();
 
     // Send current snapshot immediately on connect
@@ -315,7 +336,6 @@ pub(crate) enum TacView {
     Denied(&'static str),
 }
 
-
 /// A weapon name worth showing, or None.
 ///
 /// Kills recorded before the engine learned that DCS leaves `weapon_name` nil
@@ -324,9 +344,10 @@ pub(crate) enum TacView {
 /// engine no longer produces those, but the rows already in the database do,
 /// and they render in the kill log as if "nil" were the weapon. Filter it here
 /// so the API never hands one out, rather than rewriting stored history.
-pub(crate) fn display_weapon<S: std::fmt::Display>(name: Option<&S>) -> Option<std::string::String> {
-    name.map(|w| w.to_string())
-        .filter(|w| !w.is_empty() && w != "nil")
+pub(crate) fn display_weapon<S: std::fmt::Display>(
+    name: Option<&S>,
+) -> Option<std::string::String> {
+    name.map(|w| w.to_string()).filter(|w| !w.is_empty() && w != "nil")
 }
 
 /// Background task: poll `query-tacmap` for both coalitions and cache the
@@ -347,15 +368,20 @@ pub(crate) async fn tacmap_poller(db: StatsDb, inst: Inst, state: TacState) {
     let mut last_report: [chrono::DateTime<chrono::Utc>; 2] =
         [chrono::DateTime::UNIX_EPOCH; 2];
     let mut last_err_kind: [u8; 2] = [255; 2]; // 0=ok 1=rpc-err 2=timeout 3=bad-json
-    // Consecutive failures per side, so an instance that is simply switched off
-    // backs off to a heartbeat instead of a steady warning stream.
+                                               // Consecutive failures per side, so an instance that is simply switched off
+                                               // backs off to a heartbeat instead of a steady warning stream.
     let mut fail_streak: [u32; 2] = [0; 2];
     loop {
         tick.tick().await;
         for (i, side) in ["blue", "red"].into_iter().enumerate() {
             let res = tokio::time::timeout(
                 std::time::Duration::from_secs(6),
-                call_engine_rpc_str(&db, &inst, "query-tacmap", vec![("side", Value::from(side))]),
+                call_engine_rpc_str(
+                    &db,
+                    &inst,
+                    "query-tacmap",
+                    vec![("side", Value::from(side))],
+                ),
             )
             .await;
             let (pic, kind, detail) = match res {
@@ -399,7 +425,9 @@ pub(crate) async fn tacmap_poller(db: StatsDb, inst: Inst, state: TacState) {
                     if last_err_kind[i] != 0 && last_err_kind[i] != 255 {
                         log::info!("[{id}] tacmap_poller: query-tacmap({side}) ok again -- {detail}");
                     } else {
-                        log::debug!("[{id}] tacmap_poller: query-tacmap({side}) ok -- {detail}");
+                        log::debug!(
+                            "[{id}] tacmap_poller: query-tacmap({side}) ok -- {detail}"
+                        );
                     }
                 } else if fail_streak[i] > 30 {
                     log::warn!(
@@ -523,12 +551,22 @@ pub(crate) async fn ws_tacmap_handler(
     live: LiveState,
 ) -> Response {
     let Some(slot) = websec::ws_slot(ip) else {
-        return websec::ws_refused(warp::http::StatusCode::TOO_MANY_REQUESTS, "too many open connections");
+        return websec::ws_refused(
+            warp::http::StatusCode::TOO_MANY_REQUESTS,
+            "too many open connections",
+        );
     };
     let view = tacmap_view(session_id, &query, &db, &bot_cfg, &inst).await;
     ws.on_upgrade(move |socket| async move {
         let _slot = slot;
-        ws_tacmap(socket, view, tac, live, TacIdentity { session_id, query, db, bot_cfg, inst }).await
+        ws_tacmap(
+            socket,
+            view,
+            tac,
+            live,
+            TacIdentity { session_id, query, db, bot_cfg, inst },
+        )
+        .await
     })
     .into_response()
 }
@@ -558,16 +596,22 @@ pub(crate) async fn tacmap_view(
             Some(session) => {
                 let ucid = resolve_ucid_via_bot(&bot_cfg, &session.discord_id).await;
                 let own = match &ucid {
-                    Some(u) => task::block_in_place(|| db.pilot_current_side(&inst.id, u)).ok().flatten(),
+                    Some(u) => {
+                        task::block_in_place(|| db.pilot_current_side(&inst.id, u))
+                            .ok()
+                            .flatten()
+                    }
                     None => None,
                 };
                 match own {
                     Some(s) => TacView::Side(s),
-                    None if session.is_admin => match query.get("side").map(|s| s.as_str()) {
-                        Some("blue") => TacView::Side(Side::Blue),
-                        Some("red") => TacView::Side(Side::Red),
-                        _ => TacView::God,
-                    },
+                    None if session.is_admin => {
+                        match query.get("side").map(|s| s.as_str()) {
+                            Some("blue") => TacView::Side(Side::Blue),
+                            Some("red") => TacView::Side(Side::Red),
+                            _ => TacView::God,
+                        }
+                    }
                     None => TacView::Denied("nocoalition"),
                 }
             }
@@ -607,7 +651,8 @@ pub(crate) async fn ws_tacmap(
         let _ = sink.send(Message::close()).await;
         return;
     }
-    let mut round = task::block_in_place(|| who.db.active_round_id(&who.inst.id)).ok().flatten();
+    let mut round =
+        task::block_in_place(|| who.db.active_round_id(&who.inst.id)).ok().flatten();
     let mut last_check = std::time::Instant::now();
     let mut last_heard = std::time::Instant::now();
     let mut ticks: u32 = 0;

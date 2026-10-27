@@ -48,10 +48,14 @@ fn same(a: &Value, b: &Value, at: &str) -> Result<(), String> {
             if x.len() != y.len() {
                 return Err(format!("{at}: {} items != {}", x.len(), y.len()));
             }
-            x.iter().zip(y).enumerate().try_for_each(|(i, (x, y))| same(x, y, &format!("{at}[{i}]")))
+            x.iter()
+                .zip(y)
+                .enumerate()
+                .try_for_each(|(i, (x, y))| same(x, y, &format!("{at}[{i}]")))
         }
         (Value::Object(x), Value::Object(y)) => {
-            let keys: std::collections::BTreeSet<&String> = x.keys().chain(y.keys()).collect();
+            let keys: std::collections::BTreeSet<&String> =
+                x.keys().chain(y.keys()).collect();
             keys.into_iter().try_for_each(|k| {
                 let n = Value::Null;
                 same(x.get(k).unwrap_or(&n), y.get(k).unwrap_or(&n), &format!("{at}.{k}"))
@@ -151,7 +155,8 @@ fn inputs(name: &str, key: &str, default: Value) -> Vec<Value> {
     if bless() {
         return default.as_array().unwrap().clone();
     }
-    let txt = std::fs::read_to_string(path(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let txt =
+        std::fs::read_to_string(path(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
     let v: Value = serde_json::from_str(&txt).unwrap();
     v[key].as_array().unwrap_or_else(|| panic!("{name}: no {key}")).clone()
 }
@@ -198,7 +203,9 @@ fn lso_fixtures() {
     let grades = inputs(
         F,
         "grades",
-        json!(["_OK_", "OK", "(OK)", "B", "--", "OWO", "WO", "WOP", "WOFD", "C", "NC", "ZZ"]),
+        json!([
+            "_OK_", "OK", "(OK)", "B", "--", "OWO", "WO", "WOP", "WOFD", "C", "NC", "ZZ"
+        ]),
     );
     let grades: Vec<Value> = grades
         .iter()
@@ -210,7 +217,10 @@ fn lso_fixtures() {
     let normalize = inputs(
         F,
         "normalize",
-        json!(["---", "--", "-", "CUT", "BOLTER", "WOAF", "TWO", "TLU", " OK: ", "_OK_::", "WOFD"]),
+        json!([
+            "---", "--", "-", "CUT", "BOLTER", "WOAF", "TWO", "TLU", " OK: ", "_OK_::",
+            "WOFD"
+        ]),
     );
     let normalize: Vec<Value> = normalize
         .iter()
@@ -289,7 +299,10 @@ fn grading_fixtures() {
     let clock: Vec<Value> = inputs(
         F,
         "clock",
-        json!([0., 14., 16., 45., 90., 179., 180., 270., -90., -14., -16., 345., 359., 360., 735.]),
+        json!([
+            0., 14., 16., 45., 90., 179., 180., 270., -90., -14., -16., 345., 359., 360.,
+            735.
+        ]),
     )
     .iter()
     .map(|r| {
@@ -301,25 +314,46 @@ fn grading_fixtures() {
         Some((e, m)) => json!({ "error": e, "mag": m }),
         None => Value::Null,
     };
-    let glideslope: Vec<Value> =
-        inputs(F, "glideslope", json!([2., 1.55, 1.5, 1.2, 0.85, 0.8, 0.6, 0.45, 0.4, 0.2, 0., -0.2, -0.3, -0.35, -0.5, -0.6, -0.65, -0.8, -0.9, -0.95, -1.4]))
-            .iter()
-            .map(|g| {
-                let g = g.get("gse_deg").unwrap_or(g).as_f64().unwrap();
-                json!({ "gse_deg": g, "expect": call(grading::glideslope_call(g)) })
-            })
-            .collect();
-    let lineup: Vec<Value> = inputs(F, "lineup", json!([4., 3.05, 3., 2., 1.05, 1., 0.7, 0.55, 0.5, 0.2, 0., -0.2, -0.55, -0.7, -1.05, -1.5, -3.05, -3.5]))
-        .iter()
-        .map(|l| {
-            let l = l.get("lue_deg").unwrap_or(l).as_f64().unwrap();
-            json!({ "lue_deg": l, "expect": call(grading::lineup_call(l)) })
-        })
-        .collect();
+    let glideslope: Vec<Value> = inputs(
+        F,
+        "glideslope",
+        json!([
+            2., 1.55, 1.5, 1.2, 0.85, 0.8, 0.6, 0.45, 0.4, 0.2, 0., -0.2, -0.3, -0.35,
+            -0.5, -0.6, -0.65, -0.8, -0.9, -0.95, -1.4
+        ]),
+    )
+    .iter()
+    .map(|g| {
+        let g = g.get("gse_deg").unwrap_or(g).as_f64().unwrap();
+        json!({ "gse_deg": g, "expect": call(grading::glideslope_call(g)) })
+    })
+    .collect();
+    let lineup: Vec<Value> = inputs(
+        F,
+        "lineup",
+        json!([
+            4., 3.05, 3., 2., 1.05, 1., 0.7, 0.55, 0.5, 0.2, 0., -0.2, -0.55, -0.7,
+            -1.05, -1.5, -3.05, -3.5
+        ]),
+    )
+    .iter()
+    .map(|l| {
+        let l = l.get("lue_deg").unwrap_or(l).as_f64().unwrap();
+        json!({ "lue_deg": l, "expect": call(grading::lineup_call(l)) })
+    })
+    .collect();
     let waveoff: Vec<Value> = inputs(
         F,
         "waveoff",
-        json!([[0., 0.], [0., 3.1], [0., -3.1], [-1.3, 0.], [1.9, 0.], [-1.2, 3.], [1.8, -3.]]),
+        json!([
+            [0., 0.],
+            [0., 3.1],
+            [0., -3.1],
+            [-1.3, 0.],
+            [1.9, 0.],
+            [-1.2, 3.],
+            [1.8, -3.]
+        ]),
     )
     .iter()
     .map(|w| {
@@ -386,7 +420,10 @@ const NM: f64 = 1852.;
 const M_TO_FT: f64 = 3.28084;
 
 fn rel_json(s: &[RelSample]) -> Value {
-    json!(s.iter().map(|x| json!([x.t, x.along, x.across, x.agl, x.rel, x.gs_kts])).collect::<Vec<_>>())
+    json!(s
+        .iter()
+        .map(|x| json!([x.t, x.along, x.across, x.agl, x.rel, x.gs_kts]))
+        .collect::<Vec<_>>())
 }
 
 fn rel_from(v: &Value) -> Vec<RelSample> {
@@ -395,13 +432,23 @@ fn rel_from(v: &Value) -> Vec<RelSample> {
         .iter()
         .map(|x| {
             let n = |i: usize| x[i].as_f64().unwrap();
-            RelSample { t: n(0), along: n(1), across: n(2), agl: n(3), rel: n(4), gs_kts: n(5) }
+            RelSample {
+                t: n(0),
+                along: n(1),
+                across: n(2),
+                agl: n(3),
+                rel: n(4),
+                gs_kts: n(5),
+            }
         })
         .collect()
 }
 
 fn taxi_json(s: &[TaxiSample]) -> Value {
-    json!(s.iter().map(|x| json!([x.t, x.along, x.across, x.gs_kts, x.x, x.z])).collect::<Vec<_>>())
+    json!(s
+        .iter()
+        .map(|x| json!([x.t, x.along, x.across, x.gs_kts, x.x, x.z]))
+        .collect::<Vec<_>>())
 }
 
 fn taxi_from(v: &Value) -> Vec<TaxiSample> {
@@ -410,7 +457,14 @@ fn taxi_from(v: &Value) -> Vec<TaxiSample> {
         .iter()
         .map(|x| {
             let n = |i: usize| x[i].as_f64().unwrap();
-            TaxiSample { t: n(0), along: n(1), across: n(2), gs_kts: n(3), x: n(4), z: n(5) }
+            TaxiSample {
+                t: n(0),
+                along: n(1),
+                across: n(2),
+                gs_kts: n(3),
+                x: n(4),
+                z: n(5),
+            }
         })
         .collect()
 }
@@ -420,7 +474,14 @@ fn taxi_from(v: &Value) -> Vec<TaxiSample> {
 fn tidy(mut s: Vec<RelSample>) -> Vec<RelSample> {
     let r = |x: f64| (x * 100.).round() / 100.;
     for x in s.iter_mut() {
-        *x = RelSample { t: r(x.t), along: r(x.along), across: r(x.across), agl: r(x.agl), rel: r(x.rel), gs_kts: r(x.gs_kts) };
+        *x = RelSample {
+            t: r(x.t),
+            along: r(x.along),
+            across: r(x.across),
+            agl: r(x.agl),
+            rel: r(x.rel),
+            gs_kts: r(x.gs_kts),
+        };
     }
     s
 }
@@ -433,7 +494,14 @@ fn straight_in(drift_right_m: f64) -> Vec<RelSample> {
         // a final that swings `drift_right_m` across the centreline between
         // 1.5 and 0.3 nm, then corrects
         let over = if (-1.5 * NM..-0.3 * NM).contains(&a) { drift_right_m } else { 0. };
-        s.push(RelSample { t, along: a, across: over, agl: (-a).max(0.) * 0.0524, rel: 1., gs_kts: 140. });
+        s.push(RelSample {
+            t,
+            along: a,
+            across: over,
+            agl: (-a).max(0.) * 0.0524,
+            rel: 1.,
+            gs_kts: 140.,
+        });
         a += 100.;
         t += 1.4;
     }
@@ -487,19 +555,34 @@ fn taxi_cases() -> Vec<(&'static str, f64, f64, f64, &'static str, Vec<TaxiSampl
     }
     let roll_end = (t, along);
     for k in 0..40 {
-        let g = if (10..15).contains(&k) { 38. } else if (20..26).contains(&k) { 0. } else { 15. };
-        parked.push(TaxiSample { t, along, across: 30. + k as f64 * 8., gs_kts: g, x: along, z: 30. + k as f64 * 8. });
+        let g = if (10..15).contains(&k) {
+            38.
+        } else if (20..26).contains(&k) {
+            0.
+        } else {
+            15.
+        };
+        parked.push(TaxiSample {
+            t,
+            along,
+            across: 30. + k as f64 * 8.,
+            gs_kts: g,
+            x: along,
+            z: 30. + k as f64 * 8.,
+        });
         t += 1.;
     }
     // stops on the runway after the rollout and never turns off
-    let mut stuck: Vec<TaxiSample> = parked.iter().filter(|x| x.t < roll_end.0).copied().collect();
+    let mut stuck: Vec<TaxiSample> =
+        parked.iter().filter(|x| x.t < roll_end.0).copied().collect();
     let (mut t, along) = roll_end;
     for _ in 0..20 {
         stuck.push(TaxiSample { t, along, across: 1., gs_kts: 0., x: along, z: 1. });
         t += 1.;
     }
     // a slow exit: crawls down the runway for 80 s before turning off
-    let mut slow: Vec<TaxiSample> = parked.iter().filter(|x| x.t < roll_end.0).copied().collect();
+    let mut slow: Vec<TaxiSample> =
+        parked.iter().filter(|x| x.t < roll_end.0).copied().collect();
     let (mut t, mut along) = roll_end;
     for k in 0..90 {
         let across = if k < 80 { 0. } else { 30. + (k - 80) as f64 * 8. };
@@ -530,7 +613,8 @@ fn pattern_leg_fixtures() {
         .map(|p| {
             let s = rel_from(&p["samples"]);
             let tt = p["t_touch"].as_f64().unwrap();
-            let legs: Vec<&str> = pattern_legs::legs(&s, tt).iter().map(|l| l.label()).collect();
+            let legs: Vec<&str> =
+                pattern_legs::legs(&s, tt).iter().map(|l| l.label()).collect();
             json!({
                 "name": p["name"],
                 "t_touch": tt,
@@ -586,18 +670,82 @@ fn wire_schema() {
         ($($t:ty),* $(,)?) => { $( let _ = g.subschema_for::<$t>(); )* };
     }
     roots!(
-        AarResult, AirdropRelease, AirdropResult, AntiShipResult, AtmoLayer, BombQuality,
-        BombResult, CasResult, CatalogItem, CsarOutcome, CsarResult, DefenseSummary,
-        EngagementOutcome, EngagementResult, EngineGrade, FieldLandingOutcome, FieldLandingResult,
-        FieldPattern, FieldTaxi, GateTime, GeoPt, GradeSource, GrooveSample, GunneryResult,
-        HotZoneOutcome, HotZoneResult, LandingResult, LaunchGeom, LiveArena, LiveCarrier, LiveCsar,
-        LiveHotZone, LiveIads, LiveJammer, LivePlayer, LiveSamSite, LiveShipDeck, LiveSpawn,
-        LiveStation, LiveTanker, LowLevelResult, MissileOutcome, MissileResult, ParamKind,
-        ParamOption, ParamSpec, PassOutcome, PatternSummary, PilotRef, PrecisionQuality, RangeLive,
-        RangeRecord, RangeResult, RefuelMethod, RelSample, Release, SeadResult, SkyInfo,
-        SlingResult, SpawnCatalog, SpawnCategory, SpawnReply, SpawnRequest, Stability, StationKind,
-        StrafeQuality, StrafeResult, TankerState, Track, TrackPt, TrapResult, TroopResult,
-        WeaponBallistics, WeaponClass, WeaponDb, WindInfo,
+        AarResult,
+        AirdropRelease,
+        AirdropResult,
+        AntiShipResult,
+        AtmoLayer,
+        BombQuality,
+        BombResult,
+        CasResult,
+        CatalogItem,
+        CsarOutcome,
+        CsarResult,
+        DefenseSummary,
+        EngagementOutcome,
+        EngagementResult,
+        EngineGrade,
+        FieldLandingOutcome,
+        FieldLandingResult,
+        FieldPattern,
+        FieldTaxi,
+        GateTime,
+        GeoPt,
+        GradeSource,
+        GrooveSample,
+        GunneryResult,
+        HotZoneOutcome,
+        HotZoneResult,
+        LandingResult,
+        LaunchGeom,
+        LiveArena,
+        LiveCarrier,
+        LiveCsar,
+        LiveHotZone,
+        LiveIads,
+        LiveJammer,
+        LivePlayer,
+        LiveSamSite,
+        LiveShipDeck,
+        LiveSpawn,
+        LiveStation,
+        LiveTanker,
+        LowLevelResult,
+        MissileOutcome,
+        MissileResult,
+        ParamKind,
+        ParamOption,
+        ParamSpec,
+        PassOutcome,
+        PatternSummary,
+        PilotRef,
+        PrecisionQuality,
+        RangeLive,
+        RangeRecord,
+        RangeResult,
+        RefuelMethod,
+        RelSample,
+        Release,
+        SeadResult,
+        SkyInfo,
+        SlingResult,
+        SpawnCatalog,
+        SpawnCategory,
+        SpawnReply,
+        SpawnRequest,
+        Stability,
+        StationKind,
+        StrafeQuality,
+        StrafeResult,
+        TankerState,
+        Track,
+        TrackPt,
+        TrapResult,
+        TroopResult,
+        WeaponBallistics,
+        WeaponClass,
+        WeaponDb,
+        WindInfo,
         cfg::SectorCfg,
     );
     // the shape only: a doc comment edited in mod.rs is not a change
@@ -610,7 +758,9 @@ fn wire_schema() {
                 for (k, x) in o.iter_mut() {
                     match (k.as_str(), x) {
                         // field names, not schema keywords: keep the keys
-                        ("properties", Value::Object(p)) => p.values_mut().for_each(strip),
+                        ("properties", Value::Object(p)) => {
+                            p.values_mut().for_each(strip)
+                        }
                         (_, x) => strip(x),
                     }
                 }

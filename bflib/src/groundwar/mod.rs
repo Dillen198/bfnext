@@ -35,8 +35,8 @@ mod picture;
 pub(crate) use picture::picture;
 
 use crate::{
-    db::formation::{FormationId, FormationRt, Order},
     Context,
+    db::formation::{FormationId, FormationRt, Order},
 };
 use bfprotocols::{
     cfg::GroundWarCfg,
@@ -44,9 +44,9 @@ use bfprotocols::{
     groundwar::{GroundCommand, GroundCommandReply},
     perf::PerfInner,
 };
-use chrono::{prelude::*, Duration};
-use compact_str::{format_compact, CompactString};
-use dcso3::{coalition::Side, env::miz::GroupId as MizGroupId, net::Ucid, MizLua};
+use chrono::{Duration, prelude::*};
+use compact_str::{CompactString, format_compact};
+use dcso3::{MizLua, coalition::Side, env::miz::GroupId as MizGroupId, net::Ucid};
 use fxhash::FxHashMap;
 use log::info;
 use std::mem;
@@ -123,12 +123,11 @@ pub(crate) fn apply(
         crate::command::may_order(ctx, &ucid, side)?;
     }
     let cooldown = Duration::seconds(cfg.player_order_cooldown_secs as i64);
-    let cooling = ctx
-        .groundwar
-        .last_order
-        .get(&ucid)
-        .map_or(false, |t| now - *t < cooldown);
-    let mine = |ctx: &Context, id: FormationId| ctx.db.formation(id).map_or(false, |f| f.side == side);
+    let cooling =
+        ctx.groundwar.last_order.get(&ucid).map_or(false, |t| now - *t < cooldown);
+    let mine = |ctx: &Context, id: FormationId| {
+        ctx.db.formation(id).map_or(false, |f| f.side == side)
+    };
     match kind {
         CmdKind::Status => Err("status is not an order".into()),
         CmdKind::Raise(oid) => {
@@ -136,7 +135,10 @@ pub(crate) fn apply(
                 return Err("wait a moment before your next ground order".into());
             }
             if cfg.raise_cost > 0 && (points as i64) < cfg.raise_cost as i64 {
-                return Err(format_compact!("raising a formation costs {} points", cfg.raise_cost));
+                return Err(format_compact!(
+                    "raising a formation costs {} points",
+                    cfg.raise_cost
+                ));
             }
             let id = ctx
                 .db
@@ -171,12 +173,19 @@ pub(crate) fn apply(
                 .order_formation(&mut ctx.groundwar.rt, lua, id, order, Some(ucid), now)
                 .map_err(|e| format_compact!("order refused: {e}"))?;
             ctx.groundwar.last_order.insert(ucid, now);
-            ctx.db
-                .ephemeral
-                .msgs()
-                .panel_to_side(10, false, side, format_compact!("{pname}{via}: {what}"));
+            ctx.db.ephemeral.msgs().panel_to_side(
+                10,
+                false,
+                side,
+                format_compact!("{pname}{via}: {what}"),
+            );
             let mins = cfg.player_order_lock_secs / 60;
-            Ok((format_compact!("{what}. Yours for {mins} min, then the AI takes it back"), Some(id)))
+            Ok((
+                format_compact!(
+                    "{what}. Yours for {mins} min, then the AI takes it back"
+                ),
+                Some(id),
+            ))
         }
         CmdKind::Release(id) => {
             if !mine(ctx, id) {
@@ -189,7 +198,13 @@ pub(crate) fn apply(
     }
 }
 
-fn run_cmd(lua: MizLua, ctx: &mut Context, cfg: &GroundWarCfg, cmd: Cmd, now: DateTime<Utc>) {
+fn run_cmd(
+    lua: MizLua,
+    ctx: &mut Context,
+    cfg: &GroundWarCfg,
+    cmd: Cmd,
+    now: DateTime<Utc>,
+) {
     let Some(side) = ctx.db.player(&cmd.ucid).map(|p| p.side) else { return };
     match cmd.kind {
         CmdKind::Status => {
@@ -245,8 +260,12 @@ pub(crate) fn dashboard_command(
     };
     let id = |o: u64| ObjectiveId::from(o as i64);
     let kind = match cmd {
-        GroundCommand::Attack { formation, objective } => CmdKind::Order(formation, Order::Attack(id(objective))),
-        GroundCommand::Defend { formation, objective } => CmdKind::Order(formation, Order::Defend(id(objective))),
+        GroundCommand::Attack { formation, objective } => {
+            CmdKind::Order(formation, Order::Attack(id(objective)))
+        }
+        GroundCommand::Defend { formation, objective } => {
+            CmdKind::Order(formation, Order::Defend(id(objective)))
+        }
         GroundCommand::Withdraw { formation, objective } => {
             CmdKind::Order(formation, Order::Withdraw(id(objective)))
         }
@@ -255,8 +274,12 @@ pub(crate) fn dashboard_command(
         GroundCommand::Raise { objective } => CmdKind::Raise(id(objective)),
     };
     match apply(lua, ctx, &cfg, ucid, kind, " (dashboard)", now) {
-        Ok((msg, formation)) => GroundCommandReply { ok: true, message: msg.to_string(), formation },
-        Err(e) => GroundCommandReply { ok: false, message: e.to_string(), formation: None },
+        Ok((msg, formation)) => {
+            GroundCommandReply { ok: true, message: msg.to_string(), formation }
+        }
+        Err(e) => {
+            GroundCommandReply { ok: false, message: e.to_string(), formation: None }
+        }
     }
 }
 
@@ -272,7 +295,9 @@ fn frontline(ctx: &mut Context, cfg: &GroundWarCfg, now: DateTime<Utc>) {
         return;
     }
     let mut h = DefaultHasher::new();
-    for (x, y, w) in crate::db::formation::pressure(&ctx.db.persisted, cfg.frontline_weight) {
+    for (x, y, w) in
+        crate::db::formation::pressure(&ctx.db.persisted, cfg.frontline_weight)
+    {
         ((x / 5_000.).round() as i64).hash(&mut h);
         ((y / 5_000.).round() as i64).hash(&mut h);
         ((w * 4.).round() as i64).hash(&mut h);
@@ -292,7 +317,12 @@ fn frontline(ctx: &mut Context, cfg: &GroundWarCfg, now: DateTime<Utc>) {
 }
 
 /// The slow-tick entry point.
-pub(crate) fn tick(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, now: DateTime<Utc>) {
+pub(crate) fn tick(
+    lua: MizLua,
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    now: DateTime<Utc>,
+) {
     // Garrisons defend their bases with or without the ground war; only
     // the quick reaction force needs it.
     {
@@ -385,4 +415,3 @@ mod tests {
         assert_eq!(daylight(23.), 0.);
     }
 }
-

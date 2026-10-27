@@ -92,12 +92,22 @@ const MAX_SIG: u64 = 4096;
 /// private key. Empty until that key exists: a DLL built so refuses every
 /// update, and bfcockpit/release.ps1 refuses to publish one.
 const RELEASE_PUBKEY: &str = include_str!("../updater.pub");
-const NO_KEY: &str = "this bfcockpit_net.dll was built without the release key, so it can't check \
+const NO_KEY: &str =
+    "this bfcockpit_net.dll was built without the release key, so it can't check \
                       an update -- install the new version by hand";
 
 enum Work {
-    Http { method: String, url: String, body: Option<String>, timeout: Duration, headers: Vec<(String, String)> },
-    Update { version: String, write_dir: PathBuf },
+    Http {
+        method: String,
+        url: String,
+        body: Option<String>,
+        timeout: Duration,
+        headers: Vec<(String, String)>,
+    },
+    Update {
+        version: String,
+        write_dir: PathBuf,
+    },
 }
 
 struct Job {
@@ -136,9 +146,8 @@ fn pool() -> &'static Pool {
             let rx = rx.clone();
             let done = done.clone();
             let agent = agent.clone();
-            let _ = thread::Builder::new()
-                .name(format!("bfcockpit-net-{n}"))
-                .spawn(move || loop {
+            let _ = thread::Builder::new().name(format!("bfcockpit-net-{n}")).spawn(
+                move || loop {
                     // Hold the lock only for the hand-off, not the request.
                     let job = match rx.lock() {
                         Ok(rx) => rx.recv(),
@@ -149,7 +158,8 @@ fn pool() -> &'static Pool {
                     if let Ok(mut done) = done.lock() {
                         done.push(result);
                     }
-                });
+                },
+            );
         }
         Pool { tx: Mutex::new(tx), done, next_id: AtomicU64::new(1) }
     })
@@ -161,9 +171,14 @@ fn read_body(resp: ureq::Response) -> Result<String, String> {
 
 fn read_limited(r: impl Read, max: u64) -> Result<String, String> {
     let mut bytes = Vec::new();
-    r.take(max + 1).read_to_end(&mut bytes).map_err(|e| format!("reading response: {e}"))?;
+    r.take(max + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("reading response: {e}"))?;
     if bytes.len() as u64 > max {
-        return Err(format!("response body is larger than {} MB -- not passed on", max / (1024 * 1024)));
+        return Err(format!(
+            "response body is larger than {} MB -- not passed on",
+            max / (1024 * 1024)
+        ));
     }
     String::from_utf8(bytes).map_err(|_| "response body is not UTF-8 text".to_string())
 }
@@ -173,10 +188,14 @@ fn run(agent: &ureq::Agent, job: Job) -> Done {
         Work::Http { method, url, body, timeout, headers } => {
             http(agent, job.id, &method, &url, body, timeout, &headers)
         }
-        Work::Update { version, write_dir } => match update_now(agent, &version, &write_dir) {
-            Ok(msg) => Done { id: job.id, status: 200, body: msg, error: None },
-            Err(e) => Done { id: job.id, status: 0, body: String::new(), error: Some(e) },
-        },
+        Work::Update { version, write_dir } => {
+            match update_now(agent, &version, &write_dir) {
+                Ok(msg) => Done { id: job.id, status: 200, body: msg, error: None },
+                Err(e) => {
+                    Done { id: job.id, status: 0, body: String::new(), error: Some(e) }
+                }
+            }
+        }
     }
 }
 
@@ -189,10 +208,8 @@ fn http(
     timeout: Duration,
     headers: &[(String, String)],
 ) -> Done {
-    let mut req = agent
-        .request(method, url)
-        .timeout(timeout)
-        .set("Accept", "application/json");
+    let mut req =
+        agent.request(method, url).timeout(timeout).set("Accept", "application/json");
     for (name, value) in headers {
         req = req.set(name, value);
     }
@@ -205,7 +222,12 @@ fn http(
     let resp = match res {
         Ok(resp) | Err(ureq::Error::Status(_, resp)) => resp,
         Err(ureq::Error::Transport(t)) => {
-            return Done { id, status: 0, body: String::new(), error: Some(t.to_string()) }
+            return Done {
+                id,
+                status: 0,
+                body: String::new(),
+                error: Some(t.to_string()),
+            }
         }
     };
     let status = resp.status();
@@ -262,13 +284,18 @@ fn download(agent: &ureq::Agent, url: &str, max: u64) -> Result<Vec<u8>, String>
 /// hidden with `--auto-update --write-dir <profile>`. It installs once DCS
 /// has let go of this DLL -- that is, after the player closes DCS -- and then
 /// exits.
-fn update_now(agent: &ureq::Agent, version: &str, write_dir: &Path) -> Result<String, String> {
+fn update_now(
+    agent: &ureq::Agent,
+    version: &str,
+    write_dir: &Path,
+) -> Result<String, String> {
     // before downloading anything: without the key nothing could be run anyway
     if RELEASE_PUBKEY.trim().is_empty() {
         return Err(NO_KEY.into());
     }
     let dir = std::env::temp_dir().join("VectorStrikeCockpit");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("creating {}: {e}", dir.display()))?;
     let exe = dir.join(format!("VectorStrike-Cockpit-Install-{version}.exe"));
     let part = dir.join(format!("VectorStrike-Cockpit-Install-{version}.part"));
 
@@ -280,9 +307,11 @@ fn update_now(agent: &ureq::Agent, version: &str, write_dir: &Path) -> Result<St
     if !bytes.starts_with(b"MZ") {
         return Err(format!("{url} is not the installer ({} bytes)", bytes.len()));
     }
-    verify(&bytes, &sig, RELEASE_PUBKEY)
-        .map_err(|e| format!("refusing {url}: it isn't signed by the cockpit release key ({e})"))?;
-    std::fs::write(&part, &bytes).map_err(|e| format!("saving {}: {e}", part.display()))?;
+    verify(&bytes, &sig, RELEASE_PUBKEY).map_err(|e| {
+        format!("refusing {url}: it isn't signed by the cockpit release key ({e})")
+    })?;
+    std::fs::write(&part, &bytes)
+        .map_err(|e| format!("saving {}: {e}", part.display()))?;
     // An installer for this version may already be waiting from an earlier
     // session. It is running, so it can't be replaced -- and it will do the job.
     let _ = std::fs::remove_file(&exe);
@@ -295,13 +324,18 @@ fn update_now(agent: &ureq::Agent, version: &str, write_dir: &Path) -> Result<St
     }
     // Once more from disk, immediately before it runs: what runs must be what
     // was verified.
-    let on_disk = std::fs::read(&exe).map_err(|e| format!("reading {}: {e}", exe.display()))?;
+    let on_disk =
+        std::fs::read(&exe).map_err(|e| format!("reading {}: {e}", exe.display()))?;
     if let Err(e) = verify(&on_disk, &sig, RELEASE_PUBKEY) {
         let _ = std::fs::remove_file(&exe);
-        return Err(format!("{} changed on disk since it was verified -- not running it ({e})", exe.display()));
+        return Err(format!(
+            "{} changed on disk since it was verified -- not running it ({e})",
+            exe.display()
+        ));
     }
     drop(on_disk);
-    spawn_detached(&exe, write_dir).map_err(|e| format!("starting {}: {e}", exe.display()))?;
+    spawn_detached(&exe, write_dir)
+        .map_err(|e| format!("starting {}: {e}", exe.display()))?;
     Ok("waiting for DCS to close".into())
 }
 
@@ -348,7 +382,14 @@ const MAX_HEADERS: usize = 16;
 /// A header name (an HTTP token, and not one this module sets itself) and a
 /// value of printable ASCII: nothing that could split the request.
 fn valid_header(name: &str, value: &str) -> bool {
-    const OURS: &[&str] = &["accept", "content-type", "content-length", "host", "user-agent", "transfer-encoding"];
+    const OURS: &[&str] = &[
+        "accept",
+        "content-type",
+        "content-length",
+        "host",
+        "user-agent",
+        "transfer-encoding",
+    ];
     !name.is_empty()
         && name.len() <= 64
         && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
@@ -433,7 +474,13 @@ fn send(work: Work) -> Result<u64, String> {
 /// would make mlua raise on a wrong type before this code ever ran.
 fn request(
     _: &Lua,
-    (method, url, body, timeout, headers): (LuaValue, LuaValue, LuaValue, LuaValue, LuaValue),
+    (method, url, body, timeout, headers): (
+        LuaValue,
+        LuaValue,
+        LuaValue,
+        LuaValue,
+        LuaValue,
+    ),
 ) -> LuaResult<(Option<u64>, Option<String>)> {
     Ok(match queue(&method, &url, &body, &timeout, &headers) {
         Ok(id) => (Some(id), None),
@@ -445,7 +492,9 @@ fn request(
 fn valid_version(v: &str) -> bool {
     let parts: Vec<&str> = v.split('.').collect();
     (2..=4).contains(&parts.len())
-        && parts.iter().all(|p| !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()))
+        && parts.iter().all(|p| {
+            !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit())
+        })
 }
 
 /// `update(version, write_dir) -> id | nil, err`
@@ -478,13 +527,23 @@ fn update(
 fn os_random(buf: &mut [u8]) -> Result<(), String> {
     #[link(name = "bcrypt")]
     extern "system" {
-        fn BCryptGenRandom(alg: *mut core::ffi::c_void, buf: *mut u8, len: u32, flags: u32) -> i32;
+        fn BCryptGenRandom(
+            alg: *mut core::ffi::c_void,
+            buf: *mut u8,
+            len: u32,
+            flags: u32,
+        ) -> i32;
     }
     const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 0x0000_0002;
     // SAFETY: a null algorithm handle is what SYSTEM_PREFERRED_RNG asks for;
     // buf is valid for len bytes.
     let status = unsafe {
-        BCryptGenRandom(std::ptr::null_mut(), buf.as_mut_ptr(), buf.len() as u32, BCRYPT_USE_SYSTEM_PREFERRED_RNG)
+        BCryptGenRandom(
+            std::ptr::null_mut(),
+            buf.as_mut_ptr(),
+            buf.len() as u32,
+            BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+        )
     };
     if status == 0 {
         Ok(())
@@ -496,10 +555,13 @@ fn os_random(buf: &mut [u8]) -> Result<(), String> {
 #[cfg(not(windows))]
 fn os_random(buf: &mut [u8]) -> Result<(), String> {
     use std::fs::File;
-    File::open("/dev/urandom").and_then(|mut f| f.read_exact(buf)).map_err(|e| format!("/dev/urandom: {e}"))
+    File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(buf))
+        .map_err(|e| format!("/dev/urandom: {e}"))
 }
 
-const KEY_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+const KEY_CHARS: &[u8] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
 /// `len` characters from KEY_CHARS, uniformly: bytes of 248 and up are
 /// dropped so `% 62` has no bias.
@@ -528,7 +590,9 @@ fn random_key(_: &Lua, len: LuaValue) -> LuaResult<(Option<String>, Option<Strin
     let len = match len {
         LuaValue::Nil => Ok(40),
         LuaValue::Integer(n) if (16..=128).contains(&n) => Ok(n as usize),
-        LuaValue::Number(n) if n.fract() == 0. && (16. ..=128.).contains(&n) => Ok(n as usize),
+        LuaValue::Number(n) if n.fract() == 0. && (16. ..=128.).contains(&n) => {
+            Ok(n as usize)
+        }
         _ => Err("len must be a whole number from 16 to 128".to_string()),
     };
     Ok(match len.and_then(new_key) {
@@ -586,7 +650,10 @@ mod tests {
     const PUB: &str = include_str!("../../../bfmanager/src-tauri/updater.pub");
 
     fn unwrap_b64(s: &str) -> String {
-        String::from_utf8(base64::engine::general_purpose::STANDARD.decode(s.trim()).unwrap()).unwrap()
+        String::from_utf8(
+            base64::engine::general_purpose::STANDARD.decode(s.trim()).unwrap(),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -616,15 +683,22 @@ mod tests {
         assert_ne!(a, b);
         assert_eq!(new_key(128).unwrap().len(), 128);
         // every character turns up over enough draws (no stuck alphabet)
-        let many: std::collections::HashSet<char> = new_key(4000).unwrap().chars().collect();
+        let many: std::collections::HashSet<char> =
+            new_key(4000).unwrap().chars().collect();
         assert_eq!(many.len(), KEY_CHARS.len());
     }
 
     #[test]
     fn headers_are_checked() {
         assert!(valid_header("X-Cockpit-Key", "abcDEF123"));
-        assert!(!valid_header("X-Cockpit-Key", "a
-Host: evil"), "no request splitting");
+        assert!(
+            !valid_header(
+                "X-Cockpit-Key",
+                "a
+Host: evil"
+            ),
+            "no request splitting"
+        );
         assert!(!valid_header("Bad Name", "v"));
         assert!(!valid_header("", "v"));
         assert!(!valid_header("Content-Type", "text/plain"), "set by request itself");
@@ -636,7 +710,10 @@ Host: evil"), "no request splitting");
         let lua = Lua::new();
         assert!(headers_of(&LuaValue::Nil).unwrap().is_empty());
         let t: LuaValue = lua.load(r#"{ ["X-Cockpit-Key"] = "abc" }"#).eval().unwrap();
-        assert_eq!(headers_of(&t).unwrap(), vec![("X-Cockpit-Key".to_string(), "abc".to_string())]);
+        assert_eq!(
+            headers_of(&t).unwrap(),
+            vec![("X-Cockpit-Key".to_string(), "abc".to_string())]
+        );
         let bad: LuaValue = lua.load(r#"{ ["X-A"] = 5 }"#).eval().unwrap();
         assert!(headers_of(&bad).is_err());
         let list: LuaValue = lua.load(r#"{ "a", "b" }"#).eval().unwrap();
@@ -658,7 +735,9 @@ Host: evil"), "no request splitting");
 
         #[test]
         fn build_stamp_reads_back() {
-            let dll = [b"junk\0".as_slice(), super::super::BUILD_STAMP.as_bytes(), b"\0more"].concat();
+            let dll =
+                [b"junk\0".as_slice(), super::super::BUILD_STAMP.as_bytes(), b"\0more"]
+                    .concat();
             let (version, script, git) = read_stamp(&dll).expect("stamp");
             assert_eq!(version, env!("CARGO_PKG_VERSION"));
             assert_eq!(script, env!("BFCOCKPIT_SCRIPT_VERSION"));
@@ -689,7 +768,8 @@ Host: evil"), "no request splitting");
     #[test]
     #[ignore]
     fn verify_release_file() {
-        let path = std::env::var("BFCOCKPIT_VERIFY").expect("set BFCOCKPIT_VERIFY to an installer path");
+        let path = std::env::var("BFCOCKPIT_VERIFY")
+            .expect("set BFCOCKPIT_VERIFY to an installer path");
         let data = std::fs::read(&path).unwrap();
         let sig = std::fs::read_to_string(format!("{path}{SIG_SUFFIX}")).unwrap();
         verify(&data, &sig, RELEASE_PUBKEY).expect("signature must verify");

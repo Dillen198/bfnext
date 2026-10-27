@@ -21,5 +21,6 @@ simple_enum_unknown!(LiquidType, u8, [
 ]);
 
 impl LiquidType {
-    pub const ALL: [LiquidType; 4] = [Self::Avgas, Self::Diesel, Self::JetFuel, Self::MW50];
+    pub const ALL: [LiquidType; 4] =
+        [Self::Avgas, Self::Diesel, Self::JetFuel, Self::MW50];
 }

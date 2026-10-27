@@ -56,20 +56,13 @@ pub fn apply_live_time(mission: &Table, utc_offset_hours: Option<f64>) -> Result
         None => chrono::Local::now().naive_local(),
     };
     let date: Table = mission.raw_get("date").context("getting date table")?;
-    date.raw_set("Day", now.day() as i64)
-        .context("setting date.Day")?;
-    date.raw_set("Month", now.month() as i64)
-        .context("setting date.Month")?;
-    date.raw_set("Year", now.year() as i64)
-        .context("setting date.Year")?;
-    let start_time = now.hour() as i64 * 3600 + now.minute() as i64 * 60 + now.second() as i64;
-    mission
-        .raw_set("start_time", start_time)
-        .context("setting start_time")?;
-    log::info!(
-        "applied live local time to mission: {}",
-        now.format("%Y-%m-%d %H:%M:%S")
-    );
+    date.raw_set("Day", now.day() as i64).context("setting date.Day")?;
+    date.raw_set("Month", now.month() as i64).context("setting date.Month")?;
+    date.raw_set("Year", now.year() as i64).context("setting date.Year")?;
+    let start_time =
+        now.hour() as i64 * 3600 + now.minute() as i64 * 60 + now.second() as i64;
+    mission.raw_set("start_time", start_time).context("setting start_time")?;
+    log::info!("applied live local time to mission: {}", now.format("%Y-%m-%d %H:%M:%S"));
     Ok(())
 }
 
@@ -81,7 +74,10 @@ pub fn apply_live_time(mission: &Table, utc_offset_hours: Option<f64>) -> Result
 /// picks the preset that best matches real cloud cover and precipitation
 /// intensity, plus that preset's own base altitude, both taken from the
 /// preset .miz templates DCS itself ships in the mission editor.
-pub fn select_cloud_preset(cover_pct: f64, precip_mm: f64) -> (Option<&'static str>, i64) {
+pub fn select_cloud_preset(
+    cover_pct: f64,
+    precip_mm: f64,
+) -> (Option<&'static str>, i64) {
     if precip_mm > 0.2 {
         return if precip_mm > 6.0 {
             (Some("RainyPreset3"), 1700)
@@ -169,7 +165,8 @@ pub fn decode_checkwx_metar(resp: &serde_json::Value) -> Result<MetarSurface> {
         .context("METAR missing temperature.celsius")?;
     // Some stations (OSDI, Sept 29) come back with no hPa reading; take the
     // same pressure in whichever unit checkwx did report.
-    let baro = |key: &str| d.pointer(&format!("/barometer/{key}")).and_then(|v| v.as_f64());
+    let baro =
+        |key: &str| d.pointer(&format!("/barometer/{key}")).and_then(|v| v.as_f64());
     let pressure_hpa = baro("hpa")
         .or_else(|| baro("mb"))
         .or_else(|| baro("kpa").map(|k| k * 10.0))
@@ -180,9 +177,7 @@ pub fn decode_checkwx_metar(resp: &serde_json::Value) -> Result<MetarSurface> {
                 .get("speed_mps")
                 .and_then(|v| v.as_f64())
                 .or_else(|| {
-                    w.get("speed_kts")
-                        .and_then(|v| v.as_f64())
-                        .map(|k| k * 0.514444)
+                    w.get("speed_kts").and_then(|v| v.as_f64()).map(|k| k * 0.514444)
                 })
                 .unwrap_or(0.0);
             let dir = w.get("degrees").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -276,9 +271,8 @@ fn apply_live_weather(mission: &Table, cfg: &LiveWeatherConfig) -> Result<()> {
     log::debug!("[LIVE_WX] raw response: {body}");
     let resp: serde_json::Value =
         serde_json::from_str(&body).context("parsing live weather response")?;
-    let current = resp
-        .get("current")
-        .context("live weather response missing 'current'")?;
+    let current =
+        resp.get("current").context("live weather response missing 'current'")?;
     let mut temp_c = current
         .get("temperature_2m")
         .and_then(|v| v.as_f64())
@@ -370,9 +364,8 @@ fn apply_live_weather(mission: &Table, cfg: &LiveWeatherConfig) -> Result<()> {
     );
 
     let weather: Table = mission.raw_get("weather").context("getting weather table")?;
-    let season: Table = weather
-        .raw_get("season")
-        .context("getting weather.season table")?;
+    let season: Table =
+        weather.raw_get("season").context("getting weather.season table")?;
 
     // Log what the .miz was authored with, so a "still too windy" report can be
     // traced to either the source data, our conversion, or an untouched layer.
@@ -405,9 +398,7 @@ fn apply_live_weather(mission: &Table, cfg: &LiveWeatherConfig) -> Result<()> {
     season
         .raw_set("temperature", temp_c.round() as i64)
         .context("setting weather.season.temperature")?;
-    weather
-        .raw_set("qnh", qnh_mmhg)
-        .context("setting weather.qnh")?;
+    weather.raw_set("qnh", qnh_mmhg).context("setting weather.qnh")?;
     // Sanity cap so a bad reading can't drop a hurricane on the server. Kept
     // deliberately low -- DCS blends this surface layer into the 2000 m layer
     // below, so a stiff surface wind plus an even stiffer layer just above it
@@ -420,9 +411,8 @@ fn apply_live_weather(mission: &Table, cfg: &LiveWeatherConfig) -> Result<()> {
         );
     }
     let wind: Table = weather.raw_get("wind").context("getting weather.wind table")?;
-    let at_ground: Table = wind
-        .raw_get("atGround")
-        .context("getting weather.wind.atGround table")?;
+    let at_ground: Table =
+        wind.raw_get("atGround").context("getting weather.wind.atGround table")?;
     at_ground
         .raw_set("speed", wind_speed_ms)
         .context("setting weather.wind.atGround.speed")?;
@@ -442,7 +432,11 @@ fn apply_live_weather(mission: &Table, cfg: &LiveWeatherConfig) -> Result<()> {
     // is missing.
     let hour_idx = Utc::now().hour() as usize;
     let hourly = resp.get("hourly");
-    let upper = |field_speed: &str, field_dir: &str, layer: &str, cap: f64| -> Result<()> {
+    let upper = |field_speed: &str,
+                 field_dir: &str,
+                 layer: &str,
+                 cap: f64|
+     -> Result<()> {
         let (Some(spd_raw), Some(dir_from)) = (
             hourly
                 .and_then(|h| h.get(field_speed))
@@ -477,7 +471,11 @@ fn apply_live_weather(mission: &Table, cfg: &LiveWeatherConfig) -> Result<()> {
             "[LIVE_WX] {layer}: API {spd_raw} {hourly_wind_unit:?} -> {spd_conv:.1}m/s{} \
              from {dir_from:.0}deg -> toward {dir_to}deg; mission {old_spd:.1}m/s@{old_dir:.0} \
              -> {spd:.1}m/s@{dir_to}",
-            if spd_conv > spd { format!(" (clamped to {cap:.0})") } else { String::new() },
+            if spd_conv > spd {
+                format!(" (clamped to {cap:.0})")
+            } else {
+                String::new()
+            },
         );
         Ok(())
     };
@@ -499,7 +497,8 @@ fn apply_live_weather(mission: &Table, cfg: &LiveWeatherConfig) -> Result<()> {
     );
 
     let (preset, cloud_base_m) = select_cloud_preset(cloud_cover_pct, precipitation_mm);
-    let clouds: Table = weather.raw_get("clouds").context("getting weather.clouds table")?;
+    let clouds: Table =
+        weather.raw_get("clouds").context("getting weather.clouds table")?;
     match preset {
         Some(name) => clouds.raw_set("preset", name).context("setting clouds.preset")?,
         // no preset key at all for clear skies, matching DCS's own
@@ -547,7 +546,10 @@ pub fn apply_metar_station_weather(
     log::info!(
         "CheckWX {metar_station}: temp={:.0}C qnh={} wind={:.1}m/s@{:.0} cloud={:.0}% precip={:.1}mm",
         metar.temp_c,
-        metar.pressure_hpa.map(|p| format!("{p:.0}hPa")).unwrap_or_else(|| "not reported".into()),
+        metar
+            .pressure_hpa
+            .map(|p| format!("{p:.0}hPa"))
+            .unwrap_or_else(|| "not reported".into()),
         metar.wind_speed_ms,
         metar.wind_from_dir,
         metar.cloud_cover_pct,
@@ -575,9 +577,8 @@ pub fn apply_metar_station_weather(
         .context("reading live weather response body")?;
     let resp: serde_json::Value =
         serde_json::from_str(&body).context("parsing live weather response")?;
-    let current = resp
-        .get("current")
-        .context("live weather response missing 'current'")?;
+    let current =
+        resp.get("current").context("live weather response missing 'current'")?;
     let get = |key: &'static str| -> Result<f64> {
         current
             .get(key)
@@ -612,15 +613,16 @@ pub fn apply_metar_station_weather(
     let qnh_mmhg = pressure_hpa.map(|p| (p * 0.750062).round() as i64);
 
     let weather: Table = mission.raw_get("weather").context("getting weather table")?;
-    let season: Table = weather
-        .raw_get("season")
-        .context("getting weather.season table")?;
+    let season: Table =
+        weather.raw_get("season").context("getting weather.season table")?;
     season
         .raw_set("temperature", temp_c.round() as i64)
         .context("setting weather.season.temperature")?;
     match qnh_mmhg {
         Some(q) => weather.raw_set("qnh", q).context("setting weather.qnh")?,
-        None => log::warn!("METAR for {metar_station} has no pressure, keeping the template's QNH"),
+        None => log::warn!(
+            "METAR for {metar_station} has no pressure, keeping the template's QNH"
+        ),
     }
     // Derive a modest gust component from the (clamped) surface wind rather
     // than leaving whatever the template authored -- a high authored
@@ -652,7 +654,8 @@ pub fn apply_metar_station_weather(
     set_wind_band("at8000", wind_speed_8000, to_dir(wind_from_dir_8000))?;
 
     let (preset, cloud_base_m) = select_cloud_preset(cloud_cover_pct, precipitation_mm);
-    let clouds: Table = weather.raw_get("clouds").context("getting weather.clouds table")?;
+    let clouds: Table =
+        weather.raw_get("clouds").context("getting weather.clouds table")?;
     match preset {
         Some(name) => clouds.raw_set("preset", name).context("setting clouds.preset")?,
         // no preset key at all for clear skies, matching DCS's own
@@ -706,7 +709,12 @@ const DUST_VISIBILITY_MIN_M: f64 = 300.0;
 const DUST_VISIBILITY_MAX_M: f64 = 3000.0;
 const FOG_ON_THRESHOLD_M: f64 = 3000.0;
 
-fn apply_live_obscurants(weather: &Table, lat: f64, lon: f64, visibility_m: f64) -> Result<()> {
+fn apply_live_obscurants(
+    weather: &Table,
+    lat: f64,
+    lon: f64,
+    visibility_m: f64,
+) -> Result<()> {
     let url = format!(
         "https://air-quality-api.open-meteo.com/v1/air-quality?latitude={lat}&longitude={lon}&current=dust"
     );
@@ -718,7 +726,8 @@ fn apply_live_obscurants(weather: &Table, lat: f64, lon: f64, visibility_m: f64)
         .context("reading live dust response body")?;
     let resp: serde_json::Value =
         serde_json::from_str(&body).context("parsing live dust response")?;
-    let dust_ugm3 = resp.get("current").and_then(|c| c.get("dust")).and_then(|v| v.as_f64());
+    let dust_ugm3 =
+        resp.get("current").and_then(|c| c.get("dust")).and_then(|v| v.as_f64());
 
     let fog: Table = weather.raw_get("fog").context("getting weather.fog table")?;
     let dust_active = match dust_ugm3 {
@@ -727,11 +736,13 @@ fn apply_live_obscurants(weather: &Table, lat: f64, lon: f64, visibility_m: f64)
     };
 
     if let Some(dust_ugm3) = dust_active {
-        let frac = ((dust_ugm3 - DUST_ON_THRESHOLD_UGM3) / (DUST_MAX_UGM3 - DUST_ON_THRESHOLD_UGM3))
+        let frac = ((dust_ugm3 - DUST_ON_THRESHOLD_UGM3)
+            / (DUST_MAX_UGM3 - DUST_ON_THRESHOLD_UGM3))
             .clamp(0.0, 1.0);
         // worse dust (higher ug/m3) -> lower visibility
-        let visibility =
-            (DUST_VISIBILITY_MAX_M - frac * (DUST_VISIBILITY_MAX_M - DUST_VISIBILITY_MIN_M)).round() as i64;
+        let visibility = (DUST_VISIBILITY_MAX_M
+            - frac * (DUST_VISIBILITY_MAX_M - DUST_VISIBILITY_MIN_M))
+            .round() as i64;
         weather.raw_set("enable_dust", true).context("enabling dust storm")?;
         weather.raw_set("dust_density", visibility).context("setting dust_density")?;
         weather.raw_set("enable_fog", false).context("disabling fog for dust")?;
@@ -851,9 +862,13 @@ mod tests {
         let date: Table = mission.raw_get("date").unwrap();
         assert_eq!(date.raw_get::<i64>("Year").unwrap(), now.year() as i64);
         let start: i64 = mission.raw_get("start_time").unwrap();
-        let expect = now.hour() as i64 * 3600 + now.minute() as i64 * 60 + now.second() as i64;
+        let expect =
+            now.hour() as i64 * 3600 + now.minute() as i64 * 60 + now.second() as i64;
         // within a few seconds, allowing for midnight
-        assert!((start - expect).rem_euclid(86400) < 5 || (expect - start).rem_euclid(86400) < 5);
+        assert!(
+            (start - expect).rem_euclid(86400) < 5
+                || (expect - start).rem_euclid(86400) < 5
+        );
         assert!(apply_live_time(&mission, Some(30.)).is_err());
     }
 }

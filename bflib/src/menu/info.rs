@@ -1,21 +1,20 @@
-use super::{brg_rng, player_world_pos, slot_for_group, ArgTriple, ArgTuple, Pager};
+use super::{ArgTriple, ArgTuple, Pager, brg_rng, player_world_pos, slot_for_group};
 use crate::{
-    atis,
-    db::{group::DeployKind, logistics::ConvoyState, Db},
-    Context,
+    Context, atis,
+    db::{Db, group::DeployKind, logistics::ConvoyState},
 };
 use anyhow::{Context as ErrContext, Result};
 use bfprotocols::{
     cfg::{ActionKind, AwacsCfg},
     db::objective::ObjectiveId,
 };
-use compact_str::{format_compact, CompactString};
+use compact_str::{CompactString, format_compact};
 use dcso3::{
+    MizLua, Vector2,
     coalition::Side,
     env::miz::GroupId,
     mission_commands::{GroupSubMenu, MissionCommands},
     net::SlotId,
-    MizLua, Vector2,
 };
 use log::error;
 use std::fmt::Write;
@@ -97,7 +96,8 @@ fn build_support(ctx: &Context, side: Side, from: Option<Vector2>) -> CompactStr
             ActionKind::Tanker(plane) => plane,
             _ => continue,
         };
-        let kind = if matches!(&spec.kind, ActionKind::Tanker(_)) { "TANKER" } else { "AWACS" };
+        let kind =
+            if matches!(&spec.kind, ActionKind::Tanker(_)) { "TANKER" } else { "AWACS" };
         let mut line = format_compact!("{kind} [{}]", group.name);
         if let Some(freq) = plane.freq {
             let _ = write!(line, "  {:.3} MHz", freq as f64 / 1_000_000.0);
@@ -199,7 +199,11 @@ fn build_navaids(ctx: &Context, side: Side, from: Option<Vector2>) -> CompactStr
             };
             rows.push((
                 r,
-                format_compact!("{who}{}: {}\n", brg_rng_str(from, obj.pos()), nav.summary()),
+                format_compact!(
+                    "{who}{}: {}\n",
+                    brg_rng_str(from, obj.pos()),
+                    nav.summary()
+                ),
             ));
         }
     }
@@ -346,7 +350,8 @@ fn weather(lua: MizLua, arg: ArgTuple<GroupId, SlotId>) -> Result<()> {
     }
     // No slot context (F10 map, spectator, ground unit) -- a general brief at
     // wherever the player is, falling back to the map origin.
-    let pos = from_pos(ctx, lua, &arg.fst).unwrap_or_else(|| dcso3::Vector2::new(0.0, 0.0));
+    let pos =
+        from_pos(ctx, lua, &arg.fst).unwrap_or_else(|| dcso3::Vector2::new(0.0, 0.0));
     if let Err(e) = atis::send_weather_brief(lua, ctx, arg.fst, pos) {
         error!("weather brief failed for group {:?}: {:?}", arg.fst, e);
     }
@@ -556,10 +561,12 @@ fn hq_ops(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
 fn hq_request(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let Some(kind) = bfprotocols::hq::RequestKind::ALL.get(arg.trd as usize).copied() else {
+    let Some(kind) = bfprotocols::hq::RequestKind::ALL.get(arg.trd as usize).copied()
+    else {
         return Ok(());
     };
-    let (_, slot) = slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
+    let (_, slot) =
+        slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
     let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() else {
         return Ok(());
     };
@@ -569,26 +576,56 @@ fn hq_request(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
     Ok(())
 }
 
-fn add_hq_menu(mc: &MissionCommands, p: &mut Pager, miz_gid: GroupId, side: Side) -> Result<()> {
+fn add_hq_menu(
+    mc: &MissionCommands,
+    p: &mut Pager,
+    miz_gid: GroupId,
+    side: Side,
+) -> Result<()> {
     let root = p.submenu(mc, "HQ".into())?;
     let mut hp = Pager::new(miz_gid, root);
-    hp.command(mc, "Commander's Intent".into(), hq_intent, ArgTriple { fst: miz_gid, snd: side, trd: 0u8 })?;
-    hp.command(mc, "Operations".into(), hq_ops, ArgTriple { fst: miz_gid, snd: side, trd: 0u8 })?;
+    hp.command(
+        mc,
+        "Commander's Intent".into(),
+        hq_intent,
+        ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
+    )?;
+    hp.command(
+        mc,
+        "Operations".into(),
+        hq_ops,
+        ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
+    )?;
     let req_root = hp.submenu(mc, "Request Support (nearest objective)".into())?;
     let mut rp = Pager::new(miz_gid, req_root);
     for (i, kind) in bfprotocols::hq::RequestKind::ALL.iter().enumerate() {
         let label = match kind {
             bfprotocols::hq::RequestKind::Cas => "CAS on the nearest enemy objective",
-            bfprotocols::hq::RequestKind::Cap => "CAP over the nearest friendly objective",
+            bfprotocols::hq::RequestKind::Cap => {
+                "CAP over the nearest friendly objective"
+            }
             bfprotocols::hq::RequestKind::Sead => "SEAD near the nearest enemy objective",
             bfprotocols::hq::RequestKind::Recon => "Recon of the nearest enemy objective",
             bfprotocols::hq::RequestKind::Fires => "Fires on the nearest enemy objective",
-            bfprotocols::hq::RequestKind::Supply => "Resupply the nearest friendly objective",
-            bfprotocols::hq::RequestKind::Troops => "Troops to the nearest enemy objective",
-            bfprotocols::hq::RequestKind::Tanker => "Tanker near the nearest friendly objective",
-            bfprotocols::hq::RequestKind::Awacs => "AWACS near the nearest friendly objective",
+            bfprotocols::hq::RequestKind::Supply => {
+                "Resupply the nearest friendly objective"
+            }
+            bfprotocols::hq::RequestKind::Troops => {
+                "Troops to the nearest enemy objective"
+            }
+            bfprotocols::hq::RequestKind::Tanker => {
+                "Tanker near the nearest friendly objective"
+            }
+            bfprotocols::hq::RequestKind::Awacs => {
+                "AWACS near the nearest friendly objective"
+            }
         };
-        rp.command(mc, label.into(), hq_request, ArgTriple { fst: miz_gid, snd: side, trd: i as u8 })?;
+        rp.command(
+            mc,
+            label.into(),
+            hq_request,
+            ArgTriple { fst: miz_gid, snd: side, trd: i as u8 },
+        )?;
     }
     Ok(())
 }
@@ -602,7 +639,11 @@ fn help_topic(text: &'static str) -> impl Fn(MizLua, GroupId) -> Result<()> {
     }
 }
 
-pub(super) fn init_info_menu_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Result<()> {
+pub(super) fn init_info_menu_for_slot(
+    ctx: &mut Context,
+    lua: MizLua,
+    slot: &SlotId,
+) -> Result<()> {
     let mc = MissionCommands::singleton(lua)?;
     let si = ctx.db.ephemeral.get_slot_info(slot).context("getting slot info")?;
     let miz_gid = si.miz_gid;
@@ -615,12 +656,7 @@ pub(super) fn init_info_menu_for_slot(ctx: &mut Context, lua: MizLua, slot: &Slo
     // a "More >>" page instead of being dropped by DCS.
     let mut p = Pager::new(miz_gid, root);
 
-    p.command(
-        &mc,
-        "My Status".into(),
-        my_status,
-        ArgTuple { fst: miz_gid, snd: *slot },
-    )?;
+    p.command(&mc, "My Status".into(), my_status, ArgTuple { fst: miz_gid, snd: *slot })?;
     let sit_root = p.submenu(&mc, "Situation".into())?;
     let mut sp = Pager::new(miz_gid, sit_root);
     for (i, title) in crate::situation::PAGES.iter().enumerate() {
@@ -632,7 +668,10 @@ pub(super) fn init_info_menu_for_slot(ctx: &mut Context, lua: MizLua, slot: &Slo
         )?;
     }
     for (label, cb) in [
-        ("Support & Radios", support as fn(MizLua, ArgTriple<GroupId, Side, u8>) -> Result<()>),
+        (
+            "Support & Radios",
+            support as fn(MizLua, ArgTriple<GroupId, Side, u8>) -> Result<()>,
+        ),
         ("Supply Convoys", convoys),
         ("Navaids Directory", navaids_directory),
     ] {
@@ -647,12 +686,7 @@ pub(super) fn init_info_menu_for_slot(ctx: &mut Context, lua: MizLua, slot: &Slo
         add_hq_menu(&mc, &mut p, miz_gid, side)?;
     }
     p.command(&mc, "Time & Server".into(), time_and_server, miz_gid)?;
-    p.command(
-        &mc,
-        "Weather".into(),
-        weather,
-        ArgTuple { fst: miz_gid, snd: *slot },
-    )?;
+    p.command(&mc, "Weather".into(), weather, ArgTuple { fst: miz_gid, snd: *slot })?;
 
     let help_root = p.submenu(&mc, "Help".into())?;
     let mut hp = Pager::new(miz_gid, help_root);

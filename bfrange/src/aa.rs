@@ -20,14 +20,15 @@ use crate::{
     util::{self, V3},
     weapons::Shooter,
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use bfprotocols::range::{
-    cfg::{AdversaryCfg, MissileTrainerCfg, RangeCfg},
     DefenseSummary, EngagementOutcome, EngagementResult, LaunchGeom, MissileOutcome,
     MissileResult, PilotRef, RangeResult, Track, TrackPt,
+    cfg::{AdversaryCfg, MissileTrainerCfg, RangeCfg},
 };
 use chrono::{Duration, Utc};
 use dcso3::{
+    LuaVec3, MizLua,
     coalition::Side,
     env::miz::GroupId,
     net::Ucid,
@@ -35,7 +36,6 @@ use dcso3::{
     trigger::Trigger,
     unit::Unit,
     weapon::{ClassWeapon, MissileCategory, Weapon, WeaponDesc},
-    LuaVec3, MizLua,
 };
 use fxhash::FxHashMap;
 use log::{info, warn};
@@ -206,7 +206,13 @@ pub struct AirToAir {
 
 fn sample(lua: MizLua, t: f64, p: V3, v: V3) -> TrackPt {
     let g = util::geo(lua, p);
-    TrackPt { t, lat: g.lat, lon: g.lon, alt_m: p.y, speed_kts: v.norm() * util::MS_TO_KTS }
+    TrackPt {
+        t,
+        lat: g.lat,
+        lon: g.lon,
+        alt_m: p.y,
+        speed_kts: v.norm() * util::MS_TO_KTS,
+    }
 }
 
 impl AirToAir {
@@ -239,7 +245,8 @@ impl AirToAir {
             self.missiles.remove(0);
         }
         let Ok(oid) = weapon.object_id() else { return };
-        let big = desc.warhead_explosive_kg.map(|e| e >= cfg.big_warhead_kg).unwrap_or(false);
+        let big =
+            desc.warhead_explosive_kg.map(|e| e >= cfg.big_warhead_kg).unwrap_or(false);
         let target = weapon
             .get_target()
             .ok()
@@ -255,8 +262,14 @@ impl AirToAir {
         // count the shot for any engagement the shooter is in
         for e in self.engagements.values_mut() {
             if e.player.unit == shooter.unit_name
-                || e.opponent.as_ref().map(|o| o.unit == shooter.unit_name).unwrap_or(false)
-                || e.adversary_group.as_ref().map(|g| spawn::in_group(&shooter.unit_name, g)).unwrap_or(false)
+                || e.opponent
+                    .as_ref()
+                    .map(|o| o.unit == shooter.unit_name)
+                    .unwrap_or(false)
+                || e.adversary_group
+                    .as_ref()
+                    .map(|g| spawn::in_group(&shooter.unit_name, g))
+                    .unwrap_or(false)
             {
                 *e.shots.entry(shooter.unit_name.clone()).or_default() += 1;
             }
@@ -271,7 +284,11 @@ impl AirToAir {
                         f.group_id,
                         &format!(
                             "MISSILE LAUNCH: {} from {:03.0} for {:.1} nm ({}). Notch {:03.0} / {:03.0}",
-                            if desc.display_name.is_empty() { &desc.type_name } else { &desc.display_name },
+                            if desc.display_name.is_empty() {
+                                &desc.type_name
+                            } else {
+                                &desc.display_name
+                            },
                             brg,
                             rng,
                             shooter.typ,
@@ -285,7 +302,11 @@ impl AirToAir {
         }
         self.missiles.push(Missile {
             oid,
-            weapon: if desc.display_name.is_empty() { desc.type_name.clone() } else { desc.display_name.clone() },
+            weapon: if desc.display_name.is_empty() {
+                desc.type_name.clone()
+            } else {
+                desc.display_name.clone()
+            },
             category,
             shooter,
             t0: now,
@@ -318,7 +339,12 @@ impl AirToAir {
         }
     }
 
-    fn protected(cfg: &MissileTrainerCfg, players: &Players, spawned_ai: &dyn Fn(&str) -> bool, unit: &str) -> bool {
+    fn protected(
+        cfg: &MissileTrainerCfg,
+        players: &Players,
+        spawned_ai: &dyn Fn(&str) -> bool,
+        unit: &str,
+    ) -> bool {
         match players.flying.get(unit) {
             Some(f) => f.trainer,
             None => cfg.protect_ai && spawned_ai(unit),
@@ -339,7 +365,10 @@ impl AirToAir {
         now: f64,
     ) -> Vec<TrainerKill> {
         let spawned_ai = |unit: &str| {
-            spawns.active.values().any(|s| s.groups.iter().any(|g| spawn::in_group(unit, g)))
+            spawns
+                .active
+                .values()
+                .any(|s| s.groups.iter().any(|g| spawn::in_group(unit, g)))
         };
         let mut kills = vec![];
         let mut i = 0;
@@ -494,7 +523,10 @@ impl AirToAir {
                 .map(|s| s.to_string())
                 .unwrap_or_default()
         });
-        let shooter_ref = PilotRef { ucid: m.shooter.ucid.map(|u| u.to_string()), name: m.shooter.name.clone() };
+        let shooter_ref = PilotRef {
+            ucid: m.shooter.ucid.map(|u| u.to_string()),
+            name: m.shooter.name.clone(),
+        };
         let min_d = if m.min_dist == f64::MAX { 0. } else { m.min_dist };
         let base = MissileResult {
             weapon: m.weapon.clone(),
@@ -518,7 +550,10 @@ impl AirToAir {
             },
             perspective: String::new(),
         };
-        let track = Track::Intercept { missile: m.missile_pts.clone(), target: m.target_pts.clone() };
+        let track = Track::Intercept {
+            missile: m.missile_pts.clone(),
+            target: m.target_pts.clone(),
+        };
         // defender's record
         if let Some(f) = tf {
             let mut r = base.clone();
@@ -533,8 +568,12 @@ impl AirToAir {
                     "DEFEATED: {} from {} - closest {:.0} m",
                     m.weapon, m.shooter.name, min_d
                 ),
-                MissileOutcome::Hit => format!("HIT by {} from {}", m.weapon, m.shooter.name),
-                MissileOutcome::Timeout => format!("{} from {} timed out", m.weapon, m.shooter.name),
+                MissileOutcome::Hit => {
+                    format!("HIT by {} from {}", m.weapon, m.shooter.name)
+                }
+                MissileOutcome::Timeout => {
+                    format!("{} from {} timed out", m.weapon, m.shooter.name)
+                }
             };
             records::to_group(lua, f.group_id, &text, msg_s);
             rec.emit(
@@ -555,11 +594,19 @@ impl AirToAir {
             let score = missile_scores(outcome).1;
             if let Some(g) = m.shooter.group_id {
                 let text = match outcome {
-                    MissileOutcome::Kill => format!("SPLASH! Your {} would have killed {}", m.weapon, target_ref.name),
+                    MissileOutcome::Kill => format!(
+                        "SPLASH! Your {} would have killed {}",
+                        m.weapon, target_ref.name
+                    ),
                     MissileOutcome::Defeated => {
-                        format!("Your {} was defeated by {} - closest {:.0} m", m.weapon, target_ref.name, min_d)
+                        format!(
+                            "Your {} was defeated by {} - closest {:.0} m",
+                            m.weapon, target_ref.name, min_d
+                        )
                     }
-                    MissileOutcome::Hit => format!("Your {} hit {}", m.weapon, target_ref.name),
+                    MissileOutcome::Hit => {
+                        format!("Your {} hit {}", m.weapon, target_ref.name)
+                    }
                     MissileOutcome::Timeout => format!("Your {} timed out", m.weapon),
                 };
                 records::to_group(lua, g, &text, msg_s);
@@ -618,10 +665,16 @@ impl AirToAir {
             ("bfm", "neutral") => (3000., 300., 0., h + 180., v, "BFM neutral"),
             ("bfm", "perch") => (1800., 0., -900., h, v * 0.9, "BFM high perch"),
             ("bfm", _) => (9000., 0., 0., h + 180., v, "BFM head-on"),
-            (_, "flank") => (range_nm * util::NM, 0., 0., h + 180. + 45., 250., "BVR flanking"),
+            (_, "flank") => {
+                (range_nm * util::NM, 0., 0., h + 180. + 45., 250., "BVR flanking")
+            }
             (_, "beam") => (range_nm * util::NM, 0., 0., h + 90., 250., "BVR beaming"),
-            (_, "high") => (range_nm * util::NM, 0., 3000., h + 180., 250., "BVR hot, high"),
-            (_, "low") => (range_nm * util::NM, 0., -3000., h + 180., 250., "BVR hot, low"),
+            (_, "high") => {
+                (range_nm * util::NM, 0., 3000., h + 180., 250., "BVR hot, high")
+            }
+            (_, "low") => {
+                (range_nm * util::NM, 0., -3000., h + 180., 250., "BVR hot, low")
+            }
             _ => (range_nm * util::NM, 0., 0., h + 180., 250., "BVR hot"),
         };
         let mut pos = util::offset(p, h, fwd, right);
@@ -674,7 +727,13 @@ impl AirToAir {
             side,
         };
         spawn::add_group(lua, country, spawn::AIRPLANE, &spawn::air_group(&spec))?;
-        spawns.defer(now + 1.5, spawn::Pending::GroupCommand { group: name.clone(), cmd: spawn::bool_cmd("SetUnlimitedFuel", true) });
+        spawns.defer(
+            now + 1.5,
+            spawn::Pending::GroupCommand {
+                group: name.clone(),
+                cmd: spawn::bool_cmd("SetUnlimitedFuel", true),
+            },
+        );
         self.seq += 1;
         let eid = self.seq;
         let spawn_id = name.clone();
@@ -687,7 +746,10 @@ impl AirToAir {
             groups: vec![name.clone()],
             statics: vec![],
             created: Utc::now(),
-            expires: Some(Utc::now() + Duration::seconds(cfg.spawn.despawn_after_s.min(1800) as i64)),
+            expires: Some(
+                Utc::now()
+                    + Duration::seconds(cfg.spawn.despawn_after_s.min(1800) as i64),
+            ),
             units: spec.count,
             pos,
             kind: SpawnKind::Adversary { engagement: eid },
@@ -730,7 +792,13 @@ impl AirToAir {
 
     // ------------------------------------------------------------ duels
 
-    pub fn challenge(&mut self, lua: MizLua, players: &Players, from: &Flying, now: f64) -> Result<()> {
+    pub fn challenge(
+        &mut self,
+        lua: MizLua,
+        players: &Players,
+        from: &Flying,
+        now: f64,
+    ) -> Result<()> {
         let to = players
             .flying
             .values()
@@ -741,7 +809,11 @@ impl AirToAir {
             .map(|(f, _)| f)
             .ok_or_else(|| anyhow!("no airborne player within 20 nm to challenge"))?;
         self.challenges.retain(|c| c.from != from.ucid);
-        self.challenges.push(Challenge { from: from.ucid, to: to.ucid, expires: now + 90. });
+        self.challenges.push(Challenge {
+            from: from.ucid,
+            to: to.ucid,
+            expires: now + 90.,
+        });
         records::to_group(
             lua,
             to.group_id,
@@ -751,11 +823,22 @@ impl AirToAir {
             ),
             20,
         );
-        records::to_group(lua, from.group_id, &format!("Challenge sent to {} ({}).", to.name, to.typ), 10);
+        records::to_group(
+            lua,
+            from.group_id,
+            &format!("Challenge sent to {} ({}).", to.name, to.typ),
+            10,
+        );
         Ok(())
     }
 
-    pub fn accept(&mut self, lua: MizLua, players: &Players, me: &Flying, now: f64) -> Result<()> {
+    pub fn accept(
+        &mut self,
+        lua: MizLua,
+        players: &Players,
+        me: &Flying,
+        now: f64,
+    ) -> Result<()> {
         self.challenges.retain(|c| c.expires > now);
         let c = self
             .challenges
@@ -822,7 +905,9 @@ impl AirToAir {
                 e.adversary_group.as_ref().map(|g| spawn::in_group(u, g)).unwrap_or(false)
                     || e.opponent.as_ref().map(|o| o.unit == u).unwrap_or(false)
             };
-            if (e.player.unit == shooter_unit && adv(target_unit)) || (adv(shooter_unit) && e.player.unit == target_unit) {
+            if (e.player.unit == shooter_unit && adv(target_unit))
+                || (adv(shooter_unit) && e.player.unit == target_unit)
+            {
                 *e.gun_hits.entry(shooter_unit.to_string()).or_default() += 1;
             }
         }
@@ -838,11 +923,18 @@ impl AirToAir {
                 || (adv(&k.shooter_unit) && e.player.unit == k.target_unit);
             if involved {
                 *e.trainer_kills.entry(k.shooter_unit.clone()).or_default() += 1;
-                e.notes.push(format!("{} trainer kill on {} with {}", k.shooter_unit, k.target_unit, k.weapon));
+                e.notes.push(format!(
+                    "{} trainer kill on {} with {}",
+                    k.shooter_unit, k.target_unit, k.weapon
+                ));
                 e.killed.get_or_insert(k.target_unit.clone());
                 // an AI "killed" by the trainer blows up, so the pilot sees
                 // the splash; a player never does
-                if e.adversary_group.as_ref().map(|g| spawn::in_group(&k.target_unit, g)).unwrap_or(false) {
+                if e.adversary_group
+                    .as_ref()
+                    .map(|g| spawn::in_group(&k.target_unit, g))
+                    .unwrap_or(false)
+                {
                     if let Ok(u) = Unit::get_by_name(lua, &k.target_unit) {
                         if let Ok(p) = u.get_point() {
                             let _ = Trigger::singleton(lua)
@@ -858,7 +950,11 @@ impl AirToAir {
     /// A unit died for real (DEAD / crash / pilot dead).
     pub fn unit_dead(&mut self, unit: &str) {
         for e in self.engagements.values_mut() {
-            let adv = e.adversary_group.as_ref().map(|g| spawn::in_group(unit, g)).unwrap_or(false)
+            let adv = e
+                .adversary_group
+                .as_ref()
+                .map(|g| spawn::in_group(unit, g))
+                .unwrap_or(false)
                 || e.opponent.as_ref().map(|o| o.unit == unit).unwrap_or(false);
             if (adv || e.player.unit == unit) && e.killed.is_none() {
                 e.killed = Some(unit.to_string());
@@ -869,7 +965,8 @@ impl AirToAir {
     /// The player left their aircraft (landed, slot change, disconnect).
     pub fn player_left(&mut self, unit: &str) {
         for e in self.engagements.values_mut() {
-            if (e.player.unit == unit || e.opponent.as_ref().map(|o| o.unit == unit).unwrap_or(false))
+            if (e.player.unit == unit
+                || e.opponent.as_ref().map(|o| o.unit == unit).unwrap_or(false))
                 && e.killed.is_none()
             {
                 e.killed = Some("__abort__".into());
@@ -878,7 +975,14 @@ impl AirToAir {
     }
 
     /// Resolve finished engagements; sample tracks.
-    pub fn slow_tick(&mut self, lua: MizLua, cfg: &RangeCfg, spawns: &mut Spawns, rec: &mut Recorder, now: f64) {
+    pub fn slow_tick(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        spawns: &mut Spawns,
+        rec: &mut Recorder,
+        now: f64,
+    ) {
         let gun_kill = cfg.air_to_air.gun_kill_hits;
         let mut done = vec![];
         for (eid, e) in self.engagements.iter_mut() {
@@ -895,12 +999,21 @@ impl AirToAir {
                 for (label, u) in units {
                     if let Ok(u) = Unit::get_by_name(lua, &u) {
                         if let (Ok(p), Ok(v)) = (u.get_point(), u.get_velocity()) {
-                            e.track.entry(label).or_default().push(sample(lua, now - e.started, p.0, v.0));
+                            e.track.entry(label).or_default().push(sample(
+                                lua,
+                                now - e.started,
+                                p.0,
+                                v.0,
+                            ));
                         }
                     }
                 }
             }
-            let adv_alive = e.adversary_group.as_ref().map(|g| spawn::group_exists(lua, g)).unwrap_or(true);
+            let adv_alive = e
+                .adversary_group
+                .as_ref()
+                .map(|g| spawn::group_exists(lua, g))
+                .unwrap_or(true);
             let player_guns = e.gun_hits.get(&e.player.unit).copied().unwrap_or(0);
             let opp_guns = e
                 .opponent
@@ -909,7 +1022,12 @@ impl AirToAir {
                 .unwrap_or_else(|| {
                     e.gun_hits
                         .iter()
-                        .filter(|(u, _)| e.adversary_group.as_ref().map(|g| spawn::in_group(u, g)).unwrap_or(false))
+                        .filter(|(u, _)| {
+                            e.adversary_group
+                                .as_ref()
+                                .map(|g| spawn::in_group(u, g))
+                                .unwrap_or(false)
+                        })
                         .map(|(_, n)| *n)
                         .sum()
                 });
@@ -918,8 +1036,12 @@ impl AirToAir {
                 Some(k) if *k == e.player.unit => Some(EngagementOutcome::Loss),
                 Some(_) => Some(EngagementOutcome::Win),
                 None if !adv_alive => Some(EngagementOutcome::Win),
-                None if e.opponent.is_some() && player_guns >= gun_kill => Some(EngagementOutcome::Win),
-                None if e.opponent.is_some() && opp_guns >= gun_kill => Some(EngagementOutcome::Loss),
+                None if e.opponent.is_some() && player_guns >= gun_kill => {
+                    Some(EngagementOutcome::Win)
+                }
+                None if e.opponent.is_some() && opp_guns >= gun_kill => {
+                    Some(EngagementOutcome::Loss)
+                }
                 None if now - e.started > 900. => Some(EngagementOutcome::Draw),
                 None => None,
             };
@@ -930,12 +1052,20 @@ impl AirToAir {
         for (id, outcome) in done {
             let Some(e) = self.engagements.remove(&id) else { continue };
             let duration = now - e.started;
-            let emit = |rec: &mut Recorder, me: &Side_, them: Option<&Side_>, o: EngagementOutcome| {
+            let emit = |rec: &mut Recorder,
+                        me: &Side_,
+                        them: Option<&Side_>,
+                        o: EngagementOutcome| {
                 let res = EngagementResult {
                     setup: e.setup.clone(),
-                    adversary: them.map(|t| t.name.clone()).unwrap_or_else(|| e.adversary_type.clone()),
+                    adversary: them
+                        .map(|t| t.name.clone())
+                        .unwrap_or_else(|| e.adversary_type.clone()),
                     adversary_skill: e.skill.clone(),
-                    opponent: them.map(|t| PilotRef { ucid: t.ucid.map(|u| u.to_string()), name: t.name.clone() }),
+                    opponent: them.map(|t| PilotRef {
+                        ucid: t.ucid.map(|u| u.to_string()),
+                        name: t.name.clone(),
+                    }),
                     outcome: o,
                     duration_s: duration,
                     shots_fired: e.shots.get(&me.unit).copied().unwrap_or(0),
@@ -965,7 +1095,10 @@ impl AirToAir {
                 }
                 rec.emit(
                     lua,
-                    PilotRef { ucid: me.ucid.map(|u| u.to_string()), name: me.name.clone() },
+                    PilotRef {
+                        ucid: me.ucid.map(|u| u.to_string()),
+                        name: me.name.clone(),
+                    },
                     &me.typ,
                     me.side,
                     &me.callsign,
@@ -1002,7 +1135,9 @@ impl AirToAir {
     pub fn duels(&self) -> Vec<(String, String)> {
         self.engagements
             .values()
-            .filter_map(|e| e.opponent.as_ref().map(|o| (e.player.name.clone(), o.name.clone())))
+            .filter_map(|e| {
+                e.opponent.as_ref().map(|o| (e.player.name.clone(), o.name.clone()))
+            })
             .collect()
     }
 }

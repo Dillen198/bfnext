@@ -292,7 +292,8 @@ pub fn split_by_weight(total: i32, weights: &[f64]) -> Vec<i32> {
         let w = vec![1.; n];
         return if total <= 0 { vec![0; n] } else { split_by_weight(total, &w) };
     }
-    let exact: Vec<f64> = weights.iter().map(|w| total as f64 * w.max(0.) / sum).collect();
+    let exact: Vec<f64> =
+        weights.iter().map(|w| total as f64 * w.max(0.) / sum).collect();
     let mut parts: Vec<i32> = exact.iter().map(|e| e.floor() as i32).collect();
     let mut left = total - parts.iter().sum::<i32>();
     let mut order: Vec<usize> = (0..n).collect();

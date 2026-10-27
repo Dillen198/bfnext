@@ -137,7 +137,8 @@ pub(crate) struct Reader<R> {
 impl<R: BufRead> Reader<R> {
     /// Wrap a text stream and check its two header lines.
     pub(crate) fn new(inner: R) -> Result<Self> {
-        let mut r = Self { inner, raw: Vec::with_capacity(4096), line: String::new(), lineno: 0 };
+        let mut r =
+            Self { inner, raw: Vec::with_capacity(4096), line: String::new(), lineno: 0 };
         let mut saw_type = false;
         // The header is the first two non-empty lines; tolerate their order.
         for _ in 0..2 {
@@ -239,8 +240,12 @@ fn continues(s: &str) -> bool {
 
 /// Open a recording: `.zip.acmi` (the first entry of the zip) or plain text.
 /// Calls `f` with a reader over its text.
-pub(crate) fn open<T>(path: &Path, f: impl FnOnce(&mut Reader<Box<dyn BufRead + '_>>) -> Result<T>) -> Result<T> {
-    let mut file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
+pub(crate) fn open<T>(
+    path: &Path,
+    f: impl FnOnce(&mut Reader<Box<dyn BufRead + '_>>) -> Result<T>,
+) -> Result<T> {
+    let mut file =
+        File::open(path).with_context(|| format!("opening {}", path.display()))?;
     let mut magic = [0u8; 4];
     let n = file.read(&mut magic)?;
     drop(file);
@@ -252,7 +257,8 @@ pub(crate) fn open<T>(path: &Path, f: impl FnOnce(&mut Reader<Box<dyn BufRead + 
                     bail!("the zip is empty");
                 }
                 let entry = zip.by_index(0)?;
-                let rd: Box<dyn BufRead + '_> = Box::new(BufReader::with_capacity(1 << 20, entry));
+                let rd: Box<dyn BufRead + '_> =
+                    Box::new(BufReader::with_capacity(1 << 20, entry));
                 let mut r = Reader::new(rd)?;
                 f(&mut r)
             }
@@ -325,7 +331,8 @@ mod tests {
     #[test]
     fn reads_a_cut_off_zip() {
         use std::io::Write;
-        let dir = std::env::temp_dir().join(format!("bfdb-acmi-cut-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("bfdb-acmi-cut-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cut.zip.acmi");
         let mut text = String::from("FileType=text/acmi/tacview\nFileVersion=2.2\n");
@@ -401,7 +408,10 @@ mod tests {
     #[test]
     fn transform_forms() {
         let t = transform("1|2|3");
-        assert_eq!((t.lon, t.lat, t.alt, t.has_att), (Some(1.), Some(2.), Some(3.), false));
+        assert_eq!(
+            (t.lon, t.lat, t.alt, t.has_att),
+            (Some(1.), Some(2.), Some(3.), false)
+        );
         let t = transform("1|2|3|4|5");
         assert!(!t.has_att && t.roll.is_none());
         let t = transform("1||3|10|20|30");

@@ -30,7 +30,9 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow, bail};
 use bfprotocols::{
-    cfg::{Action, ActionKind, MATERIEL_ITEM, ReinforceCfg, UnitTag, default_trailer_pairs},
+    cfg::{
+        Action, ActionKind, MATERIEL_ITEM, ReinforceCfg, UnitTag, default_trailer_pairs,
+    },
     db::{
         group::GroupId,
         objective::{ObjectiveId, ObjectiveKind},
@@ -40,7 +42,9 @@ use bfprotocols::{
 };
 use chrono::{Duration, prelude::*};
 use compact_str::format_compact;
-use dcso3::{String, Vector2, coalition::Side, env::miz::MizIndex, land::Land, net::Ucid};
+use dcso3::{
+    String, Vector2, coalition::Side, env::miz::MizIndex, land::Land, net::Ucid,
+};
 use fxhash::{FxHashMap, FxHashSet};
 use log::{error, info, warn};
 use std::cmp::Reverse;
@@ -96,13 +100,16 @@ impl Db {
         if let Some(groups) = obj.groups.get(&obj.owner) {
             for gid in groups {
                 let group = group!(self, gid)?;
-                let Some(rank) = REBUILD_ORDER.iter().position(|c| *c == group.class) else {
+                let Some(rank) = REBUILD_ORDER.iter().position(|c| *c == group.class)
+                else {
                     continue;
                 };
                 let dead = group
                     .units
                     .into_iter()
-                    .filter(|uid| self.persisted.units.get(*uid).map_or(false, |u| u.dead))
+                    .filter(|uid| {
+                        self.persisted.units.get(*uid).map_or(false, |u| u.dead)
+                    })
                     .count();
                 if dead > 0 {
                     found.push((rank, Reverse(dead), *gid));
@@ -115,8 +122,14 @@ impl Db {
 
     /// Put up to `n` of `oid`'s destroyed garrison groups back together.
     /// Returns how many were rebuilt.
-    fn rebuild_garrison(&mut self, oid: ObjectiveId, n: usize, now: DateTime<Utc>) -> Result<usize> {
-        let gids: Vec<GroupId> = self.reinforce_candidates(&oid)?.into_iter().take(n).collect();
+    fn rebuild_garrison(
+        &mut self,
+        oid: ObjectiveId,
+        n: usize,
+        now: DateTime<Utc>,
+    ) -> Result<usize> {
+        let gids: Vec<GroupId> =
+            self.reinforce_candidates(&oid)?.into_iter().take(n).collect();
         let spawned = objective!(self, oid)?.spawned;
         for gid in &gids {
             let group = group!(self, gid)?;
@@ -233,7 +246,8 @@ impl Db {
             }
         }
         let delta = tpos - spos;
-        let dir = if delta.norm() > 1. { delta / delta.norm() } else { Vector2::new(1., 0.) };
+        let dir =
+            if delta.norm() > 1. { delta / delta.norm() } else { Vector2::new(1., 0.) };
         let loc = SpawnLoc::AtPos {
             pos: spos,
             offset_direction: dir,
@@ -297,11 +311,10 @@ impl Db {
         if amount == 0 {
             return;
         }
-        if let Some(inv) = self
-            .persisted
-            .objectives
-            .get_mut_cow(&source)
-            .and_then(|o| o.warehouse.equipment.get_mut_cow(&String::from(MATERIEL_ITEM)))
+        if let Some(inv) =
+            self.persisted.objectives.get_mut_cow(&source).and_then(|o| {
+                o.warehouse.equipment.get_mut_cow(&String::from(MATERIEL_ITEM))
+            })
         {
             *inv += amount;
             self.ephemeral.dirty();
@@ -328,11 +341,19 @@ impl Db {
             speed_kph.max(1.) / 3.6,
             &format_compact!("Reinforcements {gid}"),
         )?;
-        let km = route.windows(2).map(|w| dist(w[1].pos.0, w[0].pos.0)).sum::<f64>() / 1000.;
+        let km =
+            route.windows(2).map(|w| dist(w[1].pos.0, w[0].pos.0)).sum::<f64>() / 1000.;
         let pairs = self.trailer_pairs();
         let spawned = self
             .ephemeral
-            .spawn_group(perf, &self.persisted, idx, spctx, group!(self, gid)?, route.clone())
+            .spawn_group(
+                perf,
+                &self.persisted,
+                idx,
+                spctx,
+                group!(self, gid)?,
+                route.clone(),
+            )
             .context("spawning the reinforcement convoy")?;
         if let Some(Spawned::Group(g)) = spawned {
             match attach_trailers(&g, route, &pairs) {
@@ -400,8 +421,10 @@ impl Db {
             .collect();
         // The tractors carry the load. A template without any (plain
         // trucks) carries it in every vehicle.
-        let tractors: Vec<_> = units.iter().filter(|u| pairs.contains_key(&u.typ.0)).collect();
-        let carriers: Vec<_> = if tractors.is_empty() { units.iter().collect() } else { tractors };
+        let tractors: Vec<_> =
+            units.iter().filter(|u| pairs.contains_key(&u.typ.0)).collect();
+        let carriers: Vec<_> =
+            if tractors.is_empty() { units.iter().collect() } else { tractors };
         let total = carriers.len();
         let alive = carriers.iter().filter(|u| !u.dead).count();
         if alive == 0 {
@@ -420,7 +443,8 @@ impl Db {
         let parked = live
             .iter()
             .all(|u| u.moved.map_or(true, |t| now - t >= Duration::seconds(PARKED_SECS)));
-        if parked && live.iter().any(|u| dist(u.pos, *dest) <= END_OF_ROAD_M.max(arrive)) {
+        if parked && live.iter().any(|u| dist(u.pos, *dest) <= END_OF_ROAD_M.max(arrive))
+        {
             return Ok(Outcome::Arrived { alive, total });
         }
         let leg = rtb.map_or(0., |from| dist(from, *dest)) * ROAD_FACTOR;
@@ -433,7 +457,11 @@ impl Db {
 
     /// Settle every reinforcement convoy that has arrived, been destroyed or
     /// got stuck. Called from `advance_actions` with the Reinforce groups.
-    pub(super) fn advance_reinforcements(&mut self, gids: &[GroupId], now: DateTime<Utc>) {
+    pub(super) fn advance_reinforcements(
+        &mut self,
+        gids: &[GroupId],
+        now: DateTime<Utc>,
+    ) {
         for gid in gids {
             let outcome = match self.reinforce_outcome(*gid, now) {
                 Ok(o) => o,
@@ -447,7 +475,9 @@ impl Db {
             }
             // Arrived at a base that has come under attack since the convoy
             // set off: it waits there and rebuilds once the threat clears.
-            if matches!(outcome, Outcome::Arrived { .. }) && self.reinforce_target_threatened(*gid) {
+            if matches!(outcome, Outcome::Arrived { .. })
+                && self.reinforce_target_threatened(*gid)
+            {
                 continue;
             }
             if let Err(e) = self.settle_reinforcements(*gid, outcome, now) {
@@ -471,7 +501,12 @@ impl Db {
         }
     }
 
-    fn settle_reinforcements(&mut self, gid: GroupId, outcome: Outcome, now: DateTime<Utc>) -> Result<()> {
+    fn settle_reinforcements(
+        &mut self,
+        gid: GroupId,
+        outcome: Outcome,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
         let group = group!(self, gid)?;
         let side = group.side;
         let DeployKind::Action {
@@ -492,12 +527,15 @@ impl Db {
         };
         let (dest, source, player, paid_by, carried, name) =
             (*dest, *origin, *player, *paid_by, *carried, name.clone());
-        let (materiel_per_group, want, penalty) = (cfg.materiel_per_group, cfg.groups, spec.penalty);
+        let (materiel_per_group, want, penalty) =
+            (cfg.materiel_per_group, cfg.groups, spec.penalty);
         // The objective the convoy was sent to, whoever holds it now.
-        let target = Self::objective_near_point(&self.persisted.objectives, dest, |_| true)
-            .filter(|(d, _, _)| *d < 2_000.)
-            .map(|(_, _, o)| (o.id, o.name.clone(), o.owner));
-        let tname = target.as_ref().map_or_else(|| String::from("the front"), |t| t.1.clone());
+        let target =
+            Self::objective_near_point(&self.persisted.objectives, dest, |_| true)
+                .filter(|(d, _, _)| *d < 2_000.)
+                .map(|(_, _, o)| (o.id, o.name.clone(), o.owner));
+        let tname =
+            target.as_ref().map_or_else(|| String::from("the front"), |t| t.1.clone());
         match outcome {
             Outcome::Driving => (),
             Outcome::Destroyed => {
@@ -525,9 +563,14 @@ impl Db {
                 }
             }
             Outcome::Stuck => {
-                warn!("reinforce: {side:?} {name} {gid} to {tname} stuck on the road, recalled");
+                warn!(
+                    "reinforce: {side:?} {name} {gid} to {tname} stuck on the road, recalled"
+                );
                 if let Some(source) = source {
-                    self.return_materiel(source, materiel_per_group.saturating_mul(carried));
+                    self.return_materiel(
+                        source,
+                        materiel_per_group.saturating_mul(carried),
+                    );
                 }
                 if let Some((ucid, amount)) = paid_by
                     && amount > 0
@@ -566,7 +609,9 @@ impl Db {
                         (0, _) => format_compact!(
                             "Reinforcements reached {tname}, but nothing there needed replacing."
                         ),
-                        (r, 0) => format_compact!("Reinforcements reached {tname}: {r} group(s) back in the line."),
+                        (r, 0) => format_compact!(
+                            "Reinforcements reached {tname}: {r} group(s) back in the line."
+                        ),
                         (r, l) => format_compact!(
                             "Reinforcements reached {tname}: {r} group(s) back in the line \
                              ({l} transporter(s) lost on the way)."
@@ -575,12 +620,16 @@ impl Db {
                     self.ephemeral.msgs().panel_to_side(15, false, side, msg);
                 }
                 _ => {
-                    info!("reinforce: {side:?} {name} {gid} arrived, but {tname} is no longer ours");
+                    info!(
+                        "reinforce: {side:?} {name} {gid} arrived, but {tname} is no longer ours"
+                    );
                     self.ephemeral.msgs().panel_to_side(
                         15,
                         false,
                         side,
-                        format_compact!("{tname} fell before the reinforcements got there."),
+                        format_compact!(
+                            "{tname} fell before the reinforcements got there."
+                        ),
                     );
                 }
             },

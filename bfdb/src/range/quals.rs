@@ -74,10 +74,14 @@ pub(crate) fn evaluate(recs: &[&RangeRecord], now: DateTime<Utc>) -> Vec<Qual> {
         out.push(Qual {
             id: "cq_day",
             name: "CQ Day",
-            description: "6 day traps averaging 3.0 LSO points or better in the last 30 days",
+            description:
+                "6 day traps averaging 3.0 LSO points or better in the last 30 days",
             earned,
             progress: blend(frac(n, 6), avg / 3.0, earned),
-            detail: format!("{}/6 day traps, average {avg:.1} points (need 3.0)", n.min(6)),
+            detail: format!(
+                "{}/6 day traps, average {avg:.1} points (need 3.0)",
+                n.min(6)
+            ),
         });
     }
     // CQ Night: 4 night traps, last 30 days
@@ -217,7 +221,8 @@ pub(crate) fn evaluate(recs: &[&RangeRecord], now: DateTime<Utc>) -> Vec<Qual> {
         out.push(Qual {
             id: "sling",
             name: "Helo Cargo",
-            description: "3 cargo deliveries, sling or internal, graded GOOD or better (90 days)",
+            description:
+                "3 cargo deliveries, sling or internal, graded GOOD or better (90 days)",
             earned,
             progress: counted(n, 3, earned),
             detail: format!("{}/3 deliveries GOOD or better", n.min(3)),
@@ -288,7 +293,8 @@ pub(crate) fn evaluate(recs: &[&RangeRecord], now: DateTime<Utc>) -> Vec<Qual> {
         out.push(Qual {
             id: "low_level",
             name: "Low Level",
-            description: "2 low-level routes with every gate, graded GOOD or better (90 days)",
+            description:
+                "2 low-level routes with every gate, graded GOOD or better (90 days)",
             earned,
             progress: counted(n, 2, earned),
             detail: format!("{}/2 routes GOOD or better", n.min(2)),

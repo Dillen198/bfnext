@@ -41,16 +41,14 @@ impl Dcs {
     pub fn get_version(&self) -> Result<String> {
         match self.t.call_function::<String>("getVersion", ()) {
             Ok(v) => Ok(v),
-            Err(e) => match self
-                .lua
-                .globals()
-                .raw_get::<Option<String>>("__DCS_VERSION__")
-            {
-                Ok(Some(v)) => Ok(v),
-                // Report the original failure -- the fallback being absent too
-                // is not the interesting half.
-                _ => Err(e.into()),
-            },
+            Err(e) => {
+                match self.lua.globals().raw_get::<Option<String>>("__DCS_VERSION__") {
+                    Ok(Some(v)) => Ok(v),
+                    // Report the original failure -- the fallback being absent too
+                    // is not the interesting half.
+                    _ => Err(e.into()),
+                }
+            }
         }
     }
 

@@ -19,7 +19,7 @@ for more details.
 //! runway check, the era weapon rules, and when the reactive air response
 //! scrambles.
 
-use chrono::{prelude::*, Duration};
+use chrono::{Duration, prelude::*};
 use dcso3::Vector2;
 
 /// A held takeoff counts once the aircraft is this high above the ground...
@@ -30,7 +30,8 @@ pub(crate) const TAKEOFF_CONFIRM_SECS: i64 = 30;
 /// Has an aircraft that left the ground climbed away for real (rather than
 /// bounced or hopped)?
 pub(crate) fn takeoff_confirmed(agl_m: f64, airborne_for: Duration) -> bool {
-    agl_m >= TAKEOFF_CONFIRM_AGL_M || airborne_for >= Duration::seconds(TAKEOFF_CONFIRM_SECS)
+    agl_m >= TAKEOFF_CONFIRM_AGL_M
+        || airborne_for >= Duration::seconds(TAKEOFF_CONFIRM_SECS)
 }
 
 /// Where a lift-off point is relative to one runway.
@@ -52,7 +53,13 @@ pub(crate) enum RunwayFit {
 /// not always the full paved surface, and its course is a few degrees off on
 /// some fields -- an angular error that grows into a lateral one the farther
 /// down the runway the wheels leave the ground.
-pub(crate) fn runway_fit(dn: f64, de: f64, course: f64, length: f64, width: f64) -> RunwayFit {
+pub(crate) fn runway_fit(
+    dn: f64,
+    de: f64,
+    course: f64,
+    length: f64,
+    width: f64,
+) -> RunwayFit {
     // Carriers / LHAs (and the odd heliport) report length 0, width 0 and a
     // junk course: there is no rectangle to be off of.
     if length < 1.0 || width < 1.0 {
@@ -176,9 +183,8 @@ pub(crate) fn scramble_reason(
 
 /// The mean of some points, or the origin for none.
 pub(crate) fn centroid(points: impl IntoIterator<Item = Vector2>) -> Vector2 {
-    let (sum, n) = points
-        .into_iter()
-        .fold((Vector2::new(0., 0.), 0usize), |(acc, n), p| {
+    let (sum, n) =
+        points.into_iter().fold((Vector2::new(0., 0.), 0usize), |(acc, n), p| {
             (Vector2::new(acc.x + p.x, acc.y + p.y), n + 1)
         });
     if n == 0 {
@@ -291,9 +297,15 @@ mod tests {
         let t = Utc.with_ymd_and_hms(2026, 10, 25, 12, 0, 0).unwrap();
         let deadline = t + Duration::seconds(60);
         assert_eq!(banned_loadout_verdict(None, t, deadline), BannedVerdict::Forgive);
-        assert_eq!(banned_loadout_verdict(Some(false), deadline, deadline), BannedVerdict::Forgive);
+        assert_eq!(
+            banned_loadout_verdict(Some(false), deadline, deadline),
+            BannedVerdict::Forgive
+        );
         assert_eq!(banned_loadout_verdict(Some(true), t, deadline), BannedVerdict::Wait);
-        assert_eq!(banned_loadout_verdict(Some(true), deadline, deadline), BannedVerdict::Remove);
+        assert_eq!(
+            banned_loadout_verdict(Some(true), deadline, deadline),
+            BannedVerdict::Remove
+        );
     }
 
     #[test]

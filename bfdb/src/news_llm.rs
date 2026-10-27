@@ -51,7 +51,8 @@ struct Gate {
     rate_limited: u32,
 }
 
-static GATE: Mutex<Gate> = Mutex::new(Gate { next_call: None, waiting: None, rate_limited: 0 });
+static GATE: Mutex<Gate> =
+    Mutex::new(Gate { next_call: None, waiting: None, rate_limited: 0 });
 
 /// Ask for the process-wide writer slot. `true` means the caller may make one
 /// call now; `false` means leave the day for a later tick.
@@ -79,9 +80,8 @@ pub fn acquire(who: &str) -> bool {
 pub(crate) fn note_rate_limited(retry_after: Option<Duration>) -> Duration {
     let mut g = GATE.lock().unwrap_or_else(|e| e.into_inner());
     g.rate_limited = g.rate_limited.saturating_add(1);
-    let exp = MIN_SPACING
-        .saturating_mul(1u32 << g.rate_limited.min(6))
-        .min(MAX_RATE_BACKOFF);
+    let exp =
+        MIN_SPACING.saturating_mul(1u32 << g.rate_limited.min(6)).min(MAX_RATE_BACKOFF);
     let delay = retry_after.unwrap_or_default().max(exp);
     g.next_call = Some(Instant::now() + delay);
     delay
@@ -137,7 +137,8 @@ fn http_error(res: reqwest::blocking::Response) -> anyhow::Error {
         // Groq puts it in the message too: "Please try again in 16.25s."
         let body_wait = body.find("try again in ").and_then(|i| {
             let rest = &body[i + "try again in ".len()..];
-            let num: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+            let num: String =
+                rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
             let secs = num.parse::<f64>().ok()?;
             Some(if rest[num.len()..].starts_with("ms") { secs / 1000. } else { secs })
         });
@@ -178,7 +179,8 @@ impl WriterCfg {
     ) -> Option<Self> {
         let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
         let url = url.or_else(|| env("BFDB_NEWS_LLM_URL"));
-        let key = key.or_else(|| env("BFDB_NEWS_LLM_KEY")).or_else(|| env("OPENAI_API_KEY"));
+        let key =
+            key.or_else(|| env("BFDB_NEWS_LLM_KEY")).or_else(|| env("OPENAI_API_KEY"));
         let model = model.or_else(|| env("BFDB_NEWS_LLM_MODEL"));
         if url.is_none() && key.is_none() {
             return None;
@@ -304,7 +306,10 @@ fn user_prompt(d: &NewsDigest, history: &[NewsDigest]) -> String {
             .held_by_country
             .iter()
             .map(|(c, t)| {
-                format!("{c}: {} {}, {} {}", d.factions.blue, t.blue, d.factions.red, t.red)
+                format!(
+                    "{c}: {} {}, {} {}",
+                    d.factions.blue, t.blue, d.factions.red, t.red
+                )
             })
             .collect::<Vec<_>>()
             .join("; ");
@@ -405,9 +410,8 @@ pub fn chat(
     max_tokens: u32,
     temperature: f64,
 ) -> Result<(String, Option<String>)> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(300))
-        .build()?;
+    let client =
+        reqwest::blocking::Client::builder().timeout(Duration::from_secs(300)).build()?;
 
     let raw = if cfg.is_anthropic() {
         let body = serde_json::json!({
@@ -416,10 +420,8 @@ pub fn chat(
             "system": system,
             "messages": [{ "role": "user", "content": user }],
         });
-        let mut req = client
-            .post(&cfg.url)
-            .header("anthropic-version", "2023-06-01")
-            .json(&body);
+        let mut req =
+            client.post(&cfg.url).header("anthropic-version", "2023-06-01").json(&body);
         if let Some(k) = &cfg.key {
             req = req.header("x-api-key", k);
         }
@@ -509,7 +511,8 @@ mod tests {
 
     #[test]
     fn extracts_plain_json() {
-        let w = extract_json(r#"{"headline":"THE LINE HOLDS","body":["one","two"]}"#).unwrap();
+        let w = extract_json(r#"{"headline":"THE LINE HOLDS","body":["one","two"]}"#)
+            .unwrap();
         assert_eq!(w.headline, "THE LINE HOLDS");
         assert_eq!(w.body.len(), 2);
     }

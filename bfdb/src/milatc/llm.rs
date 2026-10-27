@@ -61,8 +61,16 @@ impl Llm {
             return None;
         }
         let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
-        let key = cfg.key.clone().filter(|k| !k.trim().is_empty()).or_else(|| env("BFDB_ATC_LLM_KEY")).or_else(|| env("ANTHROPIC_API_KEY"))?;
-        let http = reqwest::blocking::Client::builder().timeout(Duration::from_millis(cfg.timeout_ms.max(500))).build().ok()?;
+        let key = cfg
+            .key
+            .clone()
+            .filter(|k| !k.trim().is_empty())
+            .or_else(|| env("BFDB_ATC_LLM_KEY"))
+            .or_else(|| env("ANTHROPIC_API_KEY"))?;
+        let http = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_millis(cfg.timeout_ms.max(500)))
+            .build()
+            .ok()?;
         Some(Llm {
             url: cfg.url.clone().unwrap_or_else(|| DEFAULT_URL.into()),
             key,
@@ -98,7 +106,10 @@ impl Llm {
         let status = res.status();
         if !status.is_success() {
             let txt = res.text().unwrap_or_default();
-            bail!("language model: {status} {}", txt.chars().take(300).collect::<String>());
+            bail!(
+                "language model: {status} {}",
+                txt.chars().take(300).collect::<String>()
+            );
         }
         #[derive(Deserialize)]
         struct Block {
@@ -117,8 +128,10 @@ impl Llm {
         if r.stop_reason.as_deref() == Some("refusal") {
             bail!("language model declined");
         }
-        let text: String = r.content.into_iter().filter(|b| b.kind == "text").map(|b| b.text).collect();
-        let w: Wire = serde_json::from_str(text.trim()).map_err(|e| anyhow!("unparseable model reply ({e}): {text}"))?;
+        let text: String =
+            r.content.into_iter().filter(|b| b.kind == "text").map(|b| b.text).collect();
+        let w: Wire = serde_json::from_str(text.trim())
+            .map_err(|e| anyhow!("unparseable model reply ({e}): {text}"))?;
         Ok(w.into_parsed())
     }
 }
@@ -274,12 +287,15 @@ struct Wire {
 impl Wire {
     fn into_parsed(self) -> Parsed {
         let intent: Intent =
-            serde_json::from_value(serde_json::Value::String(self.intent)).unwrap_or(Intent::None);
+            serde_json::from_value(serde_json::Value::String(self.intent))
+                .unwrap_or(Intent::None);
         let mut p = Parsed::of(intent);
         p.callsign = self.callsign.trim().to_string();
         p.runway = self.runway.trim().to_uppercase();
-        p.approach = serde_json::from_value(serde_json::Value::String(self.approach)).unwrap_or(Approach::Unspecified);
-        p.option = serde_json::from_value(serde_json::Value::String(self.option)).unwrap_or(LandingOption::Unspecified);
+        p.approach = serde_json::from_value(serde_json::Value::String(self.approach))
+            .unwrap_or(Approach::Unspecified);
+        p.option = serde_json::from_value(serde_json::Value::String(self.option))
+            .unwrap_or(LandingOption::Unspecified);
         p.altitude_ft = self.altitude_ft.clamp(0, 60_000) as i32;
         p.squawk = if (0..=7777).contains(&self.squawk) { self.squawk as u16 } else { 0 };
         p.destination = self.destination.trim().to_string();
@@ -302,7 +318,8 @@ mod tests {
         assert_eq!(p.approach, Approach::Par);
         assert_eq!(p.option, LandingOption::FullStop);
         assert_eq!(p.runway, "06R");
-        let bad: Wire = serde_json::from_str(r#"{"intent":"dance","approach":"x"}"#).unwrap();
+        let bad: Wire =
+            serde_json::from_str(r#"{"intent":"dance","approach":"x"}"#).unwrap();
         let p = bad.into_parsed();
         assert_eq!(p.intent, Intent::None);
         assert_eq!(p.approach, Approach::Unspecified);

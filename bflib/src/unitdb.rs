@@ -37,10 +37,10 @@ for more details.
 //! deliberate gameplay override stays an override, and everything else stops
 //! being a maintenance burden.
 
-use anyhow::{anyhow, Result};
-use chrono::Utc;
-use dcso3::{dcs::Dcs, lfs::Lfs, HooksLua, LuaEnv};
+use anyhow::{Result, anyhow};
 use bfprotocols::cfg::ArtilleryCfg;
+use chrono::Utc;
+use dcso3::{HooksLua, LuaEnv, dcs::Dcs, lfs::Lfs};
 use fxhash::FxHashMap;
 use log::{info, warn};
 use mlua::prelude::*;
@@ -248,7 +248,9 @@ fn parse_unit(t: &LuaTable, category: &str) -> Option<UnitInfo> {
         // `MaxFuelWeight` is the same number as a string on most airframes;
         // it's only the fallback for the odd mod that leaves `M_fuel_max` out.
         max_fuel_kg: opt_f64(t, "M_fuel_max")
-            .or_else(|| opt_string(t, "MaxFuelWeight").and_then(|s| s.trim().parse().ok()))
+            .or_else(|| {
+                opt_string(t, "MaxFuelWeight").and_then(|s| s.trim().parse().ok())
+            })
             .filter(|v| *v > 0.0),
     })
 }
@@ -272,7 +274,9 @@ fn walk(
         let (k, v) = pair;
         let LuaValue::Table(child) = v else { continue };
         let name = match &k {
-            LuaValue::String(s) => s.to_str().map(|s| s.to_string()).unwrap_or_else(|_| "?".into()),
+            LuaValue::String(s) => {
+                s.to_str().map(|s| s.to_string()).unwrap_or_else(|_| "?".into())
+            }
             LuaValue::Integer(i) => i.to_string(),
             LuaValue::Number(n) => n.to_string(),
             _ => continue,
@@ -285,11 +289,7 @@ fn walk(
                 out.insert(info.typ.clone(), info);
             }
             None => {
-                let path = if path.is_empty() {
-                    name
-                } else {
-                    format!("{path}/{name}")
-                };
+                let path = if path.is_empty() { name } else { format!("{path}/{name}") };
                 walk(&child, &path, depth - 1, out, seen)
             }
         }
@@ -308,17 +308,12 @@ pub fn harvest<'lua, L: LuaEnv<'lua>>(lua: L) -> Result<UnitDb> {
         .globals()
         .raw_get("db")
         .map_err(|e| anyhow!("_G.db is not reachable from this lua state: {e}"))?;
-    let units: LuaTable = db
-        .raw_get("Units")
-        .map_err(|e| anyhow!("_G.db.Units is missing: {e}"))?;
+    let units: LuaTable =
+        db.raw_get("Units").map_err(|e| anyhow!("_G.db.Units is missing: {e}"))?;
     let mut by_type = FxHashMap::default();
     let mut seen = Vec::with_capacity(256);
     walk(&units, "", UNIT_SCAN_DEPTH, &mut by_type, &mut seen);
-    Ok(UnitDb {
-        dcs_version: None,
-        harvested_at: None,
-        by_type,
-    })
+    Ok(UnitDb { dcs_version: None, harvested_at: None, by_type })
 }
 
 /// Harvest and store, and drop a `Logs/unitdb.json` alongside the DCS logs so
@@ -338,19 +333,15 @@ pub fn init(lua: HooksLua) -> Result<()> {
         .ok();
     db.harvested_at = Some(Utc::now().to_rfc3339());
     let arty = db.iter().filter(|(_, i)| i.is_indirect_fire()).count();
-    let radar = db
-        .iter()
-        .filter(|(_, i)| i.detection_range_m.is_some())
-        .count();
+    let radar = db.iter().filter(|(_, i)| i.detection_range_m.is_some()).count();
     info!(
         "unit db harvested from DCS {}: {} types ({arty} indirect fire, {radar} with radar)",
         db.dcs_version.as_deref().unwrap_or("unknown"),
         db.len()
     );
     if let Ok(write_dir) = Lfs::singleton(lua).and_then(|l| l.writedir()) {
-        let path = std::path::PathBuf::from(write_dir.as_str())
-            .join("Logs")
-            .join("unitdb.json");
+        let path =
+            std::path::PathBuf::from(write_dir.as_str()).join("Logs").join("unitdb.json");
         match serde_json::to_vec_pretty(&db) {
             Ok(body) => {
                 if let Err(e) = std::fs::write(&path, body) {
@@ -470,7 +461,11 @@ mod drive_tests {
 /// a Buk site used to count as a battery (offered Fire on the command map,
 /// and tasked with fire missions DCS then ignored). DCS's own "Indirect
 /// fire" / "Air Defence" attributes decide when the harvest has them.
-pub fn fires_indirect(typ: &str, tags: enumflags2::BitFlags<bfprotocols::cfg::UnitTag>, artillery: bool) -> bool {
+pub fn fires_indirect(
+    typ: &str,
+    tags: enumflags2::BitFlags<bfprotocols::cfg::UnitTag>,
+    artillery: bool,
+) -> bool {
     use bfprotocols::cfg::UnitTag;
     if artillery {
         return true;
@@ -485,7 +480,9 @@ pub fn fires_indirect(typ: &str, tags: enumflags2::BitFlags<bfprotocols::cfg::Un
         }
     }
     tags.contains(UnitTag::Artillery)
-        || (tags.contains(UnitTag::Launcher) && !tags.contains(UnitTag::SAM) && !tags.contains(UnitTag::AAA))
+        || (tags.contains(UnitTag::Launcher)
+            && !tags.contains(UnitTag::SAM)
+            && !tags.contains(UnitTag::AAA))
 }
 
 #[cfg(test)]

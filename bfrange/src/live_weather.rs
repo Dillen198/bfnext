@@ -59,7 +59,9 @@ pub fn note(write_dir: &Path, cfg: Option<&LiveWeatherConfig>) {
         return;
     };
     let Some(miz) = MISSION.lock().clone() else {
-        warn!("live weather: DCS did not say which mission file is loaded, so it cannot be updated");
+        warn!(
+            "live weather: DCS did not say which mission file is loaded, so it cannot be updated"
+        );
         return;
     };
     let res = serde_json::to_string_pretty(&Note { miz: miz.clone(), cfg: cfg.clone() })
@@ -94,11 +96,17 @@ pub fn apply_noted(write_dir: &Path, when: &str) {
         Err(e) => return warn!("live weather: {path:?}: {e:?}"),
     };
     if !note.miz.exists() {
-        return warn!("live weather: the mission {:?} is gone, nothing to update", note.miz);
+        return warn!(
+            "live weather: the mission {:?} is gone, nothing to update",
+            note.miz
+        );
     }
     info!("live weather ({when}): writing the real weather into {:?}", note.miz);
     match livewx::apply(&note.miz, &note.cfg) {
-        Ok(()) => info!("live weather ({when}): {:?} updated, it takes effect when it loads", note.miz),
+        Ok(()) => info!(
+            "live weather ({when}): {:?} updated, it takes effect when it loads",
+            note.miz
+        ),
         Err(e) => warn!("live weather ({when}): {:?} left as it was: {e:?}", note.miz),
     }
 }

@@ -47,10 +47,21 @@ pub(crate) trait Facility: Send {
     /// A new picture: what it says unprompted.
     fn update(&mut self, pic: &Picture) -> Vec<Tx>;
     /// Answer a transmission heard on `pos`.
-    fn respond(&mut self, pos: Pos, who: &Caller, heard: &str, parsed: Option<Parsed>, now: f64) -> Vec<Tx>;
+    fn respond(
+        &mut self,
+        pos: Pos,
+        who: &Caller,
+        heard: &str,
+        parsed: Option<Parsed>,
+        now: f64,
+    ) -> Vec<Tx>;
     /// Who a transmission came from: callsign and aircraft type, for the
     /// transcript.
-    fn caller(&mut self, who: &Caller, parsed: Option<&Parsed>) -> (Option<String>, Option<String>);
+    fn caller(
+        &mut self,
+        who: &Caller,
+        parsed: Option<&Parsed>,
+    ) -> (Option<String>, Option<String>);
     fn llm_context(&mut self, pos: Pos, who: &Caller, heard: &str) -> llm::Context;
     /// Names and phrases whisper should expect on its frequencies.
     fn vocabulary(&self) -> Vec<String>;
@@ -106,7 +117,12 @@ fn air(t: &AtcTraffic) -> Option<Air> {
 
 /// Which aircraft a transmission came from: the SRS unit id, else the SRS
 /// name against player names, else the callsign the pilot gave.
-pub(crate) fn locate<'a>(air: &'a [Air], who: &Caller, parsed: Option<&Parsed>, calls: &HashMap<u64, String>) -> Option<&'a Air> {
+pub(crate) fn locate<'a>(
+    air: &'a [Air],
+    who: &Caller,
+    parsed: Option<&Parsed>,
+    calls: &HashMap<u64, String>,
+) -> Option<&'a Air> {
     if let Some(a) = who.unit_id.and_then(|u| air.iter().find(|a| a.id == u)) {
         return Some(a);
     }
@@ -120,13 +136,21 @@ pub(crate) fn locate<'a>(air: &'a [Air], who: &Caller, parsed: Option<&Parsed>, 
         }
     }
     let c = parsed.map(|p| norm(&p.callsign)).filter(|c| !c.is_empty())?;
-    air.iter().find(|a| calls.get(&a.id).map(|k| norm(k) == c).unwrap_or_else(|| norm(&call_of(a)) == c))
+    air.iter().find(|a| {
+        calls.get(&a.id).map(|k| norm(k) == c).unwrap_or_else(|| norm(&call_of(a)) == c)
+    })
 }
 
 /// How a facility addresses an aircraft before the pilot has said: the
 /// callsign the engine has for it, else the player's name.
 pub(crate) fn call_of(a: &Air) -> String {
-    guess_callsign(&a.group).unwrap_or_else(|| if a.ai { a.group.clone() } else { a.name.clone() })
+    guess_callsign(&a.group).unwrap_or_else(|| {
+        if a.ai {
+            a.group.clone()
+        } else {
+            a.name.clone()
+        }
+    })
 }
 
 /// Callsigns learnt from what pilots say, by unit.
@@ -171,7 +195,12 @@ impl Local {
 }
 
 /// Range in nm and bearing from one point to another.
-pub(crate) fn range_bearing(from_lat: f64, from_lon: f64, lat: f64, lon: f64) -> (f64, f64) {
+pub(crate) fn range_bearing(
+    from_lat: f64,
+    from_lon: f64,
+    lat: f64,
+    lon: f64,
+) -> (f64, f64) {
     let (m, b) = Local::at(from_lat, from_lon).polar(lat, lon);
     (m / NM, b)
 }
@@ -261,7 +290,17 @@ impl Mouth {
 
     /// The controller (or a voice override, e.g. the LSO on the approach
     /// frequency) talks to `a`. AI flights read it back.
-    pub(crate) fn say(&mut self, pos: Pos, voice: Option<Pos>, a: &Air, call: &str, field: &str, text: String, now: f64, out: &mut Vec<Tx>) {
+    pub(crate) fn say(
+        &mut self,
+        pos: Pos,
+        voice: Option<Pos>,
+        a: &Air,
+        call: &str,
+        field: &str,
+        text: String,
+        now: f64,
+        out: &mut Vec<Tx>,
+    ) {
         let mut tx = Tx::new(pos, text.clone(), Some(a.id), now + 14.);
         tx.delay = self.between(0.8, 2.2);
         tx.subtitle = (!a.ai).then_some(a.id);
@@ -280,7 +319,14 @@ impl Mouth {
     }
 
     /// The controller to everyone on frequency (no addressee).
-    pub(crate) fn broadcast(&mut self, pos: Pos, voice: Option<Pos>, text: String, now: f64, out: &mut Vec<Tx>) {
+    pub(crate) fn broadcast(
+        &mut self,
+        pos: Pos,
+        voice: Option<Pos>,
+        text: String,
+        now: f64,
+        out: &mut Vec<Tx>,
+    ) {
         let mut tx = Tx::new(pos, text, None, now + 20.);
         tx.delay = self.between(0.5, 1.5);
         tx.voice = voice;
@@ -288,7 +334,15 @@ impl Mouth {
     }
 
     /// An AI pilot keys up.
-    pub(crate) fn pilot(&mut self, pos: Pos, a: &Air, call: &str, text: String, now: f64, out: &mut Vec<Tx>) {
+    pub(crate) fn pilot(
+        &mut self,
+        pos: Pos,
+        a: &Air,
+        call: &str,
+        text: String,
+        now: f64,
+        out: &mut Vec<Tx>,
+    ) {
         let mut tx = Tx::new(pos, text, Some(a.id), now + 30.);
         tx.pilot = Some(call.to_string());
         tx.aircraft = type_label(&a.typ);
@@ -301,7 +355,9 @@ impl Mouth {
         if !a.ai {
             return;
         }
-        if let Some(tx) = out.iter_mut().rev().find(|t| t.to == Some(a.id) && t.pilot.is_none()) {
+        if let Some(tx) =
+            out.iter_mut().rev().find(|t| t.to == Some(a.id) && t.pilot.is_none())
+        {
             tx.action = Some((a.name.clone(), action));
         }
     }
@@ -315,7 +371,12 @@ mod tests {
     fn clock_says_mission_minutes() {
         let mut c = Clock::default();
         let atc = AtcPicture::default();
-        let pic = Picture { atc: &atc, range: None, now: 100., mission_s: Some(10. * 3600. + 28. * 60.) };
+        let pic = Picture {
+            atc: &atc,
+            range: None,
+            now: 100.,
+            mission_s: Some(10. * 3600. + 28. * 60.),
+        };
         c.sync(&pic);
         assert_eq!(c.minute(100.), 28);
         assert_eq!(c.say_minute(100. + 4. * 60.), "3-2");

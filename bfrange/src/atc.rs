@@ -15,7 +15,7 @@ use crate::{
     util::{self, V3},
 };
 use bfprotocols::atc::{AtcAirfield, AtcPicture, AtcRunway, AtcTraffic};
-use dcso3::{airbase::AirbaseCategory, world::World, LuaEnv, MizLua};
+use dcso3::{LuaEnv, MizLua, airbase::AirbaseCategory, world::World};
 use log::{info, warn};
 use mlua::prelude::*;
 
@@ -67,11 +67,7 @@ fn true_axis(name: &str, course_deg: f64) -> f64 {
             .map(|n| util::angdiff(c, *n).abs().min(util::angdiff(c + 180., *n).abs()))
             .fold(f64::MAX, f64::min)
     };
-    if score(cands[1]) < score(cands[0]) {
-        cands[1]
-    } else {
-        cands[0]
-    }
+    if score(cands[1]) < score(cands[0]) { cands[1] } else { cands[0] }
 }
 
 impl Atc {
@@ -87,7 +83,9 @@ impl Atc {
                 let mut ends: Vec<End> = vec![];
                 for rw in ab.get_runways()? {
                     let Ok(rw) = rw else { continue };
-                    let (Ok(c), Ok(course), Ok(len), Ok(w)) = (rw.position(), rw.course(), rw.length(), rw.width()) else {
+                    let (Ok(c), Ok(course), Ok(len), Ok(w)) =
+                        (rw.position(), rw.course(), rw.length(), rw.width())
+                    else {
                         continue;
                     };
                     if len < 300. {
@@ -118,23 +116,29 @@ impl Atc {
     }
 
     /// Rebuild the picture, once a second.
-    pub fn tick(&mut self, lua: MizLua, players: &Players, ai: Vec<AtcTraffic>, now: f64) {
+    pub fn tick(
+        &mut self,
+        lua: MizLua,
+        players: &Players,
+        ai: Vec<AtcTraffic>,
+        now: f64,
+    ) {
         if self.fields.is_empty() || now - self.last < 1. {
             return;
         }
         self.last = now;
         let wx = Clouds::read(lua);
-        let airfields: Vec<AtcAirfield> = self.fields.iter().map(|f| airfield(lua, f, &wx)).collect();
+        let airfields: Vec<AtcAirfield> =
+            self.fields.iter().map(|f| airfield(lua, f, &wx)).collect();
         let mut traffic: Vec<AtcTraffic> = players
             .flying
             .values()
             .filter(|f| !f.is_ground)
             .map(|f| {
                 let g = util::geo(lua, f.pos);
-                let near = self
-                    .fields
-                    .iter()
-                    .min_by(|a, b| util::dist2(a.pos, f.pos).total_cmp(&util::dist2(b.pos, f.pos)));
+                let near = self.fields.iter().min_by(|a, b| {
+                    util::dist2(a.pos, f.pos).total_cmp(&util::dist2(b.pos, f.pos))
+                });
                 AtcTraffic {
                     ucid: f.ucid.to_string(),
                     unit_id: Some(f.unit_id.inner() as u64),
@@ -149,8 +153,12 @@ impl Atc {
                     vspd_fpm: (f.vel.y * util::M_TO_FT * 60.).round() as i32,
                     on_ground: !f.in_air,
                     field: near.map(|n| n.name.clone()),
-                    field_brg: near.map(|n| util::bearing(n.pos, f.pos).round() as u16 % 360).unwrap_or(0),
-                    field_rng_m: near.map(|n| util::dist2(n.pos, f.pos).round() as u32).unwrap_or(0),
+                    field_brg: near
+                        .map(|n| util::bearing(n.pos, f.pos).round() as u16 % 360)
+                        .unwrap_or(0),
+                    field_rng_m: near
+                        .map(|n| util::dist2(n.pos, f.pos).round() as u32)
+                        .unwrap_or(0),
                     rotary: f.is_helo,
                     ai: false,
                     ai_plan: None,
@@ -173,7 +181,8 @@ fn name_parallels(ends: &mut [End]) {
         if ends[i].name.chars().last().map_or(false, |c| c.is_alphabetic()) {
             continue;
         }
-        let same: Vec<usize> = idx.iter().copied().filter(|&j| ends[j].name == ends[i].name).collect();
+        let same: Vec<usize> =
+            idx.iter().copied().filter(|&j| ends[j].name == ends[i].name).collect();
         if same.len() != 2 {
             continue;
         }
@@ -184,7 +193,8 @@ fn name_parallels(ends: &mut [End]) {
             let r = h.to_radians();
             -(p.x) * r.sin() + p.z * r.cos()
         };
-        let (left, right) = if side(ends[a].thr) < side(ends[b].thr) { (a, b) } else { (b, a) };
+        let (left, right) =
+            if side(ends[a].thr) < side(ends[b].thr) { (a, b) } else { (b, a) };
         let n = ends[left].name.clone();
         ends[left].name = format!("{n}L");
         ends[right].name = format!("{n}R");
@@ -204,12 +214,21 @@ impl Clouds {
         let r = (|| -> LuaResult<Clouds> {
             let g = lua.inner().globals();
             // dcso3 wraps the mission's weather table but has no accessors for its fields
-            let wx = dcso3::env::miz::Miz::singleton(lua).and_then(|m| m.weather()).map_err(LuaError::external)?;
+            let wx = dcso3::env::miz::Miz::singleton(lua)
+                .and_then(|m| m.weather())
+                .map_err(LuaError::external)?;
             let clouds: Option<LuaTable> = wx.raw_get("clouds").ok();
-            let density: f64 = clouds.as_ref().and_then(|c| c.get("density").ok()).unwrap_or(0.);
-            let preset: Option<String> = clouds.as_ref().and_then(|c| c.get::<String>("preset").ok()).filter(|s| !s.is_empty());
+            let density: f64 =
+                clouds.as_ref().and_then(|c| c.get("density").ok()).unwrap_or(0.);
+            let preset: Option<String> = clouds
+                .as_ref()
+                .and_then(|c| c.get::<String>("preset").ok())
+                .filter(|s| !s.is_empty());
             let base: Option<f64> = clouds.as_ref().and_then(|c| c.get("base").ok());
-            let precip = clouds.as_ref().and_then(|c| c.get::<f64>("iprecptns").ok()).map_or(false, |p| p > 0.)
+            let precip = clouds
+                .as_ref()
+                .and_then(|c| c.get::<f64>("iprecptns").ok())
+                .map_or(false, |p| p > 0.)
                 || preset.as_deref().map_or(false, |p| p.starts_with("Rainy"));
             let cover = if preset.is_some() {
                 Some("clouds".to_string())
@@ -222,7 +241,10 @@ impl Clouds {
                     _ => Some("overcast".into()),
                 }
             };
-            let mut vis: f64 = wx.get::<LuaTable>("visibility").and_then(|v| v.get("distance")).unwrap_or(80_000.);
+            let mut vis: f64 = wx
+                .get::<LuaTable>("visibility")
+                .and_then(|v| v.get("distance"))
+                .unwrap_or(80_000.);
             let fog = (|| -> LuaResult<f64> {
                 let world: LuaTable = g.raw_get("world")?;
                 let weather: LuaTable = world.raw_get("weather")?;
@@ -242,7 +264,8 @@ impl Clouds {
 fn airfield(lua: MizLua, f: &Field, c: &Clouds) -> AtcAirfield {
     let g = util::geo(lua, f.pos);
     let (wf, wk, _) = util::wind_at(lua, V3::new(f.pos.x, f.elev_m + 10., f.pos.z));
-    let (temp, qfe) = util::temp_pressure_at(lua, V3::new(f.pos.x, f.elev_m + 2., f.pos.z));
+    let (temp, qfe) =
+        util::temp_pressure_at(lua, V3::new(f.pos.x, f.elev_m + 2., f.pos.z));
     // QFE to QNH through the standard atmosphere.
     let qnh = qfe / (1. - 0.0065 * f.elev_m / 288.15).powf(5.255877);
     let runways = f
@@ -308,7 +331,13 @@ mod tests {
 
     #[test]
     fn parallels_get_left_and_right() {
-        let mk = |name: &str, x: f64, z: f64| End { name: name.into(), thr: V3::new(x, 0., z), hdg: 66., len: 3700., width: 60. };
+        let mk = |name: &str, x: f64, z: f64| End {
+            name: name.into(),
+            thr: V3::new(x, 0., z),
+            hdg: 66.,
+            len: 3700.,
+            width: 60.,
+        };
         // 06 heading 066: the northern runway is on the left.
         let n = mk("06", 600., 0.);
         let s = mk("06", 0., 200.);

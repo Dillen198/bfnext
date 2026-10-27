@@ -10,15 +10,15 @@ pub(crate) type LogHistory = Arc<Mutex<VecDeque<String>>>;
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct LogLine {
-    pub(crate) ts:     String,
-    pub(crate) level:  String,
+    pub(crate) ts: String,
+    pub(crate) level: String,
     pub(crate) target: String,
-    pub(crate) msg:    String,
+    pub(crate) msg: String,
 }
 
 pub(crate) struct BroadcastLogger {
-    pub(crate) inner:   env_logger::Logger,
-    pub(crate) tx:      broadcast::Sender<String>,
+    pub(crate) inner: env_logger::Logger,
+    pub(crate) tx: broadcast::Sender<String>,
     pub(crate) history: LogHistory,
 }
 
@@ -33,10 +33,10 @@ impl log::Log for BroadcastLogger {
         }
         self.inner.log(record);
         let line = LogLine {
-            ts:     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-            level:  record.level().to_string(),
+            ts: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            level: record.level().to_string(),
             target: record.target().to_string(),
-            msg:    record.args().to_string(),
+            msg: record.args().to_string(),
         };
         if let Ok(json) = serde_json::to_string(&line) {
             let mut hist = self.history.lock().unwrap();
@@ -106,11 +106,16 @@ pub(crate) async fn api_logs(
     }
 
     let Some(expected) = expected_token.as_ref() else {
-        return text(warp::http::StatusCode::NOT_FOUND, "log endpoints are disabled (no --log-read-token)\n");
+        return text(
+            warp::http::StatusCode::NOT_FOUND,
+            "log endpoints are disabled (no --log-read-token)\n",
+        );
     };
     // `?token=` is kept on purpose (tooling that cannot set headers relies on
     // it); bfdb writes no access log, so it never lands in one of ours.
-    if let Err((status, why)) = check_static_token(&q, auth_header.as_deref(), &[expected.as_str()], ip) {
+    if let Err((status, why)) =
+        check_static_token(&q, auth_header.as_deref(), &[expected.as_str()], ip)
+    {
         return text(status, why);
     }
 
@@ -120,7 +125,10 @@ pub(crate) async fn api_logs(
     //            text with ?source=<engine_X|dcs_X|bfdb|bot>&date=YYYY-MM-DD
     //   bot | service | netidx | bfdb_boot   tails of the bot-side logs
     // Survive bfdb restarts, unlike the in-memory `engine` / `bfdb` tails.
-    if matches!(source.as_str(), "issues" | "archive" | "bot" | "service" | "netidx" | "bfdb_boot") {
+    if matches!(
+        source.as_str(),
+        "issues" | "archive" | "bot" | "service" | "netidx" | "bfdb_boot"
+    ) {
         let Some(cfg) = bot_cfg.as_ref() else {
             return text(
                 warp::http::StatusCode::SERVICE_UNAVAILABLE,
@@ -170,7 +178,8 @@ pub(crate) async fn api_logs(
                 .ok()
                 .and_then(|v| {
                     v.get("lines").and_then(|l| l.as_array()).map(|a| {
-                        a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join("\n") + "\n"
+                        a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join("\n")
+                            + "\n"
                     })
                 })
                 .unwrap_or(body)
@@ -178,7 +187,8 @@ pub(crate) async fn api_logs(
             body
         };
         return text(
-            warp::http::StatusCode::from_u16(status).unwrap_or(warp::http::StatusCode::BAD_GATEWAY),
+            warp::http::StatusCode::from_u16(status)
+                .unwrap_or(warp::http::StatusCode::BAD_GATEWAY),
             body,
         );
     }
@@ -220,9 +230,9 @@ pub(crate) async fn api_logs(
             return text(
                 warp::http::StatusCode::BAD_REQUEST,
                 format!(
-                    "unknown log source {other:?} (want engine, bfdb, issues, archive, bot, \
+                "unknown log source {other:?} (want engine, bfdb, issues, archive, bot, \
                      service, netidx or bfdb_boot)\n"
-                ),
+            ),
             )
         }
     };

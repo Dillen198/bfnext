@@ -72,24 +72,15 @@ impl Timer {
     }
 
     pub fn get_time(&self) -> Result<Time> {
-        Ok(record_perf!(
-            timer_get_time,
-            self.t.call_function("getTime", ())?
-        ))
+        Ok(record_perf!(timer_get_time, self.t.call_function("getTime", ())?))
     }
 
     pub fn get_abs_time(&self) -> Result<Time> {
-        Ok(record_perf!(
-            timer_get_abs_time,
-            self.t.call_function("getAbsTime", ())?
-        ))
+        Ok(record_perf!(timer_get_abs_time, self.t.call_function("getAbsTime", ())?))
     }
 
     pub fn get_time0(&self) -> Result<Time> {
-        Ok(record_perf!(
-            timer_get_time0,
-            self.t.call_function("getTime0", ())?
-        ))
+        Ok(record_perf!(timer_get_time0, self.t.call_function("getTime0", ())?))
     }
 
     /// Schedule `f` to run at `when`. It runs again at the time it returns,
@@ -104,15 +95,15 @@ impl Timer {
         F: Fn(MizLua, T, Time) -> Result<Option<Time>> + 'static,
         T: IntoLua + FromLua,
     {
-        let f = self
-            .lua
-            .create_function(move |lua, (arg, time): (T, Time)| {
-                Ok(run_scheduled("scheduled function", || f(MizLua(lua), arg, time))
-                    .unwrap_or_else(|| {
-                        error!("scheduled function rescheduled in {RETRY_AFTER}s after failing");
-                        Some(time + RETRY_AFTER)
-                    }))
-            })?;
+        let f = self.lua.create_function(move |lua, (arg, time): (T, Time)| {
+            Ok(run_scheduled("scheduled function", || f(MizLua(lua), arg, time))
+                .unwrap_or_else(|| {
+                    error!(
+                        "scheduled function rescheduled in {RETRY_AFTER}s after failing"
+                    );
+                    Some(time + RETRY_AFTER)
+                }))
+        })?;
         Ok(record_perf!(
             timer_schedule_function,
             self.t.call_function("scheduleFunction", (f, arg, when))?
@@ -127,12 +118,10 @@ impl Timer {
         F: Fn(MizLua, T, Time) -> Result<()> + 'static,
         T: IntoLua + FromLua,
     {
-        let f = self
-            .lua
-            .create_function(move |lua, (arg, time): (T, Time)| {
-                run_scheduled("scheduled one shot function", || f(MizLua(lua), arg, time));
-                Ok(None::<Time>)
-            })?;
+        let f = self.lua.create_function(move |lua, (arg, time): (T, Time)| {
+            run_scheduled("scheduled one shot function", || f(MizLua(lua), arg, time));
+            Ok(None::<Time>)
+        })?;
         Ok(record_perf!(
             timer_schedule_function,
             self.t.call_function("scheduleFunction", (f, arg, when))?

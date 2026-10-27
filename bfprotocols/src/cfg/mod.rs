@@ -17,7 +17,13 @@ for more details.
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::prelude::*;
 use compact_str::format_compact;
-use dcso3::{coalition::Side, controller::{AltType, TacanBand}, country::Country, net::Ucid, String};
+use dcso3::{
+    coalition::Side,
+    controller::{AltType, TacanBand},
+    country::Country,
+    net::Ucid,
+    String,
+};
 use enumflags2::{bitflags, BitFlags};
 use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
 use indexmap::IndexMap;
@@ -30,9 +36,9 @@ use std::{
     fmt,
     fs::{self, File},
     io,
-    sync::Arc,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 mod balance;
@@ -40,13 +46,18 @@ mod command;
 mod economy;
 mod example;
 mod ground_war;
-pub use ground_war::{GarrisonCfg, GroundAiCfg, GroundCombatCfg, GroundWarCfg, PurchasedFormationCfg};
+pub use ground_war::{
+    GarrisonCfg, GroundAiCfg, GroundCombatCfg, GroundWarCfg, PurchasedFormationCfg,
+};
 mod hq;
-pub use hq::{EscortPolicy, HqAirCfg, HqAirTemplate, HqCfg, HqCostsCfg, HqPackagesCfg, HqGapFillCfg, HqLimitsCfg, HqRequestsCfg, HqStrategistCfg, HqSupportCfg};
+pub use hq::{
+    EscortPolicy, HqAirCfg, HqAirTemplate, HqCfg, HqCostsCfg, HqGapFillCfg, HqLimitsCfg,
+    HqPackagesCfg, HqRequestsCfg, HqStrategistCfg, HqSupportCfg,
+};
 
 pub use balance::{fmt_mult, EmergencyRepairCfg, PopulationScalingCfg};
-pub use economy::{split_by_weight, EconomyCfg};
 pub use command::{rank_min_score, rank_tier, CommandCfg, HuntersCfg, RANK_MIN_SCORE};
+pub use economy::{split_by_weight, EconomyCfg};
 
 // The rest of the config, split out of this file by subsystem. Every item
 // is re-exported here, so its path (`bfprotocols::cfg::X`) is unchanged.
@@ -652,7 +663,8 @@ fn write_atomic(path: &Path, data: &[u8]) -> Result<()> {
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
     let res = (|| -> Result<()> {
-        let mut fd = File::create(&tmp).with_context(|| format_compact!("creating {:?}", tmp))?;
+        let mut fd =
+            File::create(&tmp).with_context(|| format_compact!("creating {:?}", tmp))?;
         fd.write_all(data).with_context(|| format_compact!("writing {:?}", tmp))?;
         fd.sync_all().with_context(|| format_compact!("syncing {:?}", tmp))?;
         drop(fd);
@@ -741,8 +753,13 @@ mod load_tests {
             let text = std::fs::read_to_string(path).unwrap();
             let text = text.trim_start_matches('\u{feff}');
             let raw: serde_json::Value = serde_json::from_str(text).unwrap();
-            let cfg: Cfg = serde_json::from_str(text).unwrap_or_else(|e| panic!("{path}: {e}"));
-            let hq = cfg.smart_commander.as_ref().and_then(|s| s.hq.as_ref()).expect("no smart_commander.hq");
+            let cfg: Cfg =
+                serde_json::from_str(text).unwrap_or_else(|e| panic!("{path}: {e}"));
+            let hq = cfg
+                .smart_commander
+                .as_ref()
+                .and_then(|s| s.hq.as_ref())
+                .expect("no smart_commander.hq");
             let known = serde_json::to_value(&cfg).unwrap();
             let mut out = vec![];
             for key in ["smart_commander", "ground_war"] {
@@ -751,7 +768,9 @@ mod load_tests {
             }
             let out: Vec<_> = out
                 .into_iter()
-                .filter(|k| k.starts_with("smart_commander.hq") || k.starts_with("ground_war"))
+                .filter(|k| {
+                    k.starts_with("smart_commander.hq") || k.starts_with("ground_war")
+                })
                 .collect();
             eprintln!(
                 "{path}: loads; hq sides {:?}, cost_scale {}, air rosters (cap, strike, sead) {:?}; ignored keys {:?}",
@@ -771,7 +790,12 @@ mod load_tests {
         let v = serde_json::to_value(&cfg).unwrap();
         let back: Cfg = serde_json::from_value(v.clone()).unwrap();
         let mut out = vec![];
-        unknown_keys(&v, &serde_json::to_value(&back).unwrap(), &mut Default::default(), &mut out);
+        unknown_keys(
+            &v,
+            &serde_json::to_value(&back).unwrap(),
+            &mut Default::default(),
+            &mut out,
+        );
         assert!(out.is_empty(), "{out:?}");
     }
 
@@ -835,7 +859,9 @@ mod load_tests {
         }
         assert!(cfg.validate().is_err());
         // Enum values are spelled as in the docs.
-        let e: EwCfg = serde_json::from_value(serde_json::json!({"gps": "Spoof", "radio": "Off"})).unwrap();
+        let e: EwCfg =
+            serde_json::from_value(serde_json::json!({"gps": "Spoof", "radio": "Off"}))
+                .unwrap();
         assert_eq!(e.gps, GnssMode::Spoof);
         assert_eq!(e.radio, RadioJamMode::Off);
     }
@@ -881,7 +907,9 @@ fn restore_unknown_keys(
                 }
             }
         }
-        (J::Array(r), J::Array(k), J::Array(n)) if r.len() == k.len() && k.len() == n.len() => {
+        (J::Array(r), J::Array(k), J::Array(n))
+            if r.len() == k.len() && k.len() == n.len() =>
+        {
             for ((rv, kv), nv) in r.iter().zip(k).zip(n.iter_mut()) {
                 restore_unknown_keys(rv, kv, nv)
             }
@@ -926,9 +954,12 @@ impl Cfg {
                 Err(e) => match e.kind() {
                     io::ErrorKind::NotFound => {
                         let default = serde_json::to_string_pretty(&Cfg::default())
-                            .map_err(|e| anyhow!("could not encode default config {}", e))?;
-                        write_atomic(&path, default.as_bytes())
-                            .map_err(|e| anyhow!("could not write default config {:?}", e))?;
+                            .map_err(|e| {
+                                anyhow!("could not encode default config {}", e)
+                            })?;
+                        write_atomic(&path, default.as_bytes()).map_err(|e| {
+                            anyhow!("could not write default config {:?}", e)
+                        })?;
                     }
                     e => {
                         return Err(anyhow!("error opening config file {:?}", e));
@@ -1022,7 +1053,10 @@ impl Cfg {
         check(self.pilot_experience.is_some(), "pilot_experience");
         check(self.counter_battery.is_some(), "counter_battery");
         check(self.ewr_cull_distance != default_ewr_cull_distance(), "ewr_cull_distance");
-        check(self.weapon_spawn_radius != default_weapon_spawn_radius(), "weapon_spawn_radius");
+        check(
+            self.weapon_spawn_radius != default_weapon_spawn_radius(),
+            "weapon_spawn_radius",
+        );
         if let Some(f) = &self.frontline {
             check(f.max_marks != default_frontline_max_marks(), "frontline.max_marks");
             check(
@@ -1046,7 +1080,10 @@ impl Cfg {
                 e.event_probability != default_event_probability(),
                 "campaign_events.event_probability",
             );
-            check(e.vip_reward_points != default_vip_reward(), "campaign_events.vip_reward_points");
+            check(
+                e.vip_reward_points != default_vip_reward(),
+                "campaign_events.vip_reward_points",
+            );
             check(
                 e.evacuation_reward_per_civilian != default_evac_reward(),
                 "campaign_events.evacuation_reward_per_civilian",
@@ -1108,9 +1145,15 @@ impl Cfg {
         }
         if let Some(ps) = cfg.population_scaling.as_ref().filter(|p| p.enabled) {
             for (name, m) in [
-                ("capture_time_mult_when_undefended", ps.capture_time_mult_when_undefended),
+                (
+                    "capture_time_mult_when_undefended",
+                    ps.capture_time_mult_when_undefended,
+                ),
                 ("max_capture_time_mult", ps.max_capture_time_mult),
-                ("repair_speed_mult_when_undefended", ps.repair_speed_mult_when_undefended),
+                (
+                    "repair_speed_mult_when_undefended",
+                    ps.repair_speed_mult_when_undefended,
+                ),
             ] {
                 if !(m >= 1.) {
                     warn!("population_scaling.{name} is {m}: anything under 1 is treated as 1 (no effect)")
@@ -1212,7 +1255,8 @@ impl Cfg {
                     bail!("air_life.civil_traffic is enabled but its aircraft list is empty")
                 }
                 for a in &ct.aircraft {
-                    if a.cruise_alt_min_m > a.cruise_alt_max_m || a.cruise_speed_ms <= 0. {
+                    if a.cruise_alt_min_m > a.cruise_alt_max_m || a.cruise_speed_ms <= 0.
+                    {
                         bail!(
                             "air_life.civil_traffic.aircraft {}: cruise_alt_min_m must not exceed \
                              cruise_alt_max_m and cruise_speed_ms must be positive",
@@ -1227,8 +1271,15 @@ impl Cfg {
         }
         if let Some(mw) = &cfg.modern_war {
             const KINDS: &[&str] = &[
-                "Airbase", "FOB", "FARP", "Logistics Hub", "Naval Base", "Carrier Group",
-                "Factory", "Special SAM Site", "Command Center",
+                "Airbase",
+                "FOB",
+                "FARP",
+                "Logistics Hub",
+                "Naval Base",
+                "Carrier Group",
+                "Factory",
+                "Special SAM Site",
+                "Command Center",
             ];
             let check_kinds = |what: &str, kinds: &[String]| {
                 for k in kinds {
@@ -1249,7 +1300,10 @@ impl Cfg {
             }
             if let Some(r) = mw.raids.as_ref().filter(|r| r.enabled) {
                 check_kinds("raids.target_kinds", &r.target_kinds);
-                if r.drone_templates_red.is_empty() && r.drone_templates_blue.is_empty() && !r.use_missiles {
+                if r.drone_templates_red.is_empty()
+                    && r.drone_templates_blue.is_empty()
+                    && !r.use_missiles
+                {
                     warn!("modern_war.raids: no drone templates and use_missiles off -- nothing can raid")
                 }
                 if let Some((a, b)) = r.hours {
@@ -1274,7 +1328,8 @@ impl Cfg {
         let path = Self::path(miz_state_path);
         let old = fs::read_to_string(&path).ok().and_then(|text| {
             let raw = serde_json::from_str::<serde_json::Value>(&text).ok()?;
-            let known = serde_json::to_value(serde_json::from_str::<Cfg>(&text).ok()?).ok()?;
+            let known =
+                serde_json::to_value(serde_json::from_str::<Cfg>(&text).ok()?).ok()?;
             Some((raw, known))
         });
         let s = self.to_json_keeping_unknown(old.as_ref().map(|(r, k)| (r, k)))?;

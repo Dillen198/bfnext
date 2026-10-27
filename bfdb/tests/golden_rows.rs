@@ -53,7 +53,11 @@ where
     let bytes = yats::serialize(value).unwrap();
     assert_eq!(hex(&bytes), expected, "encoding of {value:?} changed");
     let back: T = yats::deserialize(&bytes).unwrap();
-    assert_eq!(hex(&yats::serialize(&back).unwrap()), expected, "{value:?} does not round trip");
+    assert_eq!(
+        hex(&yats::serialize(&back).unwrap()),
+        expected,
+        "{value:?} does not round trip"
+    );
 }
 
 const UCID: &str = "0123456789abcdef0123456789abcdef";
@@ -163,29 +167,55 @@ fn dead_row() {
 const DEAD: &str = concat!(
     // victim: Who::AI { unit: DcsOid { id: 5, class: "Unit" }, side: Red,
     //   gid: 2, uid: 3, ucid: None }
-    "00000000", "0000000000000005", "0000000000000004", "556e6974",
-    "00000001", "0000000000000002", "0000000000000003", "00",
+    "00000000",
+    "0000000000000005",
+    "0000000000000004",
+    "556e6974",
+    "00000001",
+    "0000000000000002",
+    "0000000000000003",
+    "00",
     // time: DateTime<Utc> as its RFC 3339 string
-    "0000000000000014", "323032332d31312d31345432323a31333a32305a",
+    "0000000000000014",
+    "323032332d31312d31345432323a31333a32305a",
     // shots: 1 element
     "0000000000000001",
     //   weapon_name: Some("AIM-120C")
-    "01", "0000000000000008", "41494d2d31323043",
+    "01",
+    "0000000000000008",
+    "41494d2d31323043",
     //   weapon: None
     "00",
     //   shooter: Who::Player { unit: 6, "Unit", side: Blue, ucid, slot: 77 }
-    "00000001", "0000000000000006", "0000000000000004", "556e6974", "00000002",
-    "0000000000000020", "3031323334353637383961626364656630313233343536373839616263646566",
-    "0000000000000002", "3737",
+    "00000001",
+    "0000000000000006",
+    "0000000000000004",
+    "556e6974",
+    "00000002",
+    "0000000000000020",
+    "3031323334353637383961626364656630313233343536373839616263646566",
+    "0000000000000002",
+    "3737",
     //   shooter_typ: Some("F-16C_50")
-    "01", "0000000000000008", "462d3136435f3530",
+    "01",
+    "0000000000000008",
+    "462d3136435f3530",
     //   target: the victim again
-    "00000000", "0000000000000005", "0000000000000004", "556e6974",
-    "00000001", "0000000000000002", "0000000000000003", "00",
+    "00000000",
+    "0000000000000005",
+    "0000000000000004",
+    "556e6974",
+    "00000001",
+    "0000000000000002",
+    "0000000000000003",
+    "00",
     //   target_typ: "MiG-29S"
-    "0000000000000007", "4d69472d323953",
+    "0000000000000007",
+    "4d69472d323953",
     //   time, hit
-    "0000000000000014", "323032332d31312d31345432323a31333a32305a", "01",
+    "0000000000000014",
+    "323032332d31312d31345432323a31333a32305a",
+    "01",
 );
 
 /// A histogram as stored inside the perf rows (session records): a base64
@@ -209,7 +239,10 @@ fn stored_histogram_still_decodes() {
 }
 
 fn hex_decode(s: &str) -> Vec<u8> {
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+        .collect()
 }
 
 /// yats bytes of the histogram in `stored_histogram_still_decodes` as written
@@ -235,7 +268,10 @@ where
     assert_eq!(&bytes[..6], &yats::codec::MAGIC);
     assert_eq!(hex(&bytes[6..]), expected, "MessagePack encoding of {value:?} changed");
     let back: T = yats::deserialize(&bytes).unwrap();
-    assert_eq!(hex(&yats::codec::encode_value(&back, yats::Codec::MsgPack).unwrap()[6..]), expected);
+    assert_eq!(
+        hex(&yats::codec::encode_value(&back, yats::Codec::MsgPack).unwrap()[6..]),
+        expected
+    );
     for engine in [yats::Engine::Sled, yats::Engine::Redb] {
         let db = yats::Db::temporary(engine).unwrap();
         let tree = yats::Tree::<u32, T>::open(&db, "golden").unwrap();
@@ -257,9 +293,15 @@ fn msgpack_side() {
 
 #[test]
 fn msgpack_ucid_and_slots() {
-    golden_mp(&ucid(), "d9203031323334353637383961626364656630313233343536373839616263646566");
+    golden_mp(
+        &ucid(),
+        "d9203031323334353637383961626364656630313233343536373839616263646566",
+    );
     golden_mp(&SlotId::Unit(42), "a23432");
-    golden_mp(&SlotId::ArtilleryCommander(Side::Blue, 1), "ba617274696c6c6572795f636f6d6d616e6465725f626c75655f31");
+    golden_mp(
+        &SlotId::ArtilleryCommander(Side::Blue, 1),
+        "ba617274696c6c6572795f636f6d6d616e6465725f626c75655f31",
+    );
 }
 
 #[test]
@@ -280,8 +322,19 @@ fn msgpack_ids_vehicles_flags() {
 #[test]
 fn msgpack_dead_row() {
     let t = Utc.timestamp_opt(1_700_000_000, 0).unwrap();
-    let ai = Who::AI { unit: unit(5), side: Side::Red, gid: GroupId::from(2), uid: UnitId::from(3), ucid: None };
-    let player = Who::Player { unit: unit(6), side: Side::Blue, ucid: ucid(), slot: SlotId::Unit(77) };
+    let ai = Who::AI {
+        unit: unit(5),
+        side: Side::Red,
+        gid: GroupId::from(2),
+        uid: UnitId::from(3),
+        ucid: None,
+    };
+    let player = Who::Player {
+        unit: unit(6),
+        side: Side::Blue,
+        ucid: ucid(),
+        slot: SlotId::Unit(77),
+    };
     let dead = Dead {
         victim: ai.clone(),
         time: t,

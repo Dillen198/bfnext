@@ -111,17 +111,11 @@ pub(super) fn default_carrier_link4_mhz() -> f64 {
 }
 
 pub(super) fn default_western_carriers() -> Vec<String> {
-    ["CVN_", "Stennis", "Forrestal"]
-        .into_iter()
-        .map(String::from)
-        .collect()
+    ["CVN_", "Stennis", "Forrestal"].into_iter().map(String::from).collect()
 }
 
 pub(super) fn default_helo_carriers() -> Vec<String> {
-    ["LHA_Tarawa", "Tarawa", "LHA", "LHD"]
-        .into_iter()
-        .map(String::from)
-        .collect()
+    ["LHA_Tarawa", "Tarawa", "LHA", "LHD"].into_iter().map(String::from).collect()
 }
 
 impl Default for NavaidsCfg {

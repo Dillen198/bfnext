@@ -23,7 +23,10 @@ for more details.
 //! ELINT/SIGINT [`IntelDatabase`](super::intel::IntelDatabase), which renders
 //! the decaying F10 map contacts and the "Ground Intel" radio picture.
 
-use super::{intel::{IntelSource, IntelUnitClass}, Db};
+use super::{
+    Db,
+    intel::{IntelSource, IntelUnitClass},
+};
 use crate::landcache::LandCache;
 use anyhow::{Context as ErrContext, Result};
 use bfprotocols::{
@@ -31,8 +34,8 @@ use bfprotocols::{
     db::objective::ObjectiveId,
 };
 use chrono::prelude::*;
-use compact_str::{format_compact, CompactString};
-use dcso3::{coalition::Side, land::Land, net::Ucid, MizLua, Vector2, Vector3};
+use compact_str::{CompactString, format_compact};
+use dcso3::{MizLua, Vector2, Vector3, coalition::Side, land::Land, net::Ucid};
 use log::debug;
 
 /// An in-progress player recon pass.
@@ -81,11 +84,7 @@ impl Db {
     }
 
     fn elint_cfg(&self) -> ElintConfig {
-        self.ephemeral
-            .cfg
-            .elint
-            .clone()
-            .unwrap_or_else(ElintConfig::default)
+        self.ephemeral.cfg.elint.clone().unwrap_or_else(ElintConfig::default)
     }
 
     /// The shared intel database (ELINT/SIGINT, player recon, JTAC eyes-on)
@@ -100,7 +99,12 @@ impl Db {
     /// the unit, so confidence stays pinned at 1.0 while tracked and only
     /// starts decaying -- over a long, separately configured half-life --
     /// once the JTAC loses it. No-op unless the intel system is active.
-    pub fn note_jtac_contact(&mut self, friendly_side: Side, unit: &super::group::SpawnedUnit, now: DateTime<Utc>) {
+    pub fn note_jtac_contact(
+        &mut self,
+        friendly_side: Side,
+        unit: &super::group::SpawnedUnit,
+        now: DateTime<Utc>,
+    ) {
         if !self.intel_active() {
             return;
         }
@@ -163,10 +167,7 @@ impl Db {
             .into_iter()
             .filter(|(_, obj)| obj.owner == enemy_side)
             .flat_map(|(_, obj)| {
-                obj.groups
-                    .get(&enemy_side)
-                    .into_iter()
-                    .flat_map(|gs| gs.into_iter())
+                obj.groups.get(&enemy_side).into_iter().flat_map(|gs| gs.into_iter())
             })
             // Ground formations out in the field are out of their bases'
             // garrisons, but no less visible.
@@ -181,7 +182,8 @@ impl Db {
             .flat_map(|g| g.units.into_iter())
             .filter_map(|uid| self.persisted.units.get(uid))
             .filter(|u| {
-                !u.dead && na::distance_squared(&target_pos.into(), &u.pos.into()) <= scan_sq
+                !u.dead
+                    && na::distance_squared(&target_pos.into(), &u.pos.into()) <= scan_sq
             })
             .map(|u| {
                 let class = self
@@ -198,9 +200,7 @@ impl Db {
         if let Some((land, landcache, observer)) = los {
             detected.retain(|(_, unit3, _)| {
                 let d = na::distance(&observer.into(), &(*unit3).into());
-                landcache
-                    .is_visible(land, d, observer, *unit3)
-                    .unwrap_or(false)
+                landcache.is_visible(land, d, observer, *unit3).unwrap_or(false)
             });
         }
 
@@ -223,15 +223,14 @@ impl Db {
             }
         }
         for (pos, class, n) in clusters {
-            self.ephemeral.intel_db.upsert(
-                side, enemy_side, pos, class, n, source, &elint_cfg, now,
-            );
+            self.ephemeral
+                .intel_db
+                .upsert(side, enemy_side, pos, class, n, source, &elint_cfg, now);
         }
 
         // Dotted scan-area box + count label on the F10 map.
         if draw_area {
-            self.ephemeral
-                .on_recon_result(target_pos, scan_radius_m, count, side, now);
+            self.ephemeral.on_recon_result(target_pos, scan_radius_m, count, side, now);
         }
         count
     }
@@ -266,16 +265,18 @@ impl Db {
         }
         let ac_pos = Vector2::new(inst.position.p.x, inst.position.p.z);
         if cfg.cost > 0 && points < cfg.cost as i32 {
-            return format_compact!("Recon pass costs {} points (you have {points})", cfg.cost);
+            return format_compact!(
+                "Recon pass costs {} points (you have {points})",
+                cfg.cost
+            );
         }
-        let (dist, oid, oname) = match Db::objective_near_point(
-            &self.persisted.objectives,
-            ac_pos,
-            |o| o.owner != side && o.owner != Side::Neutral,
-        ) {
-            Some((dist, _, obj)) => (dist, obj.id, obj.name().to_string()),
-            None => return "No enemy objective nearby".into(),
-        };
+        let (dist, oid, oname) =
+            match Db::objective_near_point(&self.persisted.objectives, ac_pos, |o| {
+                o.owner != side && o.owner != Side::Neutral
+            }) {
+                Some((dist, _, obj)) => (dist, obj.id, obj.name().to_string()),
+                None => return "No enemy objective nearby".into(),
+            };
         if dist > cfg.range_m {
             return format_compact!(
                 "Nearest enemy objective ({oname}) is {:.0}km away -- must be within {:.0}km",
@@ -283,12 +284,8 @@ impl Db {
                 cfg.range_m / 1000.0
             );
         }
-        let target_pos = self
-            .persisted
-            .objectives
-            .get(&oid)
-            .map(|o| o.pos())
-            .unwrap_or(ac_pos);
+        let target_pos =
+            self.persisted.objectives.get(&oid).map(|o| o.pos()).unwrap_or(ac_pos);
         if cfg.cost > 0 {
             self.adjust_points(ucid, -(cfg.cost as i32), "recon pass");
         }
@@ -322,12 +319,16 @@ impl Db {
                     self.adjust_points(ucid, refund as i32, "recon pass cancelled");
                 }
                 if let Some(cfg) = self.player_recon_cfg() {
-                    self.ephemeral
-                        .recon_cooldown
-                        .insert(*ucid, now + chrono::Duration::seconds(cfg.cooldown_secs as i64));
+                    self.ephemeral.recon_cooldown.insert(
+                        *ucid,
+                        now + chrono::Duration::seconds(cfg.cooldown_secs as i64),
+                    );
                 }
                 if s.charged > 0 {
-                    format_compact!("Recon pass cancelled -- {refund} of {} points refunded", s.charged)
+                    format_compact!(
+                        "Recon pass cancelled -- {refund} of {} points refunded",
+                        s.charged
+                    )
                 } else {
                     "Recon pass cancelled".into()
                 }
@@ -348,15 +349,27 @@ impl Db {
                 .get(&s.target)
                 .map(|o| o.name().to_string())
                 .unwrap_or_else(|| "target".to_string());
-            let pct = ((s.accumulated_secs / cfg.dwell_secs.max(1) as f64) * 100.0).min(100.0);
-            return format_compact!("Recon on {oname}: {pct:.0}% ({:.0}/{}s)", s.accumulated_secs, cfg.dwell_secs);
+            let pct =
+                ((s.accumulated_secs / cfg.dwell_secs.max(1) as f64) * 100.0).min(100.0);
+            return format_compact!(
+                "Recon on {oname}: {pct:.0}% ({:.0}/{}s)",
+                s.accumulated_secs,
+                cfg.dwell_secs
+            );
         }
         if let Some(until) = self.ephemeral.recon_cooldown.get(ucid).copied() {
             if now < until {
-                return format_compact!("Recon on cooldown for {}s", (until - now).num_seconds().max(1));
+                return format_compact!(
+                    "Recon on cooldown for {}s",
+                    (until - now).num_seconds().max(1)
+                );
             }
         }
-        match self.player(ucid).and_then(|p| p.current_slot.as_ref()).and_then(|(_, i)| i.as_ref()) {
+        match self
+            .player(ucid)
+            .and_then(|p| p.current_slot.as_ref())
+            .and_then(|(_, i)| i.as_ref())
+        {
             None => "Not in an aircraft".into(),
             Some(inst) if !self.recon_capable(&inst.typ) => {
                 "This airframe is not equipped for reconnaissance".into()
@@ -368,7 +381,11 @@ impl Db {
                     o.owner != side && o.owner != Side::Neutral
                 }) {
                     Some((dist, _, obj)) if dist <= cfg.range_m => {
-                        format_compact!("Ready -- nearest enemy objective {} at {:.0}km", obj.name(), dist / 1000.0)
+                        format_compact!(
+                            "Ready -- nearest enemy objective {} at {:.0}km",
+                            obj.name(),
+                            dist / 1000.0
+                        )
                     }
                     Some((dist, _, obj)) => format_compact!(
                         "Nearest enemy objective {} is {:.0}km away (need {:.0}km)",
@@ -402,7 +419,13 @@ impl Db {
         for ucid in ucids {
             let (target_pos, side, accumulated, last_tick, last_frac) =
                 match self.ephemeral.recon_sessions.get(&ucid) {
-                    Some(s) => (s.target_pos, s.side, s.accumulated_secs, s.last_tick, s.last_reveal_frac),
+                    Some(s) => (
+                        s.target_pos,
+                        s.side,
+                        s.accumulated_secs,
+                        s.last_tick,
+                        s.last_reveal_frac,
+                    ),
                     None => continue,
                 };
             // Resolve the live aircraft (copy out everything we need so the
@@ -423,7 +446,12 @@ impl Db {
             let (ac_pos, observer3, alt_msl, typ) = match ac_state {
                 Some(v) => v,
                 None => {
-                    self.recon_abort(&ucid, now, &cfg, "Recon aborted -- left the aircraft");
+                    self.recon_abort(
+                        &ucid,
+                        now,
+                        &cfg,
+                        "Recon aborted -- left the aircraft",
+                    );
                     continue;
                 }
             };
@@ -434,11 +462,21 @@ impl Db {
             }
             let dist = na::distance(&ac_pos.into(), &target_pos.into());
             if dist > range_limit {
-                self.recon_abort(&ucid, now, &cfg, "Recon aborted -- out of range of the target");
+                self.recon_abort(
+                    &ucid,
+                    now,
+                    &cfg,
+                    "Recon aborted -- out of range of the target",
+                );
                 continue;
             }
             if cfg.max_altitude_m > 0.0 && alt_msl > cfg.max_altitude_m {
-                self.recon_abort(&ucid, now, &cfg, "Recon aborted -- above the sensor altitude ceiling");
+                self.recon_abort(
+                    &ucid,
+                    now,
+                    &cfg,
+                    "Recon aborted -- above the sensor altitude ceiling",
+                );
                 continue;
             }
             // Accumulate valid station time.
@@ -454,11 +492,10 @@ impl Db {
             // the next 25% boundary (progressive mode only).
             let done = frac >= 1.0;
             let next_boundary = ((last_frac / 0.25f32).floor() + 1.0) * 0.25f32;
-            let progressive_hit = cfg.progressive && frac >= next_boundary && next_boundary < 1.0;
+            let progressive_hit =
+                cfg.progressive && frac >= next_boundary && next_boundary < 1.0;
             if done || progressive_hit {
-                let los = cfg
-                    .require_los
-                    .then_some((&land, &mut *landcache, observer3));
+                let los = cfg.require_los.then_some((&land, &mut *landcache, observer3));
                 let n = self.apply_recon_scan(
                     target_pos,
                     cfg.scan_radius_m,
@@ -481,14 +518,19 @@ impl Db {
                         &self.persisted,
                         15,
                         &ucid,
-                        format_compact!("Recon complete -- {n} contact(s) on the F10 map"),
+                        format_compact!(
+                            "Recon complete -- {n} contact(s) on the F10 map"
+                        ),
                     );
                 } else {
                     self.ephemeral.panel_to_player(
                         &self.persisted,
                         8,
                         &ucid,
-                        format_compact!("Recon {:.0}% -- {n} contact(s)", (frac * 100.0f32).min(100.0f32)),
+                        format_compact!(
+                            "Recon {:.0}% -- {n} contact(s)",
+                            (frac * 100.0f32).min(100.0f32)
+                        ),
                     );
                 }
             }
@@ -501,7 +543,13 @@ impl Db {
     /// shot down. Every case refunds the same way as a cancel: the unrevealed
     /// share only. (Proportional rather than nothing on death, so losing the
     /// aircraft before the first reveal still returns the whole cost.)
-    fn recon_abort(&mut self, ucid: &Ucid, now: DateTime<Utc>, cfg: &PlayerReconCfg, msg: &str) {
+    fn recon_abort(
+        &mut self,
+        ucid: &Ucid,
+        now: DateTime<Utc>,
+        cfg: &PlayerReconCfg,
+        msg: &str,
+    ) {
         if let Some(s) = self.ephemeral.recon_sessions.remove(ucid) {
             let refund = recon_refund(s.charged, s.last_reveal_frac);
             if refund > 0 {
@@ -510,8 +558,7 @@ impl Db {
             self.ephemeral
                 .recon_cooldown
                 .insert(*ucid, now + chrono::Duration::seconds(cfg.cooldown_secs as i64));
-            self.ephemeral
-                .panel_to_player(&self.persisted, 10, ucid, msg.to_string());
+            self.ephemeral.panel_to_player(&self.persisted, 10, ucid, msg.to_string());
         }
     }
 }

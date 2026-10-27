@@ -32,11 +32,14 @@ for more details.
 //! truck that no longer exists.
 
 use super::{
-    logistics::{HeloMission, HeloMissionId},
     Db,
+    logistics::{HeloMission, HeloMissionId},
 };
-use crate::{group, objective, spawnctx::{SpawnCtx, SpawnLoc}};
-use anyhow::{anyhow, bail, Context, Result};
+use crate::{
+    group, objective,
+    spawnctx::{SpawnCtx, SpawnLoc},
+};
+use anyhow::{Context, Result, anyhow, bail};
 use bfprotocols::{
     cfg::HeloInsertionCfg,
     db::{
@@ -45,9 +48,9 @@ use bfprotocols::{
     },
     perf::Perf,
 };
-use chrono::{prelude::*, Duration};
-use compact_str::{format_compact, CompactString};
-use dcso3::{coalition::Side, net::Ucid, MizLua, String, Vector2};
+use chrono::{Duration, prelude::*};
+use compact_str::{CompactString, format_compact};
+use dcso3::{MizLua, String, Vector2, coalition::Side, net::Ucid};
 use log::{info, warn};
 use serde_derive::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -202,10 +205,8 @@ fn road_reaches(path: &[Vector2], from: Vector2, to: Vector2, to_radius: f64) ->
 fn decimate_road(path: &[Vector2]) -> SmallVec<[Vector2; 64]> {
     let mut out: SmallVec<[Vector2; 64]> = SmallVec::new();
     for (i, p) in path.iter().enumerate() {
-        let far_enough = out
-            .last()
-            .map(|l| (p - l).norm() >= ROAD_WAYPOINT_SPACING_M)
-            .unwrap_or(true);
+        let far_enough =
+            out.last().map(|l| (p - l).norm() >= ROAD_WAYPOINT_SPACING_M).unwrap_or(true);
         let is_last = i + 1 == path.len();
         if (far_enough || is_last) && out.len() < MAX_ROAD_WAYPOINTS {
             out.push(*p);
@@ -231,11 +232,7 @@ fn leg_timeout_secs(route_m: f64, speed_mps: f64, configured: Option<u32>) -> i6
 /// zone's bounding radius, so this errs short for a quad -- fine, since the
 /// squad is walked into the zone on dismount regardless.
 fn dist_to_zone(pos: Vector2, center: Vector2, radius: f64, inside: bool) -> f64 {
-    if inside {
-        0.
-    } else {
-        ((pos - center).norm() - radius).max(0.)
-    }
+    if inside { 0. } else { ((pos - center).norm() - radius).max(0.) }
 }
 
 /// Move the anchor if the vehicle has gone somewhere since it was set, and
@@ -252,7 +249,9 @@ fn observe_motion(
 }
 
 fn judge(to_zone_m: f64, stopped_secs: i64, timed_out: bool, arrive_m: f64) -> LegStep {
-    if to_zone_m <= arrive_m || (stopped_secs >= STOPPED_ARRIVE_SECS && to_zone_m <= 2. * arrive_m) {
+    if to_zone_m <= arrive_m
+        || (stopped_secs >= STOPPED_ARRIVE_SECS && to_zone_m <= 2. * arrive_m)
+    {
         LegStep::Arrived
     } else if timed_out {
         LegStep::TimedOut
@@ -267,7 +266,11 @@ fn judge(to_zone_m: f64, stopped_secs: i64, timed_out: bool, arrive_m: f64) -> L
 /// otherwise the nearest point on the way from the vehicle to the zone
 /// centre that is -- troops outside the zone capture nothing, and the helo
 /// path makes the same call when it lands outside.
-fn dismount_point(vehicle: Vector2, center: Vector2, contains: impl Fn(Vector2) -> bool) -> Vector2 {
+fn dismount_point(
+    vehicle: Vector2,
+    center: Vector2,
+    contains: impl Fn(Vector2) -> bool,
+) -> Vector2 {
     if contains(vehicle) {
         return vehicle;
     }
@@ -310,7 +313,9 @@ impl Db {
                 continue;
             }
             match self.start_ground_insertion(lua, &f, &cfg, now) {
-                Ok(msg) => self.ephemeral.panel_to_player(&self.persisted, 20, &f.player, msg),
+                Ok(msg) => {
+                    self.ephemeral.panel_to_player(&self.persisted, 20, &f.player, msg)
+                }
                 Err(e) => {
                     info!(
                         "[HELO_GROUND] {} could not go by road, refunding: {e:#}",
@@ -319,7 +324,10 @@ impl Db {
                     refunds.push((
                         f.player,
                         f.cost,
-                        format_compact!("{}; the squad can't go by road either: {e}", f.why),
+                        format_compact!(
+                            "{}; the squad can't go by road either: {e}",
+                            f.why
+                        ),
                     ));
                 }
             }
@@ -338,17 +346,21 @@ impl Db {
     ) -> Result<CompactString> {
         use crate::db::group::DeployKind;
         use dcso3::{
-            controller::{ActionTyp, AltType, MissionPoint, PointType, Task, VehicleFormation},
+            LuaVec2,
+            controller::{
+                ActionTyp, AltType, MissionPoint, PointType, Task, VehicleFormation,
+            },
             env::miz::Miz,
             land::{Land, RoadType},
-            LuaVec2,
         };
         use enumflags2::BitFlags;
 
         let g = &cfg.ground_fallback;
         let side = f.side;
-        let dest = objective!(self, &f.destination).map_err(|_| anyhow!("the target is gone"))?;
-        let (dest_pos, dest_radius, dest_name) = (dest.pos(), dest.zone.radius(), dest.name.clone());
+        let dest = objective!(self, &f.destination)
+            .map_err(|_| anyhow!("the target is gone"))?;
+        let (dest_pos, dest_radius, dest_name) =
+            (dest.pos(), dest.zone.radius(), dest.name.clone());
         let template = g
             .template
             .get(&side)
@@ -389,9 +401,14 @@ impl Db {
                 .get(oid)
                 .map(|o| o.name.clone())
                 .unwrap_or_default();
-            match land.find_path_on_roads(RoadType::Road, LuaVec2(*from), LuaVec2(dest_pos)) {
+            match land.find_path_on_roads(
+                RoadType::Road,
+                LuaVec2(*from),
+                LuaVec2(dest_pos),
+            ) {
                 Ok(seq) => {
-                    let pts: Vec<Vector2> = seq.into_iter().filter_map(|p| p.ok()).map(|p| p.0).collect();
+                    let pts: Vec<Vector2> =
+                        seq.into_iter().filter_map(|p| p.ok()).map(|p| p.0).collect();
                     if road_reaches(&pts, *from, dest_pos, dest_radius) {
                         found = Some((*oid, *from, name, pts));
                         break;
@@ -438,31 +455,39 @@ impl Db {
                 DeployKind::Objective { origin },
                 BitFlags::empty(),
             )
-            .with_context(|| format_compact!("the vehicle template '{template}' would not spawn"))?;
+            .with_context(|| {
+                format_compact!("the vehicle template '{template}' would not spawn")
+            })?;
 
-        let point = |pos: Vector2, formation: VehicleFormation, first: bool| MissionPoint {
-            action: Some(ActionTyp::Ground(formation)),
-            airdrome_id: None,
-            helipad: None,
-            typ: PointType::TurningPoint,
-            link_unit: None,
-            pos: LuaVec2(pos),
-            alt: land.get_height(LuaVec2(pos)).unwrap_or(0.),
-            alt_typ: Some(AltType::BARO),
-            time_re_fu_ar: None,
-            eta: first.then_some(dcso3::Time(0.)),
-            eta_locked: first.then_some(true),
-            speed: speed_mps,
-            speed_locked: first.then_some(true),
-            name: None,
-            task: Box::new(Task::ComboTask(vec![])),
-        };
+        let point =
+            |pos: Vector2, formation: VehicleFormation, first: bool| MissionPoint {
+                action: Some(ActionTyp::Ground(formation)),
+                airdrome_id: None,
+                helipad: None,
+                typ: PointType::TurningPoint,
+                link_unit: None,
+                pos: LuaVec2(pos),
+                alt: land.get_height(LuaVec2(pos)).unwrap_or(0.),
+                alt_typ: Some(AltType::BARO),
+                time_re_fu_ar: None,
+                eta: first.then_some(dcso3::Time(0.)),
+                eta_locked: first.then_some(true),
+                speed: speed_mps,
+                speed_locked: first.then_some(true),
+                name: None,
+                task: Box::new(Task::ComboTask(vec![])),
+            };
         let mut route = vec![point(from, VehicleFormation::OnRoad, true)];
-        route.extend(decimate_road(&road).into_iter().map(|p| point(p, VehicleFormation::OnRoad, false)));
+        route.extend(
+            decimate_road(&road)
+                .into_iter()
+                .map(|p| point(p, VehicleFormation::OnRoad, false)),
+        );
         // Off road for the last stretch: "On Road" stops at the road point
         // nearest the objective, which can be well outside its zone.
         route.push(point(dest_pos, VehicleFormation::OffRoad, false));
-        let route_m: f64 = route.windows(2).map(|w| (w[1].pos.0 - w[0].pos.0).norm()).sum();
+        let route_m: f64 =
+            route.windows(2).map(|w| (w[1].pos.0 - w[0].pos.0).norm()).sum();
         let waypoints = route.len();
 
         let spawned = {
@@ -480,7 +505,9 @@ impl Db {
         if let Err(e) = spawned {
             // Don't leave a record for a vehicle that never appeared.
             let _ = self.delete_group(&group_id);
-            return Err(e.context(format_compact!("the vehicle '{template}' would not spawn")));
+            return Err(
+                e.context(format_compact!("the vehicle '{template}' would not spawn"))
+            );
         }
 
         let timeout = leg_timeout_secs(route_m, speed_mps, g.timeout_mins);
@@ -523,16 +550,25 @@ impl Db {
     /// Poll the road legs: dismount the squads that have arrived, refund the
     /// ones that were lost, wedged or ran out of time. Same slow tick as
     /// `tick_helo_missions`.
-    pub fn tick_ground_insertions(&mut self, lua: MizLua, now: DateTime<Utc>) -> Result<()> {
+    pub fn tick_ground_insertions(
+        &mut self,
+        lua: MizLua,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
         if self.persisted.ground_insertions.len() == 0 {
             return Ok(());
         }
-        let (arrive_m, refund_on_loss) = match self.ephemeral.cfg.helo_insertion.as_ref() {
+        let (arrive_m, refund_on_loss) = match self.ephemeral.cfg.helo_insertion.as_ref()
+        {
             Some(h) => (h.ground_fallback.arrive_m, h.refund_on_loss),
             None => (default_arrive_m(), true),
         };
-        let ids: SmallVec<[CompactString; 4]> =
-            self.persisted.ground_insertions.into_iter().map(|(id, _)| id.clone()).collect();
+        let ids: SmallVec<[CompactString; 4]> = self
+            .persisted
+            .ground_insertions
+            .into_iter()
+            .map(|(id, _)| id.clone())
+            .collect();
         // (leg, vehicle position) to dismount; (leg, why) to refund.
         let mut arrived: SmallVec<[(GroundInsertion, Vector2); 2]> = SmallVec::new();
         let mut failed: SmallVec<[(GroundInsertion, CompactString); 2]> = SmallVec::new();
@@ -558,14 +594,22 @@ impl Db {
                     leg.id,
                     (leg.last_pos - dest.pos()).norm() / 1000.
                 );
-                failed.push((leg, format_compact!("the vehicle carrying the squad was destroyed")));
+                failed.push((
+                    leg,
+                    format_compact!("the vehicle carrying the squad was destroyed"),
+                ));
                 continue;
             };
             leg.last_pos = pos;
             let mut anchor = (leg.anchor_pos, leg.anchor_time);
             let stopped = observe_motion(&mut anchor, pos, now);
             (leg.anchor_pos, leg.anchor_time) = anchor;
-            let to_zone = dist_to_zone(pos, dest.pos(), dest.zone.radius(), dest.zone.contains(pos));
+            let to_zone = dist_to_zone(
+                pos,
+                dest.pos(),
+                dest.zone.radius(),
+                dest.zone.contains(pos),
+            );
             match judge(to_zone, stopped, now > leg.deadline, arrive_m) {
                 LegStep::Driving => {
                     // Tracking only; not worth a save of its own.
@@ -591,7 +635,9 @@ impl Db {
                     let mins = (leg.deadline - leg.spawn_time).num_minutes();
                     failed.push((
                         leg,
-                        format_compact!("the vehicle didn't reach {dest_name} in {mins} min"),
+                        format_compact!(
+                            "the vehicle didn't reach {dest_name} in {mins} min"
+                        ),
                     ));
                 }
                 LegStep::Stuck => {
@@ -603,7 +649,10 @@ impl Db {
                     );
                     failed.push((
                         leg,
-                        format_compact!("the vehicle got stuck {:.1} km short of {dest_name}", to_zone / 1000.),
+                        format_compact!(
+                            "the vehicle got stuck {:.1} km short of {dest_name}",
+                            to_zone / 1000.
+                        ),
                     ));
                 }
             }
@@ -638,7 +687,10 @@ impl Db {
                         );
                     }
                     Err(e) => {
-                        warn!("[HELO_GROUND] {} squad could not be deployed at {dest_name}: {e:?}", leg.id);
+                        warn!(
+                            "[HELO_GROUND] {} squad could not be deployed at {dest_name}: {e:?}",
+                            leg.id
+                        );
                         self.refund_ground_leg(
                             &leg,
                             format_compact!("the squad could not be deployed: {e}"),
@@ -658,21 +710,25 @@ impl Db {
     /// Mission load: the vehicles of any legs still on the road were not
     /// respawned, so hand the points back and clear them out.
     pub(super) fn reconcile_ground_insertions(&mut self) {
-        let legs: SmallVec<[GroundInsertion; 4]> =
-            self.persisted.ground_insertions.into_iter().map(|(_, l)| l.clone()).collect();
+        let legs: SmallVec<[GroundInsertion; 4]> = self
+            .persisted
+            .ground_insertions
+            .into_iter()
+            .map(|(_, l)| l.clone())
+            .collect();
         if legs.is_empty() {
             return;
         }
-        let refund = self
-            .ephemeral
-            .cfg
-            .helo_insertion
-            .as_ref()
-            .map_or(true, |h| h.refund_on_loss);
+        let refund =
+            self.ephemeral.cfg.helo_insertion.as_ref().map_or(true, |h| h.refund_on_loss);
         for leg in &legs {
             self.end_ground_leg(leg);
             if refund && leg.cost > 0 {
-                self.adjust_points(&leg.player, leg.cost, "road troop insertion cut off by a restart");
+                self.adjust_points(
+                    &leg.player,
+                    leg.cost,
+                    "road troop insertion cut off by a restart",
+                );
             }
             info!(
                 "[HELO_GROUND] {} cut off by the mission restart{}",
@@ -691,7 +747,10 @@ impl Db {
         self.persisted.ground_insertions.remove_cow(&leg.id);
         if self.persisted.groups.get(&leg.group_id).is_some() {
             if let Err(e) = self.delete_group(&leg.group_id) {
-                warn!("[HELO_GROUND] {} could not remove its vehicle group: {e:?}", leg.id);
+                warn!(
+                    "[HELO_GROUND] {} could not remove its vehicle group: {e:?}",
+                    leg.id
+                );
             }
         }
         self.ephemeral.dirty();
@@ -699,11 +758,19 @@ impl Db {
 
     /// Tell the player the road leg failed and why, refunding like the helo
     /// missions do (`refund_on_loss`, nothing to refund on a free mission).
-    fn refund_ground_leg(&mut self, leg: &GroundInsertion, why: CompactString, refund_on_loss: bool) {
+    fn refund_ground_leg(
+        &mut self,
+        leg: &GroundInsertion,
+        why: CompactString,
+        refund_on_loss: bool,
+    ) {
         let dest_name = self.objective_name(leg.destination);
         let msg = format_compact!("road insertion to {dest_name} failed: {why}");
         if refund_on_loss && leg.cost > 0 {
-            info!("[HELO_GROUND] {} failed ({why}), refunding {} points", leg.id, leg.cost);
+            info!(
+                "[HELO_GROUND] {} failed ({why}), refunding {} points",
+                leg.id, leg.cost
+            );
             self.ephemeral.panel_to_player(
                 &self.persisted,
                 20,
@@ -740,7 +807,11 @@ mod tests {
 
     #[test]
     fn departures_nearest_first_within_range() {
-        let r = rank_departures([("far", v(50_000., 0.)), ("near", v(0., 10_000.)), ("out", v(70_000., 0.))], v(0., 0.), 60_000.);
+        let r = rank_departures(
+            [("far", v(50_000., 0.)), ("near", v(0., 10_000.)), ("out", v(70_000., 0.))],
+            v(0., 0.),
+            60_000.,
+        );
         let names: Vec<_> = r.iter().map(|(n, _, _)| *n).collect();
         assert_eq!(names, ["near", "far"]);
         assert_eq!(r[0].2, 10_000.);

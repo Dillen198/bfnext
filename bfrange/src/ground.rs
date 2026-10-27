@@ -17,15 +17,15 @@ use crate::{
     util::{self, V3},
     weapons::Impact,
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use bfprotocols::range::{
-    cfg::{JtacCfg, RangeCfg},
     CasResult, GunneryResult, PilotRef, RangeResult, StationKind,
+    cfg::{JtacCfg, RangeCfg},
 };
-use dcso3::{coord::Coord, unit::Unit, LuaEnv, LuaVec3, MizLua};
+use dcso3::{LuaEnv, LuaVec3, MizLua, coord::Coord, unit::Unit};
 use fxhash::FxHashMap;
 use log::{info, warn};
-use mlua::{prelude::*, RegistryKey};
+use mlua::{RegistryKey, prelude::*};
 use serde_json::json;
 
 #[derive(Debug)]
@@ -73,7 +73,16 @@ pub struct Ground {
 }
 
 fn cardinal(brg: f64) -> &'static str {
-    const C: [&str; 8] = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"];
+    const C: [&str; 8] = [
+        "north",
+        "north-east",
+        "east",
+        "south-east",
+        "south",
+        "south-west",
+        "west",
+        "north-west",
+    ];
     C[(((brg + 22.5).rem_euclid(360.)) / 45.) as usize % 8]
 }
 
@@ -106,7 +115,13 @@ impl Ground {
         self.jtacs.iter().map(|j| (j.cfg.id.clone(), j.cfg.callsign.clone())).collect()
     }
 
-    fn ensure_jtac(lua: MizLua, spawns: &mut Spawns, j: &mut JtacRt, side: dcso3::coalition::Side, now: f64) -> Result<()> {
+    fn ensure_jtac(
+        lua: MizLua,
+        spawns: &mut Spawns,
+        j: &mut JtacRt,
+        side: dcso3::coalition::Side,
+        now: f64,
+    ) -> Result<()> {
         if j.unit_group.as_ref().map(|g| spawn::group_exists(lua, g)).unwrap_or(false) {
             return Ok(());
         }
@@ -129,18 +144,42 @@ impl Ground {
                 callsign: None,
                 freq_mhz: j.cfg.freq_mhz,
                 task: "Reconnaissance".into(),
-                route: vec![spawn::waypoint(j.pos, alt, 60., vec![spawn::task_entry(1, orbit)])],
+                route: vec![spawn::waypoint(
+                    j.pos,
+                    alt,
+                    60.,
+                    vec![spawn::task_entry(1, orbit)],
+                )],
                 fuel_kg: None,
                 side,
             };
             spawn::add_group(lua, country, spawn::AIRPLANE, &spawn::air_group(&spec))?;
         } else {
-            let g = spawn::surface_group(&name, &[(j.cfg.typ.clone(), j.pos, 0.)], "Excellent", vec![spawn::ground_waypoint(j.pos, 0., false, vec![])]);
+            let g = spawn::surface_group(
+                &name,
+                &[(j.cfg.typ.clone(), j.pos, 0.)],
+                "Excellent",
+                vec![spawn::ground_waypoint(j.pos, 0., false, vec![])],
+            );
             spawn::add_group(lua, country, spawn::GROUND, &g)?;
-            spawns.defer(now + 2., spawn::Pending::GroupOption { group: name.clone(), id: 0, value: json!(4) });
+            spawns.defer(
+                now + 2.,
+                spawn::Pending::GroupOption {
+                    group: name.clone(),
+                    id: 0,
+                    value: json!(4),
+                },
+            );
         }
-        for c in [spawn::bool_cmd("SetInvisible", true), spawn::bool_cmd("SetImmortal", true), spawn::bool_cmd("SetUnlimitedFuel", true)] {
-            spawns.defer(now + 2., spawn::Pending::GroupCommand { group: name.clone(), cmd: c });
+        for c in [
+            spawn::bool_cmd("SetInvisible", true),
+            spawn::bool_cmd("SetImmortal", true),
+            spawn::bool_cmd("SetUnlimitedFuel", true),
+        ] {
+            spawns.defer(
+                now + 2.,
+                spawn::Pending::GroupCommand { group: name.clone(), cmd: c },
+            );
         }
         j.unit_group = Some(name);
         Ok(())
@@ -162,13 +201,17 @@ impl Ground {
             .iter_mut()
             .find(|j| j.cfg.id == jtac_id)
             .ok_or_else(|| anyhow!("no JTAC {jtac_id}"))?;
-        let si = ag.station_by_id(&j.cfg.station).ok_or_else(|| anyhow!("JTAC station {} missing", j.cfg.station))?;
+        let si = ag
+            .station_by_id(&j.cfg.station)
+            .ok_or_else(|| anyhow!("JTAC station {} missing", j.cfg.station))?;
         let st = &ag.stations[si];
         let tgt = st
             .targets
             .iter()
             .filter(|t| t.alive)
-            .min_by(|a, b| util::dist2(a.pos, st.center).total_cmp(&util::dist2(b.pos, st.center)))
+            .min_by(|a, b| {
+                util::dist2(a.pos, st.center).total_cmp(&util::dist2(b.pos, st.center))
+            })
             .ok_or_else(|| anyhow!("{} has no live targets right now", st.cfg.name))?;
         Self::ensure_jtac(lua, spawns, j, f.side, now)?;
         // friendlies for danger-close training
@@ -176,13 +219,37 @@ impl Ground {
             let fp = util::offset(tgt.pos, util::bearing(tgt.pos, j.pos), d, 0.);
             let name = format!("RNG-FRND-{}", j.cfg.id);
             let units: Vec<(String, V3, f64)> = (0..4)
-                .map(|i| ("Soldier M4".to_string(), util::offset(fp, 0., 0., 8. * i as f64), 0.))
+                .map(|i| {
+                    (
+                        "Soldier M4".to_string(),
+                        util::offset(fp, 0., 0., 8. * i as f64),
+                        0.,
+                    )
+                })
                 .collect();
-            let g = spawn::surface_group(&name, &units, "Average", vec![spawn::ground_waypoint(fp, 0., false, vec![])]);
+            let g = spawn::surface_group(
+                &name,
+                &units,
+                "Average",
+                vec![spawn::ground_waypoint(fp, 0., false, vec![])],
+            );
             if let Ok(c) = spawn::country_id(spawn::default_country(f.side)) {
                 if spawn::add_group(lua, c, spawn::GROUND, &g).is_ok() {
-                    spawns.defer(now + 2., spawn::Pending::GroupOption { group: name.clone(), id: 0, value: json!(4) });
-                    spawns.defer(now + 2., spawn::Pending::GroupCommand { group: name.clone(), cmd: spawn::bool_cmd("SetImmortal", true) });
+                    spawns.defer(
+                        now + 2.,
+                        spawn::Pending::GroupOption {
+                            group: name.clone(),
+                            id: 0,
+                            value: json!(4),
+                        },
+                    );
+                    spawns.defer(
+                        now + 2.,
+                        spawn::Pending::GroupCommand {
+                            group: name.clone(),
+                            cmd: spawn::bool_cmd("SetImmortal", true),
+                        },
+                    );
                     j.friendly_group = Some(name);
                     j.friendly_pos = Some(fp);
                 }
@@ -199,7 +266,13 @@ impl Ground {
                 }
                 None => {
                     if let Ok(u) = Unit::get_by_name(lua, &format!("{g}-1")) {
-                        match dcso3::spot::Spot::create_laser(lua, u.as_object()?, Some(LuaVec3(V3::new(0., 2., 0.))), LuaVec3(aim), j.cfg.laser_code) {
+                        match dcso3::spot::Spot::create_laser(
+                            lua,
+                            u.as_object()?,
+                            Some(LuaVec3(V3::new(0., 2., 0.))),
+                            LuaVec3(aim),
+                            j.cfg.laser_code,
+                        ) {
                             Ok(s) => {
                                 let t: LuaTable = (*s).clone();
                                 j.spot = Some(lua.inner().create_registry_value(t)?);
@@ -214,11 +287,20 @@ impl Ground {
         let ll = coord.lo_to_ll(LuaVec3(tgt.pos))?;
         let mgrs = coord
             .ll_to_mgrs(ll.latitude, ll.longitude)
-            .map(|m| format!("{} {} {:05.0} {:05.0}", m.utm_zone, m.mgrs_digraph, m.easting, m.northing))
+            .map(|m| {
+                format!(
+                    "{} {} {:05.0} {:05.0}",
+                    m.utm_zone, m.mgrs_digraph, m.easting, m.northing
+                )
+            })
             .unwrap_or_default();
         let brg = util::bearing(f.pos, tgt.pos);
         let fr = j.friendly_pos.map(|fp| {
-            format!("{:.0} m {} of the target", util::dist2(fp, tgt.pos), cardinal(util::bearing(tgt.pos, fp)))
+            format!(
+                "{:.0} m {} of the target",
+                util::dist2(fp, tgt.pos),
+                cardinal(util::bearing(tgt.pos, fp))
+            )
         });
         let nine = format!(
             "{cs}, nine-line:\n1. IP: {ip}\n2. Heading {brg:03.0} (from your position), offset none\n3. Distance {dist:.1} nm\n4. Elevation {elev:.0} ft MSL\n5. {desc}\n6. {lat} {lon}  MGRS {mgrs}\n7. Mark: laser, code {code}\n8. Friendlies: {fr}\n9. Egress: as required\nRemarks: cleared hot on the laser. Report IN.",
@@ -250,7 +332,15 @@ impl Ground {
 
     /// Offer an impact to a running CAS drill. Called for every scored
     /// air-to-ground impact.
-    pub fn impact(&mut self, lua: MizLua, cfg: &RangeCfg, ag: &AirToGround, rec: &mut Recorder, imp: &Impact, now: f64) {
+    pub fn impact(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        ag: &AirToGround,
+        rec: &mut Recorder,
+        imp: &Impact,
+        now: f64,
+    ) {
         let Some(u) = imp.w.shooter.ucid.map(|u| u.to_string()) else { return };
         let Some(d) = self.drills.get(&u) else { return };
         let st = &ag.stations[d.station];
@@ -262,9 +352,12 @@ impl Ground {
         let nearest = st
             .targets
             .iter()
-            .min_by(|a, b| util::dist2(a.pos, imp.pos).total_cmp(&util::dist2(b.pos, imp.pos)))
+            .min_by(|a, b| {
+                util::dist2(a.pos, imp.pos).total_cmp(&util::dist2(b.pos, imp.pos))
+            })
             .map(|t| t.name.clone());
-        let correct = nearest.as_deref() == Some(d.target.as_str()) || imp.w.hits.contains(&d.target);
+        let correct = nearest.as_deref() == Some(d.target.as_str())
+            || imp.w.hits.contains(&d.target);
         let nf = d.friendlies.map(|fp| util::dist2(fp, imp.pos));
         let danger = nf.map(|x| x < 150.).unwrap_or(false);
         let res = CasResult {
@@ -281,7 +374,8 @@ impl Ground {
         let score = if !correct || danger {
             1.
         } else {
-            bfprotocols::range::grading::bomb_quality(&cfg.scoring, imp.w.class, miss).score()
+            bfprotocols::range::grading::bomb_quality(&cfg.scoring, imp.w.class, miss)
+                .score()
         };
         if let Some(g) = imp.w.shooter.group_id {
             records::to_group(
@@ -314,7 +408,14 @@ impl Ground {
 
     /// A hit or kill by a (CA) player on a gunnery-lane target.
     #[allow(clippy::too_many_arguments)]
-    pub fn lane_event(&mut self, ag: &AirToGround, f: &Flying, target: &str, kill: bool, now: f64) {
+    pub fn lane_event(
+        &mut self,
+        ag: &AirToGround,
+        f: &Flying,
+        target: &str,
+        kill: bool,
+        now: f64,
+    ) {
         let Some(si) = ag.is_station_target(target) else { return };
         if ag.stations[si].cfg.kind != StationKind::GunneryLane {
             return;
@@ -351,7 +452,13 @@ impl Ground {
     }
 
     /// Close lanes that are cleared or idle for two minutes.
-    pub fn slow_tick(&mut self, lua: MizLua, ag: &AirToGround, rec: &mut Recorder, now: f64) {
+    pub fn slow_tick(
+        &mut self,
+        lua: MizLua,
+        ag: &AirToGround,
+        rec: &mut Recorder,
+        now: f64,
+    ) {
         let done: Vec<String> = self
             .lanes
             .iter()
@@ -370,9 +477,22 @@ impl Ground {
                 time_s: l.last - l.started,
                 first_round_hits: l.first_round,
             };
-            let frac = if res.targets_total > 0 { l.kills as f64 / res.targets_total as f64 } else { 0. };
+            let frac = if res.targets_total > 0 {
+                l.kills as f64 / res.targets_total as f64
+            } else {
+                0.
+            };
             let _ = l.ucid;
-            rec.emit(lua, l.pilot.clone(), &l.typ, l.side, &l.callsign, Some((frac * 5.).clamp(1., 5.)), RangeResult::Gunnery(res), None);
+            rec.emit(
+                lua,
+                l.pilot.clone(),
+                &l.typ,
+                l.side,
+                &l.callsign,
+                Some((frac * 5.).clamp(1., 5.)),
+                RangeResult::Gunnery(res),
+                None,
+            );
         }
     }
 

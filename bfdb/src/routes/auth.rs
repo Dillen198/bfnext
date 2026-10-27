@@ -4,13 +4,13 @@ use crate::*;
 
 #[derive(Debug, Clone)]
 pub(crate) struct AuthConfig {
-    pub(crate) client_id:     String,
+    pub(crate) client_id: String,
     pub(crate) client_secret: String,
-    pub(crate) redirect_uri:  String,
-    pub(crate) guild_id:      String,
+    pub(crate) redirect_uri: String,
+    pub(crate) guild_id: String,
     pub(crate) admin_role_id: String,
     /// Discord roles granting a single admin role (`admin::Role`).
-    pub(crate) roles:         admin::DiscordRoles,
+    pub(crate) roles: admin::DiscordRoles,
 }
 
 #[derive(Debug, Clone)]
@@ -51,15 +51,20 @@ pub(crate) async fn api_auth_login(
         });
     const MAX_PENDING_LOGINS: usize = 20_000;
     if !LOGINS.hit(&ip) {
-        return Err(websec::too_many("too many login attempts -- try again in a few minutes").into());
+        return Err(websec::too_many(
+            "too many login attempts -- try again in a few minutes",
+        )
+        .into());
     }
     if db.oauth_state_count() >= MAX_PENDING_LOGINS {
         log::warn!("refusing /api/auth/login: {MAX_PENDING_LOGINS} login attempts already pending");
-        return Err(websec::unavailable("login is busy -- try again in a few minutes").into());
+        return Err(
+            websec::unavailable("login is busy -- try again in a few minutes").into()
+        );
     }
     let state = Uuid::new_v4();
-    let return_to = q.return_to
-        .filter(|rt| allowed_origins.iter().any(|o| rt == &format!("{o}/")));
+    let return_to =
+        q.return_to.filter(|rt| allowed_origins.iter().any(|o| rt == &format!("{o}/")));
     task::block_in_place(|| db.store_oauth_state(state, return_to))?;
     let url = format!(
         "https://discord.com/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&scope=identify+guilds.members.read&state={}",
@@ -71,22 +76,37 @@ pub(crate) async fn api_auth_login(
 }
 
 #[derive(Deserialize)]
-pub(crate) struct CallbackQuery { code: String, state: String }
+pub(crate) struct CallbackQuery {
+    code: String,
+    state: String,
+}
 
 #[derive(Deserialize)]
-pub(crate) struct DiscordUser { id: String, username: String, avatar: Option<String> }
+pub(crate) struct DiscordUser {
+    id: String,
+    username: String,
+    avatar: Option<String>,
+}
 
 #[derive(Deserialize)]
-pub(crate) struct GuildMember { roles: Vec<String> }
+pub(crate) struct GuildMember {
+    roles: Vec<String>,
+}
 
 #[derive(Deserialize)]
-pub(crate) struct TokenResponse { access_token: String }
+pub(crate) struct TokenResponse {
+    access_token: String,
+}
 
 /// Session cookie attributes. SameSite=None (needed for cross-origin fetch/XHR
 /// with credentials) requires Secure, which requires bfdb to be served over
 /// TLS — so we only opt into it when --cors-origin was actually configured.
 pub(crate) fn session_cookie_attrs(cross_origin: bool) -> &'static str {
-    if cross_origin { "SameSite=None; Secure" } else { "SameSite=Lax" }
+    if cross_origin {
+        "SameSite=None; Secure"
+    } else {
+        "SameSite=Lax"
+    }
 }
 
 /// GET /api/auth/callback?code=&state=  — exchange code, create session
@@ -99,9 +119,14 @@ pub(crate) async fn api_auth_callback(
     // Validate state, recovering which frontend origin to send the browser
     // back to (falls back to bfdb's own "/" for embedded-mode deployments
     // that never passed a return_to at /api/auth/login).
-    let state_uuid = q.state.parse::<Uuid>().map_err(|_| websec::bad_request("bad login state"))?;
-    let Some(return_to) = task::block_in_place(|| db.take_oauth_state(state_uuid))? else {
-        return Err(websec::bad_request("invalid or expired login attempt -- start the login again").into());
+    let state_uuid =
+        q.state.parse::<Uuid>().map_err(|_| websec::bad_request("bad login state"))?;
+    let Some(return_to) = task::block_in_place(|| db.take_oauth_state(state_uuid))?
+    else {
+        return Err(websec::bad_request(
+            "invalid or expired login attempt -- start the login again",
+        )
+        .into());
     };
     let redirect_location = return_to.unwrap_or_else(|| "/".to_string());
 
@@ -111,11 +136,11 @@ pub(crate) async fn api_auth_callback(
     let token_res: TokenResponse = http
         .post("https://discord.com/api/oauth2/token")
         .form(&[
-            ("client_id",     cfg.client_id.as_str()),
+            ("client_id", cfg.client_id.as_str()),
             ("client_secret", cfg.client_secret.as_str()),
-            ("grant_type",    "authorization_code"),
-            ("code",          q.code.as_str()),
-            ("redirect_uri",  cfg.redirect_uri.as_str()),
+            ("grant_type", "authorization_code"),
+            ("code", q.code.as_str()),
+            ("redirect_uri", cfg.redirect_uri.as_str()),
         ])
         .send()
         .await
@@ -156,17 +181,18 @@ pub(crate) async fn api_auth_callback(
     let lifetime = if roles != 0 { ADMIN_SESSION_SECS } else { PLAYER_SESSION_SECS };
     let session = SessionData {
         discord_id: user.id.clone(),
-        username:   user.username.clone(),
-        avatar:     user.avatar.clone(),
+        username: user.username.clone(),
+        avatar: user.avatar.clone(),
         is_admin,
-        expires:    chrono::Utc::now() + chrono::Duration::seconds(lifetime),
+        expires: chrono::Utc::now() + chrono::Duration::seconds(lifetime),
         roles,
     };
     task::block_in_place(|| db.create_session(session_id, session))?;
 
     let cookie = format!(
         "session={}; Path=/; HttpOnly; {}; Max-Age={lifetime}",
-        session_id, session_cookie_attrs(cross_origin)
+        session_id,
+        session_cookie_attrs(cross_origin)
     );
     Ok(warp::http::Response::builder()
         .status(302)
@@ -195,7 +221,8 @@ pub(crate) async fn api_auth_me(
     let ucid = resolve_ucid_via_bot(&bot_cfg, &s.discord_id).await;
     // Coalition in the active round -- gates access to the recon intel page.
     let side = match &ucid {
-        Some(u) => task::block_in_place(|| db.pilot_current_side(&inst.id, u))?.map(|s| format!("{s:?}")),
+        Some(u) => task::block_in_place(|| db.pilot_current_side(&inst.id, u))?
+            .map(|s| format!("{s:?}")),
         None => None,
     };
     Ok(json_response(serde_json::to_string(&serde_json::json!({
@@ -222,7 +249,10 @@ pub(crate) async fn api_auth_logout(
     if let Some(id) = session_id {
         task::block_in_place(|| db.delete_session(id))?;
     }
-    let cookie = format!("session=; Path=/; HttpOnly; {}; Max-Age=0", session_cookie_attrs(cross_origin));
+    let cookie = format!(
+        "session=; Path=/; HttpOnly; {}; Max-Age=0",
+        session_cookie_attrs(cross_origin)
+    );
     Ok(warp::http::Response::builder()
         .status(200)
         .header("set-cookie", cookie)
@@ -231,18 +261,22 @@ pub(crate) async fn api_auth_logout(
 }
 
 #[derive(Deserialize)]
-pub(crate) struct LocalLoginBody { username: String, password: String }
+pub(crate) struct LocalLoginBody {
+    username: String,
+    password: String,
+}
 
 /// Failed local-login attempts per client IP: 5 in 15 minutes locks that
 /// address out for 15 minutes.
-pub(crate) static LOCAL_LOGIN_FAILS: std::sync::LazyLock<websec::RateLimiter<std::net::IpAddr>> =
-    std::sync::LazyLock::new(|| {
-        websec::RateLimiter::new(
-            5,
-            std::time::Duration::from_secs(900),
-            std::time::Duration::from_secs(900),
-        )
-    });
+pub(crate) static LOCAL_LOGIN_FAILS: std::sync::LazyLock<
+    websec::RateLimiter<std::net::IpAddr>,
+> = std::sync::LazyLock::new(|| {
+    websec::RateLimiter::new(
+        5,
+        std::time::Duration::from_secs(900),
+        std::time::Duration::from_secs(900),
+    )
+});
 
 /// Admin sessions (Discord or local) last this long. A Discord admin's role
 /// is only checked at login, so this is also how long a removed admin keeps
@@ -265,13 +299,16 @@ pub(crate) async fn api_auth_local_login(
     // A machine credential for DCSServerBot on this box, not a login form for
     // the internet: by default only loopback may even try (--local-login-from).
     let allowed = if allowed_from.is_empty() {
-        ip.is_loopback() || matches!(ip, std::net::IpAddr::V6(v6) if v6.to_ipv4_mapped().map_or(false, |v4| v4.is_loopback()))
+        ip.is_loopback()
+            || matches!(ip, std::net::IpAddr::V6(v6) if v6.to_ipv4_mapped().map_or(false, |v4| v4.is_loopback()))
     } else {
         allowed_from.iter().any(|n| n.contains(ip))
     };
     if !allowed {
         log::warn!("local-login refused from {ip} (not in --local-login-from)");
-        return Err(websec::forbidden("local login is not available from your address").into());
+        return Err(
+            websec::forbidden("local login is not available from your address").into()
+        );
     }
     if let Some(wait) = LOCAL_LOGIN_FAILS.blocked(&ip) {
         return Err(websec::too_many(format!(
@@ -293,16 +330,17 @@ pub(crate) async fn api_auth_local_login(
     let session_id = Uuid::new_v4();
     let session = SessionData {
         discord_id: format!("local:{}", cfg.username),
-        username:   cfg.username.clone(),
-        avatar:     None,
-        is_admin:   true,
-        expires:    chrono::Utc::now() + chrono::Duration::seconds(ADMIN_SESSION_SECS),
-        roles:      admin::Role::ALL,
+        username: cfg.username.clone(),
+        avatar: None,
+        is_admin: true,
+        expires: chrono::Utc::now() + chrono::Duration::seconds(ADMIN_SESSION_SECS),
+        roles: admin::Role::ALL,
     };
     task::block_in_place(|| db.create_session(session_id, session))?;
     let cookie = format!(
         "session={}; Path=/; HttpOnly; {}; Max-Age={ADMIN_SESSION_SECS}",
-        session_id, session_cookie_attrs(cross_origin)
+        session_id,
+        session_cookie_attrs(cross_origin)
     );
     Ok(warp::http::Response::builder()
         .status(200)
@@ -321,20 +359,22 @@ pub(crate) async fn api_admin_sessions(
     require_admin(session_id, db.clone()).await?;
     let data = task::block_in_place(|| -> Result<(String, usize)> {
         let sessions = db.list_sessions()?;
-        let entries: Vec<_> = sessions.iter().map(|s| {
-            serde_json::json!({
-                "discord_id": s.discord_id,
-                "username":   s.username,
-                "avatar":     s.avatar,
-                "is_admin":   s.is_admin,
-                "expires":    s.expires.to_rfc3339(),
+        let entries: Vec<_> = sessions
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "discord_id": s.discord_id,
+                    "username":   s.username,
+                    "avatar":     s.avatar,
+                    "is_admin":   s.is_admin,
+                    "expires":    s.expires.to_rfc3339(),
+                })
             })
-        }).collect();
+            .collect();
         page_json(entries, &q, ADMIN_LIST_CAP)
     })?;
     Ok(paged_response(data))
 }
-
 
 #[derive(Deserialize)]
 pub(crate) struct RevokeBody {
@@ -355,6 +395,12 @@ pub(crate) async fn api_admin_revoke_sessions(
     let who = require_admin(session_id, db.clone()).await?;
     let target = body.discord_id.as_deref().filter(|s| !s.is_empty());
     let n = task::block_in_place(|| db.revoke_sessions(target))?;
-    audit(&db, &who, &format!("revoke {n} session(s)"), Some(target.unwrap_or("all users")), None);
+    audit(
+        &db,
+        &who,
+        &format!("revoke {n} session(s)"),
+        Some(target.unwrap_or("all users")),
+        None,
+    );
     Ok(warp::reply::json(&serde_json::json!({ "ok": true, "revoked": n })))
 }

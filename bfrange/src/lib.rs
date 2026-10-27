@@ -45,11 +45,11 @@ use aa::AirToAir;
 use aar::Aar;
 use ag::{AirToGround, StrafeRun};
 use antiship::AntiShip;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use bfprotocols::{
     range::{
-        cfg::RangeCfg, LiveArena, LivePlayer, LiveSpawn, RangeLive, SpawnReply, SpawnRequest,
-        WindInfo,
+        LiveArena, LivePlayer, LiveSpawn, RangeLive, SpawnReply, SpawnRequest, WindInfo,
+        cfg::RangeCfg,
     },
     stats::Stat,
 };
@@ -57,6 +57,7 @@ use carrier::Carriers;
 use chrono::Utc;
 use crossbeam::queue::SegQueue;
 use dcso3::{
+    HooksLua, LuaVec3, MizLua, String,
     coalition::Side,
     env::miz::GroupId,
     event::Event,
@@ -68,7 +69,6 @@ use dcso3::{
     trigger::{SmokeColor, Trigger},
     unit::{ClassUnit, Unit, UnitCategory},
     world::{HandlerId, World},
-    HooksLua, LuaVec3, MizLua, String,
 };
 use fxhash::{FxHashMap, FxHashSet};
 use ground::Ground;
@@ -209,17 +209,29 @@ impl Deferred {
     /// Reduce an event to owned data, reading the Lua objects now. `None`
     /// for events that carry nothing the range acts on when deferred.
     fn of(ev: &Event) -> Option<Self> {
-        let name = |o: Option<&dcso3::object::Object>| o.and_then(|o| o.get_name().ok()).map(|n| n.to_string());
+        let name = |o: Option<&dcso3::object::Object>| {
+            o.and_then(|o| o.get_name().ok()).map(|n| n.to_string())
+        };
         match ev {
-            Event::Birth(b) => b.initiator.as_ref().and_then(|o| o.object_id().ok()).map(Deferred::Birth),
-            Event::PlayerLeaveUnit(l) => l.initiator.clone().map(Deferred::PlayerLeaveUnit),
-            Event::Dead(e) | Event::Crash(e) | Event::PilotDead(e) | Event::UnitLost(e) => {
-                name(e.initiator.as_ref()).map(Deferred::Dead)
+            Event::Birth(b) => {
+                b.initiator.as_ref().and_then(|o| o.object_id().ok()).map(Deferred::Birth)
             }
+            Event::PlayerLeaveUnit(l) => {
+                l.initiator.clone().map(Deferred::PlayerLeaveUnit)
+            }
+            Event::Dead(e)
+            | Event::Crash(e)
+            | Event::PilotDead(e)
+            | Event::UnitLost(e) => name(e.initiator.as_ref()).map(Deferred::Dead),
             Event::Ejection(e) => name(e.initiator.as_ref()).map(Deferred::Ejection),
             Event::Kill(k) => Some(Deferred::Kill {
                 target: name(k.target.as_ref()),
-                target_type: k.target.as_ref().and_then(|o| o.get_type_name().ok()).map(|s| s.to_string()).unwrap_or_default(),
+                target_type: k
+                    .target
+                    .as_ref()
+                    .and_then(|o| o.get_type_name().ok())
+                    .map(|s| s.to_string())
+                    .unwrap_or_default(),
                 shooter: name(k.initiator.as_ref()),
                 weapon_name: k.weapon_name.as_ref().map(|w| w.to_string()),
             }),
@@ -288,7 +300,9 @@ fn drain_deferred(lua: MizLua, ctx: &mut Ctx) {
         let _defer = DeferEvents::begin();
         let now = now_of(lua);
         for ev in evs {
-            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle_deferred(lua, ctx, ev, now)));
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                handle_deferred(lua, ctx, ev, now)
+            }));
             match r {
                 Ok(Ok(())) => (),
                 Ok(Err(e)) => error!("deferred event: {e:?}"),
@@ -296,7 +310,9 @@ fn drain_deferred(lua: MizLua, ctx: &mut Ctx) {
             }
         }
     }
-    warn!("deferred events still arriving after 16 passes, leaving the rest for the next drain");
+    warn!(
+        "deferred events still arriving after 16 passes, leaving the rest for the next drain"
+    );
 }
 
 fn handle_deferred(lua: MizLua, ctx: &mut Ctx, ev: Deferred, now: f64) -> Result<()> {
@@ -322,7 +338,16 @@ fn handle_deferred(lua: MizLua, ctx: &mut Ctx, ev: Deferred, now: f64) -> Result
             Ok(())
         }
         Deferred::Kill { target, target_type, shooter, weapon_name } => {
-            handle_kill(lua, ctx, target.as_deref(), &target_type, shooter.as_deref(), None, weapon_name.as_deref(), now);
+            handle_kill(
+                lua,
+                ctx,
+                target.as_deref(),
+                &target_type,
+                shooter.as_deref(),
+                None,
+                weapon_name.as_deref(),
+                now,
+            );
             Ok(())
         }
     }
@@ -338,7 +363,13 @@ fn abs_of(lua: MizLua) -> f64 {
 
 // ------------------------------------------------------------------ hooks
 
-fn on_player_try_connect(_: HooksLua, addr: String, name: String, ucid: Ucid, id: PlayerId) -> Result<Option<String>> {
+fn on_player_try_connect(
+    _: HooksLua,
+    addr: String,
+    name: String,
+    ucid: Ucid,
+    id: PlayerId,
+) -> Result<Option<String>> {
     let ctx = unsafe { Ctx::get() };
     ctx.players.connected(id, ucid, name.to_string(), addr.to_string());
     Ok(None)
@@ -353,7 +384,12 @@ fn on_player_disconnect(_: HooksLua, id: PlayerId) -> Result<()> {
     Ok(())
 }
 
-fn on_player_try_send_chat(lua: HooksLua, id: PlayerId, msg: String, _all: bool) -> Result<Option<String>> {
+fn on_player_try_send_chat(
+    lua: HooksLua,
+    id: PlayerId,
+    msg: String,
+    _all: bool,
+) -> Result<Option<String>> {
     let m = msg.as_str().trim();
     // The bfcockpit overlay registers its secret key with a "-cockpitkey
     // <key>" chat line. The range has no use for it, but must not show it to
@@ -425,7 +461,8 @@ fn read_sortie(lua: MizLua) -> std::string::String {
     (|| -> Result<std::string::String> {
         let env = dcso3::env::Env::singleton(lua)?;
         // Miz::sortie() can't say "unset"
-        let s: Option<std::string::String> = dcso3::env::miz::Miz::singleton(lua)?.raw_get("sortie")?;
+        let s: Option<std::string::String> =
+            dcso3::env::miz::Miz::singleton(lua)?.raw_get("sortie")?;
         // the ME stores the sortie name as a dictionary key; resolve it
         let s = s.unwrap_or_default();
         if s.starts_with("DictKey_") {
@@ -448,9 +485,12 @@ fn delayed_init_inner(lua: MizLua, ctx: &mut Ctx) -> Result<()> {
     let sortie = read_sortie(lua);
     let cfg_path = ctx.write_dir.join(format!("{sortie}_RANGE"));
     let cfg = if cfg_path.exists() {
-        RangeCfg::load(&cfg_path).map_err(|e| anyhow!("{cfg_path:?} does not parse: {e}"))?
+        RangeCfg::load(&cfg_path)
+            .map_err(|e| anyhow!("{cfg_path:?} does not parse: {e}"))?
     } else {
-        warn!("no range config at {cfg_path:?}: writing an empty one (edit it and restart)");
+        warn!(
+            "no range config at {cfg_path:?}: writing an empty one (edit it and restart)"
+        );
         let c = RangeCfg::default();
         if let Err(e) = c.save(&cfg_path) {
             warn!("could not write {cfg_path:?}: {e:?}")
@@ -477,11 +517,15 @@ fn delayed_init_inner(lua: MizLua, ctx: &mut Ctx) -> Result<()> {
     let cfg = Arc::new(cfg);
     ctx.cfg = cfg.clone();
     ctx.sortie = sortie.clone();
-    ctx.rec = Recorder::new(sortie.clone(), util::MissionClock::read(lua), cfg.record_tracks);
+    ctx.rec =
+        Recorder::new(sortie.clone(), util::MissionClock::read(lua), cfg.record_tracks);
     ctx.cmds = Arc::new(SegQueue::new());
     // before this mission's first record, so a rotated file is whole
     let mb = |m: Option<u64>| m.map(|m| m.saturating_mul(1024 * 1024));
-    bg::send(bg::Task::RotateJsonl { range_max: mb(cfg.range_jsonl_rotate_mb), stats_max: mb(cfg.stats_jsonl_rotate_mb) });
+    bg::send(bg::Task::RotateJsonl {
+        range_max: mb(cfg.range_jsonl_rotate_mb),
+        stats_max: mb(cfg.stats_jsonl_rotate_mb),
+    });
     // one stats round per range, not per restart: the marker keeps pilots'
     // identity stats attached to the same round across restarts
     let marker = ctx.write_dir.join(format!("{sortie}_RANGE.round"));
@@ -518,17 +562,24 @@ fn delayed_init_inner(lua: MizLua, ctx: &mut Ctx) -> Result<()> {
             Err(e) => warn!("arena {}: {e:?}", a.id),
         }
     }
-    ctx.catalog_json = serde_json::to_string(&catalog::build(&cfg, &ctx.helo, &ctx.ground)).ok();
+    ctx.catalog_json =
+        serde_json::to_string(&catalog::build(&cfg, &ctx.helo, &ctx.ground)).ok();
     let world = World::singleton(lua)?;
     ctx.handler = Some(world.add_event_handler(on_event)?);
     let timer = Timer::singleton(lua)?;
-    timer.schedule_function(dcso3::Time(now + 0.5), mlua::Value::Nil, move |lua, _, t| {
-        Ok(Some(dcso3::Time(fast_tick(lua, t.0))))
-    })?;
-    timer.schedule_function(dcso3::Time(now + 1.), mlua::Value::Nil, move |lua, _, t| {
-        slow_tick(lua, t.0);
-        Ok(Some(dcso3::Time(t.0 + 1.)))
-    })?;
+    timer.schedule_function(
+        dcso3::Time(now + 0.5),
+        mlua::Value::Nil,
+        move |lua, _, t| Ok(Some(dcso3::Time(fast_tick(lua, t.0)))),
+    )?;
+    timer.schedule_function(
+        dcso3::Time(now + 1.),
+        mlua::Value::Nil,
+        move |lua, _, t| {
+            slow_tick(lua, t.0);
+            Ok(Some(dcso3::Time(t.0 + 1.)))
+        },
+    )?;
     ctx.started = true;
     info!("range engine running");
     Ok(())
@@ -544,7 +595,9 @@ fn init_miz(lua: MizLua) -> Result<()> {
     // Only the write folder and who is connected carry over.
     let ctx = unsafe { Ctx::get() };
     if ctx.started {
-        info!("a new mission in the same DCS process: the last mission's range state is dropped");
+        info!(
+            "a new mission in the same DCS process: the last mission's range state is dropped"
+        );
     }
     let write_dir = std::mem::take(&mut ctx.write_dir);
     let mut players = std::mem::take(&mut ctx.players);
@@ -556,9 +609,13 @@ fn init_miz(lua: MizLua) -> Result<()> {
     timer.schedule_once(when, mlua::Value::Nil, move |lua, _, _now| {
         if let Err(e) = delayed_init(lua) {
             error!("THE RANGE CANNOT START: {e:?}");
-            let _ = Trigger::singleton(lua)
-                .and_then(|t| t.action())
-                .and_then(|a| a.out_text(format!("THE RANGE CANNOT START\n\n{e:?}").as_str().into(), 3600, true));
+            let _ = Trigger::singleton(lua).and_then(|t| t.action()).and_then(|a| {
+                a.out_text(
+                    format!("THE RANGE CANNOT START\n\n{e:?}").as_str().into(),
+                    3600,
+                    true,
+                )
+            });
         }
         Ok(())
     })?;
@@ -573,7 +630,8 @@ fn bfrange(lua: &Lua) -> LuaResult<LuaTable> {
     }
     let ctx = unsafe { Ctx::get() };
     if ctx.write_dir.as_os_str().is_empty() {
-        let wd = Lfs::singleton(lua).and_then(|l| l.writedir()).map_err(dcso3::lua_err)?;
+        let wd =
+            Lfs::singleton(lua).and_then(|l| l.writedir()).map_err(dcso3::lua_err)?;
         ctx.write_dir = PathBuf::from(wd.as_str());
         bg::init(ctx.write_dir.clone());
     }
@@ -654,13 +712,16 @@ fn gun_ammo(u: &Unit) -> u32 {
 /// (`spawn.trust_rpc_instructor`, on by default); the config's own
 /// instructor list always counts.
 fn is_instructor(ctx: &Ctx, ucid: &str, dashboard_admin: bool) -> bool {
-    (dashboard_admin && ctx.cfg.spawn.trust_rpc_instructor) || ctx.cfg.spawn.instructors.iter().any(|i| i == ucid)
+    (dashboard_admin && ctx.cfg.spawn.trust_rpc_instructor)
+        || ctx.cfg.spawn.instructors.iter().any(|i| i == ucid)
 }
 
 /// With `spawn.rpc_requires_connected`, an RPC acting for a ucid must name
 /// someone connected to the server (listed instructors excepted).
 fn rpc_caller_ok(ctx: &Ctx, ucid: &str) -> Result<()> {
-    if !ctx.cfg.spawn.rpc_requires_connected || ctx.cfg.spawn.instructors.iter().any(|i| i == ucid) {
+    if !ctx.cfg.spawn.rpc_requires_connected
+        || ctx.cfg.spawn.instructors.iter().any(|i| i == ucid)
+    {
         return Ok(());
     }
     match Ucid::from_str(ucid) {
@@ -694,7 +755,12 @@ fn player_out(lua: MizLua, ctx: &mut Ctx, unit: &str, died: bool, now: f64) {
 
 // ------------------------------------------------------------------ events
 
-fn handle_birth(lua: MizLua, ctx: &mut Ctx, init: &dcso3::object::Object, now: f64) -> Result<()> {
+fn handle_birth(
+    lua: MizLua,
+    ctx: &mut Ctx,
+    init: &dcso3::object::Object,
+    now: f64,
+) -> Result<()> {
     let Ok(u) = init.as_unit() else {
         // DCS dynamic cargo arrives as a static object's birth
         if let Ok(n) = init.get_name() {
@@ -781,7 +847,17 @@ fn handle_kill(
     let Some(t) = target else { return };
     ctx.ag.object_dead(t, now);
     let cfg = ctx.cfg.clone();
-    ctx.iads.on_kill(lua, &cfg, &mut ctx.rec, &ctx.players, shooter, t, weapon, weapon_name, now);
+    ctx.iads.on_kill(
+        lua,
+        &cfg,
+        &mut ctx.rec,
+        &ctx.players,
+        shooter,
+        t,
+        weapon,
+        weapon_name,
+        now,
+    );
     ctx.hz.on_kill(shooter, t, target_type, now);
     ctx.ew.unit_dead(lua, t, now);
     if let Some(s) = shooter {
@@ -854,15 +930,35 @@ fn handle_event(lua: MizLua, ctx: &mut Ctx, ev: Event) -> Result<()> {
             let (purpose, class) = weapons::classify(&desc);
             ctx.ground.lane_shot(&sh.unit_name);
             ctx.iads.on_shot(lua, &ctx.players, &s.weapon, &desc, &sh, pos, now);
-            let target = s.weapon.get_target().ok().flatten().and_then(|t| t.get_name().ok()).map(|t| t.to_string());
-            ctx.hz.on_shot(&sh.unit_name, target.as_deref(), class == bfprotocols::range::WeaponClass::Missile);
+            let target = s
+                .weapon
+                .get_target()
+                .ok()
+                .flatten()
+                .and_then(|t| t.get_name().ok())
+                .map(|t| t.to_string());
+            ctx.hz.on_shot(
+                &sh.unit_name,
+                target.as_deref(),
+                class == bfprotocols::range::WeaponClass::Missile,
+            );
             match purpose {
                 Purpose::AirToAir => {
                     let cfg = ctx.cfg.clone();
-                    ctx.aa.on_shot(lua, &cfg.air_to_air.missile_trainer, &ctx.players, &s.weapon, &desc, sh, pos, now);
+                    ctx.aa.on_shot(
+                        lua,
+                        &cfg.air_to_air.missile_trainer,
+                        &ctx.players,
+                        &s.weapon,
+                        &desc,
+                        sh,
+                        pos,
+                        now,
+                    );
                 }
                 Purpose::AirToGround | Purpose::AntiShip if sh.is_player() => {
-                    ctx.tracker.start(&s.weapon, desc, purpose, class, sh, pos, vel, now)?;
+                    ctx.tracker
+                        .start(&s.weapon, desc, purpose, class, sh, pos, vel, now)?;
                 }
                 _ => (),
             }
@@ -889,7 +985,10 @@ fn handle_event(lua: MizLua, ctx: &mut Ctx, ev: Event) -> Result<()> {
                         side: f.side,
                         callsign: f.group_name.clone(),
                         group_id: Some(f.group_id),
-                        gun: e.weapon_name.map(|w| w.to_string()).unwrap_or_else(|| "gun".into()),
+                        gun: e
+                            .weapon_name
+                            .map(|w| w.to_string())
+                            .unwrap_or_else(|| "gun".into()),
                         ammo_start: gun_ammo(&u),
                         hits: 0,
                         firing: true,
@@ -911,8 +1010,13 @@ fn handle_event(lua: MizLua, ctx: &mut Ctx, ev: Event) -> Result<()> {
             }
         }
         Event::Hit(h) => {
-            let target = h.target.as_ref().and_then(|t| t.get_name().ok()).map(|s| s.to_string());
-            let shooter = h.initiator.as_ref().and_then(|t| t.get_name().ok()).map(|s| s.to_string());
+            let target =
+                h.target.as_ref().and_then(|t| t.get_name().ok()).map(|s| s.to_string());
+            let shooter = h
+                .initiator
+                .as_ref()
+                .and_then(|t| t.get_name().ok())
+                .map(|s| s.to_string());
             match (&h.weapon, &target) {
                 (Some(w), Some(t)) => {
                     if let Ok(oid) = w.object_id() {
@@ -937,9 +1041,19 @@ fn handle_event(lua: MizLua, ctx: &mut Ctx, ev: Event) -> Result<()> {
             }
         }
         Event::Kill(k) => {
-            let target = k.target.as_ref().and_then(|t| t.get_name().ok()).map(|s| s.to_string());
-            let shooter = k.initiator.as_ref().and_then(|t| t.get_name().ok()).map(|s| s.to_string());
-            let ttype = k.target.as_ref().and_then(|o| o.get_type_name().ok()).map(|s| s.to_string()).unwrap_or_default();
+            let target =
+                k.target.as_ref().and_then(|t| t.get_name().ok()).map(|s| s.to_string());
+            let shooter = k
+                .initiator
+                .as_ref()
+                .and_then(|t| t.get_name().ok())
+                .map(|s| s.to_string());
+            let ttype = k
+                .target
+                .as_ref()
+                .and_then(|o| o.get_type_name().ok())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
             handle_kill(
                 lua,
                 ctx,
@@ -960,9 +1074,16 @@ fn handle_event(lua: MizLua, ctx: &mut Ctx, ev: Event) -> Result<()> {
             }
         }
         Event::Land(e) => {
-            let Some(name) = e.initiator.as_ref().and_then(|o| o.get_name().ok()) else { return Ok(()) };
+            let Some(name) = e.initiator.as_ref().and_then(|o| o.get_name().ok()) else {
+                return Ok(());
+            };
             let name = name.to_string();
-            let place = e.place.as_ref().and_then(|p| p.get_name().ok()).map(|s| s.to_string()).unwrap_or_default();
+            let place = e
+                .place
+                .as_ref()
+                .and_then(|p| p.get_name().ok())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
             if let Some(f) = ctx.players.flying.get(&name).cloned() {
                 ctx.players.land(f.ucid);
                 let cfg = ctx.cfg.clone();
@@ -975,8 +1096,17 @@ fn handle_event(lua: MizLua, ctx: &mut Ctx, ev: Event) -> Result<()> {
                     if let Some(Ok(p)) = e.initiator.as_ref().map(|o| o.get_point()) {
                         f.pos = p.0;
                     }
-                    let at = if place.is_empty() { None } else { Some((place.clone(), None)) };
-                    ctx.csar.landed(lua, &cfg, &mut ctx.rec, &ctx.players, &name, at, now);
+                    let at =
+                        if place.is_empty() { None } else { Some((place.clone(), None)) };
+                    ctx.csar.landed(
+                        lua,
+                        &cfg,
+                        &mut ctx.rec,
+                        &ctx.players,
+                        &name,
+                        at,
+                        now,
+                    );
                     if !ctx.decks.landed(lua, &cfg, &mut ctx.rec, &f, &place, now) {
                         ctx.helo.landed(lua, &cfg, &mut ctx.rec, &f, now);
                     }
@@ -984,8 +1114,15 @@ fn handle_event(lua: MizLua, ctx: &mut Ctx, ev: Event) -> Result<()> {
             }
         }
         Event::RunwayTouch(e) => {
-            let Some(name) = e.initiator.as_ref().and_then(|o| o.get_name().ok()) else { return Ok(()) };
-            let place = e.place.as_ref().and_then(|p| p.get_name().ok()).map(|s| s.to_string()).unwrap_or_default();
+            let Some(name) = e.initiator.as_ref().and_then(|o| o.get_name().ok()) else {
+                return Ok(());
+            };
+            let place = e
+                .place
+                .as_ref()
+                .and_then(|p| p.get_name().ok())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
             if carrier::carrier_by_place(&ctx.cv, &place) {
                 ctx.cv.touch(lua, name.as_str(), &place, false, now);
             } else if let Some(f) = ctx.players.flying.get(name.as_str()).cloned() {
@@ -994,8 +1131,15 @@ fn handle_event(lua: MizLua, ctx: &mut Ctx, ev: Event) -> Result<()> {
             }
         }
         Event::RunwayTakeoff(e) => {
-            let Some(name) = e.initiator.as_ref().and_then(|o| o.get_name().ok()) else { return Ok(()) };
-            let place = e.place.as_ref().and_then(|p| p.get_name().ok()).map(|s| s.to_string()).unwrap_or_default();
+            let Some(name) = e.initiator.as_ref().and_then(|o| o.get_name().ok()) else {
+                return Ok(());
+            };
+            let place = e
+                .place
+                .as_ref()
+                .and_then(|p| p.get_name().ok())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
             if carrier::carrier_by_place(&ctx.cv, &place) {
                 ctx.cv.runway_takeoff(name.as_str(), &place, now);
             }
@@ -1012,7 +1156,9 @@ fn handle_event(lua: MizLua, ctx: &mut Ctx, ev: Event) -> Result<()> {
             }
         }
         Event::LandingQualityMark(m) => {
-            if let (Some(n), Some(c)) = (m.initiator.and_then(|o| o.get_name().ok()), m.comment) {
+            if let (Some(n), Some(c)) =
+                (m.initiator.and_then(|o| o.get_name().ok()), m.comment)
+            {
                 ctx.cv.landing_quality_mark(n.as_str(), c.as_str(), now);
             }
         }
@@ -1024,7 +1170,11 @@ fn handle_event(lua: MizLua, ctx: &mut Ctx, ev: Event) -> Result<()> {
 // ------------------------------------------------------------------ ticks
 
 fn fast_tick(lua: MizLua, now: f64) -> f64 {
-    let r = with_ctx(lua, |ctx| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fast_tick_inner(lua, ctx, now))));
+    let r = with_ctx(lua, |ctx| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            fast_tick_inner(lua, ctx, now)
+        }))
+    });
     match r {
         Ok(Ok(next)) => next,
         Ok(Err(e)) => {
@@ -1060,7 +1210,15 @@ fn fast_tick_inner(lua: MizLua, ctx: &mut Ctx, now: f64) -> Result<f64> {
     // missile trainer
     let mut next = now + 0.25;
     if ctx.aa.active() {
-        let kills = ctx.aa.tick(lua, &cfg.air_to_air.missile_trainer, &ctx.players, &ctx.spawns, &mut ctx.rec, cfg.message_s, now);
+        let kills = ctx.aa.tick(
+            lua,
+            &cfg.air_to_air.missile_trainer,
+            &ctx.players,
+            &ctx.spawns,
+            &mut ctx.rec,
+            cfg.message_s,
+            now,
+        );
         for k in kills {
             ctx.aa.trainer_kill(lua, &k);
             ctx.iads.trainer_kill(&ctx.players, &k);
@@ -1071,7 +1229,8 @@ fn fast_tick_inner(lua: MizLua, ctx: &mut Ctx, now: f64) -> Result<f64> {
         }
     }
     // carrier passes at 10 Hz
-    if ctx.cv.tick(lua, &cfg, &mut ctx.players, &ctx.rec.clock.clone(), &mut ctx.rec, now) {
+    if ctx.cv.tick(lua, &cfg, &mut ctx.players, &ctx.rec.clock.clone(), &mut ctx.rec, now)
+    {
         next = next.min(now + 0.1);
     }
     // AAR at 5 Hz
@@ -1136,7 +1295,10 @@ fn strafe_tick(lua: MizLua, ctx: &mut Ctx, now: f64) {
             }
         }
         let receding = v.dot(&(tpos - p)) < 0.;
-        let done = !run.firing && (d > pit.box_length_m || (receding && d > 300.) || now - run.started > 120.);
+        let done = !run.firing
+            && (d > pit.box_length_m
+                || (receding && d > 300.)
+                || now - run.started > 120.);
         if done {
             let ammo = gun_ammo(&u);
             ctx.ag.finish_strafe(lua, &cfg, &mut ctx.rec, &unit, ammo, tpos);
@@ -1145,9 +1307,13 @@ fn strafe_tick(lua: MizLua, ctx: &mut Ctx, now: f64) {
 }
 
 fn slow_tick(lua: MizLua, now: f64) {
-    if let Err(e) = with_ctx(lua, |ctx| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| slow_tick_inner(lua, ctx, now))))
-        .map_err(|_| anyhow!("panicked"))
-        .and_then(|r| r)
+    if let Err(e) = with_ctx(lua, |ctx| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            slow_tick_inner(lua, ctx, now)
+        }))
+    })
+    .map_err(|_| anyhow!("panicked"))
+    .and_then(|r| r)
     {
         error!("slow tick: {e:?}");
     }
@@ -1191,7 +1357,8 @@ fn slow_tick_inner(lua: MizLua, ctx: &mut Ctx, now: f64) -> Result<()> {
     ctx.sectors.tick(lua, &ctx.players, now);
     // menus, one group per tick
     if let Some(gid) = ctx.menu_queue.pop() {
-        let d = menu_data(ctx, ctx.players.by_group(gid).map(|f| f.is_helo).unwrap_or(false));
+        let d =
+            menu_data(ctx, ctx.players.by_group(gid).map(|f| f.is_helo).unwrap_or(false));
         match menu::build(lua, gid, &d) {
             Ok(()) => {
                 ctx.menus.insert(gid);
@@ -1283,14 +1450,25 @@ fn menu_data(ctx: &Ctx, is_helo: bool) -> menu::MenuData {
     };
     let pair = |a: &str, b: &str| (a.to_string(), b.to_string());
     menu::MenuData {
-        stations: ctx.ag.stations.iter().map(|s| (s.cfg.id.clone(), s.cfg.name.clone())).collect(),
+        stations: ctx
+            .ag
+            .stations
+            .iter()
+            .map(|s| (s.cfg.id.clone(), s.cfg.name.clone()))
+            .collect(),
         adversaries: advs.iter().map(|a| (a.typ.clone(), a.label.clone())).collect(),
-        tanker_types: bfprotocols::range::cfg::TANKER_TYPES.iter().map(|t| pair(t.typ, t.typ)).collect(),
+        tanker_types: bfprotocols::range::cfg::TANKER_TYPES
+            .iter()
+            .map(|t| pair(t.typ, t.typ))
+            .collect(),
         sling: ctx.helo.sling_courses(),
         troops: ctx.helo.troop_lzs(),
         jtacs: ctx.ground.jtac_list(),
         ships: antiship::TARGET_SHIPS.iter().map(|(a, b)| pair(a, b)).collect(),
-        compositions: catalog::GROUND_COMPOSITIONS.iter().map(|(k, l, _)| pair(k, l)).collect(),
+        compositions: catalog::GROUND_COMPOSITIONS
+            .iter()
+            .map(|(k, l, _)| pair(k, l))
+            .collect(),
         sams: catalog::SAMS.iter().map(|(k, l, _)| pair(k, l)).collect(),
         iads: ctx.iads.list(),
         csar: ctx.csar.list_all(),
@@ -1319,7 +1497,13 @@ fn live(lua: MizLua, ctx: &Ctx, now: f64) -> RangeLive {
     let (sf, sk, _) = util::wind_at(lua, V3::new(reference.x, gh + 10., reference.z));
     let (af, ak, _) = util::wind_at(lua, V3::new(reference.x, 2000., reference.z));
     let (temp, qnh) = dcso3::atmosphere::Atmosphere::singleton(lua)
-        .and_then(|a| a.get_temperature_and_pressure(LuaVec3(V3::new(reference.x, gh + 2., reference.z))))
+        .and_then(|a| {
+            a.get_temperature_and_pressure(LuaVec3(V3::new(
+                reference.x,
+                gh + 2.,
+                reference.z,
+            )))
+        })
         .map(|t| (t.temperature_k - 273.15, t.pressure_pa / 100.))
         .unwrap_or((15., 1013.));
     let players = ctx
@@ -1389,7 +1573,14 @@ fn live(lua: MizLua, ctx: &Ctx, now: f64) -> RangeLive {
         mission_date: date,
         night: ctx.rec.clock.is_night(g.lat, g.lon, abs),
         wind: WindInfo {
-            layers: util::atmo_profile(lua, reference.x, reference.z, gh + 10., 10000., 1000.),
+            layers: util::atmo_profile(
+                lua,
+                reference.x,
+                reference.z,
+                gh + 10.,
+                10000.,
+                1000.,
+            ),
             surface_from_deg: sf,
             surface_kts: sk,
             alt_from_deg: af,
@@ -1443,7 +1634,9 @@ fn handle_cmd(lua: MizLua, ctx: &mut Ctx, cmd: bg::Cmd, now: f64) -> Value {
             } else {
                 ctx.traffic.command(lua, &target, &action)
             };
-            reply_json(&json!({ "ok": r.is_ok(), "message": match r { Ok(m) => m, Err(e) => e.to_string() } }))
+            reply_json(
+                &json!({ "ok": r.is_ok(), "message": match r { Ok(m) => m, Err(e) => e.to_string() } }),
+            )
         }
         bg::Cmd::QueryAtc => match &ctx.atc.json {
             Some(s) => Value::String(s.clone().into()),
@@ -1459,30 +1652,46 @@ fn handle_cmd(lua: MizLua, ctx: &mut Ctx, cmd: bg::Cmd, now: f64) -> Value {
         },
         bg::Cmd::Spawn(req) => reply_json(&spawn_request(lua, ctx, req, now)),
         bg::Cmd::Despawn { ucid, spawn_id, instructor } => {
-            let r = rpc_caller_ok(ctx, &ucid).and_then(|()| despawn_request(lua, ctx, &ucid, &spawn_id, instructor));
-            reply_json(&json!({ "ok": r.is_ok(), "message": match r { Ok(m) => m, Err(e) => e.to_string() } }))
+            let r = rpc_caller_ok(ctx, &ucid)
+                .and_then(|()| despawn_request(lua, ctx, &ucid, &spawn_id, instructor));
+            reply_json(
+                &json!({ "ok": r.is_ok(), "message": match r { Ok(m) => m, Err(e) => e.to_string() } }),
+            )
         }
         bg::Cmd::ResetStation { ucid, station, instructor } => {
             let r = (|| -> Result<std::string::String> {
                 rpc_caller_ok(ctx, &ucid)?;
-                let i = ctx.ag.station_by_id(&station).ok_or_else(|| anyhow!("no station {station}"))?;
-                if ctx.ag.stations[i].cfg.locked && !is_instructor(ctx, &ucid, instructor) {
+                let i = ctx
+                    .ag
+                    .station_by_id(&station)
+                    .ok_or_else(|| anyhow!("no station {station}"))?;
+                if ctx.ag.stations[i].cfg.locked && !is_instructor(ctx, &ucid, instructor)
+                {
                     bail!("that station can only be reset by an instructor")
                 }
                 ctx.ag.reset(lua, i, &mut ctx.spawns, now)?;
                 Ok(format!("{} reset", ctx.ag.stations[i].cfg.name))
             })();
-            reply_json(&json!({ "ok": r.is_ok(), "message": match r { Ok(m) => m, Err(e) => e.to_string() } }))
+            reply_json(
+                &json!({ "ok": r.is_ok(), "message": match r { Ok(m) => m, Err(e) => e.to_string() } }),
+            )
         }
     }
 }
 
-fn despawn_request(lua: MizLua, ctx: &mut Ctx, ucid: &str, spawn_id: &str, instructor: bool) -> Result<std::string::String> {
+fn despawn_request(
+    lua: MizLua,
+    ctx: &mut Ctx,
+    ucid: &str,
+    spawn_id: &str,
+    instructor: bool,
+) -> Result<std::string::String> {
     if spawn_id == "all" {
         let n = despawn_owned(lua, ctx, ucid);
         return Ok(format!("{n} spawn(s) removed"));
     }
-    let s = ctx.spawns.active.get(spawn_id).ok_or_else(|| anyhow!("no spawn {spawn_id}"))?;
+    let s =
+        ctx.spawns.active.get(spawn_id).ok_or_else(|| anyhow!("no spawn {spawn_id}"))?;
     if s.owner.as_deref() != Some(ucid) && !is_instructor(ctx, ucid, instructor) {
         bail!("that spawn belongs to {}", s.owner_name)
     }
@@ -1493,11 +1702,19 @@ fn despawn_request(lua: MizLua, ctx: &mut Ctx, ucid: &str, spawn_id: &str, instr
     bail!("no spawn {spawn_id}")
 }
 
-fn param<'a>(p: &'a BTreeMap<std::string::String, std::string::String>, k: &str, d: &'a str) -> &'a str {
+fn param<'a>(
+    p: &'a BTreeMap<std::string::String, std::string::String>,
+    k: &str,
+    d: &'a str,
+) -> &'a str {
     p.get(k).map(|s| s.as_str()).unwrap_or(d)
 }
 
-fn param_f(p: &BTreeMap<std::string::String, std::string::String>, k: &str, d: f64) -> f64 {
+fn param_f(
+    p: &BTreeMap<std::string::String, std::string::String>,
+    k: &str,
+    d: f64,
+) -> f64 {
     p.get(k).and_then(|s| s.parse::<f64>().ok()).unwrap_or(d)
 }
 
@@ -1516,11 +1733,9 @@ fn spawn_inner(
 ) -> Result<(std::string::String, Option<std::string::String>)> {
     let cfg = ctx.cfg.clone();
     let ucid = Ucid::from_str(&req.ucid).map_err(|_| anyhow!("bad ucid"))?;
-    let f = ctx
-        .players
-        .by_ucid(&ucid)
-        .cloned()
-        .ok_or_else(|| anyhow!("you need to be in an aircraft on the range server to spawn"))?;
+    let f = ctx.players.by_ucid(&ucid).cloned().ok_or_else(|| {
+        anyhow!("you need to be in an aircraft on the range server to spawn")
+    })?;
     let instructor = is_instructor(ctx, &req.ucid, req.instructor);
     if cfg.spawn.instructor_only.iter().any(|i| i == &req.item) && !instructor {
         bail!("{} is instructor-only", req.item)
@@ -1535,20 +1750,50 @@ fn spawn_inner(
             )
         }
         if ctx.spawns.ai_units() >= cfg.spawn.max_ai_units {
-            bail!("the server is at its AI limit ({}); try again later", cfg.spawn.max_ai_units)
+            bail!(
+                "the server is at its AI limit ({}); try again later",
+                cfg.spawn.max_ai_units
+            )
         }
         ctx.spawns.cooldown_ok(&req.ucid, cfg.spawn.cooldown_s)?;
     }
     let p = &req.params;
     let id = match req.item.as_str() {
         "bfm" | "bvr" | "missile_drill" => {
-            let kind = if req.item == "missile_drill" { "bvr" } else { req.item.as_str() };
-            let setup = param(p, if kind == "bfm" { "setup" } else { "aspect" }, if kind == "bfm" { "offensive" } else { "hot" });
-            let count = if req.item == "missile_drill" { 1 } else { param_f(p, "count", 1.) as u32 };
-            let skill = param(p, "skill", if req.item == "missile_drill" { "Excellent" } else { "High" });
-            let weapons = param(p, "weapons", if kind == "bfm" { "guns" } else { "fox3" });
+            let kind =
+                if req.item == "missile_drill" { "bvr" } else { req.item.as_str() };
+            let setup = param(
+                p,
+                if kind == "bfm" { "setup" } else { "aspect" },
+                if kind == "bfm" { "offensive" } else { "hot" },
+            );
+            let count = if req.item == "missile_drill" {
+                1
+            } else {
+                param_f(p, "count", 1.) as u32
+            };
+            let skill = param(
+                p,
+                "skill",
+                if req.item == "missile_drill" { "Excellent" } else { "High" },
+            );
+            let weapons =
+                param(p, "weapons", if kind == "bfm" { "guns" } else { "fox3" });
             let adv = param(p, "adversary", "MiG-29S");
-            ctx.aa.spawn_setup(lua, &cfg, &mut ctx.spawns, &f, kind, setup, adv, skill, weapons, count, param_f(p, "range_nm", 30.), now)?
+            ctx.aa.spawn_setup(
+                lua,
+                &cfg,
+                &mut ctx.spawns,
+                &f,
+                kind,
+                setup,
+                adv,
+                skill,
+                weapons,
+                count,
+                param_f(p, "range_nm", 30.),
+                now,
+            )?
         }
         "tanker" => ctx.aar.spawn_for(
             lua,
@@ -1573,16 +1818,36 @@ fn spawn_inner(
             now,
         )?,
         "ground_targets" | "sam_site" => spawn_ground(lua, ctx, &f, &req.item, p, now)?,
-        "sling_course" => ctx.helo.start_sling(lua, &cfg, &mut ctx.spawns, &f, param(p, "course", ""), now)?,
+        "sling_course" => ctx.helo.start_sling(
+            lua,
+            &cfg,
+            &mut ctx.spawns,
+            &f,
+            param(p, "course", ""),
+            now,
+        )?,
         "cas_drill" => {
             ctx.ground.require_jtac()?;
-            let nine = ctx.ground.request_cas(lua, &mut ctx.spawns, &ctx.ag, &f, param(p, "jtac", ""), now)?;
+            let nine = ctx.ground.request_cas(
+                lua,
+                &mut ctx.spawns,
+                &ctx.ag,
+                &f,
+                param(p, "jtac", ""),
+                now,
+            )?;
             records::to_group(lua, f.group_id, &nine, 90);
             return Ok(("nine-line sent to your cockpit".into(), None));
         }
         other => bail!("unknown catalog item {other}"),
     };
-    Ok((format!("{} spawned", ctx.spawns.active.get(&id).map(|s| s.label.clone()).unwrap_or(id.clone())), Some(id)))
+    Ok((
+        format!(
+            "{} spawned",
+            ctx.spawns.active.get(&id).map(|s| s.label.clone()).unwrap_or(id.clone())
+        ),
+        Some(id),
+    ))
 }
 
 fn spawn_ground(
@@ -1601,15 +1866,22 @@ fn spawn_ground(
     if util::is_water(lua, pos) {
         bail!("{dist:.0} nm ahead of you is water - point at land and try again")
     }
-    let (types, label, weapons_free): (Vec<&str>, std::string::String, bool) = if item == "sam_site" {
-        let k = param(p, "type", "sa8");
-        let (_, l, t) = catalog::SAMS.iter().find(|(x, ..)| *x == k).ok_or_else(|| anyhow!("unknown SAM {k}"))?;
-        (t.to_vec(), l.to_string(), param(p, "weapons_free", "no") == "yes")
-    } else {
-        let k = param(p, "composition", "armor");
-        let (_, l, t) = catalog::GROUND_COMPOSITIONS.iter().find(|(x, ..)| *x == k).ok_or_else(|| anyhow!("unknown composition {k}"))?;
-        (t.to_vec(), l.to_string(), k == "shilka")
-    };
+    let (types, label, weapons_free): (Vec<&str>, std::string::String, bool) =
+        if item == "sam_site" {
+            let k = param(p, "type", "sa8");
+            let (_, l, t) = catalog::SAMS
+                .iter()
+                .find(|(x, ..)| *x == k)
+                .ok_or_else(|| anyhow!("unknown SAM {k}"))?;
+            (t.to_vec(), l.to_string(), param(p, "weapons_free", "no") == "yes")
+        } else {
+            let k = param(p, "composition", "armor");
+            let (_, l, t) = catalog::GROUND_COMPOSITIONS
+                .iter()
+                .find(|(x, ..)| *x == k)
+                .ok_or_else(|| anyhow!("unknown composition {k}"))?;
+            (t.to_vec(), l.to_string(), k == "shilka")
+        };
     let name = ctx.spawns.next_name(if item == "sam_site" { "SAM" } else { "GND" });
     let units: Vec<(std::string::String, V3, f64)> = types
         .iter()
@@ -1617,7 +1889,11 @@ fn spawn_ground(
         .map(|(i, t)| {
             let ring = if item == "sam_site" { 60. } else { 25. };
             let a = i as f64 * 360. / types.len().max(1) as f64;
-            (t.to_string(), util::offset(pos, a, if i == 0 { 0. } else { ring }, 0.), hdg + 180.)
+            (
+                t.to_string(),
+                util::offset(pos, a, if i == 0 { 0. } else { ring }, 0.),
+                hdg + 180.,
+            )
         })
         .collect();
     let moving = param(p, "moving", "no") == "yes";
@@ -1625,17 +1901,40 @@ fn spawn_ground(
         let p2 = util::offset(pos, hdg + 90., 5000., 0.);
         vec![
             spawn::ground_waypoint(pos, 8., true, vec![]),
-            spawn::ground_waypoint(p2, 8., true, vec![spawn::wrapped(1, json!({ "id": "SwitchWaypoint", "params": { "fromWaypointIndex": 2, "goToWaypointIndex": 1 } }))]),
+            spawn::ground_waypoint(
+                p2,
+                8.,
+                true,
+                vec![spawn::wrapped(
+                    1,
+                    json!({ "id": "SwitchWaypoint", "params": { "fromWaypointIndex": 2, "goToWaypointIndex": 1 } }),
+                )],
+            ),
         ]
     } else {
         vec![spawn::ground_waypoint(pos, 0., false, vec![])]
     };
     let g = spawn::surface_group(&name, &units, "High", route);
     let side = f.side.opposite();
-    spawn::add_group(lua, spawn::country_id(spawn::default_country(side))?, spawn::GROUND, &g)?;
+    spawn::add_group(
+        lua,
+        spawn::country_id(spawn::default_country(side))?,
+        spawn::GROUND,
+        &g,
+    )?;
     // ROE: 2 open fire / 4 weapon hold; alarm state red keeps radars up
-    ctx.spawns.defer(now + 2., spawn::Pending::GroupOption { group: name.clone(), id: 0, value: json!(if weapons_free { 2 } else { 4 }) });
-    ctx.spawns.defer(now + 2., spawn::Pending::GroupOption { group: name.clone(), id: 9, value: json!(2) });
+    ctx.spawns.defer(
+        now + 2.,
+        spawn::Pending::GroupOption {
+            group: name.clone(),
+            id: 0,
+            value: json!(if weapons_free { 2 } else { 4 }),
+        },
+    );
+    ctx.spawns.defer(
+        now + 2.,
+        spawn::Pending::GroupOption { group: name.clone(), id: 9, value: json!(2) },
+    );
     ctx.spawns.insert(spawn::Spawn {
         id: name.clone(),
         item: item.into(),
@@ -1645,12 +1944,23 @@ fn spawn_ground(
         groups: vec![name.clone()],
         statics: vec![],
         created: Utc::now(),
-        expires: Some(Utc::now() + chrono::Duration::seconds(cfg.spawn.despawn_after_s as i64)),
+        expires: Some(
+            Utc::now() + chrono::Duration::seconds(cfg.spawn.despawn_after_s as i64),
+        ),
         units: units.len() as u32,
         pos,
-        kind: if item == "sam_site" { spawn::SpawnKind::Sam } else { spawn::SpawnKind::Targets },
+        kind: if item == "sam_site" {
+            spawn::SpawnKind::Sam
+        } else {
+            spawn::SpawnKind::Targets
+        },
     });
-    records::to_group(lua, f.group_id, &format!("{label} spawned {:03.0} for {dist:.0} nm", hdg), 15);
+    records::to_group(
+        lua,
+        f.group_id,
+        &format!("{label} spawned {:03.0} for {dist:.0} nm", hdg),
+        15,
+    );
     Ok(name)
 }
 
@@ -1679,19 +1989,29 @@ fn on_menu_inner(lua: MizLua, ctx: &mut Ctx, gid: GroupId, action: &str) -> Resu
                 records::to_group(lua, gid, &t.join("\n"), 40);
             }
             "status" => {
-                let mut t = vec![format!("{} - {} players flying", ctx.cfg.name, ctx.players.flying.len())];
+                let mut t = vec![format!(
+                    "{} - {} players flying",
+                    ctx.cfg.name,
+                    ctx.players.flying.len()
+                )];
                 if let Some(i) = ctx.sectors.at(f.pos) {
                     t.push(format!("You are in {}", ctx.sectors.list[i].title()));
                 }
                 t.push("Stations:".into());
-                t.extend(ctx.ag.describe(lua, Some(f.pos)).into_iter().map(|s| format!("  {s}")));
+                t.extend(
+                    ctx.ag
+                        .describe(lua, Some(f.pos))
+                        .into_iter()
+                        .map(|s| format!("  {s}")),
+                );
                 t.push("Tankers:".into());
                 t.extend(ctx.aar.describe().into_iter().map(|s| format!("  {s}")));
                 t.extend(ctx.cv.describe(lua));
                 say(&t.join("\n"));
             }
             "ag" => {
-                let i = ctx.ag.station_by_id(a2).ok_or_else(|| anyhow!("no station {a2}"))?;
+                let i =
+                    ctx.ag.station_by_id(a2).ok_or_else(|| anyhow!("no station {a2}"))?;
                 let st = &ctx.ag.stations[i];
                 match a1 {
                     "info" => say(&format!(
@@ -1702,16 +2022,28 @@ fn on_menu_inner(lua: MizLua, ctx: &mut Ctx, gid: GroupId, action: &str) -> Resu
                         st.center.y * util::M_TO_FT,
                         st.alive(),
                         st.targets.len(),
-                        st.cfg.laser_code.map(|c| format!(" Laser code {c}.")).unwrap_or_default(),
+                        st.cfg
+                            .laser_code
+                            .map(|c| format!(" Laser code {c}."))
+                            .unwrap_or_default(),
                         st.cfg.note.as_ref().map(|n| format!(" {n}")).unwrap_or_default()
                     )),
                     "smoke" => {
-                        let p = st.targets.iter().find(|t| t.alive).map(|t| t.pos).unwrap_or(st.center);
-                        Trigger::singleton(lua)?.action()?.smoke(LuaVec3(p), SmokeColor::Red)?;
+                        let p = st
+                            .targets
+                            .iter()
+                            .find(|t| t.alive)
+                            .map(|t| t.pos)
+                            .unwrap_or(st.center);
+                        Trigger::singleton(lua)?
+                            .action()?
+                            .smoke(LuaVec3(p), SmokeColor::Red)?;
                         say(&format!("{}: red smoke on the target", st.cfg.name));
                     }
                     "reset" => {
-                        if st.cfg.locked && !is_instructor(ctx, &f.ucid.to_string(), false) {
+                        if st.cfg.locked
+                            && !is_instructor(ctx, &f.ucid.to_string(), false)
+                        {
                             bail!("only an instructor can reset {}", st.cfg.name)
                         }
                         ctx.ag.reset(lua, i, &mut ctx.spawns, now)?;
@@ -1724,9 +2056,21 @@ fn on_menu_inner(lua: MizLua, ctx: &mut Ctx, gid: GroupId, action: &str) -> Resu
                 let item = a1.to_string();
                 let params: BTreeMap<std::string::String, std::string::String> = a2
                     .split('&')
-                    .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+                    .filter_map(|kv| {
+                        kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string()))
+                    })
                     .collect();
-                let r = spawn_request(lua, ctx, SpawnRequest { ucid: f.ucid.to_string(), item, params, instructor: false }, now);
+                let r = spawn_request(
+                    lua,
+                    ctx,
+                    SpawnRequest {
+                        ucid: f.ucid.to_string(),
+                        item,
+                        params,
+                        instructor: false,
+                    },
+                    now,
+                );
                 if !r.ok {
                     say(&format!("Unable: {}", r.message));
                 }
@@ -1762,11 +2106,28 @@ fn on_menu_inner(lua: MizLua, ctx: &mut Ctx, gid: GroupId, action: &str) -> Resu
                     "bfm"
                 };
                 params.insert("adversary".into(), s.adversary.clone());
-                params.insert("weapons".into(), if item != "bfm" && s.weapons == "guns" { "fox3".into() } else { s.weapons.clone() });
+                params.insert(
+                    "weapons".into(),
+                    if item != "bfm" && s.weapons == "guns" {
+                        "fox3".into()
+                    } else {
+                        s.weapons.clone()
+                    },
+                );
                 params.insert("skill".into(), s.skill.clone());
                 params.insert("count".into(), s.count.to_string());
                 params.insert("range_nm".into(), s.range_nm.to_string());
-                let r = spawn_request(lua, ctx, SpawnRequest { ucid: f.ucid.to_string(), item: item.into(), params, instructor: false }, now);
+                let r = spawn_request(
+                    lua,
+                    ctx,
+                    SpawnRequest {
+                        ucid: f.ucid.to_string(),
+                        item: item.into(),
+                        params,
+                        instructor: false,
+                    },
+                    now,
+                );
                 if !r.ok {
                     say(&format!("Unable: {}", r.message));
                 }
@@ -1797,39 +2158,76 @@ fn on_menu_inner(lua: MizLua, ctx: &mut Ctx, gid: GroupId, action: &str) -> Resu
                     let m = ctx.iads.reset(lua, a2, &mut ctx.spawns, now)?;
                     say(&m);
                 }
-                _ => records::to_group(lua, gid, &ctx.iads.describe(f.pos, f.side).join("\n"), 40),
+                _ => records::to_group(
+                    lua,
+                    gid,
+                    &ctx.iads.describe(f.pos, f.side).join("\n"),
+                    40,
+                ),
             },
             "ew" => {
                 let d = ctx.ew.describe(f.pos, f.side);
-                say(&if d.is_empty() { "No enemy jammers on this range".to_string() } else { format!("Jammers:\n{}", d.join("\n")) });
+                say(&if d.is_empty() {
+                    "No enemy jammers on this range".to_string()
+                } else {
+                    format!("Jammers:\n{}", d.join("\n"))
+                });
             }
             "hz" => match a1 {
                 "picture" => records::to_group(lua, gid, &ctx.hz.picture(lua, &f), 30),
                 _ => {
                     let d = ctx.hz.describe(f.pos, f.side);
-                    say(&if d.is_empty() { "No hot zones for your side".to_string() } else { format!("Hot zones:\n{}", d.join("\n")) });
+                    say(&if d.is_empty() {
+                        "No hot zones for your side".to_string()
+                    } else {
+                        format!("Hot zones:\n{}", d.join("\n"))
+                    });
                 }
             },
             "csar" => match a1 {
                 "req" => {
                     let (area, mode) = a2.split_once(':').unwrap_or((a2, "cold"));
-                    let m = ctx.csar.request(lua, &f, area, mode == "hot", &mut ctx.spawns, now)?;
+                    let m = ctx.csar.request(
+                        lua,
+                        &f,
+                        area,
+                        mode == "hot",
+                        &mut ctx.spawns,
+                        now,
+                    )?;
                     let _ = m;
                 }
-                _ => say(&format!("CSAR areas:\n{}", ctx.csar.describe(f.pos, f.side, now).join("\n"))),
+                _ => say(&format!(
+                    "CSAR areas:\n{}",
+                    ctx.csar.describe(f.pos, f.side, now).join("\n")
+                )),
             },
             "deck" => {
                 let d = ctx.decks.describe(lua, f.pos);
-                say(&if d.is_empty() { "No ship decks on this range".to_string() } else { format!("Ship decks:\n{}", d.join("\n")) });
+                say(&if d.is_empty() {
+                    "No ship decks on this range".to_string()
+                } else {
+                    format!("Ship decks:\n{}", d.join("\n"))
+                });
             }
-            "ll" => records::to_group(lua, gid, &ctx.ll.brief(f.pos, f.side).join("\n"), 60),
-            "pat" => say("LANDINGS: every runway landing is graded: touchdown against the aim point (300 m past the threshold), the centreline, sink rate in the last second, and your approach at 1 nm and 1/2 nm against a 3 deg glideslope. Fly a stable straight-in or a proper overhead break; touch-and-gos are graded too. Your card follows 15 s after touchdown."),
+            "ll" => {
+                records::to_group(lua, gid, &ctx.ll.brief(f.pos, f.side).join("\n"), 60)
+            }
+            "pat" => say(
+                "LANDINGS: every runway landing is graded: touchdown against the aim point (300 m past the threshold), the centreline, sink rate in the last second, and your approach at 1 nm and 1/2 nm against a 3 deg glideslope. Fly a stable straight-in or a proper overhead break; touch-and-gos are graded too. Your card follows 15 s after touchdown.",
+            ),
             "cv" => {
                 let d = ctx.cv.describe(lua);
-                say(&if d.is_empty() { "No carriers on this range".to_string() } else { d.join("\n") });
+                say(&if d.is_empty() {
+                    "No carriers on this range".to_string()
+                } else {
+                    d.join("\n")
+                });
             }
             "helo" => match a1 {
-                "pads" => say(&format!("Landing pads:\n{}", ctx.helo.pad_list().join("\n"))),
+                "pads" => {
+                    say(&format!("Landing pads:\n{}", ctx.helo.pad_list().join("\n")))
+                }
                 "cargo" => say(&ctx.helo.dyn_cargo_help()),
                 "load" => {
                     ctx.helo.mark_troop_start(&f.unit_name, now);
@@ -1853,18 +2251,35 @@ fn on_menu_inner(lua: MizLua, ctx: &mut Ctx, gid: GroupId, action: &str) -> Resu
                         .spawns
                         .active
                         .values()
-                        .filter(|s| s.owner.as_deref() == Some(f.ucid.to_string().as_str()))
+                        .filter(|s| {
+                            s.owner.as_deref() == Some(f.ucid.to_string().as_str())
+                        })
                         .map(|s| s.label.clone())
                         .collect();
-                    say(&if mine.is_empty() { "You have no spawns".to_string() } else { mine.join("\n") });
+                    say(&if mine.is_empty() {
+                        "You have no spawns".to_string()
+                    } else {
+                        mine.join("\n")
+                    });
                 }
             },
             "res" => match a1 {
                 "last" => {
-                    let l = ctx.rec.last.get(&f.ucid.to_string()).cloned().unwrap_or_default();
-                    say(&if l.is_empty() { "No results yet this session".to_string() } else { l.join("\n") });
+                    let l = ctx
+                        .rec
+                        .last
+                        .get(&f.ucid.to_string())
+                        .cloned()
+                        .unwrap_or_default();
+                    say(&if l.is_empty() {
+                        "No results yet this session".to_string()
+                    } else {
+                        l.join("\n")
+                    });
                 }
-                _ => say("Range help: every bomb, strafe pass, carrier pass, tanker session, missile shot and drill is graded and posted to range.vectorstrike.org with a full debrief. Chat: -range trainer on|off."),
+                _ => say(
+                    "Range help: every bomb, strafe pass, carrier pass, tanker session, missile shot and drill is graded and posted to range.vectorstrike.org with a full debrief. Chat: -range trainer on|off.",
+                ),
             },
             _ => (),
         }

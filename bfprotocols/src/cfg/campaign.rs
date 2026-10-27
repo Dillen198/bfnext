@@ -91,9 +91,7 @@ pub(super) fn default_under_attack_cooldown() -> u32 {
 
 impl Default for UnderAttackCfg {
     fn default() -> Self {
-        Self {
-            cooldown_secs: default_under_attack_cooldown(),
-        }
+        Self { cooldown_secs: default_under_attack_cooldown() }
     }
 }
 
@@ -318,10 +316,18 @@ pub struct PlayerReconCfg {
     pub max_altitude_m: f64,
 }
 
-pub(super) fn default_player_recon_range() -> f64 { 25_000.0 }
-pub(super) fn default_player_recon_dwell() -> u32 { 120 }
-pub(super) fn default_player_recon_scan_radius() -> f64 { 12_000.0 }
-pub(super) fn default_player_recon_cooldown() -> u32 { 300 }
+pub(super) fn default_player_recon_range() -> f64 {
+    25_000.0
+}
+pub(super) fn default_player_recon_dwell() -> u32 {
+    120
+}
+pub(super) fn default_player_recon_scan_radius() -> f64 {
+    12_000.0
+}
+pub(super) fn default_player_recon_cooldown() -> u32 {
+    300
+}
 
 impl Default for PlayerReconCfg {
     fn default() -> Self {

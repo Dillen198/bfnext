@@ -30,11 +30,12 @@ for more details.
 //! Everything here is session state: nothing is saved, and the military
 //! flights are tagged `EventSpawn` so a restart drops them.
 
-use crate::{spawnctx::SpawnCtx, Context};
-use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
+use crate::{Context, spawnctx::SpawnCtx};
+use anyhow::{Context as AnyhowContext, Result, anyhow, bail};
 use bfprotocols::{
     cfg::{
-        Action, ActionKind, AiPackagesCfg, CivilAircraftCfg, CivilTrafficCfg, UnitTag, WingmanCfg,
+        Action, ActionKind, AiPackagesCfg, CivilAircraftCfg, CivilTrafficCfg, UnitTag,
+        WingmanCfg,
     },
     db::{
         group::GroupId,
@@ -42,9 +43,10 @@ use bfprotocols::{
     },
     perf::PerfInner,
 };
-use chrono::{prelude::*, Duration};
-use compact_str::{format_compact, CompactString};
+use chrono::{Duration, prelude::*};
+use compact_str::{CompactString, format_compact};
 use dcso3::{
+    LuaEnv, LuaVec2, LuaVec3, MizLua, String, Vector2, Vector3,
     airbase::AirbaseCategory,
     attribute::Attribute,
     coalition::{Coalition, Side},
@@ -59,12 +61,11 @@ use dcso3::{
     net::Ucid,
     unit::Unit,
     world::World,
-    LuaEnv, LuaVec2, LuaVec3, MizLua, String, Vector2, Vector3,
 };
 use fxhash::FxHashMap;
 use log::{debug, error, info, warn};
 use mlua::{FromLua, Value};
-use rand::{seq::SliceRandom, thread_rng, Rng};
+use rand::{Rng, seq::SliceRandom, thread_rng};
 
 /// Every civilian group and unit name starts with this.
 pub(crate) const CIV_PREFIX: &str = "CIV ";
@@ -199,12 +200,7 @@ pub(crate) fn dist(a: Vector2, b: Vector2) -> f64 {
     (a - b).norm()
 }
 
-pub(crate) fn air_point(
-    pos: Vector2,
-    alt: f64,
-    speed: f64,
-    task: Task,
-) -> MissionPoint {
+pub(crate) fn air_point(pos: Vector2, alt: f64, speed: f64, task: Task) -> MissionPoint {
     MissionPoint {
         typ: PointType::TurningPoint,
         airdrome_id: None,
@@ -231,7 +227,12 @@ pub(crate) fn air_point(
 /// Order `gid` to land at the nearest friendly airbase and hand it to the RTB
 /// sweep, which deletes it once it is down. Deletes it outright if it can't
 /// be ordered (not in DCS, no friendly field).
-pub(crate) fn send_home(lua: MizLua, ctx: &mut Context, gid: GroupId, now: DateTime<Utc>) {
+pub(crate) fn send_home(
+    lua: MizLua,
+    ctx: &mut Context,
+    gid: GroupId,
+    now: DateTime<Utc>,
+) {
     let Some(group) = ctx.db.persisted.groups.get(&gid) else { return };
     let (name, side) = (group.name.clone(), group.side);
     let ordered = (|| -> Result<()> {
@@ -245,7 +246,8 @@ pub(crate) fn send_home(lua: MizLua, ctx: &mut Context, gid: GroupId, now: DateT
             .map(|(_, o)| o.pos())
             .min_by(|a, b| dist(*a, here).total_cmp(&dist(*b, here)))
             .ok_or_else(|| anyhow!("no friendly airbase"))?;
-        g.get_controller()?.set_task(Task::Land { point: LuaVec2(home), duration: None })?;
+        g.get_controller()?
+            .set_task(Task::Land { point: LuaVec2(home), duration: None })?;
         Ok(())
     })();
     match ordered {
@@ -323,7 +325,12 @@ pub(crate) fn process_requests(
     }
 }
 
-fn wingman_templates(ctx: &Context, cfg: &WingmanCfg, side: Side, rotary: bool) -> Vec<String> {
+fn wingman_templates(
+    ctx: &Context,
+    cfg: &WingmanCfg,
+    side: Side,
+    rotary: bool,
+) -> Vec<String> {
     let own = match (side, rotary) {
         (Side::Blue, false) => &cfg.templates_blue,
         (Side::Blue, true) => &cfg.rotary_templates_blue,
@@ -382,7 +389,9 @@ fn request_wingman(
         return Ok("Get in an aircraft first.".into());
     };
     if !inst.in_air {
-        return Ok("Call your wingman once you are airborne -- it joins you in the air.".into());
+        return Ok(
+            "Call your wingman once you are airborne -- it joins you in the air.".into()
+        );
     }
     let pilots = side_pilots(ctx, side);
     if cfg.max_side_pilots > 0 && pilots > cfg.max_side_pilots {
@@ -446,10 +455,8 @@ fn request_wingman(
         .and_then(|l| l.get_height(LuaVec2(here)).ok())
         .map(|g| player_alt.max(g + floor))
         .unwrap_or(player_alt);
-    let field_elev = land
-        .as_ref()
-        .and_then(|l| l.get_height(LuaVec2(field.pos)).ok())
-        .unwrap_or(0.);
+    let field_elev =
+        land.as_ref().and_then(|l| l.get_height(LuaVec2(field.pos)).ok()).unwrap_or(0.);
     let (engage, targets) = if rotary {
         (cfg.rotary_engage_dist_m, vec![Attribute::Helicopters, Attribute::GroundUnits])
     } else {
@@ -471,7 +478,11 @@ fn request_wingman(
         Task::Escort {
             engagement_dist_max: engage,
             target_types: targets,
-            params: FollowParams { group: escorted, pos: station, last_waypoint_index: None },
+            params: FollowParams {
+                group: escorted,
+                pos: station,
+                last_waypoint_index: None,
+            },
         },
     ]);
     // Waypoint 0 is the field: the spawn turns it into the takeoff, and the
@@ -574,13 +585,20 @@ fn wingman_status(
     now: DateTime<Utc>,
 ) -> Result<CompactString> {
     let Some(w) = ctx.airlife.wingmen.get(&ucid) else {
-        return Ok("You have no wingman. F10 > Wingman > Request Wingman calls one.".into());
+        return Ok(
+            "You have no wingman. F10 > Wingman > Request Wingman calls one.".into()
+        );
     };
     let (alive_n, total) = ctx.db.group_health(&w.gid).unwrap_or((0, 0));
     let left = (w.expires_at - now).num_minutes().max(0);
     let range = (|| -> Option<f64> {
         let name = ctx.db.persisted.groups.get(&w.gid)?.name.clone();
-        let p = Group::get_by_name(lua, name.as_str()).ok()?.get_unit(1).ok()?.get_point().ok()?;
+        let p = Group::get_by_name(lua, name.as_str())
+            .ok()?
+            .get_unit(1)
+            .ok()?
+            .get_point()
+            .ok()?;
         let me = Unit::get_by_name(lua, w.unit_name.as_str()).ok()?.get_point().ok()?;
         Some(dist(Vector2::new(p.x, p.z), Vector2::new(me.x, me.z)) / 1852.)
     })();
@@ -589,7 +607,10 @@ fn wingman_status(
             "{} wingman: {alive_n}/{total} aircraft, {nm:.1} nm from you, {left} min left.",
             w.typ
         ),
-        None => format_compact!("{} wingman: {alive_n}/{total} aircraft, {left} min left.", w.typ),
+        None => format_compact!(
+            "{} wingman: {alive_n}/{total} aircraft, {left} min left.",
+            w.typ
+        ),
     })
 }
 
@@ -637,7 +658,8 @@ fn tick_wingmen(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
                 if let Some(w) = ctx.airlife.wingmen.get_mut(&ucid) {
                     w.landed_since = None;
                 }
-                (now >= ctx.airlife.wingmen[&ucid].expires_at).then_some("it is out of time")
+                (now >= ctx.airlife.wingmen[&ucid].expires_at)
+                    .then_some("it is out of time")
             }
         };
         if let Some(why) = why {
@@ -654,9 +676,7 @@ fn tick_wingmen(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
         }
     }
     // Cooldowns only matter for a while.
-    ctx.airlife
-        .wingman_lost_at
-        .retain(|_, t| (now - *t).num_seconds() < 3600);
+    ctx.airlife.wingman_lost_at.retain(|_, t| (now - *t).num_seconds() < 3600);
 }
 
 // ---------------------------------------------------------------------------
@@ -679,7 +699,9 @@ pub(crate) fn front_points(ctx: &Context) -> Vec<Vector2> {
     let mut out = vec![];
     for (mine, theirs) in [(&red, &blue), (&blue, &red)] {
         for p in mine.iter() {
-            if let Some(q) = theirs.iter().min_by(|a, b| dist(**a, *p).total_cmp(&dist(**b, *p))) {
+            if let Some(q) =
+                theirs.iter().min_by(|a, b| dist(**a, *p).total_cmp(&dist(**b, *p)))
+            {
                 out.push((*p + *q) * 0.5);
             }
         }
@@ -755,7 +777,9 @@ fn package_actions(
     let Some(actions) = ctx.db.ephemeral.cfg.actions.get(&side) else { return vec![] };
     actions
         .iter()
-        .filter(|(name, _)| names.is_empty() || names.iter().any(|n| n.as_str() == name.as_str()))
+        .filter(|(name, _)| {
+            names.is_empty() || names.iter().any(|n| n.as_str() == name.as_str())
+        })
         .filter_map(|(_, a)| PackageKind::of(&a.kind).map(|k| (k, a.clone())))
         .collect()
 }
@@ -778,10 +802,10 @@ fn package_targets(
     if friendly.is_empty() {
         return vec![];
     }
-    let airbases: Vec<Vector2> = friendly.iter().filter(|(_, ab)| *ab).map(|(p, _)| *p).collect();
-    let in_range = |p: Vector2| {
-        airbases.iter().any(|ab| dist(*ab, p) <= cfg.max_target_range_m)
-    };
+    let airbases: Vec<Vector2> =
+        friendly.iter().filter(|(_, ab)| *ab).map(|(p, _)| *p).collect();
+    let in_range =
+        |p: Vector2| airbases.iter().any(|ab| dist(*ab, p) <= cfg.max_target_range_m);
     // (enemy objective pos, name, kind, nearest friendly pos, gap)
     let mut pairs: Vec<(Vector2, CompactString, ObjectiveKind, Vector2, f64)> = ctx
         .db
@@ -836,7 +860,10 @@ fn package_targets(
     if let Some((p, n, ..)) = pairs
         .iter()
         .filter(|(_, _, k, _, _)| {
-            !matches!(k, ObjectiveKind::SpecialSamSite | ObjectiveKind::CarrierGroup { .. })
+            !matches!(
+                k,
+                ObjectiveKind::SpecialSamSite | ObjectiveKind::CarrierGroup { .. }
+            )
         })
         .min_by(|a, b| dist(a.0, mid).total_cmp(&dist(b.0, mid)))
         .filter(|(p, ..)| in_range(*p))
@@ -856,7 +883,12 @@ fn package_targets(
     out
 }
 
-fn tick_packages(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, now: DateTime<Utc>) {
+fn tick_packages(
+    lua: MizLua,
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    now: DateTime<Utc>,
+) {
     let Some(cfg) = ctx
         .db
         .ephemeral
@@ -922,9 +954,16 @@ fn tick_packages(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, now: Date
             .last_package_launch
             .get(&side)
             .map(|t| {
-                let tempo = ctx.db.ephemeral.cfg.modern_war.as_ref().and_then(|m| m.tempo.as_ref());
+                let tempo = ctx
+                    .db
+                    .ephemeral
+                    .cfg
+                    .modern_war
+                    .as_ref()
+                    .and_then(|m| m.tempo.as_ref());
                 let factor = ctx.modern_war.tempo.factor(tempo, side, now);
-                (now - *t).num_seconds() < (cfg.launch_interval_secs as f64 * factor) as i64
+                (now - *t).num_seconds()
+                    < (cfg.launch_interval_secs as f64 * factor) as i64
             })
             .unwrap_or(false)
         {
@@ -1012,7 +1051,9 @@ fn tick_packages(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, now: Date
                 }
             }
             Err(e) => {
-                warn!("air_life: {side:?} {name} over {target_name} would not launch: {e:?}");
+                warn!(
+                    "air_life: {side:?} {name} over {target_name} would not launch: {e:?}"
+                );
                 // Don't retry the same failure every check.
                 ctx.airlife.last_package_launch.insert(side, now);
             }
@@ -1070,7 +1111,10 @@ fn airports(lua: MizLua) -> Result<Vec<Airport>> {
 /// A free airliner stand at airdrome `id` for a departure to start on: an
 /// open-big spot (the only kind every airliner fits), nearest the runway
 /// first. `None` if there isn't one free.
-fn civil_departure_spot(lua: MizLua, id: dcso3::airbase::AirbaseId) -> Option<dcso3::airbase::ParkingSpot> {
+fn civil_departure_spot(
+    lua: MizLua,
+    id: dcso3::airbase::AirbaseId,
+) -> Option<dcso3::airbase::ParkingSpot> {
     use dcso3::airbase::term_type;
     let ab = World::singleton(lua)
         .ok()?
@@ -1162,7 +1206,13 @@ fn tick_civil(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
             debug!(
                 "air_life: civil {} {} ({})",
                 f.callsign,
-                if rolled_out { "landed" } else if exited { "left the map" } else { "timed out" },
+                if rolled_out {
+                    "landed"
+                } else if exited {
+                    "left the map"
+                } else {
+                    "timed out"
+                },
                 f.typ
             );
             if let Err(e) = group.destroy() {
@@ -1185,13 +1235,17 @@ fn tick_civil(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
         && ctx.airlife.next_ship_spawn.map(|t| now >= t).unwrap_or(true)
     {
         let jitter = thread_rng().gen_range(0.7..1.3);
-        ctx.airlife.next_ship_spawn =
-            Some(now + Duration::seconds((cfg.ship_spawn_interval_secs as f64 * jitter) as i64));
+        ctx.airlife.next_ship_spawn = Some(
+            now + Duration::seconds(
+                (cfg.ship_spawn_interval_secs as f64 * jitter) as i64,
+            ),
+        );
         if let Err(e) = spawn_civil_ship(lua, ctx, &cfg, now) {
             warn!("air_life: merchant ship not spawned: {e:?}");
         }
     }
-    let airliners = ctx.airlife.civ.len() - ctx.airlife.civ.values().filter(|f| f.kind == CivKind::Ship).count();
+    let airliners = ctx.airlife.civ.len()
+        - ctx.airlife.civ.values().filter(|f| f.kind == CivKind::Ship).count();
     if airliners >= cfg.max_active as usize {
         return;
     }
@@ -1207,9 +1261,22 @@ fn tick_civil(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
 }
 
 const SHIP_NAMES: &[&str] = &[
-    "Nordic Star", "Baltic Trader", "Sea Pearl", "Black Sea Carrier", "Caspian Spirit",
-    "Gulf Horizon", "Anatolia", "Odessa Star", "Bosporus", "Aegean Wind", "Levant Pride",
-    "Hormuz Venture", "Kharg Trader", "Persian Dawn", "Crimea Bay", "Danube Queen",
+    "Nordic Star",
+    "Baltic Trader",
+    "Sea Pearl",
+    "Black Sea Carrier",
+    "Caspian Spirit",
+    "Gulf Horizon",
+    "Anatolia",
+    "Odessa Star",
+    "Bosporus",
+    "Aegean Wind",
+    "Levant Pride",
+    "Hormuz Venture",
+    "Kharg Trader",
+    "Persian Dawn",
+    "Crimea Bay",
+    "Danube Queen",
 ];
 
 /// A sea lane: two open-water points at least 50 km apart with open water
@@ -1217,14 +1284,16 @@ const SHIP_NAMES: &[&str] = &[
 fn sea_lane(lua: MizLua, lo: Vector2, hi: Vector2) -> Option<(Vector2, Vector2)> {
     use dcso3::land::SurfaceType;
     let land = Land::singleton(lua).ok()?;
-    let water = |p: Vector2| matches!(land.get_surface_type(LuaVec2(p)), Ok(SurfaceType::Water));
+    let water =
+        |p: Vector2| matches!(land.get_surface_type(LuaVec2(p)), Ok(SurfaceType::Water));
     let mut rng = thread_rng();
     let points: Vec<Vector2> = (0..60)
         .map(|_| Vector2::new(rng.gen_range(lo.x..=hi.x), rng.gen_range(lo.y..=hi.y)))
         .filter(|p| water(*p))
         .collect();
     for _ in 0..40 {
-        let (Some(a), Some(b)) = (points.choose(&mut rng), points.choose(&mut rng)) else {
+        let (Some(a), Some(b)) = (points.choose(&mut rng), points.choose(&mut rng))
+        else {
             return None;
         };
         let d = dist(*a, *b);
@@ -1315,9 +1384,15 @@ fn spawn_civil_ship(
     let group = miz::Group::from_lua(Value::Table(group), l)?;
     Coalition::singleton(lua)?
         .add_group(country, GroupCategory::Ship, group)
-        .with_context(|| format_compact!("spawning merchant {callsign} ({})", ship.typ))?;
+        .with_context(|| {
+            format_compact!("spawning merchant {callsign} ({})", ship.typ)
+        })?;
     let voyage = dist(a, b) / ship.speed_ms.max(1.) * 1.3 + 600.;
-    info!("air_life: merchant {callsign} ({}) sailing {:.0} km", ship.typ, dist(a, b) / 1000.);
+    info!(
+        "air_life: merchant {callsign} ({}) sailing {:.0} km",
+        ship.typ,
+        dist(a, b) / 1000.
+    );
     ctx.airlife.civ.insert(
         gname,
         CivFlight {
@@ -1371,7 +1446,8 @@ fn spawn_civil(
     // The box everything happens in, padded out to where airliners enter.
     let mut lo = Vector2::new(f64::INFINITY, f64::INFINITY);
     let mut hi = Vector2::new(f64::NEG_INFINITY, f64::NEG_INFINITY);
-    for p in fields.iter().map(|a| a.pos).chain(ctx.db.objectives().map(|(_, o)| o.pos())) {
+    for p in fields.iter().map(|a| a.pos).chain(ctx.db.objectives().map(|(_, o)| o.pos()))
+    {
         lo = Vector2::new(lo.x.min(p.x), lo.y.min(p.y));
         hi = Vector2::new(hi.x.max(p.x), hi.y.max(p.y));
     }
@@ -1470,7 +1546,10 @@ fn spawn_civil(
             // aircraft, engines running. It used to appear 5 km out and
             // already climbing. No free airliner stand, no departure.
             let Some(spot) = civil_departure_spot(lua, dep.id) else {
-                debug!("air_life: no free stand at {} for a departure this time", dep.name);
+                debug!(
+                    "air_life: no free stand at {} for a departure this time",
+                    dep.name
+                );
                 return Ok(());
             };
             parking = Some(spot.term_index);
@@ -1494,7 +1573,12 @@ fn spawn_civil(
                     name: None,
                     task: Box::new(base_task()),
                 },
-                air_point(dep.pos + dir * 40_000., cruise, speed, Task::ComboTask(vec![])),
+                air_point(
+                    dep.pos + dir * 40_000.,
+                    cruise,
+                    speed,
+                    Task::ComboTask(vec![]),
+                ),
                 air_point(exit, cruise, speed, Task::ComboTask(vec![])),
             ];
             (start, start_alt, pts, Some(exit), format_compact!("departing {}", dep.name))
@@ -1612,7 +1696,12 @@ fn spawn_civil(
 }
 
 /// A player's weapon hit civilian unit `unit_name`.
-pub(crate) fn civil_hit(ctx: &mut Context, unit_name: &str, shooter: Option<Ucid>, now: DateTime<Utc>) {
+pub(crate) fn civil_hit(
+    ctx: &mut Context,
+    unit_name: &str,
+    shooter: Option<Ucid>,
+    now: DateTime<Utc>,
+) {
     if let Some(ucid) = shooter {
         ctx.airlife.civ_hits.insert(String::from(unit_name), (ucid, now));
     }
@@ -1637,7 +1726,9 @@ pub(crate) fn civil_down(ctx: &mut Context, unit_name: &str, now: DateTime<Utc>)
     let (callsign, typ) = match &flight {
         Some(f) => (f.callsign.clone(), f.typ.clone()),
         None => (
-            CompactString::from(unit_name.trim_start_matches(CIV_PREFIX).trim_end_matches("-1")),
+            CompactString::from(
+                unit_name.trim_start_matches(CIV_PREFIX).trim_end_matches("-1"),
+            ),
             String::from("airliner"),
         ),
     };
@@ -1655,7 +1746,8 @@ pub(crate) fn civil_down(ctx: &mut Context, unit_name: &str, now: DateTime<Utc>)
         .as_ref()
         .and_then(|a| a.civil_traffic.clone())
         .unwrap_or_default();
-    let Some((name, side)) = ctx.db.player(&ucid).map(|p| (p.name.clone(), p.side)) else {
+    let Some((name, side)) = ctx.db.player(&ucid).map(|p| (p.name.clone(), p.side))
+    else {
         return;
     };
     warn!("air_life: civil {callsign} ({typ}) shot down by {name} ({ucid}, {side:?})");
@@ -1692,7 +1784,12 @@ pub(crate) fn civil_down(ctx: &mut Context, unit_name: &str, now: DateTime<Utc>)
 // ---------------------------------------------------------------------------
 
 /// The slow-tick half: wingman upkeep, packages, civil traffic, RTB sweep.
-pub(crate) fn tick(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, now: DateTime<Utc>) {
+pub(crate) fn tick(
+    lua: MizLua,
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    now: DateTime<Utc>,
+) {
     if ctx.db.ephemeral.cfg.air_life.is_none()
         && ctx.airlife.wingmen.is_empty()
         && ctx.airlife.packages.is_empty()

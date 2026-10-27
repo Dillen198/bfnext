@@ -20,17 +20,20 @@ use crate::{
     spawn::{self, Spawns},
     util::{self, V3},
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use bfprotocols::range::{
+    CsarOutcome, CsarResult, LiveCsar, RangeResult,
     cfg::{CsarAreaCfg, RangeCfg},
-    grading, CsarOutcome, CsarResult, LiveCsar, RangeResult,
+    grading,
 };
 use chrono::{DateTime, Utc};
 use dcso3::{
+    Color, LuaVec3, MizLua,
     coalition::Side,
     env::miz::GroupId,
-    trigger::{CircleSpec, FlareColor, LineType, MarkId, SideFilter, SmokeColor, Trigger},
-    Color, LuaVec3, MizLua,
+    trigger::{
+        CircleSpec, FlareColor, LineType, MarkId, SideFilter, SmokeColor, Trigger,
+    },
 };
 use log::{info, warn};
 use serde_json::json;
@@ -129,52 +132,125 @@ impl Csar {
     }
 
     /// F10: start a rescue in an area.
-    pub fn request(&mut self, lua: MizLua, f: &Flying, area_id: &str, hostile: bool, spawns: &mut Spawns, now: f64) -> Result<String> {
+    pub fn request(
+        &mut self,
+        lua: MizLua,
+        f: &Flying,
+        area_id: &str,
+        hostile: bool,
+        spawns: &mut Spawns,
+        now: f64,
+    ) -> Result<String> {
         if !f.is_helo {
             bail!("CSAR is flown in a helicopter")
         }
-        if self.missions.iter().any(|m| m.owner == f.ucid.to_string() && m.picked.is_none()) {
+        if self
+            .missions
+            .iter()
+            .any(|m| m.owner == f.ucid.to_string() && m.picked.is_none())
+        {
             bail!("you already have a survivor waiting")
         }
-        let ai = self.areas.iter().position(|(a, _)| a.id == area_id).ok_or_else(|| anyhow!("no CSAR area {area_id}"))?;
+        let ai = self
+            .areas
+            .iter()
+            .position(|(a, _)| a.id == area_id)
+            .ok_or_else(|| anyhow!("no CSAR area {area_id}"))?;
         let (area, centre) = self.areas[ai].clone();
         if !for_side(&area.side, f.side) {
             bail!("{} is laid out for the other side", area.name)
         }
-        let pos = self.find_spot(lua, centre, area.radius_m).ok_or_else(|| anyhow!("no open ground found in {}; try again", area.name))?;
+        let pos = self
+            .find_spot(lua, centre, area.radius_m)
+            .ok_or_else(|| anyhow!("no open ground found in {}; try again", area.name))?;
         self.seq += 1;
         let id = format!("{}", self.seq);
         // the survivor: friendly, invisible to the enemy, can't be killed
         let survivor = format!("RNG-CSAR-{id}");
-        let (man, country) = if f.side == Side::Blue { ("Soldier M4", "CJTF_BLUE") } else { ("Infantry AK", "CJTF_RED") };
-        let g = spawn::surface_group(&survivor, &[(man.to_string(), pos, self.rand() * 360.)], "Average", vec![spawn::ground_waypoint(pos, 0., false, vec![])]);
+        let (man, country) = if f.side == Side::Blue {
+            ("Soldier M4", "CJTF_BLUE")
+        } else {
+            ("Infantry AK", "CJTF_RED")
+        };
+        let g = spawn::surface_group(
+            &survivor,
+            &[(man.to_string(), pos, self.rand() * 360.)],
+            "Average",
+            vec![spawn::ground_waypoint(pos, 0., false, vec![])],
+        );
         spawn::add_group(lua, spawn::country_id(country)?, spawn::GROUND, &g)?;
-        for c in [spawn::bool_cmd("SetImmortal", true), spawn::bool_cmd("SetInvisible", true)] {
-            spawns.defer(now + 1.5, spawn::Pending::GroupCommand { group: survivor.clone(), cmd: c });
+        for c in
+            [spawn::bool_cmd("SetImmortal", true), spawn::bool_cmd("SetInvisible", true)]
+        {
+            spawns.defer(
+                now + 1.5,
+                spawn::Pending::GroupCommand { group: survivor.clone(), cmd: c },
+            );
         }
-        spawns.defer(now + 1.5, spawn::Pending::GroupOption { group: survivor.clone(), id: 0, value: json!(4) });
+        spawns.defer(
+            now + 1.5,
+            spawn::Pending::GroupOption {
+                group: survivor.clone(),
+                id: 0,
+                value: json!(4),
+            },
+        );
         // a hot rescue: a squad hunting him a kilometre or so away
         let hostile_group = if hostile {
             let name = format!("RNG-CSARHOT-{id}");
             let hp = util::offset(pos, self.rand() * 360., 900. + 400. * self.rand(), 0.);
             let hp = util::nearest_land(lua, hp, 300.).unwrap_or(hp);
             let kit: &[&str] = if f.side == Side::Blue {
-                &["Infantry AK", "Infantry AK", "Paratrooper RPG-16", "SA-18 Igla manpad", "Ural-375 ZU-23"]
+                &[
+                    "Infantry AK",
+                    "Infantry AK",
+                    "Paratrooper RPG-16",
+                    "SA-18 Igla manpad",
+                    "Ural-375 ZU-23",
+                ]
             } else {
-                &["Soldier M4", "Soldier M4", "Soldier M249", "Soldier stinger", "M1043 HMMWV Armament"]
+                &[
+                    "Soldier M4",
+                    "Soldier M4",
+                    "Soldier M249",
+                    "Soldier stinger",
+                    "M1043 HMMWV Armament",
+                ]
             };
             let units: Vec<(String, V3, f64)> = kit
                 .iter()
                 .enumerate()
                 .map(|(i, t)| {
-                    let mut q = util::offset(hp, i as f64 * 72., if i == 0 { 0. } else { 20. }, 0.);
+                    let mut q = util::offset(
+                        hp,
+                        i as f64 * 72.,
+                        if i == 0 { 0. } else { 20. },
+                        0.,
+                    );
                     q.y = util::ground_height(lua, q);
                     (t.to_string(), q, util::bearing(q, pos))
                 })
                 .collect();
-            let g = spawn::surface_group(&name, &units, "Average", vec![spawn::ground_waypoint(hp, 0., false, vec![])]);
-            spawn::add_group(lua, spawn::country_id(spawn::default_country(f.side.opposite()))?, spawn::GROUND, &g)?;
-            spawns.defer(now + 2., spawn::Pending::GroupOption { group: name.clone(), id: 0, value: json!(2) });
+            let g = spawn::surface_group(
+                &name,
+                &units,
+                "Average",
+                vec![spawn::ground_waypoint(hp, 0., false, vec![])],
+            );
+            spawn::add_group(
+                lua,
+                spawn::country_id(spawn::default_country(f.side.opposite()))?,
+                spawn::GROUND,
+                &g,
+            )?;
+            spawns.defer(
+                now + 2.,
+                spawn::Pending::GroupOption {
+                    group: name.clone(),
+                    id: 0,
+                    value: json!(2),
+                },
+            );
             Some(name)
         } else {
             None
@@ -228,10 +304,21 @@ impl Csar {
             g.lon,
             util::bearing(f.pos, fuzz),
             util::dist2(f.pos, fuzz) / util::NM,
-            if beacon.is_some() { format!(" Beacon {:.0} kHz AM: tune your ADF.", area.beacon_khz) } else { String::new() }
+            if beacon.is_some() {
+                format!(" Beacon {:.0} kHz AM: tune your ADF.", area.beacon_khz)
+            } else {
+                String::new()
+            }
         );
         records::to_group(lua, f.group_id, &msg, 60);
-        info!("CSAR {id} for {} in {} at {:.4} {:.4}{}", f.name, area.id, util::geo(lua, pos).lat, util::geo(lua, pos).lon, if hostile { " (hot)" } else { "" });
+        info!(
+            "CSAR {id} for {} in {} at {:.4} {:.4}{}",
+            f.name,
+            area.id,
+            util::geo(lua, pos).lat,
+            util::geo(lua, pos).lon,
+            if hostile { " (hot)" } else { "" }
+        );
         self.missions.push(Mission {
             id: id.clone(),
             area: ai,
@@ -259,15 +346,27 @@ impl Csar {
             spawn::destroy_group(lua, &h);
         }
         if let Some(b) = m.beacon.take() {
-            let _ = Trigger::singleton(lua).and_then(|t| t.action()).and_then(|a| a.stop_transmission(b.as_str().into()));
+            let _ = Trigger::singleton(lua)
+                .and_then(|t| t.action())
+                .and_then(|a| a.stop_transmission(b.as_str().into()));
         }
         if let Some(k) = m.mark.take() {
-            let _ = Trigger::singleton(lua).and_then(|t| t.action()).and_then(|a| a.remove_mark(k));
+            let _ = Trigger::singleton(lua)
+                .and_then(|t| t.action())
+                .and_then(|a| a.remove_mark(k));
         }
     }
 
     /// Smoke, pickups, timeouts; once a second.
-    pub fn tick(&mut self, lua: MizLua, cfg: &RangeCfg, players: &Players, rec: &mut Recorder, night: bool, now: f64) {
+    pub fn tick(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        players: &Players,
+        rec: &mut Recorder,
+        night: bool,
+        now: f64,
+    ) {
         let mut ended = vec![];
         for (mi, m) in self.missions.iter_mut().enumerate() {
             if m.picked.is_some() {
@@ -279,22 +378,41 @@ impl Csar {
                 }
                 continue;
             }
-            let helos: Vec<&Flying> = players.flying.values().filter(|f| f.is_helo && f.side == m.side).collect();
+            let helos: Vec<&Flying> = players
+                .flying
+                .values()
+                .filter(|f| f.is_helo && f.side == m.side)
+                .collect();
             // he hears you
-            if helos.iter().any(|f| f.in_air && util::dist2(f.pos, m.pos) < HEAR_M) && now - m.last_smoke > 300. {
+            if helos.iter().any(|f| f.in_air && util::dist2(f.pos, m.pos) < HEAR_M)
+                && now - m.last_smoke > 300.
+            {
                 m.last_smoke = now;
                 let r = Trigger::singleton(lua).and_then(|t| t.action()).and_then(|a| {
                     if night {
                         a.signal_flare(LuaVec3(m.pos), FlareColor::Green, 0)
                     } else {
-                        a.smoke(LuaVec3(V3::new(m.pos.x + 15., m.pos.y, m.pos.z)), SmokeColor::Green)
+                        a.smoke(
+                            LuaVec3(V3::new(m.pos.x + 15., m.pos.y, m.pos.z)),
+                            SmokeColor::Green,
+                        )
                     }
                 });
                 if let Err(e) = r {
                     warn!("CSAR smoke: {e:?}")
                 }
-                for f in helos.iter().filter(|f| util::dist2(f.pos, m.pos) < HEAR_M * 2.) {
-                    records::to_group(lua, f.group_id, &format!("CSAR {}: \"I hear you! {} out!\"", m.id, if night { "Flare" } else { "Green smoke" }), 10);
+                for f in helos.iter().filter(|f| util::dist2(f.pos, m.pos) < HEAR_M * 2.)
+                {
+                    records::to_group(
+                        lua,
+                        f.group_id,
+                        &format!(
+                            "CSAR {}: \"I hear you! {} out!\"",
+                            m.id,
+                            if night { "Flare" } else { "Green smoke" }
+                        ),
+                        10,
+                    );
                 }
             }
             // pickup: landed next to him, or a steady low hover over him
@@ -307,13 +425,18 @@ impl Csar {
                     match &m.hold {
                         Some((u, t)) if u == &f.unit_name => {
                             if now - t >= PICKUP_HOLD_S {
-                                picked = Some((f.unit_name.clone(), if landed { "landed" } else { "hover" }, f.group_id));
+                                picked = Some((
+                                    f.unit_name.clone(),
+                                    if landed { "landed" } else { "hover" },
+                                    f.group_id,
+                                ));
                             }
                         }
                         _ => m.hold = Some((f.unit_name.clone(), now)),
                     }
                     break;
-                } else if m.hold.as_ref().map(|(u, _)| u == &f.unit_name).unwrap_or(false) {
+                } else if m.hold.as_ref().map(|(u, _)| u == &f.unit_name).unwrap_or(false)
+                {
                     m.hold = None;
                 }
             }
@@ -321,9 +444,20 @@ impl Csar {
                 m.picked = Some((u, now, method));
                 spawn::destroy_group(lua, &m.survivor);
                 if let Some(b) = m.beacon.take() {
-                    let _ = Trigger::singleton(lua).and_then(|t| t.action()).and_then(|a| a.stop_transmission(b.as_str().into()));
+                    let _ = Trigger::singleton(lua)
+                        .and_then(|t| t.action())
+                        .and_then(|a| a.stop_transmission(b.as_str().into()));
                 }
-                records::to_group(lua, gid, &format!("CSAR {}: survivor on board after {:.0} min. Bring him home: land at any friendly airfield, FARP or ship.", m.id, (now - m.started) / 60.), 20);
+                records::to_group(
+                    lua,
+                    gid,
+                    &format!(
+                        "CSAR {}: survivor on board after {:.0} min. Bring him home: land at any friendly airfield, FARP or ship.",
+                        m.id,
+                        (now - m.started) / 60.
+                    ),
+                    20,
+                );
             } else if now - m.started > TIMEOUT_S {
                 ended.push((mi, None));
             }
@@ -337,17 +471,43 @@ impl Csar {
 
     /// A helicopter landed at `place` (an airbase, FARP or ship; None in the
     /// open): if it carries a survivor to a friendly place, he is rescued.
-    pub fn landed(&mut self, lua: MizLua, cfg: &RangeCfg, rec: &mut Recorder, players: &Players, unit: &str, place: Option<(String, Option<Side>)>, now: f64) {
-        let Some(mi) = self.missions.iter().position(|m| m.picked.as_ref().map(|(u, ..)| u == unit).unwrap_or(false)) else { return };
+    pub fn landed(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        rec: &mut Recorder,
+        players: &Players,
+        unit: &str,
+        place: Option<(String, Option<Side>)>,
+        now: f64,
+    ) {
+        let Some(mi) = self
+            .missions
+            .iter()
+            .position(|m| m.picked.as_ref().map(|(u, ..)| u == unit).unwrap_or(false))
+        else {
+            return;
+        };
         let side = self.missions[mi].side;
         match place {
-            Some((name, s)) if s.map(|s| s == side).unwrap_or(true) => self.finish(lua, cfg, rec, players, mi, Some(name), now),
+            Some((name, s)) if s.map(|s| s == side).unwrap_or(true) => {
+                self.finish(lua, cfg, rec, players, mi, Some(name), now)
+            }
             _ => (),
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn finish(&mut self, lua: MizLua, cfg: &RangeCfg, rec: &mut Recorder, players: &Players, mi: usize, delivered: Option<String>, now: f64) {
+    fn finish(
+        &mut self,
+        lua: MizLua,
+        cfg: &RangeCfg,
+        rec: &mut Recorder,
+        players: &Players,
+        mi: usize,
+        delivered: Option<String>,
+        now: f64,
+    ) {
         let mut m = self.missions.remove(mi);
         let hot = m.hostile.is_some();
         Self::cleanup(lua, &mut m);
@@ -360,7 +520,10 @@ impl Csar {
         let total = delivered.as_ref().map(|_| now - m.started);
         let quality = grading::csar_quality(outcome, total);
         // credit whoever carried him; the requester if nobody did
-        let who = m.picked.as_ref().and_then(|(u, ..)| players.flying.get(u)).or_else(|| players.flying.values().find(|f| f.ucid.to_string() == m.owner));
+        let who =
+            m.picked.as_ref().and_then(|(u, ..)| players.flying.get(u)).or_else(|| {
+                players.flying.values().find(|f| f.ucid.to_string() == m.owner)
+            });
         let Some(f) = who else {
             info!("CSAR {} ended ({}) with nobody to credit", m.id, outcome.label());
             return;
@@ -371,7 +534,11 @@ impl Csar {
             outcome,
             time_to_pickup_s: m.picked.as_ref().map(|(_, t, _)| t - m.started),
             time_total_s: total,
-            pickup_method: m.picked.as_ref().map(|(.., meth)| meth.to_string()).unwrap_or_default(),
+            pickup_method: m
+                .picked
+                .as_ref()
+                .map(|(.., meth)| meth.to_string())
+                .unwrap_or_default(),
             delivered_to: delivered.clone(),
             survivor_pos: util::geo(lua, m.pos),
             quality,
@@ -385,15 +552,32 @@ impl Csar {
                     m.id,
                     res.area,
                     outcome.label(),
-                    res.time_to_pickup_s.map(|t| format!(", on board at {:.0} min", t / 60.)).unwrap_or_default(),
-                    total.map(|t| format!(", home at {:.0} min ({})", t / 60., delivered.clone().unwrap_or_default())).unwrap_or_default(),
+                    res.time_to_pickup_s
+                        .map(|t| format!(", on board at {:.0} min", t / 60.))
+                        .unwrap_or_default(),
+                    total
+                        .map(|t| format!(
+                            ", home at {:.0} min ({})",
+                            t / 60.,
+                            delivered.clone().unwrap_or_default()
+                        ))
+                        .unwrap_or_default(),
                     quality.label()
                 ),
                 cfg.message_s,
             );
         }
         let _ = m.owner_gid;
-        rec.emit(lua, records::pilot_of(f), &f.typ, f.side, &f.group_name, Some(quality.score()), RangeResult::Csar(res), None);
+        rec.emit(
+            lua,
+            records::pilot_of(f),
+            &f.typ,
+            f.side,
+            &f.group_name,
+            Some(quality.score()),
+            RangeResult::Csar(res),
+            None,
+        );
     }
 
     /// A helicopter pilot left their aircraft: their waiting survivor is
@@ -401,25 +585,44 @@ impl Csar {
     pub fn player_out(&mut self, lua: MizLua, rec: &mut Recorder, f: &Flying) {
         let ucid = f.ucid.to_string();
         while let Some(mi) = self.missions.iter().position(|m| {
-            m.picked.as_ref().map(|(u, ..)| u == &f.unit_name).unwrap_or(false) || (m.picked.is_none() && m.owner == ucid)
+            m.picked.as_ref().map(|(u, ..)| u == &f.unit_name).unwrap_or(false)
+                || (m.picked.is_none() && m.owner == ucid)
         }) {
             let mut m = self.missions.remove(mi);
             let hot = m.hostile.is_some();
             Self::cleanup(lua, &mut m);
-            let area = self.areas.get(m.area).map(|a| a.0.name.clone()).unwrap_or_default();
-            let outcome = if m.picked.is_some() { CsarOutcome::PickedUp } else { CsarOutcome::Failed };
+            let area =
+                self.areas.get(m.area).map(|a| a.0.name.clone()).unwrap_or_default();
+            let outcome = if m.picked.is_some() {
+                CsarOutcome::PickedUp
+            } else {
+                CsarOutcome::Failed
+            };
             let res = CsarResult {
                 area,
                 hostile: hot,
                 outcome,
                 time_to_pickup_s: m.picked.as_ref().map(|(_, t, _)| t - m.started),
                 time_total_s: None,
-                pickup_method: m.picked.as_ref().map(|(.., meth)| meth.to_string()).unwrap_or_default(),
+                pickup_method: m
+                    .picked
+                    .as_ref()
+                    .map(|(.., meth)| meth.to_string())
+                    .unwrap_or_default(),
                 delivered_to: None,
                 survivor_pos: util::geo(lua, m.pos),
                 quality: grading::csar_quality(outcome, None),
             };
-            rec.emit(lua, records::pilot_of(f), &f.typ, f.side, &f.group_name, Some(res.quality.score()), RangeResult::Csar(res), None);
+            rec.emit(
+                lua,
+                records::pilot_of(f),
+                &f.typ,
+                f.side,
+                &f.group_name,
+                Some(res.quality.score()),
+                RangeResult::Csar(res),
+                None,
+            );
         }
     }
 
@@ -428,7 +631,16 @@ impl Csar {
             .areas
             .iter()
             .filter(|(a, _)| for_side(&a.side, side))
-            .map(|(a, p)| format!("{} {:03.0}/{:.0}nm, radius {:.0} km, beacon {:.0} kHz", a.name, util::bearing(from, *p), util::dist2(from, *p) / util::NM, a.radius_m / 1000., a.beacon_khz))
+            .map(|(a, p)| {
+                format!(
+                    "{} {:03.0}/{:.0}nm, radius {:.0} km, beacon {:.0} kHz",
+                    a.name,
+                    util::bearing(from, *p),
+                    util::dist2(from, *p) / util::NM,
+                    a.radius_m / 1000.,
+                    a.beacon_khz
+                )
+            })
             .collect();
         for m in self.missions.iter().filter(|m| m.side == side) {
             out.push(format!(
@@ -451,8 +663,17 @@ impl Csar {
         self.missions
             .iter()
             .map(|m| LiveCsar {
-                area: self.areas.get(m.area).map(|a| a.0.name.clone()).unwrap_or_default(),
-                pilot: players.flying.values().find(|f| f.ucid.to_string() == m.owner).map(|f| f.name.clone()).unwrap_or_default(),
+                area: self
+                    .areas
+                    .get(m.area)
+                    .map(|a| a.0.name.clone())
+                    .unwrap_or_default(),
+                pilot: players
+                    .flying
+                    .values()
+                    .find(|f| f.ucid.to_string() == m.owner)
+                    .map(|f| f.name.clone())
+                    .unwrap_or_default(),
                 area_pos: util::geo(lua, m.fuzz),
                 radius_m: 2500.,
                 started: m.started_utc,

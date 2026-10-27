@@ -34,10 +34,10 @@ for more details.
 
 use super::{humans, in_hours, mission_hour};
 use crate::{
+    Context,
     airlife::{air_point, alive, dist, front_dist, front_points, heading_of},
     jtac::{aim_and_fire_route, group_facing},
     spawnctx::SpawnCtx,
-    Context,
 };
 use bfprotocols::{
     cfg::{RaidsCfg, TempoCfg, UnitTag},
@@ -47,21 +47,22 @@ use bfprotocols::{
     },
     perf::PerfInner,
 };
-use chrono::{prelude::*, Duration};
+use chrono::{Duration, prelude::*};
 use compact_str::format_compact;
 use dcso3::{
+    LuaVec2, LuaVec3, MizLua, Vector2, Vector3,
     coalition::Side,
     controller::{
-        AiOption, AirOption, AirReactionToThreat, AirRoe, AltType, Command, MissionPoint, Task,
+        AiOption, AirOption, AirReactionToThreat, AirRoe, AltType, Command, MissionPoint,
+        Task,
     },
     group::Group,
     land::Land,
     trigger::Trigger,
-    LuaVec2, LuaVec3, MizLua, Vector2, Vector3,
 };
 use fxhash::FxHashMap;
 use log::{info, warn};
-use rand::{seq::SliceRandom, thread_rng, Rng};
+use rand::{Rng, seq::SliceRandom, thread_rng};
 
 /// A drone this close to its target detonates.
 const DRONE_ARRIVAL_M: f64 = 1_200.;
@@ -145,7 +146,10 @@ fn launchers_in_range(
                 .filter(|u| {
                     !u.dead
                         && u.tags.contains(UnitTag::Launcher)
-                        && cfg.missile_types.iter().any(|t| t.as_str() == u.typ.0.as_str())
+                        && cfg
+                            .missile_types
+                            .iter()
+                            .any(|t| t.as_str() == u.typ.0.as_str())
                 })
                 .collect();
             let first = launchers.first()?;
@@ -153,8 +157,11 @@ fn launchers_in_range(
             // the ground short of the target or refuses the task.
             let range = arty.units.get(first.typ.0.as_str())?;
             let d = dist(ctx.db.group_center(gid).ok()?, target);
-            (d <= range.max_range_m && d >= range.min_range_m)
-                .then_some((*gid, launchers.len() as u32, d))
+            (d <= range.max_range_m && d >= range.min_range_m).then_some((
+                *gid,
+                launchers.len() as u32,
+                d,
+            ))
         })
         .collect();
     out.sort_by(|a, b| a.2.total_cmp(&b.2));
@@ -164,15 +171,26 @@ fn launchers_in_range(
 /// The target side's missile-defence groups near `target` that still have
 /// interceptors.
 fn defence_near(ctx: &Context, defender: Side, target: Vector2) -> Vec<GroupId> {
-    let Some(gids) = ctx.db.persisted.groups_by_side.get(&defender) else { return vec![] };
+    let Some(gids) = ctx.db.persisted.groups_by_side.get(&defender) else {
+        return vec![];
+    };
     gids.into_iter()
         .filter(|gid| {
             let Some(g) = ctx.db.persisted.groups.get(gid) else { return false };
-            let capable = g.units.into_iter().filter_map(|u| ctx.db.persisted.units.get(u)).any(|u| {
-                !u.dead && u.tags.contains(UnitTag::SAM) && u.tags.contains(UnitTag::EngagesWeapons)
-            });
+            let capable =
+                g.units.into_iter().filter_map(|u| ctx.db.persisted.units.get(u)).any(
+                    |u| {
+                        !u.dead
+                            && u.tags.contains(UnitTag::SAM)
+                            && u.tags.contains(UnitTag::EngagesWeapons)
+                    },
+                );
             capable
-                && ctx.db.group_center(gid).map(|p| dist(p, target) <= DEFENCE_RADIUS_M).unwrap_or(false)
+                && ctx
+                    .db
+                    .group_center(gid)
+                    .map(|p| dist(p, target) <= DEFENCE_RADIUS_M)
+                    .unwrap_or(false)
                 && ctx.modern_war.sam.remaining(gid) != Some(0)
         })
         .copied()
@@ -195,7 +213,9 @@ fn drone_launch_site(
             let d = dist(o.pos(), target);
             d <= range && d >= 30_000.
         })
-        .max_by(|(_, a), (_, b)| front_dist(front, a.pos()).total_cmp(&front_dist(front, b.pos())))
+        .max_by(|(_, a), (_, b)| {
+            front_dist(front, a.pos()).total_cmp(&front_dist(front, b.pos()))
+        })
         .map(|(id, o)| (*id, o.pos()))
 }
 
@@ -232,7 +252,9 @@ fn pick_target(
 /// things.
 fn apply_hit(lua: MizLua, ctx: &mut Context, cfg: &RaidsCfg, raid: usize) {
     let target = ctx.modern_war.raids.raids[raid].target;
-    if let Err(e) = ctx.db.admin_reduce_inventory(lua, target, cfg.supply_damage_pct.min(100)) {
+    if let Err(e) =
+        ctx.db.admin_reduce_inventory(lua, target, cfg.supply_damage_pct.min(100))
+    {
         warn!("raids: could not cut stores at {target}: {e:?}");
     } else {
         ctx.modern_war.raids.raids[raid].supply_cut += cfg.supply_damage_pct as u32;
@@ -259,7 +281,8 @@ fn launch(
     };
     let can_drone = !templates.is_empty();
     let target = pick_target(ctx, cfg, side, |p| {
-        (can_drone && drone_launch_site(ctx, side, p, cfg.drone_range_m, &front).is_some())
+        (can_drone
+            && drone_launch_site(ctx, side, p, cfg.drone_range_m, &front).is_some())
             || (cfg.use_missiles && !launchers_in_range(ctx, cfg, side, p).is_empty())
     });
     let Some((target, target_name, target_pos)) = target else {
@@ -300,13 +323,8 @@ fn launch(
         eta_min = (leg / cfg.drone_speed_ms.max(1.) + DRONE_LAUNCH_SECS) / 60.;
         // The drones go up from the launch site itself, side by side inside
         // its zone -- not strung out across kilometres of open country.
-        let zone_r = ctx
-            .db
-            .persisted
-            .objectives
-            .get(&origin)
-            .map(|o| o.radius())
-            .unwrap_or(300.);
+        let zone_r =
+            ctx.db.persisted.objectives.get(&origin).map(|o| o.radius()).unwrap_or(300.);
         let step = DRONE_LAUNCH_SPACING_M
             .min(zone_r * 1.2 / (cfg.drones_per_raid.max(1) as f64));
         // A patch of the site clear of its garrison, as for a helicopter.
@@ -355,13 +373,16 @@ fn launch(
                         spawned = Some(gid);
                         break;
                     }
-                    Err(e) => warn!("raids: drone template {template} would not spawn: {e:?}"),
+                    Err(e) => {
+                        warn!("raids: drone template {template} would not spawn: {e:?}")
+                    }
                 }
             }
             if let Some(gid) = spawned {
                 raid.drones_launched += 1;
                 raid.drones_pending += 1;
-                let secs = leg / cfg.drone_speed_ms.max(1.) * 1.6 + 180. + DRONE_LAUNCH_SECS;
+                let secs =
+                    leg / cfg.drone_speed_ms.max(1.) * 1.6 + 180. + DRONE_LAUNCH_SECS;
                 ctx.modern_war.raids.drones.push(Drone {
                     gid,
                     raid: id,
@@ -388,13 +409,19 @@ fn launch(
         };
         let mut far = 0f64;
         for (gid, n) in launchers.into_iter().take(cfg.max_launchers as usize) {
-            let Some(name) = ctx.db.persisted.groups.get(&gid).map(|g| g.name.clone()) else {
+            let Some(name) = ctx.db.persisted.groups.get(&gid).map(|g| g.name.clone())
+            else {
                 continue;
             };
             // A culled battery isn't in DCS to take the order.
             let Ok(group) = Group::get_by_name(lua, name.as_str()) else { continue };
             let center = ctx.db.group_center(&gid).unwrap_or(target_pos);
-            let task = aim_and_fire_route(center, target_pos, group_facing(&ctx.db, &gid), fire.clone());
+            let task = aim_and_fire_route(
+                center,
+                target_pos,
+                group_facing(&ctx.db, &gid),
+                fire.clone(),
+            );
             match group.get_controller().and_then(|c| c.set_task(task)) {
                 Ok(()) => {
                     raid.missiles += n;
@@ -405,8 +432,10 @@ fn launch(
         }
         if raid.missiles > 0 {
             raid.defenders = defence_near(ctx, side.opposite(), target_pos);
-            raid.intercept_p = (cfg.intercept_per_site * raid.defenders.len() as f64).min(0.85);
-            raid.missiles_resolve_at = Some(now + Duration::seconds((60. + far / 1_200.) as i64));
+            raid.intercept_p =
+                (cfg.intercept_per_site * raid.defenders.len() as f64).min(0.85);
+            raid.missiles_resolve_at =
+                Some(now + Duration::seconds((60. + far / 1_200.) as i64));
         }
     }
     if raid.drones_launched == 0 && raid.missiles == 0 {
@@ -437,7 +466,9 @@ fn launch(
             20,
             true,
             side.opposite(),
-            format_compact!("AIR RAID WARNING: {what} inbound toward {target_name}.{eta}"),
+            format_compact!(
+                "AIR RAID WARNING: {what} inbound toward {target_name}.{eta}"
+            ),
         );
     }
     ctx.modern_war.raids.raids.push(raid);
@@ -475,12 +506,18 @@ pub(crate) fn tick(
             .and_then(|u| u.get_point().ok());
         let outcome = if !alive(ctx, &gid) || pos.is_none() {
             Some(false) // shot down
-        } else if let Some(p) = pos.filter(|p| dist(Vector2::new(p.x, p.z), target_pos) <= DRONE_ARRIVAL_M) {
+        } else if let Some(p) =
+            pos.filter(|p| dist(Vector2::new(p.x, p.z), target_pos) <= DRONE_ARRIVAL_M)
+        {
             // Detonate where it is, on the ground under it.
             let at = Vector2::new(p.x, p.z);
-            let h = land.as_ref().and_then(|l| l.get_height(LuaVec2(at)).ok()).unwrap_or(p.y);
+            let h =
+                land.as_ref().and_then(|l| l.get_height(LuaVec2(at)).ok()).unwrap_or(p.y);
             if let Ok(act) = Trigger::singleton(lua).and_then(|t| t.action()) {
-                let _ = act.explosion(LuaVec3(Vector3::new(at.x, h + 2., at.y)), cfg.drone_warhead_kg as f32);
+                let _ = act.explosion(
+                    LuaVec3(Vector3::new(at.x, h + 2., at.y)),
+                    cfg.drone_warhead_kg as f32,
+                );
             }
             Some(true)
         } else if now >= expires {
@@ -554,7 +591,10 @@ pub(crate) fn tick(
         let r = ctx.modern_war.raids.raids.swap_remove(ri);
         let mut parts = vec![];
         if r.drones_launched > 0 {
-            parts.push(format!("{}/{} drones got through", r.drone_hits, r.drones_launched));
+            parts.push(format!(
+                "{}/{} drones got through",
+                r.drone_hits, r.drones_launched
+            ));
         }
         if r.missiles > 0 {
             parts.push(format!("{}/{} missiles hit", r.missile_hits, r.missiles));
@@ -566,17 +606,24 @@ pub(crate) fn tick(
         if r.factory_halted {
             effect.push("production halted".to_string());
         }
-        let effect = if effect.is_empty() {
-            "no damage".to_string()
-        } else {
-            effect.join(", ")
-        };
-        info!("raids: raid {} on {} over: {} ({effect})", r.id, r.target_name, parts.join(", "));
+        let effect =
+            if effect.is_empty() { "no damage".to_string() } else { effect.join(", ") };
+        info!(
+            "raids: raid {} on {} over: {} ({effect})",
+            r.id,
+            r.target_name,
+            parts.join(", ")
+        );
         ctx.db.ephemeral.msgs().panel_to_side(
             15,
             false,
             r.side,
-            format_compact!("Strike on {}: {}. {}.", r.target_name, parts.join(", "), effect),
+            format_compact!(
+                "Strike on {}: {}. {}.",
+                r.target_name,
+                parts.join(", "),
+                effect
+            ),
         );
         ctx.db.ephemeral.msgs().panel_to_side(
             15,

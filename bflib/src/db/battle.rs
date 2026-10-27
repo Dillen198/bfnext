@@ -29,20 +29,20 @@ for more details.
 //! from the cockpit.
 
 use super::{
-    formation::{FormationId, FormationRt, Order, ENGAGED_M},
     Db,
+    formation::{ENGAGED_M, FormationId, FormationRt, Order},
 };
 use bfprotocols::{
     cfg::GroundWarCfg,
     db::group::{GroupId, UnitId},
 };
-use chrono::{prelude::*, Duration};
+use chrono::{Duration, prelude::*};
 use compact_str::format_compact;
 use dcso3::{
+    Color, LuaVec2, LuaVec3, MizLua, String, Vector2, Vector3,
     coalition::Side,
     land::Land,
     trigger::{CircleSpec, LineType, MarkId, SideFilter, SmokePreset, TextSpec, Trigger},
-    Color, LuaVec2, LuaVec3, MizLua, String, Vector2, Vector3,
 };
 use fxhash::{FxHashMap, FxHashSet};
 use log::{info, warn};
@@ -135,7 +135,9 @@ impl BattleRt {
 }
 
 /// Merge contact points into battles: (centre, live, formations).
-fn cluster(contacts: &[(Vector2, bool, FormationId)]) -> Vec<(Vector2, bool, SmallVec<[FormationId; 4]>)> {
+fn cluster(
+    contacts: &[(Vector2, bool, FormationId)],
+) -> Vec<(Vector2, bool, SmallVec<[FormationId; 4]>)> {
     let mut out: Vec<(Vector2, bool, SmallVec<[FormationId; 4]>, u32)> = vec![];
     for (p, live, f) in contacts {
         match out.iter_mut().find(|(c, ..)| dist(*c, *p) <= MERGE_M) {
@@ -156,7 +158,9 @@ fn cluster(contacts: &[(Vector2, bool, FormationId)]) -> Vec<(Vector2, bool, Sma
 impl Db {
     /// Every formation's contacts this tick: (where, live, which formation).
     fn contacts(&self, rt: &FormationRt) -> Vec<(Vector2, bool, FormationId)> {
-        let forms: SmallVec<[(FormationId, dcso3::coalition::Side, Vector2, Order, bool); 16]> = self
+        let forms: SmallVec<
+            [(FormationId, dcso3::coalition::Side, Vector2, Order, bool); 16],
+        > = self
             .formations()
             .map(|f| (f.id, f.side, f.pos, f.order, rt.is_live(f)))
             .collect();
@@ -233,7 +237,13 @@ impl Db {
         b.marks = Some((ring, text, b.pos));
     }
 
-    fn start_smoke(lua: MizLua, name: &str, pos: Vector2, preset: SmokePreset, density: f32) -> bool {
+    fn start_smoke(
+        lua: MizLua,
+        name: &str,
+        pos: Vector2,
+        preset: SmokePreset,
+        density: f32,
+    ) -> bool {
         let res = Land::singleton(lua).and_then(|land| {
             let h = land.get_height(LuaVec2(pos))?;
             Trigger::singleton(lua)?.action()?.effect_smoke_big(
@@ -253,14 +263,21 @@ impl Db {
     }
 
     fn stop_smoke(lua: MizLua, name: &str) {
-        let res = Trigger::singleton(lua).and_then(|t| t.action()?.effect_smoke_stop(String::from(name)));
+        let res = Trigger::singleton(lua)
+            .and_then(|t| t.action()?.effect_smoke_stop(String::from(name)));
         if let Err(e) = res {
             warn!("ground war: stopping smoke {name}: {e:?}");
         }
     }
 
     /// Find this tick's battles, keep their marks and smoke in step.
-    pub(super) fn track_battles(&mut self, rt: &mut FormationRt, cfg: &GroundWarCfg, lua: MizLua, now: DateTime<Utc>) {
+    pub(super) fn track_battles(
+        &mut self,
+        rt: &mut FormationRt,
+        cfg: &GroundWarCfg,
+        lua: MizLua,
+        now: DateTime<Utc>,
+    ) {
         let found = cluster(&self.contacts(rt));
         let mut battles = std::mem::take(&mut rt.battle.battles);
         let mut seen: FxHashSet<u32> = FxHashSet::default();
@@ -323,7 +340,10 @@ impl Db {
                 continue;
             }
             if cfg.battle_marks {
-                let stale = b.marks.as_ref().map_or(true, |(_, _, at)| dist(*at, b.pos) > REMARK_M);
+                let stale = b
+                    .marks
+                    .as_ref()
+                    .map_or(true, |(_, _, at)| dist(*at, b.pos) > REMARK_M);
                 if stale {
                     self.mark_battle(&mut b);
                 }
@@ -343,7 +363,13 @@ impl Db {
 
     /// Set a fire where every live formation vehicle that died since the
     /// last tick was, and put out the old ones.
-    pub(super) fn wreck_fires(&mut self, rt: &mut FormationRt, cfg: &GroundWarCfg, lua: MizLua, now: DateTime<Utc>) {
+    pub(super) fn wreck_fires(
+        &mut self,
+        rt: &mut FormationRt,
+        cfg: &GroundWarCfg,
+        lua: MizLua,
+        now: DateTime<Utc>,
+    ) {
         let mut alive: FxHashSet<UnitId> = FxHashSet::default();
         let mut died: SmallVec<[Vector2; 8]> = smallvec::smallvec![];
         // (formation, side, where) for every live vehicle that died.

@@ -5,15 +5,9 @@
 //! the pilot in the cockpit).
 
 use crate::{bg, players::Flying, util::MissionClock};
-use bfprotocols::range::{PilotRef, RangeRecord, RangeResult, Track, RECORD_VERSION};
+use bfprotocols::range::{PilotRef, RECORD_VERSION, RangeRecord, RangeResult, Track};
 use chrono::Utc;
-use dcso3::{
-    coalition::Side,
-    env::miz::GroupId,
-    timer::Timer,
-    trigger::Trigger,
-    MizLua,
-};
+use dcso3::{MizLua, coalition::Side, env::miz::GroupId, timer::Timer, trigger::Trigger};
 use log::{info, warn};
 
 #[derive(Debug, Default)]

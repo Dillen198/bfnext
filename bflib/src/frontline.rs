@@ -23,9 +23,9 @@ use crate::{db::persisted::Persisted, msgq::MsgQ};
 use bfprotocols::{cfg::FrontLineConfig, db::objective::ObjectiveKind, frontline as fl};
 use chrono::{DateTime, Utc};
 use dcso3::{
+    Color, LuaVec3, Vector3,
     coalition::Side,
     trigger::{LineSpec, LineType, MarkId, SideFilter},
-    Color, LuaVec3, Vector3,
 };
 use log::*;
 
@@ -98,10 +98,7 @@ fn simplify(line: &[[f64; 2]], tol: f64) -> Vec<[f64; 2]> {
             stack.push((worst_ix, last));
         }
     }
-    line.iter()
-        .zip(keep)
-        .filter_map(|(p, k)| if k { Some(*p) } else { None })
-        .collect()
+    line.iter().zip(keep).filter_map(|(p, k)| if k { Some(*p) } else { None }).collect()
 }
 
 /// Number of segments a set of polylines would draw.
@@ -169,10 +166,7 @@ impl FrontLine {
     }
 
     fn params(&self) -> fl::Params {
-        fl::Params {
-            grid_res: self.config.samples_per_boundary,
-            ..fl::Params::default()
-        }
+        fl::Params { grid_res: self.config.samples_per_boundary, ..fl::Params::default() }
     }
 
     fn draw_frontline(&mut self, persisted: &Persisted, msgq: &mut MsgQ) {
@@ -184,7 +178,8 @@ impl FrontLine {
         // Thin the contour before it reaches the message queue -- see
         // MAX_SEGMENTS. bfdb computes its own line from the same function for
         // the web map, so this only affects what the F10 map draws.
-        let raw = segment_count(&fl.mid) + segment_count(&fl.blue) + segment_count(&fl.red);
+        let raw =
+            segment_count(&fl.mid) + segment_count(&fl.blue) + segment_count(&fl.red);
         if raw > MAX_SEGMENTS {
             let mut tol = SIMPLIFY_TOLERANCE_M;
             for _ in 0..MAX_SIMPLIFY_PASSES {
@@ -211,7 +206,11 @@ impl FrontLine {
             );
         }
 
-        let draw = |line: &[[f64; 2]], color: Color, lt: LineType, marks: &mut Vec<MarkId>, msgq: &mut MsgQ| {
+        let draw = |line: &[[f64; 2]],
+                    color: Color,
+                    lt: LineType,
+                    marks: &mut Vec<MarkId>,
+                    msgq: &mut MsgQ| {
             for w in line.windows(2) {
                 let (a, b) = (w[0], w[1]);
                 let mark_id = MarkId::new();
@@ -238,13 +237,24 @@ impl FrontLine {
             draw(l, Color::violet(LINE_ALPHA), EDGE_LINE, &mut self.marks, msgq);
         }
         for l in &fl.mid {
-            draw(l, Color::new(1.0, 1.0, 1.0, LINE_ALPHA), MID_LINE, &mut self.marks, msgq);
+            draw(
+                l,
+                Color::new(1.0, 1.0, 1.0, LINE_ALPHA),
+                MID_LINE,
+                &mut self.marks,
+                msgq,
+            );
         }
     }
 
     /// Redraw the frontline from current objective ownership.
     /// Returns true if it was redrawn.
-    pub fn update(&mut self, persisted: &Persisted, msgq: &mut MsgQ, _now: DateTime<Utc>) -> bool {
+    pub fn update(
+        &mut self,
+        persisted: &Persisted,
+        msgq: &mut MsgQ,
+        _now: DateTime<Utc>,
+    ) -> bool {
         if !self.config.enabled {
             if !self.marks.is_empty() {
                 info!("Frontline: disabled, clearing {} marks", self.marks.len());
@@ -254,10 +264,13 @@ impl FrontLine {
             return false;
         }
 
-        let new_hash =
-            Self::calculate_ownership_hash(persisted) ^ self.pressure_hash().rotate_left(17);
+        let new_hash = Self::calculate_ownership_hash(persisted)
+            ^ self.pressure_hash().rotate_left(17);
         let is_initial = self.objective_ownership_hash == 0;
-        if self.config.update_on_objective_change_only && !is_initial && new_hash == self.objective_ownership_hash {
+        if self.config.update_on_objective_change_only
+            && !is_initial
+            && new_hash == self.objective_ownership_hash
+        {
             debug!("Frontline: no ownership change, skipping redraw");
             return false;
         }

@@ -17,9 +17,9 @@ for more details.
 //! Lets not bicker and argue about oo killed oo
 use crate::db::{Db, group::DeployKind};
 use anyhow::Result;
+use bfprotocols::cfg::UnitTag;
 use bfprotocols::shots::{Dead, Shot, Who};
 use chrono::{Duration, prelude::*};
-use bfprotocols::cfg::UnitTag;
 use dcso3::{
     String,
     event::Shot as ShotEvent,
@@ -111,12 +111,7 @@ fn shooter(db: &Db, id: DcsOid<ClassUnit>) -> Option<Who> {
     if let Some((ucid, slot)) = db.ephemeral.ca_driver(&id)
         && let Some(p) = db.player(ucid)
     {
-        return Some(Who::Player {
-            side: p.side,
-            slot: *slot,
-            ucid: *ucid,
-            unit: id,
-        });
+        return Some(Who::Player { side: p.side, slot: *slot, ucid: *ucid, unit: id });
     }
     who(db, id)
 }
@@ -125,8 +120,8 @@ fn shooter(db: &Db, id: DcsOid<ClassUnit>) -> Option<Who> {
 /// `weapon.get_target()` on one crashes DCS (see `ShotDb::shot`).
 fn is_cruise_missile(name: &str) -> bool {
     const NAMES: [&str; 14] = [
-        "tomahawk", "bgm-109", "bgm_109", "agm-86", "agm_86", "kh-55", "x_555", "x-555", "kh-101",
-        "x_101", "kh-65", "x_65", "3m-14", "kalibr",
+        "tomahawk", "bgm-109", "bgm_109", "agm-86", "agm_86", "kh-55", "x_555", "x-555",
+        "kh-101", "x_101", "kh-65", "x_65", "3m-14", "kalibr",
     ];
     let n = name.to_ascii_lowercase();
     NAMES.iter().any(|k| n.contains(k))
@@ -221,7 +216,7 @@ impl ShotDb {
         // falls through to the normal path -- same as any unlisted weapon.
         if let Some(name) = e.weapon_name.as_ref() {
             if db.ephemeral.cfg.weapon_target_exclusions.contains(name) {
-                return Ok(())
+                return Ok(());
             }
         }
         // Calling weapon.get_target() on a weapon that targets a ground point
@@ -245,7 +240,8 @@ impl ShotDb {
             return Ok(());
         }
         let initiator_oid = ok!(initiator.object_id());
-        let initiator_uid = some!(db.ephemeral.get_uid_by_object_id(&initiator_oid)).clone();
+        let initiator_uid =
+            some!(db.ephemeral.get_uid_by_object_id(&initiator_oid)).clone();
         let initiator_unit = ok!(db.unit(&initiator_uid));
         // Second line of defence for the crash the comment above describes.
         // `get_category()` on a China-Asset-Pack / modded ballistic launcher
@@ -278,11 +274,14 @@ impl ShotDb {
         }
         let target = ok!(some!(e.weapon.get_target()?).as_unit());
         let target_oid = target.object_id()?;
-        if self.dead.contains_key(&target_oid) || self.recently_dead.contains_key(&target_oid) {
+        if self.dead.contains_key(&target_oid)
+            || self.recently_dead.contains_key(&target_oid)
+        {
             return Ok(());
         }
         let shooter = some!(shooter(db, initiator.object_id()?));
-        let shooter_typ = initiator.get_type_name().ok().map(|s| dcso3::String::from(s.as_str()));
+        let shooter_typ =
+            initiator.get_type_name().ok().map(|s| dcso3::String::from(s.as_str()));
         let target_typ = target.get_type_name()?;
         let target = some!(who(db, target_oid.clone()));
         self.by_target.entry(target_oid).or_default().push(Shot {
@@ -308,26 +307,26 @@ impl ShotDb {
         weapon_name: Option<String>,
     ) -> Result<()> {
         let target_oid = target.object_id()?;
-        if self.dead.contains_key(&target_oid) || self.recently_dead.contains_key(&target_oid) {
+        if self.dead.contains_key(&target_oid)
+            || self.recently_dead.contains_key(&target_oid)
+        {
             return Ok(());
         }
         let target_typ = target.get_type_name()?;
-        let shooter_typ = shooter.get_type_name().ok().map(|s| dcso3::String::from(s.as_str()));
+        let shooter_typ =
+            shooter.get_type_name().ok().map(|s| dcso3::String::from(s.as_str()));
         let shooter = some!(self::shooter(db, shooter.object_id()?));
         let target = some!(who(db, target_oid.clone()));
-        self.by_target
-            .entry(target_oid.clone())
-            .or_default()
-            .push(Shot {
-                weapon_name,
-                weapon: None,
-                shooter,
-                shooter_typ,
-                target,
-                target_typ,
-                time: now,
-                hit: true,
-            });
+        self.by_target.entry(target_oid.clone()).or_default().push(Shot {
+            weapon_name,
+            weapon: None,
+            shooter,
+            shooter_typ,
+            target,
+            target_typ,
+            time: now,
+            hit: true,
+        });
         if dead {
             self.dead.insert(target_oid, now);
         }
@@ -340,11 +339,7 @@ impl ShotDb {
             if let Some(shots) = self.by_target.remove(&target) {
                 if shots.len() > 0 {
                     let victim = shots[0].target.clone();
-                    dead.push(Dead {
-                        victim,
-                        time,
-                        shots,
-                    });
+                    dead.push(Dead { victim, time, shots });
                 }
             }
             self.recently_dead.insert(target, time);

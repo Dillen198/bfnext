@@ -19,11 +19,7 @@ use mlua::{prelude::*, Value};
 use std::fmt::Debug;
 
 pub fn cvt_err(to: &'static str) -> LuaError {
-    LuaError::FromLuaConversionError {
-        from: "value",
-        to: to.into(),
-        message: None,
-    }
+    LuaError::FromLuaConversionError { from: "value", to: to.into(), message: None }
 }
 
 pub fn err(msg: &str) -> LuaError {

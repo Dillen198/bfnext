@@ -5,10 +5,10 @@ use crate::*;
 #[derive(Debug, Clone)]
 pub(crate) struct BotLinkConfig {
     pub(crate) base_url: String,
-    pub(crate) api_key:  String,
+    pub(crate) api_key: String,
     /// Key for the FowlEngine plugin's OPS API (`/fowlengine/ops/*`);
     /// `--ops-api-key`, else the same as `api_key`.
-    pub(crate) ops_key:  String,
+    pub(crate) ops_key: String,
 }
 
 #[derive(Deserialize)]
@@ -43,7 +43,12 @@ pub(crate) async fn resolve_ucid_via_bot(
     // caching turns dozens of bot round-trips per page into one.
     const UCID_CACHE: std::time::Duration = std::time::Duration::from_secs(60);
     static CACHE: std::sync::LazyLock<
-        Mutex<std::collections::HashMap<std::string::String, (Option<dcso3::net::Ucid>, std::time::Instant)>>,
+        Mutex<
+            std::collections::HashMap<
+                std::string::String,
+                (Option<dcso3::net::Ucid>, std::time::Instant),
+            >,
+        >,
     > = std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
     {
         let mut g = CACHE.lock().unwrap_or_else(|e| e.into_inner());
@@ -83,13 +88,20 @@ pub(crate) async fn resolve_ucid_via_bot(
         }
         let users: Vec<BotUserEntry> = serde_json::from_str(&body).map_err(|e| {
             let snippet: std::string::String = body.chars().take(200).collect();
-            anyhow::anyhow!("DCSServerBot getuser response parse failed: {e} (body: {snippet})")
+            anyhow::anyhow!(
+                "DCSServerBot getuser response parse failed: {e} (body: {snippet})"
+            )
         })?;
         Ok(match users.into_iter().next() {
-            Some(u) => Some(u.ucid.parse().map_err(|e| anyhow::anyhow!("bad ucid from bot: {e:?}"))?),
+            Some(u) => Some(
+                u.ucid
+                    .parse()
+                    .map_err(|e| anyhow::anyhow!("bad ucid from bot: {e:?}"))?,
+            ),
             None => None,
         })
-    }.await;
+    }
+    .await;
     match result {
         Ok(ucid) => {
             CACHE
@@ -100,7 +112,9 @@ pub(crate) async fn resolve_ucid_via_bot(
         }
         // Not cached: a bot that is down now may be back in a second.
         Err(e) => {
-            log::warn!("DCSServerBot link lookup failed for discord_id={discord_id}: {e:?}");
+            log::warn!(
+                "DCSServerBot link lookup failed for discord_id={discord_id}: {e:?}"
+            );
             None
         }
     }
@@ -110,13 +124,14 @@ pub(crate) async fn resolve_ucid_via_bot(
 /// reuse connections, and with a timeout, because a hung bot used to hang
 /// every dashboard request that asked it anything.
 pub(crate) fn http_client() -> reqwest::Client {
-    static CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
-        reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
-            .connect_timeout(std::time::Duration::from_secs(3))
-            .build()
-            .expect("building the HTTP client")
-    });
+    static CLIENT: std::sync::LazyLock<reqwest::Client> =
+        std::sync::LazyLock::new(|| {
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .connect_timeout(std::time::Duration::from_secs(3))
+                .build()
+                .expect("building the HTTP client")
+        });
     CLIENT.clone()
 }
 
@@ -126,23 +141,23 @@ pub(crate) fn http_client() -> reqwest::Client {
 // converting to match bfdb's existing meters/hPa convention.
 #[derive(Deserialize, Clone)]
 pub(crate) struct BotWeather {
-    pub(crate) temperature:    Option<f64>,
-    pub(crate) wind_speed:     Option<f64>,
+    pub(crate) temperature: Option<f64>,
+    pub(crate) wind_speed: Option<f64>,
     pub(crate) wind_direction: Option<f64>,
-    pub(crate) pressure:       Option<f64>,
-    pub(crate) clouds_base:    Option<f64>,
+    pub(crate) pressure: Option<f64>,
+    pub(crate) clouds_base: Option<f64>,
     pub(crate) clouds_density: Option<u8>,
-    pub(crate) visibility:     Option<f64>,
+    pub(crate) visibility: Option<f64>,
 }
 
 #[derive(Deserialize, Clone)]
 pub(crate) struct BotServerInfo {
     #[serde(default)]
-    pub(crate) name:         std::string::String,
+    pub(crate) name: std::string::String,
     #[serde(default)]
-    pub(crate) status:       Option<std::string::String>,
+    pub(crate) status: Option<std::string::String>,
     pub(crate) restart_time: Option<std::string::String>,
-    pub(crate) weather:      Option<BotWeather>,
+    pub(crate) weather: Option<BotWeather>,
 }
 
 /// DCSServerBot's RestAPI plugin serializes datetimes inconsistently across
@@ -173,7 +188,10 @@ pub(crate) fn parse_bot_datetime(s: &str) -> Option<chrono::DateTime<chrono::Utc
 ///
 /// `dcs_server_name` on the instance is the match. It already exists for the
 /// fowlengine plugin's lookup in the other direction.
-pub(crate) fn pick_bot_server(servers: Vec<BotServerInfo>, inst: &Inst) -> anyhow::Result<BotServerInfo> {
+pub(crate) fn pick_bot_server(
+    servers: Vec<BotServerInfo>,
+    inst: &Inst,
+) -> anyhow::Result<BotServerInfo> {
     if let Some(want) = inst.cfg.dcs_server_name.as_deref() {
         return servers
             .into_iter()
@@ -228,18 +246,24 @@ pub(crate) async fn fetch_bot_server_info(
     let cfg = bot_cfg.as_ref()?;
     // /api/stats is public and polled by every tab; the bot's answer (weather,
     // restart time) changes on the scale of minutes.
-    static CACHE: std::sync::LazyLock<websec::CacheMap<InstanceId, Option<BotServerInfo>>> =
-        std::sync::LazyLock::new(websec::CacheMap::new);
+    static CACHE: std::sync::LazyLock<
+        websec::CacheMap<InstanceId, Option<BotServerInfo>>,
+    > = std::sync::LazyLock::new(websec::CacheMap::new);
     CACHE
         .entry(&inst.id)
         .get_or_refresh(std::time::Duration::from_secs(15), || async {
-            Ok::<_, std::convert::Infallible>(fetch_bot_server_info_uncached(cfg, inst).await)
+            Ok::<_, std::convert::Infallible>(
+                fetch_bot_server_info_uncached(cfg, inst).await,
+            )
         })
         .await
         .unwrap_or_else(|e| match e {})
 }
 
-pub(crate) async fn fetch_bot_server_info_uncached(cfg: &BotLinkConfig, inst: &Inst) -> Option<BotServerInfo> {
+pub(crate) async fn fetch_bot_server_info_uncached(
+    cfg: &BotLinkConfig,
+    inst: &Inst,
+) -> Option<BotServerInfo> {
     let result: anyhow::Result<Option<BotServerInfo>> = async {
         let http = http_client();
         let servers: Vec<BotServerInfo> = http
@@ -250,9 +274,12 @@ pub(crate) async fn fetch_bot_server_info_uncached(cfg: &BotLinkConfig, inst: &I
             .map_err(|e| anyhow::anyhow!("DCSServerBot servers request failed: {e}"))?
             .json()
             .await
-            .map_err(|e| anyhow::anyhow!("DCSServerBot servers response parse failed: {e}"))?;
+            .map_err(|e| {
+                anyhow::anyhow!("DCSServerBot servers response parse failed: {e}")
+            })?;
         Ok(Some(pick_bot_server(servers, inst)?))
-    }.await;
+    }
+    .await;
     match result {
         Ok(v) => v,
         Err(e) => {
@@ -276,7 +303,9 @@ pub(crate) async fn bot_instance_action(
     path: &str,
 ) -> anyhow::Result<serde_json::Value> {
     let cfg = bot_cfg.as_ref().ok_or_else(|| {
-        anyhow::anyhow!("DCSServerBot is not configured (--dcsserverbot-url/--dcsserverbot-api-key)")
+        anyhow::anyhow!(
+            "DCSServerBot is not configured (--dcsserverbot-url/--dcsserverbot-api-key)"
+        )
     })?;
     let http = http_client();
     let servers: Vec<BotServerInfo> = http
@@ -287,17 +316,17 @@ pub(crate) async fn bot_instance_action(
         .map_err(|e| anyhow::anyhow!("DCSServerBot /servers request failed: {e}"))?
         .json()
         .await
-        .map_err(|e| anyhow::anyhow!("DCSServerBot /servers response parse failed: {e}"))?;
-    // Stopping or restarting the wrong DCS server is not a thing to guess at.
-    let name = pick_bot_server(servers, inst)
-        .map(|s| s.name)
-        .and_then(|n| {
-            if n.is_empty() {
-                anyhow::bail!("DCSServerBot reported a server with an empty name")
-            } else {
-                Ok(n)
-            }
+        .map_err(|e| {
+            anyhow::anyhow!("DCSServerBot /servers response parse failed: {e}")
         })?;
+    // Stopping or restarting the wrong DCS server is not a thing to guess at.
+    let name = pick_bot_server(servers, inst).map(|s| s.name).and_then(|n| {
+        if n.is_empty() {
+            anyhow::bail!("DCSServerBot reported a server with an empty name")
+        } else {
+            Ok(n)
+        }
+    })?;
     let resp = http
         .post(format!("{}/{path}", cfg.base_url))
         .header("X-API-Key", &cfg.api_key)

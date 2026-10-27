@@ -68,7 +68,9 @@ impl Role {
         } else if tags.contains(UnitTag::Artillery) {
             Self::Artillery
         } else if tags.contains(UnitTag::APC) {
-            if tags.intersects(UnitTag::ATGM | UnitTag::LightCannon | UnitTag::HeavyCannon) {
+            if tags
+                .intersects(UnitTag::ATGM | UnitTag::LightCannon | UnitTag::HeavyCannon)
+            {
                 Self::Ifv
             } else {
                 Self::Apc
@@ -207,7 +209,10 @@ impl Condition {
 }
 
 /// Raw firepower of a set of roles.
-pub fn raw_power<'a>(cfg: &GroundCombatCfg, roles: impl IntoIterator<Item = &'a Role>) -> f64 {
+pub fn raw_power<'a>(
+    cfg: &GroundCombatCfg,
+    roles: impl IntoIterator<Item = &'a Role>,
+) -> f64 {
     roles.into_iter().map(|r| r.firepower(cfg)).sum()
 }
 
@@ -215,7 +220,10 @@ pub fn raw_power<'a>(cfg: &GroundCombatCfg, roles: impl IntoIterator<Item = &'a 
 /// vehicle's, or the infantry's on foot when there is nothing to ride in.
 /// `cap` is the server's `speed_kph` at the ordered pace, a ceiling on the
 /// road speed (0.6 of it across country).
-pub fn speed_of<'a>(roles: impl IntoIterator<Item = &'a Role> + Clone, cap: f64) -> (f64, f64) {
+pub fn speed_of<'a>(
+    roles: impl IntoIterator<Item = &'a Role> + Clone,
+    cap: f64,
+) -> (f64, f64) {
     let vehicles = roles.clone().into_iter().filter(|r| r.is_vehicle());
     let slowest = vehicles.fold(None::<(f64, f64)>, |acc, r| {
         let (a, b) = r.speed_kph();
@@ -235,11 +243,18 @@ pub fn speed_of<'a>(roles: impl IntoIterator<Item = &'a Role> + Clone, cap: f64)
 
 /// Damage `power` deals in `minutes`, split across `targets` (their power),
 /// each divided by its cover: one figure per target.
-pub fn damage_dealt(cfg: &GroundCombatCfg, power: f64, minutes: f64, targets: &[(f64, f64)]) -> Vec<f64> {
+pub fn damage_dealt(
+    cfg: &GroundCombatCfg,
+    power: f64,
+    minutes: f64,
+    targets: &[(f64, f64)],
+) -> Vec<f64> {
     let total: f64 = targets.iter().map(|(p, _)| p.max(0.01)).sum();
     targets
         .iter()
-        .map(|(p, cover)| cfg.lethality * power * minutes * (p.max(0.01) / total) / cover.max(1.))
+        .map(|(p, cover)| {
+            cfg.lethality * power * minutes * (p.max(0.01) / total) / cover.max(1.)
+        })
         .collect()
 }
 
@@ -247,7 +262,12 @@ pub fn damage_dealt(cfg: &GroundCombatCfg, power: f64, minutes: f64, targets: &[
 /// exposure, deterministically from `seed`, until the damage left can't kill
 /// the next one. At most `cap` of them in one round. Returns (indices
 /// killed, damage left over to carry into the next round).
-pub fn casualties(units: &[(Role, u64)], damage: f64, cap: usize, seed: u64) -> (Vec<usize>, f64) {
+pub fn casualties(
+    units: &[(Role, u64)],
+    damage: f64,
+    cap: usize,
+    seed: u64,
+) -> (Vec<usize>, f64) {
     let mut left = damage;
     let mut alive: Vec<usize> = (0..units.len()).collect();
     let mut dead = vec![];
@@ -313,7 +333,12 @@ mod tests {
     #[test]
     fn supply_morale_and_deployment_cut_power() {
         let c = cfg();
-        let fresh = Condition { supply: 1., morale: 1., deployment: Deployment::Deployed, broken: false };
+        let fresh = Condition {
+            supply: 1.,
+            morale: 1.,
+            deployment: Deployment::Deployed,
+            broken: false,
+        };
         assert!((fresh.factor(&c) - 1.).abs() < 1e-9);
         let column = Condition { deployment: Deployment::Column, ..fresh };
         assert!(column.factor(&c) < fresh.factor(&c));
@@ -344,7 +369,8 @@ mod tests {
 
     #[test]
     fn casualties_spend_damage_and_carry_the_rest() {
-        let units: Vec<(Role, u64)> = vec![(Role::Tank, 1), (Role::Truck, 2), (Role::Truck, 3)];
+        let units: Vec<(Role, u64)> =
+            vec![(Role::Tank, 1), (Role::Truck, 2), (Role::Truck, 3)];
         // Too little to kill anything: carried over whole.
         let (dead, left) = casualties(&units, 0.4, 10, 7);
         assert!(dead.is_empty());

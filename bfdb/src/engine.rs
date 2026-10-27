@@ -49,14 +49,20 @@ pub(crate) async fn rpc_str_uncounted(
         Ok(Ok(v)) => v,
         Ok(Err(e)) => {
             log::warn!("[{}] {proc_name}: {e}", inst.id);
-            return Err(Error(websec::unavailable(format!("game server not reachable: {e}"))));
+            return Err(Error(websec::unavailable(format!(
+                "game server not reachable: {e}"
+            ))));
         }
         Err(_) => {
-            log::warn!("[{}] {proc_name}: no reply in {}s", inst.id, RPC_TIMEOUT.as_secs());
+            log::warn!(
+                "[{}] {proc_name}: no reply in {}s",
+                inst.id,
+                RPC_TIMEOUT.as_secs()
+            );
             return Err(Error(websec::unavailable(format!(
                 "the game server did not answer {proc_name} within {}s -- the engine may be busy; this page retries every minute",
                 RPC_TIMEOUT.as_secs()
-            ))))
+            ))));
         }
     };
     match reply {
@@ -77,11 +83,20 @@ pub(crate) async fn call_engine_rpc_str(
     // hangs a request forever when the engine stalls mid-call, and because the
     // future is dropped by the timeout the instance's breaker hears about it.
     const RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-    let reply = match tokio::time::timeout(RPC_TIMEOUT, db.call_engine_rpc(inst, proc_name, args)).await {
+    let reply = match tokio::time::timeout(
+        RPC_TIMEOUT,
+        db.call_engine_rpc(inst, proc_name, args),
+    )
+    .await
+    {
         Ok(Ok(v)) => v,
         // Transport trouble: the engine is down, restarting or not answering.
         // The detail names our own netidx paths, which is fine to show.
-        Ok(Err(e)) => return Err(Error(websec::unavailable(format!("game server not reachable: {e}")))),
+        Ok(Err(e)) => {
+            return Err(Error(websec::unavailable(format!(
+                "game server not reachable: {e}"
+            ))))
+        }
         Err(_) => {
             return Err(Error(websec::unavailable(format!(
                 "game server did not answer {proc_name} within {}s",
@@ -105,7 +120,10 @@ pub(crate) async fn call_engine_rpc_str(
 /// each call is an RPC answered inside the DCS frame. One call per instance
 /// per few seconds serves all of them (single-flight: callers arriving
 /// mid-refresh wait for it rather than firing their own).
-pub(crate) async fn engine_objectives(db: &StatsDb, inst: &Inst) -> Arc<std::result::Result<std::string::String, ()>> {
+pub(crate) async fn engine_objectives(
+    db: &StatsDb,
+    inst: &Inst,
+) -> Arc<std::result::Result<std::string::String, ()>> {
     static LIVE_OBJECTIVES: std::sync::LazyLock<
         websec::CacheMap<InstanceId, Arc<std::result::Result<std::string::String, ()>>>,
     > = std::sync::LazyLock::new(websec::CacheMap::new);
@@ -141,7 +159,10 @@ pub(crate) async fn engine_objectives(db: &StatsDb, inst: &Inst) -> Arc<std::res
 
 /// Names of the objectives the running engine has, for the active round's
 /// maps; `None` when it isn't answering (then nothing can be ruled out).
-pub(crate) async fn engine_objective_names(db: &StatsDb, inst: &Inst) -> Option<std::collections::HashSet<std::string::String>> {
+pub(crate) async fn engine_objective_names(
+    db: &StatsDb,
+    inst: &Inst,
+) -> Option<std::collections::HashSet<std::string::String>> {
     let live = engine_objectives(db, inst).await;
     let json = live.as_ref().as_ref().ok()?;
     let list = serde_json::from_str::<Vec<bfprotocols::api::ObjectiveInfo>>(json).ok()?;

@@ -31,7 +31,9 @@ pub struct Loc {
 }
 
 /// A point on the map, degrees.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct LatLon {
     pub lat: f64,
     pub lon: f64,
@@ -39,7 +41,9 @@ pub struct LatLon {
 
 /// What a sector of the theatre is for. The mission draws each kind in its
 /// own colour on the F10 map; the engine names it when a player flies in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SectorKind {
     AirToGround,
@@ -91,7 +95,9 @@ impl SectorKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct SectorCircle {
     pub lat: f64,
     pub lon: f64,
@@ -100,7 +106,9 @@ pub struct SectorCircle {
 
 /// A tanker race-track: the leg starts at `lat`/`lon` and runs `leg_m` along
 /// `heading_deg`; the sector is everything within `width_m / 2` of that leg.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct SectorTrack {
     pub lat: f64,
     pub lon: f64,
@@ -123,7 +131,9 @@ pub struct SectorShape {
 
 impl SectorShape {
     fn check(&self) -> Result<(), &'static str> {
-        let n = self.polygon.is_some() as u8 + self.circle.is_some() as u8 + self.track.is_some() as u8;
+        let n = self.polygon.is_some() as u8
+            + self.circle.is_some() as u8
+            + self.track.is_some() as u8;
         if n != 1 {
             return Err("needs exactly one of polygon, circle or track");
         }
@@ -379,10 +389,15 @@ pub struct TacanCfg {
 
 impl TacanCfg {
     pub fn describe(&self) -> String {
-        format!("{}{} {}", self.channel, match self.band {
-            TacanBand::X => "X",
-            TacanBand::Y => "Y",
-        }, self.morse)
+        format!(
+            "{}{} {}",
+            self.channel,
+            match self.band {
+                TacanBand::X => "X",
+                TacanBand::Y => "Y",
+            },
+            self.morse
+        )
     }
 
     /// The frequency DCS wants in ActivateBeacon, in Hz.
@@ -491,13 +506,55 @@ const A6E_TANKER_STORES: &[(u8, &str)] = &[
 ];
 
 pub const TANKER_TYPES: &[TankerType] = &[
-    TankerType { typ: "KC-135", method: RefuelMethod::Boom, refuel_kias: 300., carrier_capable: false, stores: &[] },
-    TankerType { typ: "KC135MPRS", method: RefuelMethod::Drogue, refuel_kias: 270., carrier_capable: false, stores: &[] },
-    TankerType { typ: "KC130", method: RefuelMethod::Drogue, refuel_kias: 220., carrier_capable: false, stores: &[] },
-    TankerType { typ: "KC130J", method: RefuelMethod::Drogue, refuel_kias: 220., carrier_capable: false, stores: &[] },
-    TankerType { typ: "S-3B Tanker", method: RefuelMethod::Drogue, refuel_kias: 250., carrier_capable: true, stores: &[] },
-    TankerType { typ: "A6E", method: RefuelMethod::Drogue, refuel_kias: 250., carrier_capable: true, stores: A6E_TANKER_STORES },
-    TankerType { typ: "IL-78M", method: RefuelMethod::Drogue, refuel_kias: 290., carrier_capable: false, stores: &[] },
+    TankerType {
+        typ: "KC-135",
+        method: RefuelMethod::Boom,
+        refuel_kias: 300.,
+        carrier_capable: false,
+        stores: &[],
+    },
+    TankerType {
+        typ: "KC135MPRS",
+        method: RefuelMethod::Drogue,
+        refuel_kias: 270.,
+        carrier_capable: false,
+        stores: &[],
+    },
+    TankerType {
+        typ: "KC130",
+        method: RefuelMethod::Drogue,
+        refuel_kias: 220.,
+        carrier_capable: false,
+        stores: &[],
+    },
+    TankerType {
+        typ: "KC130J",
+        method: RefuelMethod::Drogue,
+        refuel_kias: 220.,
+        carrier_capable: false,
+        stores: &[],
+    },
+    TankerType {
+        typ: "S-3B Tanker",
+        method: RefuelMethod::Drogue,
+        refuel_kias: 250.,
+        carrier_capable: true,
+        stores: &[],
+    },
+    TankerType {
+        typ: "A6E",
+        method: RefuelMethod::Drogue,
+        refuel_kias: 250.,
+        carrier_capable: true,
+        stores: A6E_TANKER_STORES,
+    },
+    TankerType {
+        typ: "IL-78M",
+        method: RefuelMethod::Drogue,
+        refuel_kias: 290.,
+        carrier_capable: false,
+        stores: &[],
+    },
 ];
 
 pub fn tanker_type(typ: &str) -> Option<&'static TankerType> {
@@ -509,7 +566,10 @@ impl TankerCfg {
     /// indicated speed (`speed_kias`, or the type's) at the track altitude.
     pub fn true_speed_kts(&self) -> f64 {
         self.speed_kts.unwrap_or_else(|| {
-            let kias = self.speed_kias.or_else(|| tanker_type(&self.typ).map(|t| t.refuel_kias)).unwrap_or(280.);
+            let kias = self
+                .speed_kias
+                .or_else(|| tanker_type(&self.typ).map(|t| t.refuel_kias))
+                .unwrap_or(280.);
             cas_to_tas_kts(kias, self.alt_ft)
         })
     }
@@ -1510,7 +1570,12 @@ fn default_aim_point() -> f64 {
 
 impl Default for PatternCfg {
     fn default() -> Self {
-        Self { enabled: true, fields: vec![], glideslope_deg: default_pattern_gs(), aim_point_m: default_aim_point() }
+        Self {
+            enabled: true,
+            fields: vec![],
+            glideslope_deg: default_pattern_gs(),
+            aim_point_m: default_aim_point(),
+        }
     }
 }
 
@@ -1721,8 +1786,12 @@ impl RangeCfg {
     pub fn parse(txt: &str) -> anyhow::Result<(Self, Vec<String>)> {
         let cfg: Self = serde_json::from_str(txt)?;
         let mut unknown = vec![];
-        match serde_json::from_str::<serde_json::Value>(txt).and_then(|raw| Ok((raw, serde_json::to_value(&cfg)?))) {
-            Ok((raw, known)) => unknown_keys(&raw, &known, &mut String::new(), &mut unknown),
+        match serde_json::from_str::<serde_json::Value>(txt)
+            .and_then(|raw| Ok((raw, serde_json::to_value(&cfg)?)))
+        {
+            Ok((raw, known)) => {
+                unknown_keys(&raw, &known, &mut String::new(), &mut unknown)
+            }
             Err(e) => log::warn!("range config: could not check for unknown keys: {e}"),
         }
         Ok((cfg, unknown))
@@ -1744,7 +1813,8 @@ impl RangeCfg {
         use anyhow::bail;
         let mut ids = std::collections::HashSet::new();
         let ok_id = |id: &str| {
-            !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            !id.is_empty()
+                && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         };
         for s in &self.stations {
             if !ok_id(&s.id) || !ids.insert(format!("station:{}", s.id)) {
@@ -1793,7 +1863,11 @@ impl RangeCfg {
                 bail!("sector {:?}: {e}", s.id)
             }
             if !matches!(s.side.as_str(), "blue" | "red" | "all") {
-                bail!("sector {:?}: side must be blue, red or all, not {:?}", s.id, s.side)
+                bail!(
+                    "sector {:?}: side must be blue, red or all, not {:?}",
+                    s.id,
+                    s.side
+                )
             }
         }
         let side_ok = |s: &str| matches!(s, "blue" | "red");
@@ -1805,11 +1879,19 @@ impl RangeCfg {
                 bail!("iads {:?}: side must be blue or red, not {:?}", n.id, n.side)
             }
             if !matches!(n.emcon.as_str(), "iads" | "always_on" | "blink") {
-                bail!("iads {:?}: emcon must be iads, always_on or blink, not {:?}", n.id, n.emcon)
+                bail!(
+                    "iads {:?}: emcon must be iads, always_on or blink, not {:?}",
+                    n.id,
+                    n.emcon
+                )
             }
             for site in &n.sites {
                 if !ok_id(&site.id) || !ids.insert(format!("site:{}", site.id)) {
-                    bail!("iads {:?}: site id {:?} is empty, invalid or duplicated", n.id, site.id)
+                    bail!(
+                        "iads {:?}: site id {:?} is empty, invalid or duplicated",
+                        n.id,
+                        site.id
+                    )
                 }
             }
         }
@@ -1818,17 +1900,28 @@ impl RangeCfg {
                 bail!("hot zone id {:?} is empty, invalid or duplicated", h.id)
             }
             if !side_ok(&h.ai_side) {
-                bail!("hot zone {:?}: ai_side must be blue or red, not {:?}", h.id, h.ai_side)
+                bail!(
+                    "hot zone {:?}: ai_side must be blue or red, not {:?}",
+                    h.id,
+                    h.ai_side
+                )
             }
             if h.cap_flights > 0 && h.cap_types.is_empty() {
-                bail!("hot zone {:?}: cap_flights needs at least one cap_types entry", h.id)
+                bail!(
+                    "hot zone {:?}: cap_flights needs at least one cap_types entry",
+                    h.id
+                )
             }
             if !(h.radius_nm > 0.) {
                 bail!("hot zone {:?}: radius_nm must be positive", h.id)
             }
             for g in &h.ground {
                 if !ok_id(&g.id) || !ids.insert(format!("hz_site:{}", g.id)) {
-                    bail!("hot zone {:?}: site id {:?} is empty, invalid or duplicated", h.id, g.id)
+                    bail!(
+                        "hot zone {:?}: site id {:?} is empty, invalid or duplicated",
+                        h.id,
+                        g.id
+                    )
                 }
             }
         }
@@ -1879,7 +1972,10 @@ impl RangeCfg {
         for s in &self.stations {
             if let Some(t) = &s.tier {
                 if !matches!(t.as_str(), "easy" | "medium" | "hard") {
-                    bail!("station {:?}: tier must be easy, medium or hard, not {t:?}", s.id)
+                    bail!(
+                        "station {:?}: tier must be easy, medium or hard, not {t:?}",
+                        s.id
+                    )
                 }
             }
         }
@@ -1901,7 +1997,12 @@ impl RangeCfg {
 /// campaign config's helper (`cfg::unknown_keys`, private there), plus:
 /// an explicit `null` is not reported, since `Option` fields skip
 /// serializing `None`.
-fn unknown_keys(raw: &serde_json::Value, known: &serde_json::Value, path: &mut String, out: &mut Vec<String>) {
+fn unknown_keys(
+    raw: &serde_json::Value,
+    known: &serde_json::Value,
+    path: &mut String,
+    out: &mut Vec<String>,
+) {
     use serde_json::Value as J;
     match (raw, known) {
         (J::Object(r), J::Object(k)) => {
@@ -1946,7 +2047,10 @@ mod tests {
             "messag_s": 5}"#;
         let (c, unknown) = RangeCfg::parse(txt).unwrap();
         assert_eq!(c.spawn.max_active_per_player, 2);
-        assert_eq!(unknown, vec!["messag_s".to_string(), "spawn.max_activ_per_player".to_string()]);
+        assert_eq!(
+            unknown,
+            vec!["messag_s".to_string(), "spawn.max_activ_per_player".to_string()]
+        );
     }
 
     #[test]
@@ -1967,7 +2071,10 @@ mod tests {
     #[test]
     fn sectors_are_checked() {
         let mut c = RangeCfg::default();
-        let circle = SectorShape { circle: Some(SectorCircle { lat: 42., lon: 40., radius_m: 1000. }), ..Default::default() };
+        let circle = SectorShape {
+            circle: Some(SectorCircle { lat: 42., lon: 40., radius_m: 1000. }),
+            ..Default::default()
+        };
         c.sectors.push(SectorCfg {
             id: "w-1".into(),
             name: "W-1".into(),
@@ -2023,7 +2130,9 @@ mod tests {
 
     #[test]
     fn sample_config_parses_and_validates() {
-        let (c, unknown) = RangeCfg::parse(include_str!("../../../bfrange/RANGE_CFG.sample.json")).unwrap();
+        let (c, unknown) =
+            RangeCfg::parse(include_str!("../../../bfrange/RANGE_CFG.sample.json"))
+                .unwrap();
         assert!(unknown.is_empty(), "unknown keys in the sample: {unknown:?}");
         c.validate().unwrap();
         assert_eq!(c.carriers[0].recovery_tanker.as_ref().unwrap().typ, "A6E");
@@ -2039,7 +2148,10 @@ mod tests {
         // the real airspace comes through as polygons
         assert!(c.sectors.iter().any(|s| s.id == "w-517" && s.shape.polygon.is_some()));
         assert!(c.iads.iter().all(|n| n.engage_within.is_some()));
-        assert!(c.sectors.iter().any(|s| s.kind == SectorKind::LowLevel && s.shape.polygon.is_some()));
+        assert!(c
+            .sectors
+            .iter()
+            .any(|s| s.kind == SectorKind::LowLevel && s.shape.polygon.is_some()));
     }
 
     #[test]
@@ -2048,7 +2160,8 @@ mod tests {
         assert!((cas_to_tas_kts(300., 25_000.) - 431.).abs() < 3.);
         assert!((cas_to_tas_kts(250., 0.) - 250.).abs() < 0.5);
         let c: RangeCfg =
-            serde_json::from_str(include_str!("../../../bfrange/RANGE_CFG.sample.json")).unwrap();
+            serde_json::from_str(include_str!("../../../bfrange/RANGE_CFG.sample.json"))
+                .unwrap();
         for t in &c.tankers {
             let tas = t.true_speed_kts();
             assert!(tas > 250. && tas < 470., "{} {} kts true", t.id, tas);

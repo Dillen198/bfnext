@@ -25,19 +25,22 @@ for more details.
 //!
 //! Nothing here reads an enemy unit's true position.
 
-use super::{dist, Handle};
+use super::{Handle, dist};
 use crate::{
-    db::{intel::IntelUnitClass, objective::ObjGroupClass},
     Context,
+    db::{intel::IntelUnitClass, objective::ObjGroupClass},
 };
 use bfprotocols::{
     cfg::{HqCfg, UnitTag},
-    db::{group::GroupId, objective::{ObjectiveId, ObjectiveKind}},
+    db::{
+        group::GroupId,
+        objective::{ObjectiveId, ObjectiveKind},
+    },
     hq::OpKind,
 };
 use chrono::prelude::*;
 use compact_str::CompactString;
-use dcso3::{coalition::Side, Vector2};
+use dcso3::{Vector2, coalition::Side};
 use smallvec::SmallVec;
 
 #[derive(Debug, Clone)]
@@ -170,7 +173,10 @@ impl Picture {
 
     /// Distance from `p` to the nearest friendly airbase.
     pub(crate) fn air_gap(&self, p: Vector2) -> f64 {
-        self.own().filter(|o| o.airbase).map(|o| dist(o.pos, p)).fold(f64::INFINITY, f64::min)
+        self.own()
+            .filter(|o| o.airbase)
+            .map(|o| dist(o.pos, p))
+            .fold(f64::INFINITY, f64::min)
     }
 
     pub(crate) fn sams(&self) -> impl Iterator<Item = &Contact> {
@@ -218,7 +224,8 @@ impl Picture {
     /// ends, 30 km either side across the line to the nearest enemy
     /// objective -- the same track `ai_loiter_point_mission` lays out.
     fn orbit_points(&self, p: Vector2) -> [Vector2; 3] {
-        let nearest = self.enemy().min_by(|a, b| dist(a.pos, p).total_cmp(&dist(b.pos, p)));
+        let nearest =
+            self.enemy().min_by(|a, b| dist(a.pos, p).total_cmp(&dist(b.pos, p)));
         let Some(e) = nearest else { return [p, p, p] };
         let d = p - e.pos;
         let n = d.norm();
@@ -245,7 +252,10 @@ impl Picture {
     /// stand-off, enemy bases, SAM sites, intel's air defence), for its
     /// worst racetrack point. Negative: that far inside one.
     pub(crate) fn clearance(&self, p: Vector2, r: &StationRules) -> f64 {
-        self.orbit_points(p).iter().map(|q| self.point_clearance(*q, r)).fold(f64::INFINITY, f64::min)
+        self.orbit_points(p)
+            .iter()
+            .map(|q| self.point_clearance(*q, r))
+            .fold(f64::INFINITY, f64::min)
     }
 
     /// Where an AWACS or tanker should orbit: over our own ground, every
@@ -261,9 +271,13 @@ impl Picture {
         near: Option<Vector2>,
         away: &[(Vector2, f64)],
     ) -> Option<Station> {
-        let enemy_land: Vec<Vector2> = self.enemy().filter(|o| !o.at_sea()).map(|o| o.pos).collect();
-        let own_land: Vec<Vector2> = self.own().filter(|o| !o.at_sea()).map(|o| o.pos).collect();
-        let nearest = |v: &[Vector2], p: Vector2| v.iter().map(|q| dist(*q, p)).fold(f64::INFINITY, f64::min);
+        let enemy_land: Vec<Vector2> =
+            self.enemy().filter(|o| !o.at_sea()).map(|o| o.pos).collect();
+        let own_land: Vec<Vector2> =
+            self.own().filter(|o| !o.at_sea()).map(|o| o.pos).collect();
+        let nearest = |v: &[Vector2], p: Vector2| {
+            v.iter().map(|q| dist(*q, p)).fold(f64::INFINITY, f64::min)
+        };
         let mut cands: Vec<Vector2> = vec![];
         for o in own_land.iter() {
             cands.push(*o);
@@ -281,18 +295,22 @@ impl Picture {
             .filter(|p| nearest(&own_land, *p) <= 100_000.)
             .filter(|p| self.air_gap(*p) <= r.reach)
             .filter(|p| away.iter().all(|(q, m)| dist(*p, *q) >= *m))
-            .map(|p| Station { pos: p, clearance: self.clearance(p, r), front_m: self.front_dist(p) })
+            .map(|p| Station {
+                pos: p,
+                clearance: self.clearance(p, r),
+                front_m: self.front_dist(p),
+            })
             .collect();
         if scored.is_empty() {
             return None;
         }
         let covered = |s: &Station| s.front_m <= r.cover;
         let near_m = |s: &Station| near.map_or(0., |n| dist(s.pos, n));
-        let safe: Vec<&Station> = scored.iter().filter(|s| s.clearance >= 0. && covered(s)).collect();
-        if let Some(best) = safe
-            .iter()
-            .min_by(|a, b| (a.front_m + 0.25 * near_m(a)).total_cmp(&(b.front_m + 0.25 * near_m(b))))
-        {
+        let safe: Vec<&Station> =
+            scored.iter().filter(|s| s.clearance >= 0. && covered(s)).collect();
+        if let Some(best) = safe.iter().min_by(|a, b| {
+            (a.front_m + 0.25 * near_m(a)).total_cmp(&(b.front_m + 0.25 * near_m(b)))
+        }) {
             return Some(**best);
         }
         // Nothing clears every ring: the safest place that still covers the
@@ -304,7 +322,10 @@ impl Picture {
     }
 
     /// The side's AWACS (or tankers) on the map.
-    pub(crate) fn support_of(&self, kind: OpKind) -> impl Iterator<Item = &SupportFlight> {
+    pub(crate) fn support_of(
+        &self,
+        kind: OpKind,
+    ) -> impl Iterator<Item = &SupportFlight> {
         self.support.iter().filter(move |f| f.kind == kind)
     }
 }
@@ -339,7 +360,11 @@ impl StationRules {
     pub(crate) fn of(cfg: &HqCfg, kind: OpKind) -> Self {
         let s = &cfg.support;
         Self {
-            standoff: if kind == OpKind::Tanker { s.tanker_standoff_m } else { s.awacs_standoff_m },
+            standoff: if kind == OpKind::Tanker {
+                s.tanker_standoff_m
+            } else {
+                s.awacs_standoff_m
+            },
             sam_site: s.sam_site_ring_m,
             sam_intel: s.sam_intel_ring_m,
             cover: s.awacs_cover_m,
@@ -383,7 +408,8 @@ pub(crate) struct SupportFlight {
 impl SupportFlight {
     /// Time to launch its relief: its time is nearly up, or its fuel is.
     pub(crate) fn relief_due(&self, now: DateTime<Utc>, lead_secs: u32) -> bool {
-        self.low_fuel || self.expires.map_or(false, |e| (e - now).num_seconds() <= lead_secs as i64)
+        self.low_fuel
+            || self.expires.map_or(false, |e| (e - now).num_seconds() <= lead_secs as i64)
     }
 
     /// Airborne and orbiting the station it was given.
@@ -401,7 +427,9 @@ pub(crate) fn support_flights(ctx: &Context, side: Side) -> Vec<SupportFlight> {
         .actions()
         .filter(|g| g.side == side)
         .filter_map(|g| {
-            let DeployKind::Action { spec, loc, player, time, .. } = &g.origin else { return None };
+            let DeployKind::Action { spec, loc, player, time, .. } = &g.origin else {
+                return None;
+            };
             let (kind, plane) = match &spec.kind {
                 ActionKind::Awacs(AwacsCfg { plane, .. }) => (OpKind::Awacs, plane),
                 ActionKind::Tanker(plane) => (OpKind::Tanker, plane),
@@ -427,7 +455,9 @@ pub(crate) fn support_flights(ctx: &Context, side: Side) -> Vec<SupportFlight> {
                 pos: lead.pos,
                 station,
                 launched: *time,
-                expires: plane.duration.map(|h| *time + chrono::Duration::hours(h as i64)),
+                expires: plane
+                    .duration
+                    .map(|h| *time + chrono::Duration::hours(h as i64)),
                 player: player.is_some(),
                 airborne: lead.airborne_velocity.is_some(),
                 low_fuel: low.map_or(false, |l| l.contains(&g.id)),
@@ -441,24 +471,30 @@ fn has_fire_groups(ctx: &Context, side: Side, oid: &ObjectiveId) -> bool {
     obj.groups().get(&side).map_or(false, |gids| {
         gids.into_iter().any(|gid| {
             ctx.db.persisted.groups.get(gid).map_or(false, |g| {
-                matches!(g.class, ObjGroupClass::Armor | ObjGroupClass::Mr | ObjGroupClass::Lr)
-                    && g.units.into_iter().any(|uid| {
-                        ctx.db.persisted.units.get(uid).map_or(false, |u| !u.dead)
-                    })
+                matches!(
+                    g.class,
+                    ObjGroupClass::Armor | ObjGroupClass::Mr | ObjGroupClass::Lr
+                ) && g
+                    .units
+                    .into_iter()
+                    .any(|uid| ctx.db.persisted.units.get(uid).map_or(false, |u| !u.dead))
             })
         })
     })
 }
 
-pub(crate) fn build(ctx: &Context, cfg: &HqCfg, side: Side, now: DateTime<Utc>) -> Picture {
+pub(crate) fn build(
+    ctx: &Context,
+    cfg: &HqCfg,
+    side: Side,
+    now: DateTime<Utc>,
+) -> Picture {
     let enemy_side = side.opposite();
-    let ours_capturing: Vec<ObjectiveId> = ctx.db.objectives_being_captured_by(enemy_side);
+    let ours_capturing: Vec<ObjectiveId> =
+        ctx.db.objectives_being_captured_by(enemy_side);
     let theirs_capturing: Vec<ObjectiveId> = ctx.db.objectives_being_captured_by(side);
-    let inbound: Vec<ObjectiveId> = ctx
-        .db
-        .ephemeral
-        .transport_destinations(side)
-        .collect();
+    let inbound: Vec<ObjectiveId> =
+        ctx.db.ephemeral.transport_destinations(side).collect();
     let raw: Vec<(ObjectiveId, &crate::db::objective::Objective)> =
         ctx.db.objectives().map(|(id, o)| (*id, o)).collect();
     let mut objs: Vec<Obj> = raw
@@ -488,7 +524,8 @@ pub(crate) fn build(ctx: &Context, cfg: &HqCfg, side: Side, now: DateTime<Utc>) 
             }
         })
         .collect();
-    let positions: Vec<(bool, bool, Vector2)> = objs.iter().map(|o| (o.own, o.neutral, o.pos)).collect();
+    let positions: Vec<(bool, bool, Vector2)> =
+        objs.iter().map(|o| (o.own, o.neutral, o.pos)).collect();
     for o in objs.iter_mut() {
         o.front_m = positions
             .iter()
@@ -519,7 +556,9 @@ pub(crate) fn build(ctx: &Context, cfg: &HqCfg, side: Side, now: DateTime<Utc>) 
         .connected
         .info_by_player_id
         .values()
-        .filter(|ifo| ctx.db.persisted.players.get(&ifo.ucid).map_or(false, |p| p.side == side))
+        .filter(|ifo| {
+            ctx.db.persisted.players.get(&ifo.ucid).map_or(false, |p| p.side == side)
+        })
         .count() as u32;
     humans = humans.max(connected);
 
@@ -537,21 +576,24 @@ pub(crate) fn build(ctx: &Context, cfg: &HqCfg, side: Side, now: DateTime<Utc>) 
         })
         .collect();
 
-    let ours: Vec<Vector2> = ctx.db.formations().filter(|f| f.side == side).map(|f| f.pos).collect();
-    let own_obj_pos: Vec<Vector2> = objs.iter().filter(|o| o.own).map(|o| o.pos).collect();
+    let ours: Vec<Vector2> =
+        ctx.db.formations().filter(|f| f.side == side).map(|f| f.pos).collect();
+    let own_obj_pos: Vec<Vector2> =
+        objs.iter().filter(|o| o.own).map(|o| o.pos).collect();
     // Enemy formations as the side's own forces see them right now (the
     // ground war's spotting), never where they really are.
     let rt = &ctx.groundwar.rt;
-    let enemy_formations: Vec<Vector2> = rt
-        .sightings(side)
-        .filter(|(_, s)| rt.in_sight(s))
-        .map(|(_, s)| s.pos)
-        .collect();
+    let enemy_formations: Vec<Vector2> =
+        rt.sightings(side).filter(|(_, s)| rt.in_sight(s)).map(|(_, s)| s.pos).collect();
     // Battles our formations are in.
     let battles: SmallVec<[Vector2; 4]> = rt
         .battles()
         .iter()
-        .filter(|b| b.formations.iter().any(|id| ctx.db.formation(*id).map_or(false, |f| f.side == side)))
+        .filter(|b| {
+            b.formations
+                .iter()
+                .any(|id| ctx.db.formation(*id).map_or(false, |f| f.side == side))
+        })
         .map(|b| b.pos)
         .collect();
     let formations = ours.len() as u32;
@@ -585,7 +627,9 @@ pub(crate) fn build(ctx: &Context, cfg: &HqCfg, side: Side, now: DateTime<Utc>) 
         .jtac
         .jtacs()
         .filter(|j| j.side() == side)
-        .filter_map(|j| j.target().as_ref().map(|t| (j.gid(), Vector2::new(t.pos.x, t.pos.z))))
+        .filter_map(|j| {
+            j.target().as_ref().map(|t| (j.gid(), Vector2::new(t.pos.x, t.pos.z)))
+        })
         .collect();
     let carriers = objs
         .iter()
@@ -606,11 +650,18 @@ pub(crate) fn build(ctx: &Context, cfg: &HqCfg, side: Side, now: DateTime<Utc>) 
 
     // The front line the F10 overlay draws, else (no contested stretch) the
     // midpoint between each of our bases and the enemy's nearest to it.
-    let mut front: Vec<(Vector2, Vector2)> = ctx.hq.front.as_ref().map(|(_, f)| f.clone()).unwrap_or_default();
+    let mut front: Vec<(Vector2, Vector2)> =
+        ctx.hq.front.as_ref().map(|(_, f)| f.clone()).unwrap_or_default();
     if front.is_empty() {
-        let land = |own: bool| objs.iter().filter(move |o| o.own == own && !o.neutral && !o.at_sea()).map(|o| o.pos);
+        let land = |own: bool| {
+            objs.iter()
+                .filter(move |o| o.own == own && !o.neutral && !o.at_sea())
+                .map(|o| o.pos)
+        };
         for p in land(true) {
-            if let Some(q) = land(false).min_by(|a, b| dist(*a, p).total_cmp(&dist(*b, p))) {
+            if let Some(q) =
+                land(false).min_by(|a, b| dist(*a, p).total_cmp(&dist(*b, p)))
+            {
                 let m = (p + q) * 0.5;
                 front.push((m, m));
             }
@@ -685,10 +736,18 @@ pub(crate) fn side_objectives(db: &crate::db::Db, side: Side) -> Vec<ObjSummary>
                             .groups
                             .get(gid)
                             .map(|g| {
-                                matches!(g.class, ObjGroupClass::Armor | ObjGroupClass::Mr | ObjGroupClass::Lr)
-                                    && g.units.into_iter().any(|uid| {
-                                        db.persisted.units.get(uid).map(|u| !u.dead).unwrap_or(false)
-                                    })
+                                matches!(
+                                    g.class,
+                                    ObjGroupClass::Armor
+                                        | ObjGroupClass::Mr
+                                        | ObjGroupClass::Lr
+                                ) && g.units.into_iter().any(|uid| {
+                                    db.persisted
+                                        .units
+                                        .get(uid)
+                                        .map(|u| !u.dead)
+                                        .unwrap_or(false)
+                                })
                             })
                             .unwrap_or(false)
                     })
@@ -713,7 +772,10 @@ pub(crate) fn side_objectives(db: &crate::db::Db, side: Side) -> Vec<ObjSummary>
 
 /// `side`'s deployed or action groups that can fire cruise missiles (tagged
 /// `ALCM`), with where they are (`None` when the db can't place one).
-pub(crate) fn missile_groups(db: &crate::db::Db, side: Side) -> SmallVec<[(GroupId, Option<Vector2>); 4]> {
+pub(crate) fn missile_groups(
+    db: &crate::db::Db,
+    side: Side,
+) -> SmallVec<[(GroupId, Option<Vector2>); 4]> {
     db.deployed()
         .chain(db.actions())
         .filter(|g| g.side == side && g.tags.contains(UnitTag::ALCM))
@@ -733,7 +795,10 @@ pub(crate) fn fixedwing_pilots(db: &crate::db::Db, side: Side) -> u32 {
             }
             if let Some((_, Some(inst))) = &p.current_slot {
                 match db.ephemeral.cfg.unit_classification.get(&inst.typ) {
-                    Some(tags) => tags.contains(UnitTag::Aircraft) && !tags.contains(UnitTag::Helicopter),
+                    Some(tags) => {
+                        tags.contains(UnitTag::Aircraft)
+                            && !tags.contains(UnitTag::Helicopter)
+                    }
                     None => true,
                 }
             } else {
@@ -742,7 +807,6 @@ pub(crate) fn fixedwing_pilots(db: &crate::db::Db, side: Side) -> u32 {
         })
         .count() as u32
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -796,7 +860,13 @@ mod tests {
     }
 
     fn rules() -> StationRules {
-        StationRules { standoff: 120_000., sam_site: 110_000., sam_intel: 60_000., cover: 230_000., reach: 400_000. }
+        StationRules {
+            standoff: 120_000.,
+            sam_site: 110_000.,
+            sam_intel: 60_000.,
+            cover: 230_000.,
+            reach: 400_000.,
+        }
     }
 
     #[test]
@@ -832,7 +902,10 @@ mod tests {
         let st = pic.support_station(&rules(), None, &[]).unwrap();
         assert!(st.clearance >= 0., "{st:?}");
         for p in pic.orbit_points(st.pos) {
-            assert!(dist(p, Vector2::new(10_000., 0.)) >= 120_000., "{p:?} inside the SAM ring");
+            assert!(
+                dist(p, Vector2::new(10_000., 0.)) >= 120_000.,
+                "{p:?} inside the SAM ring"
+            );
         }
     }
 
@@ -847,7 +920,8 @@ mod tests {
         objs.push(obj(50, false, 25., 0., ObjectiveKind::Airbase));
         let pic = picture(objs);
         let first = pic.support_station(&rules(), None, &[]).unwrap();
-        let second = pic.support_station(&rules(), None, &[(first.pos, 200_000.)]).unwrap();
+        let second =
+            pic.support_station(&rules(), None, &[(first.pos, 200_000.)]).unwrap();
         assert!(dist(first.pos, second.pos) >= 200_000.);
     }
 }

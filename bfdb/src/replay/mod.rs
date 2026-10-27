@@ -31,13 +31,13 @@ use anyhow::{anyhow, Context, Result};
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use yats::RawTree as Tree;
 use std::{
     fs,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use yats::RawTree as Tree;
 
 /// A recording must have been left alone this long before it is read: a
 /// file Tacview is still writing is never touched.
@@ -124,7 +124,9 @@ fn key2(a: &str, b: &[u8]) -> Vec<u8> {
 }
 
 fn safe_id(s: &str) -> String {
-    s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect()
+    s.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect()
 }
 
 impl ReplayCtx {
@@ -157,9 +159,17 @@ impl ReplayCtx {
     }
 
     /// Recordings of one instance, newest first, started before `before_ms`.
-    pub(crate) fn recordings(&self, instance: &str, before_ms: Option<i64>, limit: usize) -> Result<Vec<RecSummary>> {
+    pub(crate) fn recordings(
+        &self,
+        instance: &str,
+        before_ms: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<RecSummary>> {
         let lo = key2(instance, &[]);
-        let hi = key2(instance, &before_ms.map(|b| (b.max(0) as u64).to_be_bytes()).unwrap_or([0xff; 8]));
+        let hi = key2(
+            instance,
+            &before_ms.map(|b| (b.max(0) as u64).to_be_bytes()).unwrap_or([0xff; 8]),
+        );
         let mut out = vec![];
         for r in self.recs.range(lo..hi).rev() {
             let (_, v) = r?;
@@ -172,7 +182,11 @@ impl ReplayCtx {
     }
 
     /// Every flight flown under any of `names`, newest first.
-    pub(crate) fn flights_for(&self, names: &[String], limit: usize) -> Result<Vec<FlightRow>> {
+    pub(crate) fn flights_for(
+        &self,
+        names: &[String],
+        limit: usize,
+    ) -> Result<Vec<FlightRow>> {
         let mut out: Vec<FlightRow> = vec![];
         let mut seen = std::collections::HashSet::new();
         for n in names {
@@ -202,7 +216,9 @@ impl ReplayCtx {
         for r in self.flights.iter() {
             let (_, v) = r?;
             let Ok(f) = serde_json::from_slice::<FlightRow>(&v) else { continue };
-            if f.rec == id && (f.ucid.is_some() || !self.db.ucids_by_name(&f.pilot).is_empty()) {
+            if f.rec == id
+                && (f.ucid.is_some() || !self.db.ucids_by_name(&f.pilot).is_empty())
+            {
                 out.push(f.i);
             }
         }
@@ -225,7 +241,8 @@ impl ReplayCtx {
             }
             match &st.error {
                 Some(e) if st.tries >= MAX_TRIES => {
-                    let name = String::from_utf8_lossy(&k[cfg.id.len() + 1..]).to_string();
+                    let name =
+                        String::from_utf8_lossy(&k[cfg.id.len() + 1..]).to_string();
                     failed.push(json!({ "file": name, "error": e }));
                 }
                 _ => pending += 1,
@@ -247,9 +264,15 @@ impl ReplayCtx {
         let now = SystemTime::now();
         let oldest = now - Duration::from_secs(self.days as u64 * 86_400);
         let mut todo = vec![];
-        for e in fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))?.flatten() {
+        for e in fs::read_dir(dir)
+            .with_context(|| format!("reading {}", dir.display()))?
+            .flatten()
+        {
             let p = e.path();
-            let Some(name) = p.file_name().and_then(|n| n.to_str()).map(str::to_string) else { continue };
+            let Some(name) = p.file_name().and_then(|n| n.to_str()).map(str::to_string)
+            else {
+                continue;
+            };
             if !name.to_ascii_lowercase().ends_with(".acmi") {
                 continue;
             }
@@ -262,8 +285,10 @@ impl ReplayCtx {
                 continue;
             }
             let key = key2(&cfg.id, name.as_bytes());
-            let st: Option<FileState> = self.files.get(&key)?.and_then(|v| serde_json::from_slice(&v).ok());
-            let fresh = FileState { size: md.len(), mtime_ms: ms(mtime), ..Default::default() };
+            let st: Option<FileState> =
+                self.files.get(&key)?.and_then(|v| serde_json::from_slice(&v).ok());
+            let fresh =
+                FileState { size: md.len(), mtime_ms: ms(mtime), ..Default::default() };
             match st {
                 Some(st) if st.size == fresh.size && st.mtime_ms == fresh.mtime_ms => {
                     if st.v < ingest::INGEST_VERSION {
@@ -301,7 +326,10 @@ impl ReplayCtx {
                 Err(e) => {
                     st.tries += 1;
                     st.v = ingest::INGEST_VERSION;
-                    warn!("[{}] replay: {} failed (try {}/{}): {e:#}", cfg.id, name, st.tries, MAX_TRIES);
+                    warn!(
+                        "[{}] replay: {} failed (try {}/{}): {e:#}",
+                        cfg.id, name, st.tries, MAX_TRIES
+                    );
                     st.error = Some(format!("{e:#}"));
                 }
             }
@@ -331,7 +359,8 @@ impl ReplayCtx {
             self.forget(&id)?;
         }
         let _ = fs::remove_dir_all(&dest);
-        fs::rename(&stage, &dest).with_context(|| format!("moving into {}", dest.display()))?;
+        fs::rename(&stage, &dest)
+            .with_context(|| format!("moving into {}", dest.display()))?;
 
         let mut pilots = std::collections::HashSet::new();
         for f in &built.flights {
@@ -384,7 +413,10 @@ impl ReplayCtx {
         let mut dead = vec![];
         for r in self.flights.iter() {
             let (k, v) = r?;
-            if serde_json::from_slice::<FlightRow>(&v).map(|f| f.rec == id).unwrap_or(false) {
+            if serde_json::from_slice::<FlightRow>(&v)
+                .map(|f| f.rec == id)
+                .unwrap_or(false)
+            {
                 dead.push(k);
             }
         }
@@ -397,7 +429,8 @@ impl ReplayCtx {
 
     /// Delete every recording that started more than `days` ago.
     fn prune(&self) -> Result<usize> {
-        let cutoff = chrono::Utc::now().timestamp_millis() - self.days as i64 * 86_400_000;
+        let cutoff =
+            chrono::Utc::now().timestamp_millis() - self.days as i64 * 86_400_000;
         let mut old = vec![];
         for r in self.recs.iter() {
             let (_, v) = r?;
@@ -420,7 +453,8 @@ fn rec_key(instance: &str, start_ms: i64, id: &str) -> Vec<u8> {
 }
 
 fn flight_key(f: &FlightRow) -> Vec<u8> {
-    let mut k = key2(&f.pilot.trim().to_lowercase(), &(f.start_ms.max(0) as u64).to_be_bytes());
+    let mut k =
+        key2(&f.pilot.trim().to_lowercase(), &(f.start_ms.max(0) as u64).to_be_bytes());
     k.extend_from_slice(f.rec.as_bytes());
     k.push(0);
     k.extend_from_slice(&f.i.to_be_bytes());
@@ -430,17 +464,27 @@ fn flight_key(f: &FlightRow) -> Vec<u8> {
 /// Start the scanner (every minute, every instance with a `tacview_dir`)
 /// and the daily retention sweep.
 pub(crate) fn spawn_tasks(ctx: &Arc<ReplayCtx>) {
-    let with_dir: Vec<Arc<InstanceCfg>> =
-        ctx.db.instances().all().iter().filter(|c| c.tacview_dir.is_some()).cloned().collect();
+    let with_dir: Vec<Arc<InstanceCfg>> = ctx
+        .db
+        .instances()
+        .all()
+        .iter()
+        .filter(|c| c.tacview_dir.is_some())
+        .cloned()
+        .collect();
     if with_dir.is_empty() {
         info!("replay: no instance has a tacview_dir; flight replay is off");
         return;
     }
     // Two servers writing into one folder would each claim every recording.
-    let mut seen: std::collections::HashMap<String, &str> = std::collections::HashMap::new();
+    let mut seen: std::collections::HashMap<String, &str> =
+        std::collections::HashMap::new();
     for c in &with_dir {
         let Some(d) = &c.tacview_dir else { continue };
-        let key = fs::canonicalize(d).unwrap_or_else(|_| d.clone()).to_string_lossy().to_lowercase();
+        let key = fs::canonicalize(d)
+            .unwrap_or_else(|_| d.clone())
+            .to_string_lossy()
+            .to_lowercase();
         if let Some(other) = seen.insert(key, &c.id) {
             warn!(
                 "replay: instances {other} and {} share the Tacview folder {} -- every recording \
@@ -470,7 +514,9 @@ pub(crate) fn spawn_tasks(ctx: &Arc<ReplayCtx>) {
             tick.tick().await;
             let c2 = c.clone();
             let cfgs = with_dir.clone();
-            let prune = last_prune.map(|p| p.elapsed() >= Duration::from_secs(86_400)).unwrap_or(true);
+            let prune = last_prune
+                .map(|p| p.elapsed() >= Duration::from_secs(86_400))
+                .unwrap_or(true);
             if prune {
                 last_prune = Some(std::time::Instant::now());
             }
@@ -478,7 +524,10 @@ pub(crate) fn spawn_tasks(ctx: &Arc<ReplayCtx>) {
                 if prune {
                     match c2.prune() {
                         Ok(0) => (),
-                        Ok(n) => info!("replay: pruned {n} recording(s) older than {} days", c2.days),
+                        Ok(n) => info!(
+                            "replay: pruned {n} recording(s) older than {} days",
+                            c2.days
+                        ),
                         Err(e) => warn!("replay: pruning failed: {e:#}"),
                     }
                 }

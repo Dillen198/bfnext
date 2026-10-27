@@ -20,12 +20,12 @@ for more details.
 //! is not plainly worse than what else is on the list. The player is told
 //! either way.
 
-use super::{dist, OpStatus};
+use super::{OpStatus, dist};
 use crate::Context;
 use bfprotocols::{cfg::HqCfg, db::objective::ObjectiveId, hq::RequestKind};
-use chrono::{prelude::*, Duration};
-use compact_str::{format_compact, CompactString};
-use dcso3::{coalition::Side, net::Ucid, Vector2};
+use chrono::{Duration, prelude::*};
+use compact_str::{CompactString, format_compact};
+use dcso3::{Vector2, coalition::Side, net::Ucid};
 
 /// How far from the player a request with no objective named may look for
 /// one.
@@ -89,9 +89,17 @@ pub(crate) fn submit(
             return Err(format_compact!("you can ask again in {}s", left.num_seconds()));
         }
     }
-    let open = ctx.hq.side(side).requests.iter().filter(|r| r.status == RequestStatus::Open).count();
+    let open = ctx
+        .hq
+        .side(side)
+        .requests
+        .iter()
+        .filter(|r| r.status == RequestStatus::Open)
+        .count();
     if open >= cfg.requests.max_open_per_side as usize {
-        return Err(format_compact!("the HQ already has {open} requests waiting, try again shortly"));
+        return Err(format_compact!(
+            "the HQ already has {open} requests waiting, try again shortly"
+        ));
     }
     let friendly = kind.on_friendly();
     let fits = |o: &crate::db::objective::Objective| {
@@ -121,10 +129,17 @@ pub(crate) fn submit(
             id
         }
         None => {
-            let p = from.ok_or_else(|| CompactString::from("name an objective (couldn't find where you are)"))?;
+            let p = from.ok_or_else(|| {
+                CompactString::from("name an objective (couldn't find where you are)")
+            })?;
             let id = super::nearest_objective(ctx, p, fits)
                 .ok_or_else(|| CompactString::from("there is no objective that fits"))?;
-            let far = ctx.db.persisted.objectives.get(&id).map_or(f64::INFINITY, |o| dist(o.pos(), p));
+            let far = ctx
+                .db
+                .persisted
+                .objectives
+                .get(&id)
+                .map_or(f64::INFINITY, |o| dist(o.pos(), p));
             if far > NEAREST_M {
                 return Err(format_compact!(
                     "the nearest {} objective is {:.0} km away, name one",
@@ -148,7 +163,11 @@ pub(crate) fn submit(
         .iter()
         .find(|r| r.status == RequestStatus::Open && r.kind == kind && r.target == target)
     {
-        return Err(format_compact!("{} already asked for {} at {target_name}", dup.by, kind.label()));
+        return Err(format_compact!(
+            "{} already asked for {} at {target_name}",
+            dup.by,
+            kind.label()
+        ));
     }
     let id = ctx.hq.next_id();
     let rt = ctx.hq.side(side);
@@ -202,22 +221,42 @@ pub(crate) fn cancel(
 
 /// An operation answering request `rid` has been launched.
 pub(crate) fn answered(ctx: &mut Context, side: Side, rid: u64, what: &str) {
-    let Some(r) = ctx.hq.side(side).requests.iter_mut().find(|r| r.id == rid) else { return };
+    let Some(r) = ctx.hq.side(side).requests.iter_mut().find(|r| r.id == rid) else {
+        return;
+    };
     if r.status != RequestStatus::Open {
         return;
     }
     r.status = RequestStatus::Answered;
     r.answer = what.into();
-    let (ucid, text) = (r.ucid, format_compact!("HQ: your {} request at {}: {what}", r.kind.label(), r.target_name));
+    let (ucid, text) = (
+        r.ucid,
+        format_compact!(
+            "HQ: your {} request at {}: {what}",
+            r.kind.label(),
+            r.target_name
+        ),
+    );
     ctx.db.ephemeral.panel_to_player(&ctx.db.persisted, 15, &ucid, text);
 }
 
 /// The operation answering request `rid` has ended.
-pub(crate) fn settle(ctx: &mut Context, side: Side, rid: u64, status: OpStatus, _now: DateTime<Utc>) {
+pub(crate) fn settle(
+    ctx: &mut Context,
+    side: Side,
+    rid: u64,
+    status: OpStatus,
+    _now: DateTime<Utc>,
+) {
     let Some(r) = ctx.hq.side(side).requests.iter().find(|r| r.id == rid) else { return };
     let (ucid, text) = (
         r.ucid,
-        format_compact!("HQ: the {} you asked for at {} has {}", r.kind.label(), r.target_name, status.label()),
+        format_compact!(
+            "HQ: the {} you asked for at {} has {}",
+            r.kind.label(),
+            r.target_name,
+            status.label()
+        ),
     );
     ctx.db.ephemeral.panel_to_player(&ctx.db.persisted, 10, &ucid, text);
 }

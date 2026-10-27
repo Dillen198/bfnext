@@ -108,7 +108,8 @@ static SELECTED: OnceLock<Backend> = OnceLock::new();
 pub(crate) fn select(args: &StorageArgs) -> Result<Backend> {
     let b = match args.storage {
         Some(b) => b,
-        None => match std::env::var("BFDB_STORAGE").ok().filter(|v| !v.trim().is_empty()) {
+        None => match std::env::var("BFDB_STORAGE").ok().filter(|v| !v.trim().is_empty())
+        {
             Some(v) => v.parse().context("$BFDB_STORAGE")?,
             None => Backend::Sled,
         },
@@ -198,7 +199,10 @@ pub(crate) fn ensure_not_in_use(src: &Path, backend: Backend) -> Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => {
             return Err(e).with_context(|| {
-                format!("{} cannot be read -- is bfdb still running?", lock_file.display())
+                format!(
+                    "{} cannot be read -- is bfdb still running?",
+                    lock_file.display()
+                )
             })
         }
     };
@@ -211,21 +215,24 @@ pub(crate) fn ensure_not_in_use(src: &Path, backend: Backend) -> Result<()> {
             "the database at {} is open in another process -- stop bfdb first",
             src.display()
         ),
-        Err(std::fs::TryLockError::Error(e)) => {
-            Err(e).with_context(|| format!("checking whether {} is in use", lock_file.display()))
-        }
+        Err(std::fs::TryLockError::Error(e)) => Err(e).with_context(|| {
+            format!("checking whether {} is in use", lock_file.display())
+        }),
     }
 }
 
 fn copy_path(src: &Path, dst: &Path) -> Result<u64> {
-    let md = std::fs::metadata(src).with_context(|| format!("reading {}", src.display()))?;
+    let md =
+        std::fs::metadata(src).with_context(|| format!("reading {}", src.display()))?;
     if md.is_file() {
         if let Some(parent) = dst.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)?;
         }
-        return std::fs::copy(src, dst).with_context(|| format!("copying {} -> {}", src.display(), dst.display()));
+        return std::fs::copy(src, dst)
+            .with_context(|| format!("copying {} -> {}", src.display(), dst.display()));
     }
-    std::fs::create_dir_all(dst).with_context(|| format!("creating {}", dst.display()))?;
+    std::fs::create_dir_all(dst)
+        .with_context(|| format!("creating {}", dst.display()))?;
     let mut n = 0;
     for e in std::fs::read_dir(src)? {
         let e = e?;
@@ -265,7 +272,11 @@ fn rename_patiently(from: &Path, to: &Path) -> Result<()> {
                 tries += 1;
                 std::thread::sleep(Duration::from_millis(100));
             }
-            Err(e) => return Err(e).with_context(|| format!("renaming {} -> {}", from.display(), to.display())),
+            Err(e) => {
+                return Err(e).with_context(|| {
+                    format!("renaming {} -> {}", from.display(), to.display())
+                })
+            }
         }
     }
 }
@@ -356,7 +367,10 @@ pub(crate) fn default_target(db_path: &Path, to: Backend) -> PathBuf {
 ///    every row in the target's encoding, or only decode it), verify again,
 ///    and only then rename it into place (or, dry run, delete it). A failed
 ///    or interrupted run leaves no target; running it again starts over.
-pub(crate) fn migrate(o: &MigrateOpts, mut say: impl FnMut(&str)) -> Result<MigrateReport> {
+pub(crate) fn migrate(
+    o: &MigrateOpts,
+    mut say: impl FnMut(&str),
+) -> Result<MigrateReport> {
     if o.from == o.to {
         bail!("--migrate-storage {} {}: nothing to convert", o.from, o.to)
     }
@@ -366,12 +380,17 @@ pub(crate) fn migrate(o: &MigrateOpts, mut say: impl FnMut(&str)) -> Result<Migr
     }
     let target = o.into.clone().unwrap_or_else(|| default_target(&o.db_path, o.to));
     if target == src || (o.to == Backend::Sled && target == o.db_path) {
-        bail!("refusing to convert into {} (that is a live database location)", target.display())
+        bail!(
+            "refusing to convert into {} (that is a live database location)",
+            target.display()
+        )
     }
     ensure_not_in_use(&src, o.from)?;
     let source_bytes = size_of(&src);
-    let work_dir = target.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
-    std::fs::create_dir_all(work_dir).with_context(|| format!("creating {}", work_dir.display()))?;
+    let work_dir =
+        target.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    std::fs::create_dir_all(work_dir)
+        .with_context(|| format!("creating {}", work_dir.display()))?;
     // the staging copy plus a target of about the same size
     if let Some(free) = crate::maint::disk_free(work_dir) {
         let need = source_bytes.saturating_mul(2) + (64 << 20);
@@ -389,7 +408,12 @@ pub(crate) fn migrate(o: &MigrateOpts, mut say: impl FnMut(&str)) -> Result<Migr
 
     let staging = with_suffix(&target, ".staging-source");
     remove_patiently(&staging)?;
-    say(&format!("copying {} ({} MB) to {}", src.display(), source_bytes >> 20, staging.display()));
+    say(&format!(
+        "copying {} ({} MB) to {}",
+        src.display(),
+        source_bytes >> 20,
+        staging.display()
+    ));
     copy_path(&src, &staging)?;
     let result = migrate_from_staging(o, &src, &staging, &target, source_bytes, &mut say);
     if let Err(e) = remove_patiently(&staging) {
@@ -408,7 +432,11 @@ fn migrate_from_staging(
 ) -> Result<MigrateReport> {
     let source = open_engine(staging, o.from)?;
     if target.exists() && !o.dry_run {
-        say(&format!("{} already exists: verifying it against {}", target.display(), src.display()));
+        say(&format!(
+            "{} already exists: verifying it against {}",
+            target.display(),
+            src.display()
+        ));
         let dst = open_engine(target, o.to)?;
         let last = convert::verify(&source, &dst, true, SAMPLE_EVERY)?;
         let typed = StatsDb::reencode_store(&dst, true)?;
@@ -439,13 +467,24 @@ fn migrate_from_staging(
         if !exact.ok() {
             bail!("the copy does not match its source: {:?}", exact.mismatches)
         }
-        say(&format!("copied and verified {} pairs in {} trees", copied.pairs, copied.trees.len()));
+        say(&format!(
+            "copied and verified {} pairs in {} trees",
+            copied.pairs,
+            copied.trees.len()
+        ));
         let rewrite = !o.keep_encoding;
-        say(if rewrite { "re-encoding rows with bfdb's types" } else { "decoding every row with bfdb's types" });
+        say(if rewrite {
+            "re-encoding rows with bfdb's types"
+        } else {
+            "decoding every row with bfdb's types"
+        });
         let typed = StatsDb::reencode_store(&dst, !rewrite)?;
         let last = convert::verify(&source, &dst, true, SAMPLE_EVERY)?;
         if !last.ok() {
-            bail!("after re-encoding, the copy does not match its source: {:?}", last.mismatches)
+            bail!(
+                "after re-encoding, the copy does not match its source: {:?}",
+                last.mismatches
+            )
         }
         dst.flush()?;
         drop(dst);
@@ -453,7 +492,12 @@ fn migrate_from_staging(
             // the copy and then the rewrite of every row leave about a
             // database's worth of free pages in the file
             let (before, after) = compact_patiently(&work)?;
-            say(&format!("compacted {}: {} MB -> {} MB", work.display(), before >> 20, after >> 20));
+            say(&format!(
+                "compacted {}: {} MB -> {} MB",
+                work.display(),
+                before >> 20,
+                after >> 20
+            ));
         }
         Ok(MigrateReport {
             source: src.to_path_buf(),
@@ -487,7 +531,9 @@ fn migrate_from_staging(
 /// `--migrate-storage FROM TO`: run it and print the report. Returns the
 /// process exit code.
 pub(crate) fn migrate_cli(args: &StorageArgs, db_path: &Path) -> i32 {
-    let Some([from, to]) = args.migrate_storage.as_deref().map(|v| [v[0], v[1]]) else { return 2 };
+    let Some([from, to]) = args.migrate_storage.as_deref().map(|v| [v[0], v[1]]) else {
+        return 2;
+    };
     let o = MigrateOpts {
         db_path: db_path.to_path_buf(),
         from,
@@ -518,7 +564,11 @@ pub(crate) fn render(o: &MigrateOpts, rep: &MigrateReport) -> String {
     use std::fmt::Write as _;
     let mut s = String::new();
     let _ = writeln!(s);
-    let _ = writeln!(s, "{:<28} {:>10} {:>10} {:>10} {:>11}", "tree", "rows", "rewritten", "undecoded", "unverified");
+    let _ = writeln!(
+        s,
+        "{:<28} {:>10} {:>10} {:>10} {:>11}",
+        "tree", "rows", "rewritten", "undecoded", "unverified"
+    );
     let counts: std::collections::HashMap<&str, u64> =
         rep.copied.trees.iter().map(|(n, c)| (n.as_str(), *c)).collect();
     let mut total = ReencodeStats::default();
@@ -572,21 +622,39 @@ pub(crate) fn render(o: &MigrateOpts, rep: &MigrateReport) -> String {
     let _ = writeln!(
         s,
         "verify: {} trees, {} pairs, {} point lookups, {} re-encoded, {} mismatches",
-        rep.last.trees, rep.last.pairs, rep.last.lookups, rep.last.reencoded, rep.last.mismatch_count
+        rep.last.trees,
+        rep.last.pairs,
+        rep.last.lookups,
+        rep.last.reencoded,
+        rep.last.mismatch_count
     );
     for m in &rep.last.mismatches {
         let _ = writeln!(s, "  mismatch: {m:?}");
     }
-    let _ = writeln!(s, "size: source {} MB, target {} MB", rep.source_bytes >> 20, rep.target_bytes >> 20);
+    let _ = writeln!(
+        s,
+        "size: source {} MB, target {} MB",
+        rep.source_bytes >> 20,
+        rep.target_bytes >> 20
+    );
     let _ = writeln!(s);
     if !rep.last.ok() {
-        let _ = writeln!(s, "FAILED: the target does not match the source. Do not start bfdb on it.");
+        let _ = writeln!(
+            s,
+            "FAILED: the target does not match the source. Do not start bfdb on it."
+        );
     } else if o.dry_run {
         let _ = writeln!(s, "dry run OK: the conversion works. Nothing was kept; run without --migrate-dry-run to do it.");
     } else if rep.verified_existing {
-        let _ = writeln!(s, "OK: {} matches {}.", rep.target.display(), rep.source.display());
+        let _ =
+            writeln!(s, "OK: {} matches {}.", rep.target.display(), rep.source.display());
     } else {
-        let _ = writeln!(s, "OK: wrote {}. {} was not modified.", rep.target.display(), rep.source.display());
+        let _ = writeln!(
+            s,
+            "OK: wrote {}. {} was not modified.",
+            rep.target.display(),
+            rep.source.display()
+        );
         match o.to {
             Backend::Redb => {
                 let _ = writeln!(s, "Start bfdb with --storage redb (or $BFDB_STORAGE=redb) to run on it.");

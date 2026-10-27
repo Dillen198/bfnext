@@ -96,10 +96,7 @@ impl Task {
             }
         }
         s.push_str(&format_compact!("\nposted by {}", self.created_by_name));
-        s.push_str(&format_compact!(
-            "\nposted {}",
-            self.created.format("%H:%MZ")
-        ));
+        s.push_str(&format_compact!("\nposted {}", self.created.format("%H:%MZ")));
         if let Some(exp) = self.expires.as_ref() {
             s.push_str(&format_compact!("\nexpires {}", exp.format("%H:%MZ")));
         }
@@ -125,11 +122,7 @@ fn cardinal(deg: f64) -> &'static str {
 impl Db {
     /// Every open task belonging to `side`, oldest first.
     pub fn tasks(&self, side: Side) -> impl Iterator<Item = &Task> {
-        self.persisted
-            .tasks
-            .into_iter()
-            .map(|(_, t)| t)
-            .filter(move |t| t.side == side)
+        self.persisted.tasks.into_iter().map(|(_, t)| t).filter(move |t| t.side == side)
     }
 
     /// Describe a point as "<distance> <cardinal> of <nearest objective>",
@@ -226,7 +219,9 @@ impl Db {
             .clone();
         let open = self.tasks(side).count();
         if open >= cfg.max_per_side {
-            bail!("{side} already has {open} tasks on the board, remove one before posting another")
+            bail!(
+                "{side} already has {open} tasks on the board, remove one before posting another"
+            )
         }
         // Two people noticing the same problem shouldn't double post it.
         if let Some(oid) = oid.as_ref()
@@ -290,11 +285,8 @@ impl Db {
         ucid: Option<Ucid>,
         id: &TaskId,
     ) -> Result<Task> {
-        let task = self
-            .persisted
-            .tasks
-            .get(id)
-            .ok_or_else(|| anyhow!("no such task {id}"))?;
+        let task =
+            self.persisted.tasks.get(id).ok_or_else(|| anyhow!("no such task {id}"))?;
         if task.side != side {
             bail!("task {id} does not belong to {side}")
         }
@@ -319,7 +311,8 @@ impl Db {
             .remove_cow(id)
             .ok_or_else(|| anyhow!("no such task {id}"))?;
         self.ephemeral.dirty();
-        let msg = format_compact!("TASK CANCELLED: {} {} by {by}", task.kind, task.location);
+        let msg =
+            format_compact!("TASK CANCELLED: {} {} by {by}", task.kind, task.location);
         self.ephemeral.msgs().panel_to_side(15, false, side, msg);
         Ok(task)
     }
@@ -386,9 +379,7 @@ impl Db {
                         task.location
                     ),
                 };
-                self.ephemeral
-                    .msgs()
-                    .panel_to_side(15, false, task.side, msg);
+                self.ephemeral.msgs().panel_to_side(15, false, task.side, msg);
             }
         }
         self.ephemeral.dirty();

@@ -16,7 +16,9 @@ use super::{
     host::EngineHost,
     link::{self, Msg, Op, Peer, RemoteErr, PROTOCOL},
 };
-use crate::{instance::InstanceId, news_image::ImageCfg, news_llm::WriterCfg, LogHistory};
+use crate::{
+    instance::InstanceId, news_image::ImageCfg, news_llm::WriterCfg, LogHistory,
+};
 use futures::{SinkExt, StreamExt};
 use std::{
     collections::{HashMap, VecDeque},
@@ -40,7 +42,11 @@ impl Link {
         self.current.lock().unwrap().clone()
     }
 
-    pub(crate) async fn call(&self, make: impl FnOnce(u64) -> Msg, timeout: Duration) -> Result<serde_json::Value, RemoteErr> {
+    pub(crate) async fn call(
+        &self,
+        make: impl FnOnce(u64) -> Msg,
+        timeout: Duration,
+    ) -> Result<serde_json::Value, RemoteErr> {
         match self.peer() {
             Some(p) => p.call(make, timeout).await,
             None => Err(RemoteErr::link("not connected to bfdb")),
@@ -71,7 +77,11 @@ pub(crate) struct Services {
 }
 
 pub(crate) async fn run(args: crate::Args) -> anyhow::Result<()> {
-    log::info!("bfdb worker v{} git:{} -- voice and model services, no database", crate::BUILD_VERSION, crate::BUILD_GIT);
+    log::info!(
+        "bfdb worker v{} git:{} -- voice and model services, no database",
+        crate::BUILD_VERSION,
+        crate::BUILD_GIT
+    );
     let registry = crate::registry_from_args(&args)?;
     let link = Arc::new(Link::default());
     let multi = registry.all().len() > 1;
@@ -86,7 +96,11 @@ pub(crate) async fn run(args: crate::Args) -> anyhow::Result<()> {
         gci.insert(id, (tx, Arc::new(Mutex::new(VecDeque::new())) as LogHistory));
         hosts.push((EngineHost::remote(cfg.clone(), multi, link.clone()), c));
     }
-    let news_writer = WriterCfg::resolve(args.news_llm_url.clone(), args.news_llm_key.clone(), args.news_llm_model.clone());
+    let news_writer = WriterCfg::resolve(
+        args.news_llm_url.clone(),
+        args.news_llm_key.clone(),
+        args.news_llm_model.clone(),
+    );
     let hq_writer = crate::hq_writer_cfg(&crate::HqFlags::of(&args), &news_writer);
     let images = match ImageCfg::resolve(crate::news_image_args(&args, false)) {
         Ok(c) => c.map(Arc::new),
@@ -151,10 +165,13 @@ async fn session(
 ) -> anyhow::Result<()> {
     let mut req = url.into_client_request()?;
     req.headers_mut().insert("authorization", format!("Bearer {secret}").parse()?);
-    let (ws, _) = tokio::time::timeout(Duration::from_secs(10), tokio_tungstenite::connect_async(req))
-        .await
-        .map_err(|_| anyhow::anyhow!("connecting to {url} timed out"))?
-        .map_err(|e| anyhow::anyhow!("connecting to {url}: {e}"))?;
+    let (ws, _) = tokio::time::timeout(
+        Duration::from_secs(10),
+        tokio_tungstenite::connect_async(req),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("connecting to {url} timed out"))?
+    .map_err(|e| anyhow::anyhow!("connecting to {url}: {e}"))?;
     let (mut sink, mut stream) = ws.split();
     let hello = Msg::Hello {
         protocol: PROTOCOL,
@@ -164,7 +181,8 @@ async fn session(
         news_draw: svc.images.is_some(),
     };
     sink.send(Message::text(serde_json::to_string(&hello)?)).await?;
-    let welcome = match tokio::time::timeout(Duration::from_secs(10), stream.next()).await {
+    let welcome = match tokio::time::timeout(Duration::from_secs(10), stream.next()).await
+    {
         Ok(Some(Ok(Message::Text(t)))) => serde_json::from_str::<Msg>(t.as_str()).ok(),
         Ok(Some(Ok(Message::Close(c)))) => anyhow::bail!("bfdb closed the link: {c:?}"),
         _ => None,
@@ -248,10 +266,12 @@ async fn session(
 /// and the forwarders that carry their output to bfdb.
 fn start_services(svc: &Arc<Services>, link: &Arc<Link>) {
     for (host, gci_cfg) in &svc.hosts {
-        let (tx, hist) = svc.gci.get(&host.id).cloned().expect("a transcript per instance");
+        let (tx, hist) =
+            svc.gci.get(&host.id).cloned().expect("a transcript per instance");
         // GCI transcript lines, as /ws/gci sends them.
         {
-            let (mut rx, link, inst) = (tx.subscribe(), link.clone(), host.id.to_string());
+            let (mut rx, link, inst) =
+                (tx.subscribe(), link.clone(), host.id.to_string());
             tokio::spawn(async move {
                 loop {
                     match rx.recv().await {
@@ -266,7 +286,11 @@ fn start_services(svc: &Arc<Services>, link: &Arc<Link>) {
             // The range ATC's live feed. Subscribing also makes the feed
             // play (it is silent with no listener): bfdb's listeners are not
             // visible from here.
-            let (mut rx, link, inst) = (crate::milatc::live::subscribe(&host.id), link.clone(), host.id.to_string());
+            let (mut rx, link, inst) = (
+                crate::milatc::live::subscribe(&host.id),
+                link.clone(),
+                host.id.to_string(),
+            );
             tokio::spawn(async move {
                 use crate::milatc::live::Frame;
                 loop {
@@ -278,10 +302,13 @@ fn start_services(svc: &Arc<Services>, link: &Arc<Link>) {
                                 who: who.to_string(),
                                 text: text.to_string(),
                             }),
-                            Frame::Off { station } => {
-                                link.send(&Msg::LiveOff { inst: inst.clone(), station: station.to_string() })
+                            Frame::Off { station } => link.send(&Msg::LiveOff {
+                                inst: inst.clone(),
+                                station: station.to_string(),
+                            }),
+                            Frame::Audio { station, pcm } => {
+                                link.send_binary(link::audio_frame(&inst, station, pcm))
                             }
-                            Frame::Audio { station, pcm } => link.send_binary(link::audio_frame(&inst, station, pcm)),
                         },
                         Err(broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(_) => break,
@@ -307,25 +334,39 @@ async fn answer(svc: &Services, op: Op) -> Result<serde_json::Value, RemoteErr> 
     let b64 = base64::engine::general_purpose::STANDARD;
     match op {
         Op::GciTransmit { inst, side, text } => {
-            let side = if side == "red" { dcso3::coalition::Side::Red } else { dcso3::coalition::Side::Blue };
+            let side = if side == "red" {
+                dcso3::coalition::Side::Red
+            } else {
+                dcso3::coalition::Side::Blue
+            };
             crate::gci::human_call(&inst, side, &text)
                 .map(|_| serde_json::Value::Null)
                 .map_err(|e| RemoteErr::new(400, e))
         }
-        Op::AtcTranscript { inst, since } => Ok(crate::milatc::transcript_json(&inst, since)),
+        Op::AtcTranscript { inst, since } => {
+            Ok(crate::milatc::transcript_json(&inst, since))
+        }
         Op::AtcAudio { inst, id } => match crate::milatc::audio_wav(&inst, id) {
             Some(w) => Ok(serde_json::json!({ "wav": b64.encode(&**w) })),
-            None => Err(RemoteErr::new(404, "that transmission's audio is no longer kept")),
+            None => {
+                Err(RemoteErr::new(404, "that transmission's audio is no longer kept"))
+            }
         },
         Op::NewsWrite { digest, history } => {
             let Some(w) = svc.news_writer.clone() else {
-                return Err(RemoteErr::new(0, "this worker has no diary writer configured"));
+                return Err(RemoteErr::new(
+                    0,
+                    "this worker has no diary writer configured",
+                ));
             };
-            let r = tokio::task::spawn_blocking(move || crate::news_llm::write_dispatch(&w, &digest, &history))
-                .await
-                .map_err(|e| RemoteErr::new(0, format!("writer task died: {e}")))?;
+            let r = tokio::task::spawn_blocking(move || {
+                crate::news_llm::write_dispatch(&w, &digest, &history)
+            })
+            .await
+            .map_err(|e| RemoteErr::new(0, format!("writer task died: {e}")))?;
             match r {
-                Ok(out) => serde_json::to_value(out).map_err(|e| RemoteErr::new(0, e.to_string())),
+                Ok(out) => serde_json::to_value(out)
+                    .map_err(|e| RemoteErr::new(0, e.to_string())),
                 Err(e) => Err(match e.downcast_ref::<crate::news_llm::RateLimited>() {
                     Some(rl) => RemoteErr {
                         rate_limited: true,
@@ -338,14 +379,25 @@ async fn answer(svc: &Services, op: Op) -> Result<serde_json::Value, RemoteErr> 
         }
         Op::NewsDraw { prompt } => {
             let Some(cfg) = svc.images.clone() else {
-                return Err(RemoteErr::new(0, "this worker has no picture provider configured"));
+                return Err(RemoteErr::new(
+                    0,
+                    "this worker has no picture provider configured",
+                ));
             };
-            let r = tokio::task::spawn_blocking(move || crate::news_image::draw(&cfg, &prompt))
-                .await
-                .map_err(|e| RemoteErr::new(0, format!("picture task died: {e}")))?;
+            let r = tokio::task::spawn_blocking(move || {
+                crate::news_image::draw(&cfg, &prompt)
+            })
+            .await
+            .map_err(|e| RemoteErr::new(0, format!("picture task died: {e}")))?;
             match r {
-                Ok((bytes, by)) => Ok(serde_json::json!({ "b64": b64.encode(bytes), "by": by })),
-                Err(e) => Err(RemoteErr { billed: e.billed, rate_limited: e.rate_limited, ..RemoteErr::new(0, e.msg) }),
+                Ok((bytes, by)) => {
+                    Ok(serde_json::json!({ "b64": b64.encode(bytes), "by": by }))
+                }
+                Err(e) => Err(RemoteErr {
+                    billed: e.billed,
+                    rate_limited: e.rate_limited,
+                    ..RemoteErr::new(0, e.msg)
+                }),
             }
         }
     }
@@ -356,11 +408,23 @@ pub(crate) fn test_services(
     hosts: Vec<(EngineHost, Option<crate::gci::GciConfig>)>,
     gci: HashMap<InstanceId, (broadcast::Sender<String>, LogHistory)>,
 ) -> Arc<Services> {
-    Arc::new(Services { hosts, gci, news_writer: None, hq_writer: None, hq_every: Duration::from_secs(60), images: None })
+    Arc::new(Services {
+        hosts,
+        gci,
+        news_writer: None,
+        hq_writer: None,
+        hq_every: Duration::from_secs(60),
+        images: None,
+    })
 }
 
 #[cfg(test)]
-pub(crate) async fn test_session(url: String, secret: String, svc: Arc<Services>, link: Arc<Link>) -> anyhow::Result<()> {
+pub(crate) async fn test_session(
+    url: String,
+    secret: String,
+    svc: Arc<Services>,
+    link: Arc<Link>,
+) -> anyhow::Result<()> {
     let mut started = false;
     session(&url, &secret, &svc, &link, &mut started).await
 }

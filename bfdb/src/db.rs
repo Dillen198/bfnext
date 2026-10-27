@@ -30,7 +30,6 @@ use netidx_archive::{
 };
 
 use serde::{Deserialize, Serialize};
-use yats::Db;
 use smallvec::SmallVec;
 use std::{
     collections::{Bound, HashMap, HashSet, VecDeque},
@@ -46,6 +45,7 @@ use std::{
 };
 use tokio::{sync::broadcast, task};
 use uuid::Uuid;
+use yats::Db;
 use yats::Tree;
 
 use crate::instance::{InstanceCfg, InstanceId, Registry};
@@ -184,10 +184,10 @@ pub(crate) struct SortieDeploy {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct BanRecord {
-    pub(crate) name:      std::string::String,
+    pub(crate) name: std::string::String,
     pub(crate) banned_at: DateTime<Utc>,
-    pub(crate) until:     Option<DateTime<Utc>>,
-    pub(crate) reason:    std::string::String,
+    pub(crate) until: Option<DateTime<Utc>>,
+    pub(crate) reason: std::string::String,
 }
 
 // ── Wiki (bfwiki) types ───────────────────────────────────────────────
@@ -198,10 +198,10 @@ pub(crate) struct BanRecord {
 /// fields sorted client-side.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WikiPage {
-    pub(crate) title:      std::string::String,
-    pub(crate) section:    std::string::String,
-    pub(crate) order:      i32,
-    pub(crate) content:    std::string::String,
+    pub(crate) title: std::string::String,
+    pub(crate) section: std::string::String,
+    pub(crate) order: i32,
+    pub(crate) content: std::string::String,
     pub(crate) updated_at: DateTime<Utc>,
     pub(crate) updated_by: std::string::String,
 }
@@ -213,9 +213,9 @@ pub(crate) struct WikiPage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WikiImage {
     pub(crate) content_type: std::string::String,
-    pub(crate) data:         Vec<u8>,
-    pub(crate) uploaded_at:  DateTime<Utc>,
-    pub(crate) uploaded_by:  std::string::String,
+    pub(crate) data: Vec<u8>,
+    pub(crate) uploaded_at: DateTime<Utc>,
+    pub(crate) uploaded_by: std::string::String,
 }
 
 // ── Recon intel (TARPS) types ─────────────────────────────────────────
@@ -227,27 +227,27 @@ pub(crate) struct WikiImage {
 /// coalitions doesn't drag their old photos across with them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct IntelCapture {
-    pub(crate) round:            RoundId,
-    pub(crate) side:             Side,        // Blue | Red -- owning coalition
-    pub(crate) image_id:         Uuid,        // -> intel_images
-    pub(crate) uploaded_by:      std::string::String, // session discord_id
+    pub(crate) round: RoundId,
+    pub(crate) side: Side,     // Blue | Red -- owning coalition
+    pub(crate) image_id: Uuid, // -> intel_images
+    pub(crate) uploaded_by: std::string::String, // session discord_id
     pub(crate) uploaded_by_name: std::string::String, // pilot display name (best effort)
-    pub(crate) uploaded_at:      DateTime<Utc>,
-    pub(crate) captured_at:      Option<DateTime<Utc>>, // from the filename, if present
-    pub(crate) filename:         std::string::String,
+    pub(crate) uploaded_at: DateTime<Utc>,
+    pub(crate) captured_at: Option<DateTime<Utc>>, // from the filename, if present
+    pub(crate) filename: std::string::String,
     /// false -> the filename couldn't be parsed for coordinates; the client
     /// must drop this capture on the map manually before it renders.
-    pub(crate) placed:           bool,
-    pub(crate) lat:              f64,
-    pub(crate) lon:              f64,
-    pub(crate) alt_ft:           Option<f64>,
-    pub(crate) heading_deg:      Option<f64>,
-    pub(crate) pitch_deg:        Option<f64>,
-    pub(crate) roll_deg:         Option<f64>,
+    pub(crate) placed: bool,
+    pub(crate) lat: f64,
+    pub(crate) lon: f64,
+    pub(crate) alt_ft: Option<f64>,
+    pub(crate) heading_deg: Option<f64>,
+    pub(crate) pitch_deg: Option<f64>,
+    pub(crate) roll_deg: Option<f64>,
     /// Opaque manual-nudge state set by the client (Phase 2 warp editor).
     /// Persisted verbatim so edits survive reload; bfdb never interprets it.
-    pub(crate) adjust:           Option<IntelAdjust>,
-    pub(crate) note:             Option<std::string::String>,
+    pub(crate) adjust: Option<IntelAdjust>,
+    pub(crate) note: Option<std::string::String>,
 }
 
 /// Manual alignment set by the client's warp editor. `corners`, when present,
@@ -268,16 +268,16 @@ pub(crate) struct IntelAdjust {
 /// points; x/text: a single anchor).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct IntelMarkup {
-    pub(crate) round:   RoundId,
-    pub(crate) side:    Side,
-    pub(crate) kind:    std::string::String,
-    pub(crate) points:  Vec<[f64; 2]>,
-    pub(crate) color:   std::string::String,
-    pub(crate) width:   f64,
-    pub(crate) text:    Option<std::string::String>,
-    pub(crate) by:      std::string::String,      // discord_id
+    pub(crate) round: RoundId,
+    pub(crate) side: Side,
+    pub(crate) kind: std::string::String,
+    pub(crate) points: Vec<[f64; 2]>,
+    pub(crate) color: std::string::String,
+    pub(crate) width: f64,
+    pub(crate) text: Option<std::string::String>,
+    pub(crate) by: std::string::String, // discord_id
     pub(crate) by_name: std::string::String,
-    pub(crate) at:      DateTime<Utc>,
+    pub(crate) at: DateTime<Utc>,
 }
 
 /// Index row for an uploaded recon photo, keyed by `IntelCapture.image_id`
@@ -287,7 +287,7 @@ pub(crate) struct IntelMarkup {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct IntelImage {
     pub(crate) content_type: std::string::String,
-    pub(crate) data:         Option<Vec<u8>>,
+    pub(crate) data: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -309,7 +309,7 @@ pub(crate) struct WeatherSnapshot {
 /// embedded in bfdb, so a bare "/" redirect only ever lands on bfdb itself).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct OAuthState {
-    pub(crate) expires:   DateTime<Utc>,
+    pub(crate) expires: DateTime<Utc>,
     pub(crate) return_to: Option<std::string::String>,
 }
 
@@ -317,14 +317,14 @@ pub(crate) struct OAuthState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SessionData {
     pub(crate) discord_id: std::string::String,
-    pub(crate) username:   std::string::String,
-    pub(crate) avatar:     Option<std::string::String>,
-    pub(crate) is_admin:   bool,
-    pub(crate) expires:    DateTime<Utc>,
+    pub(crate) username: std::string::String,
+    pub(crate) avatar: Option<std::string::String>,
+    pub(crate) is_admin: bool,
+    pub(crate) expires: DateTime<Utc>,
     /// `crate::admin::Role` bits. A full admin has every one; a player none.
     /// (Rows of the old `auth_sessions` tree predate this field -- see
     /// `LegacySessionData`.)
-    pub(crate) roles:      u8,
+    pub(crate) roles: u8,
 }
 
 /// The layout of the pre-hash `auth_sessions` tree, keyed by the raw cookie
@@ -332,10 +332,10 @@ pub(crate) struct SessionData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LegacySessionData {
     discord_id: std::string::String,
-    username:   std::string::String,
-    avatar:     Option<std::string::String>,
-    is_admin:   bool,
-    expires:    DateTime<Utc>,
+    username: std::string::String,
+    avatar: Option<std::string::String>,
+    is_admin: bool,
+    expires: DateTime<Utc>,
 }
 
 /// Sessions are keyed by this digest of the cookie id, never the id itself:
@@ -365,16 +365,17 @@ pub(crate) const AUDIT_KEEP: usize = 50_000;
 
 /// Trees a backup leaves out: live credentials. Restoring a backup just
 /// means everyone logs in again.
-pub(crate) const BACKUP_EXCLUDED_TREES: &[&str] = &["auth_sessions", "auth_sessions_h", "auth_states"];
+pub(crate) const BACKUP_EXCLUDED_TREES: &[&str] =
+    &["auth_sessions", "auth_sessions_h", "auth_states"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct TrailPoint {
     pub(crate) unit_id: std::string::String,
-    pub(crate) lat:     f64,
-    pub(crate) lon:     f64,
-    pub(crate) alt:     f64,
-    pub(crate) hdg:     f64,
-    pub(crate) ts:      i64,
+    pub(crate) lat: f64,
+    pub(crate) lon: f64,
+    pub(crate) alt: f64,
+    pub(crate) hdg: f64,
+    pub(crate) ts: i64,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
@@ -465,9 +466,11 @@ pub(crate) struct Objective {
 /// like) spectators, no slot at all, or a slot not yet born.
 fn off_slot_vehicle(slot: Option<SlotId>) -> Vehicle {
     match slot {
-        Some(SlotId::ArtilleryCommander(..) | SlotId::ForwardObserver(..) | SlotId::Observer(..)) => {
-            Vehicle::from("Combined Arms")
-        }
+        Some(
+            SlotId::ArtilleryCommander(..)
+            | SlotId::ForwardObserver(..)
+            | SlotId::Observer(..),
+        ) => Vehicle::from("Combined Arms"),
         Some(SlotId::Instructor(..)) => Vehicle::from("Game Master"),
         _ => Vehicle::from("Off slot"),
     }
@@ -513,12 +516,11 @@ impl Pilots {
         k: (Ucid, Vehicle, RoundId),
         mut f: F,
     ) -> Result<()> {
-        self.aggregates
-            .fetch_and_update(&k, |a| {
-                let mut a = a.unwrap_or_default();
-                f(&mut a);
-                Some(a)
-            })?;
+        self.aggregates.fetch_and_update(&k, |a| {
+            let mut a = a.unwrap_or_default();
+            f(&mut a);
+            Some(a)
+        })?;
         Ok(())
     }
 
@@ -606,20 +608,22 @@ impl Pilots {
                 total: Aggregates::default(),
                 token: ArrayVec::new(),
             }),
-            Some(mut pilot) => match pilot.name.iter().enumerate().find(|(_, n)| name == **n) {
-                Some((i, _)) => {
-                    let last = pilot.name.len() - 1;
-                    pilot.name.swap(i, last);
-                    Some(pilot)
-                }
-                None => {
-                    if pilot.name.is_full() {
-                        let _ = pilot.name.pop_at(0);
+            Some(mut pilot) => {
+                match pilot.name.iter().enumerate().find(|(_, n)| name == **n) {
+                    Some((i, _)) => {
+                        let last = pilot.name.len() - 1;
+                        pilot.name.swap(i, last);
+                        Some(pilot)
                     }
-                    pilot.name.push(name.clone());
-                    Some(pilot)
+                    None => {
+                        if pilot.name.is_full() {
+                            let _ = pilot.name.pop_at(0);
+                        }
+                        pilot.name.push(name.clone());
+                        Some(pilot)
+                    }
                 }
-            },
+            }
         })?;
         self.by_name.update_and_fetch(&name, |ids| match ids {
             None => Some(ArrayVec::from_iter([id])),
@@ -721,7 +725,10 @@ pub(crate) struct StaleOverride {
 
 /// Compare two snapshots. Only range fields are compared -- display names and
 /// attributes churn across DCS patches for reasons nobody needs paging about.
-pub(crate) fn diff_unit_db(old: &UnitDbSnapshot, new: &UnitDbSnapshot) -> Vec<UnitDbChange> {
+pub(crate) fn diff_unit_db(
+    old: &UnitDbSnapshot,
+    new: &UnitDbSnapshot,
+) -> Vec<UnitDbChange> {
     let mut out = vec![];
     for (typ, n) in &new.by_type {
         match old.by_type.get(typ) {
@@ -818,7 +825,7 @@ struct StatCtxInner {
     public: bool,
     sortie: Scenario,
     round: RoundId,
-    seq: DateTime<Utc>
+    seq: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -848,8 +855,9 @@ impl StatCtx {
 pub(crate) struct InstanceState {
     /// Last /api/health engine probe: when, whether it answered, and why not.
     /// Shared so many dashboard tabs cost one RPC, not one each.
-    pub(crate) health_cache:
-        tokio::sync::Mutex<Option<(std::time::Instant, bool, Option<std::string::String>)>>,
+    pub(crate) health_cache: tokio::sync::Mutex<
+        Option<(std::time::Instant, bool, Option<std::string::String>)>,
+    >,
     /// Static config this instance was started with.
     pub(crate) cfg: Arc<InstanceCfg>,
     /// `cfg.id`, pre-shared for cheap cloning into keys and log lines.
@@ -896,7 +904,12 @@ pub(crate) struct InstanceState {
     rpc_failures: StdMutex<(u32, Option<std::time::Instant>)>,
     /// Per procedure: when a late reply was last logged, the worst since,
     /// and how many (`note_slow_rpc`).
-    slow_rpcs: StdMutex<std::collections::HashMap<std::string::String, (Option<std::time::Instant>, std::time::Duration, u32)>>,
+    slow_rpcs: StdMutex<
+        std::collections::HashMap<
+            std::string::String,
+            (Option<std::time::Instant>, std::time::Duration, u32),
+        >,
+    >,
     /// Subscribed engine RPC procedures, keyed by (sortie, proc name).
     ///
     /// `Proc::new` performs a resolver lookup and a subscription handshake, and
@@ -976,7 +989,11 @@ impl InstanceState {
             return true;
         }
         match g.1 {
-            Some(last) if last.elapsed() < std::time::Duration::from_secs(RPC_PROBE_SECS) => false,
+            Some(last)
+                if last.elapsed() < std::time::Duration::from_secs(RPC_PROBE_SECS) =>
+            {
+                false
+            }
             _ => {
                 g.1 = Some(std::time::Instant::now());
                 true
@@ -988,10 +1005,16 @@ impl InstanceState {
     /// Log a late reply, once a minute per procedure, with the worst seen.
     fn note_slow_rpc(&self, proc_name: &str, took: std::time::Duration) {
         let mut g = self.slow_rpcs.lock().unwrap();
-        let e = g.entry(proc_name.to_string()).or_insert((None, std::time::Duration::ZERO, 0));
+        let e = g.entry(proc_name.to_string()).or_insert((
+            None,
+            std::time::Duration::ZERO,
+            0,
+        ));
         e.1 = e.1.max(took);
         e.2 += 1;
-        if e.0.map_or(true, |t: std::time::Instant| t.elapsed() >= std::time::Duration::from_secs(60)) {
+        if e.0.map_or(true, |t: std::time::Instant| {
+            t.elapsed() >= std::time::Duration::from_secs(60)
+        }) {
             warn!(
                 "[{}] engine slow: {proc_name} answered after {} ms ({} slow replies, worst {} ms, since the last report)",
                 self.id,
@@ -1123,8 +1146,8 @@ pub(crate) struct StatsDbInner {
     /// `auth_sessions` at startup (`migrate_session_keys`).
     legacy_auth_sessions: Tree<Uuid, LegacySessionData>,
     /// Sessions keyed by `session_key(cookie id)`.
-    auth_sessions:    Tree<[u8; 32], SessionData>,
-    auth_states:      Tree<Uuid, OAuthState>,
+    auth_sessions: Tree<[u8; 32], SessionData>,
+    auth_states: Tree<Uuid, OAuthState>,
     // Trail history
     trail_points: Tree<(RoundId, std::string::String, i64), (f64, f64, f64, f64)>,
     // Capture counts per objective per round
@@ -1156,7 +1179,8 @@ pub(crate) struct StatsDbInner {
     /// War-diary pictures (`news_image.rs`), keyed (instance id, round, day).
     /// The state is JSON for the same reason `news` is; the bytes sit apart so
     /// listing a day's state never drags a few MB of PNG through the decoder.
-    news_image_meta: Tree<(std::string::String, RoundId, std::string::String), std::string::String>,
+    news_image_meta:
+        Tree<(std::string::String, RoundId, std::string::String), std::string::String>,
     news_image_data: Tree<(std::string::String, RoundId, std::string::String), Vec<u8>>,
     /// Image calls made per (instance id or "*" for all, UTC day) -- the
     /// daily cost caps.
@@ -1459,7 +1483,11 @@ fn read_jsonl_lines(
 /// of `live`: if the file the cursor points into has been renamed, read the
 /// rest of it, then every newer rotated file, then the live file from the
 /// top -- nothing lost, nothing read twice.
-fn jsonl_step(inst: &dyn std::fmt::Display, live: &Path, cur: JsonlCursor) -> Result<JsonlStep> {
+fn jsonl_step(
+    inst: &dyn std::fmt::Display,
+    live: &Path,
+    cur: JsonlCursor,
+) -> Result<JsonlStep> {
     fn step(
         kind: JsonlStepKind,
         stats: Vec<(DateTime<Utc>, Stat)>,
@@ -1484,17 +1512,30 @@ fn jsonl_step(inst: &dyn std::fmt::Display, live: &Path, cur: JsonlCursor) -> Re
                 Some(f) => Some(f),
                 None => {
                     return match live_len {
-                        None => step(JsonlStepKind::Missing("no such file".into()), vec![], cur, false),
-                        Some(len) => {
-                            step(JsonlStepKind::Replaced { len }, vec![], JsonlCursor::default(), true)
-                        }
+                        None => step(
+                            JsonlStepKind::Missing("no such file".into()),
+                            vec![],
+                            cur,
+                            false,
+                        ),
+                        Some(len) => step(
+                            JsonlStepKind::Replaced { len },
+                            vec![],
+                            JsonlCursor::default(),
+                            true,
+                        ),
                     };
                 }
             }
         }
         None => {
             let Some(len) = live_len else {
-                return step(JsonlStepKind::Missing("no such file".into()), vec![], cur, false);
+                return step(
+                    JsonlStepKind::Missing("no such file".into()),
+                    vec![],
+                    cur,
+                    false,
+                );
             };
             if cur.pos > len {
                 // An offset-only cursor (from before rotation existed) past
@@ -1505,7 +1546,12 @@ fn jsonl_step(inst: &dyn std::fmt::Display, live: &Path, cur: JsonlCursor) -> Re
                 }) {
                     Some(f) => Some(f),
                     None => {
-                        return step(JsonlStepKind::Replaced { len }, vec![], JsonlCursor::default(), true);
+                        return step(
+                            JsonlStepKind::Replaced { len },
+                            vec![],
+                            JsonlCursor::default(),
+                            true,
+                        );
                     }
                 }
             } else {
@@ -1520,7 +1566,10 @@ fn jsonl_step(inst: &dyn std::fmt::Display, live: &Path, cur: JsonlCursor) -> Re
             let (pos, stats) = read_jsonl_lines(inst, &file, cur.pos)?;
             let len = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(pos);
             if pos < len {
-                warn!("[{inst}] {file:?} ends in {} byte(s) of a torn record, skipped", len - pos);
+                warn!(
+                    "[{inst}] {file:?} ends in {} byte(s) of a torn record, skipped",
+                    len - pos
+                );
             }
             let next = jsonl_cursor_after(live, &file);
             step(JsonlStepKind::Rotated { from: file }, stats, next, true)
@@ -1532,10 +1581,20 @@ fn jsonl_step(inst: &dyn std::fmt::Display, live: &Path, cur: JsonlCursor) -> Re
             let fp = cur.fp.or(live_fp);
             if len < cur.pos {
                 // the same file, shorter than before: truncated in place
-                return step(JsonlStepKind::Replaced { len }, vec![], JsonlCursor::default(), true);
+                return step(
+                    JsonlStepKind::Replaced { len },
+                    vec![],
+                    JsonlCursor::default(),
+                    true,
+                );
             }
             if len == cur.pos {
-                return step(JsonlStepKind::Idle, vec![], JsonlCursor { pos: cur.pos, fp }, false);
+                return step(
+                    JsonlStepKind::Idle,
+                    vec![],
+                    JsonlCursor { pos: cur.pos, fp },
+                    false,
+                );
             }
             let (pos, stats) = read_jsonl_lines(inst, live, cur.pos)?;
             step(JsonlStepKind::Read, stats, JsonlCursor { pos, fp }, false)
@@ -1598,8 +1657,8 @@ impl Clone for StatsDb {
 fn copy_locked_file(src: &Path, dst: &Path) -> std::io::Result<()> {
     #[cfg(windows)]
     {
-        use std::os::windows::io::FromRawHandle;
         use std::os::windows::ffi::OsStrExt;
+        use std::os::windows::io::FromRawHandle;
         extern "system" {
             fn CreateFileW(
                 lpFileName: *const u16,
@@ -1618,7 +1677,8 @@ fn copy_locked_file(src: &Path, dst: &Path) -> std::io::Result<()> {
         const OPEN_EXISTING: u32 = 3;
         const INVALID_HANDLE_VALUE: isize = -1;
 
-        let wide_path: Vec<u16> = src.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let wide_path: Vec<u16> =
+            src.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
         let handle = unsafe {
             CreateFileW(
                 wide_path.as_ptr(),
@@ -1633,7 +1693,8 @@ fn copy_locked_file(src: &Path, dst: &Path) -> std::io::Result<()> {
         if handle == INVALID_HANDLE_VALUE {
             return Err(std::io::Error::last_os_error());
         }
-        let mut src_file = unsafe { std::fs::File::from_raw_handle(handle as *mut std::ffi::c_void) };
+        let mut src_file =
+            unsafe { std::fs::File::from_raw_handle(handle as *mut std::ffi::c_void) };
         let mut buf = Vec::new();
         src_file.read_to_end(&mut buf)?;
         let mut dst_file = std::fs::File::create(dst)?;
@@ -1724,9 +1785,6 @@ impl Deref for StatsDb {
     }
 }
 
-
-
-
 impl StatsDb {
     /// Open the database and start one ingestion pipeline per configured
     /// instance.
@@ -1811,11 +1869,15 @@ impl StatsDb {
     /// `yats::Tree::reencode`), or with `check_only` just decode every row,
     /// for `--migrate-storage`. Opens the trees with their types and nothing
     /// else: no migrations, no seeding, no background tasks.
-    pub(crate) fn reencode_store(db: &Db, check_only: bool) -> Result<Vec<(std::string::String, yats::ReencodeStats)>> {
+    pub(crate) fn reencode_store(
+        db: &Db,
+        check_only: bool,
+    ) -> Result<Vec<(std::string::String, yats::ReencodeStats)>> {
         let cfg: InstanceCfg = serde_json::from_value(serde_json::json!({
             "id": crate::instance::DEFAULT_INSTANCE,
         }))?;
-        let _trees = Self::open_trees(&HashMap::new(), db.clone(), Registry::single(cfg))?;
+        let _trees =
+            Self::open_trees(&HashMap::new(), db.clone(), Registry::single(cfg))?;
         db.reencode_all(check_only)
     }
 
@@ -1967,7 +2029,8 @@ impl StatsDb {
     /// working and the plain ids leave the database. Expired rows and rows
     /// that no longer decode are just dropped.
     fn migrate_session_keys(&self) -> Result<()> {
-        let keys: Vec<Uuid> = self.legacy_auth_sessions.iter().keys_only().filter_map(|k| k.ok()).collect();
+        let keys: Vec<Uuid> =
+            self.legacy_auth_sessions.iter().keys_only().filter_map(|k| k.ok()).collect();
         let now = Utc::now();
         let mut moved = 0usize;
         for id in keys {
@@ -2092,7 +2155,10 @@ impl StatsDb {
     }
 
     /// Resolve a `?instance=` query value to that instance's runtime state.
-    pub(crate) fn resolve_state(&self, requested: Option<&str>) -> Result<Arc<InstanceState>> {
+    pub(crate) fn resolve_state(
+        &self,
+        requested: Option<&str>,
+    ) -> Result<Arc<InstanceState>> {
         let cfg = self.0.instances.resolve(requested)?;
         let id: InstanceId = Arc::from(cfg.id.as_str());
         Ok(self.state(&id))
@@ -2112,12 +2178,19 @@ impl StatsDb {
     /// shared with everything else in the database and advanced in blocks of
     /// a million across restarts, so the ids read 0, then 108000656. They
     /// stay the key for every query; this is only what they are called.
-    pub(crate) fn round_numbers(&self) -> Result<std::collections::HashMap<RoundId, u32>> {
-        let mut by_inst: std::collections::HashMap<InstanceId, Vec<(DateTime<Utc>, RoundId)>> =
-            std::collections::HashMap::new();
+    pub(crate) fn round_numbers(
+        &self,
+    ) -> Result<std::collections::HashMap<RoundId, u32>> {
+        let mut by_inst: std::collections::HashMap<
+            InstanceId,
+            Vec<(DateTime<Utc>, RoundId)>,
+        > = std::collections::HashMap::new();
         for r in self.round.iter() {
             let ((_, rid), round) = r?;
-            by_inst.entry(self.round_instance_of(rid)).or_default().push((round.start, rid));
+            by_inst
+                .entry(self.round_instance_of(rid))
+                .or_default()
+                .push((round.start, rid));
         }
         let mut out = std::collections::HashMap::new();
         for (_, mut rounds) in by_inst {
@@ -2259,7 +2332,8 @@ impl StatsDb {
                 }
                 Err(e) => debug!("[{}] sortie discovery failed: {e:?}", inst.id),
             }
-            tokio::time::sleep(std::time::Duration::from_secs(SORTIE_DISCOVERY_SECS)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(SORTIE_DISCOVERY_SECS))
+                .await;
         }
     }
 
@@ -2308,8 +2382,8 @@ impl StatsDb {
     /// Stat::NewRound, and resubscribes if it changes (new mission/round).
     async fn engine_log_loop(self, inst: Arc<InstanceState>) -> Result<()> {
         use futures::{channel::mpsc, StreamExt};
-        use netidx::subscriber::{Event, UpdatesFlags};
         use netidx::publisher::Value;
+        use netidx::subscriber::{Event, UpdatesFlags};
 
         let (subscriber, base) = match (&inst.subscriber, &inst.base) {
             (Some(s), Some(b)) => (s.clone(), b.clone()),
@@ -2380,13 +2454,19 @@ impl StatsDb {
 
     /// Recent ERROR/WARN lines from the engine log, oldest first -- backs the
     /// admin dashboard's error feed (see api_admin_engine_errors in main.rs).
-    pub(crate) fn engine_error_snapshot(&self, inst: &InstanceState) -> Vec<std::string::String> {
+    pub(crate) fn engine_error_snapshot(
+        &self,
+        inst: &InstanceState,
+    ) -> Vec<std::string::String> {
         inst.engine_error_history.lock().unwrap().iter().cloned().collect()
     }
 
     /// Full in-memory engine-log backlog, oldest first (cap
     /// `ENGINE_LOG_HISTORY_CAP`). Backs `GET /api/logs/engine`.
-    pub(crate) fn engine_log_snapshot(&self, inst: &InstanceState) -> Vec<std::string::String> {
+    pub(crate) fn engine_log_snapshot(
+        &self,
+        inst: &InstanceState,
+    ) -> Vec<std::string::String> {
         inst.engine_log_history.lock().unwrap().iter().cloned().collect()
     }
 
@@ -2453,7 +2533,10 @@ impl StatsDb {
         // would wait out its timeout on a procedure bfrange never publishes,
         // and three of those open the breaker for the range's own calls too.
         if inst.cfg.is_range() && !RANGE_PROCS.contains(&proc_name) {
-            bail!("instance {:?} is a training range: it has no {proc_name}", inst.cfg.id);
+            bail!(
+                "instance {:?} is a training range: it has no {proc_name}",
+                inst.cfg.id
+            );
         }
         let (subscriber, base) = match (&inst.subscriber, &inst.base) {
             (Some(s), Some(b)) => (s, b),
@@ -2500,7 +2583,8 @@ impl StatsDb {
         // A timed-out caller does not cancel `proc.call`, it drops the whole
         // future -- so the outcome has to be recorded from a guard that runs on
         // drop, not from the code after the await (which never runs).
-        let mut guard = RpcOutcome { inst, reached: false, counted: guard_kind == RpcGuard::Counted };
+        let mut guard =
+            RpcOutcome { inst, reached: false, counted: guard_kind == RpcGuard::Counted };
         let started = std::time::Instant::now();
         let res = proc.call(args).await;
         // A reply carrying bflib's own error still means the engine is there;
@@ -2536,10 +2620,13 @@ impl StatsDb {
         let mut archive_cfg = ArchiveFileCfg::default();
         archive_cfg.archive_directory = stats_dir;
         archive_cfg.archive_cmds = None;
-        let archive_cfg = Arc::new(netidx_archive::config::Config::try_from(archive_cfg)?);
+        let archive_cfg =
+            Arc::new(netidx_archive::config::Config::try_from(archive_cfg)?);
 
-        let head_path = archive_cfg.archive_directory().join(shard.as_str()).join("current");
-        let head_copy_path = archive_cfg.archive_directory().join(shard.as_str()).join("current_copy");
+        let head_path =
+            archive_cfg.archive_directory().join(shard.as_str()).join("current");
+        let head_copy_path =
+            archive_cfg.archive_directory().join(shard.as_str()).join("current_copy");
         // Resume from wherever we last left off instead of always replaying
         // the entire historical archive from the beginning -- see
         // replay_cursor's doc comment on StatsDbInner.
@@ -2566,11 +2653,16 @@ impl StatsDb {
             // seeded from our own persisted/tracked position, sidesteps that
             // by forcing a correct re-derivation from the current head
             // snapshot each time.
-            let new_index = task::block_in_place(|| ArchiveIndex::new(&archive_cfg, &shard)).ok();
+            let new_index =
+                task::block_in_place(|| ArchiveIndex::new(&archive_cfg, &shard)).ok();
             let new_head = task::block_in_place(|| {
                 match copy_locked_file(&head_path, &head_copy_path) {
-                    Ok(()) => netidx_archive::logfile::ArchiveReader::open(&head_copy_path).ok(),
-                    Err(_) => netidx_archive::logfile::ArchiveReader::open(&head_path).ok(),
+                    Ok(()) => {
+                        netidx_archive::logfile::ArchiveReader::open(&head_copy_path).ok()
+                    }
+                    Err(_) => {
+                        netidx_archive::logfile::ArchiveReader::open(&head_path).ok()
+                    }
                 }
             });
             let Some(new_index) = new_index else { continue };
@@ -2623,7 +2715,8 @@ impl StatsDb {
                         // large backlog (e.g. a corrupted archive segment
                         // full of duplicate records) doesn't blow the log
                         // file up while it's replayed.
-                        let log_every = if total_batches <= 100_000 { 100 } else { 50_000 };
+                        let log_every =
+                            if total_batches <= 100_000 { 100 } else { 50_000 };
                         if total_batches <= 5 || total_batches % log_every == 0 {
                             info!("batch #{total_batches} ts={ts} items={} (total_items={total_items})", items.len());
                         }
@@ -2649,23 +2742,28 @@ impl StatsDb {
                                     }
                                 };
                                 if total_batches <= 3 {
-                                    let preview: std::string::String = s.chars().take(100).collect();
+                                    let preview: std::string::String =
+                                        s.chars().take(100).collect();
                                     info!("  raw[path_id={path_id:?}]: {preview}");
                                 }
                                 let st: Stat = match serde_json::from_str::<Stat>(&s) {
                                     Ok(s) => s,
                                     Err(e) => {
-                                        let preview: std::string::String = s.chars().take(200).collect();
+                                        let preview: std::string::String =
+                                            s.chars().take(200).collect();
                                         error!("failed to deserialize stat: {e}, raw: {preview}");
                                         continue;
                                     }
                                 };
                                 if total_batches <= 10 || total_batches % 100 == 0 {
-                                    info!("adding stat variant={}", stat_variant_name(&st));
+                                    info!(
+                                        "adding stat variant={}",
+                                        stat_variant_name(&st)
+                                    );
                                 }
-                                if let Err(e) =
-                                    task::block_in_place(|| self.add_stat(&inst, &mut ctx, ts, st))
-                                {
+                                if let Err(e) = task::block_in_place(|| {
+                                    self.add_stat(&inst, &mut ctx, ts, st)
+                                }) {
                                     error!("[{}] failed to add stat {e:?}", inst.id)
                                 }
                             }
@@ -2686,7 +2784,11 @@ impl StatsDb {
     /// The persisted reader position for `inst_key`: the fingerprinted
     /// cursor if there is one, else an offset-only cursor from
     /// `jsonl_cursor_v2`, else the start of the oldest file.
-    fn load_jsonl_cursor(&self, inst_key: &std::string::String, live: &Path) -> Result<JsonlCursor> {
+    fn load_jsonl_cursor(
+        &self,
+        inst_key: &std::string::String,
+        live: &Path,
+    ) -> Result<JsonlCursor> {
         if let Some(cur) = self.0.jsonl_file_cursor.get(inst_key)? {
             return Ok(cur);
         }
@@ -2698,7 +2800,11 @@ impl StatsDb {
 
     /// Persist the reader position. The offset also goes to
     /// `jsonl_cursor_v2`, which is what an older bfdb reads.
-    fn store_jsonl_cursor(&self, inst_key: &std::string::String, cur: &JsonlCursor) -> Result<()> {
+    fn store_jsonl_cursor(
+        &self,
+        inst_key: &std::string::String,
+        cur: &JsonlCursor,
+    ) -> Result<()> {
         self.0.jsonl_file_cursor.insert(inst_key, cur)?;
         self.0.jsonl_cursor.insert(inst_key, &cur.pos)?;
         Ok(())
@@ -2706,7 +2812,11 @@ impl StatsDb {
 
     /// Read stats from a JSONL file (one JSON object per line), following the
     /// engine's rotation of it (see `jsonl_step`).
-    async fn jsonl_loop(self, inst: Arc<InstanceState>, jsonl_path: PathBuf) -> Result<()> {
+    async fn jsonl_loop(
+        self,
+        inst: Arc<InstanceState>,
+        jsonl_path: PathBuf,
+    ) -> Result<()> {
         use tokio::time;
 
         let inst_key = inst.id.to_string();
@@ -2724,7 +2834,12 @@ impl StatsDb {
                     rounds.into_iter().find(|(_, _, r)| r.end.is_none())
                 {
                     if let Ok(Some(seq)) = self.seq.get(&(sortie.clone(), round)) {
-                        ctx.0 = Some(StatCtxInner { public: inst.cfg.counts_toward_totals(), sortie, round, seq });
+                        ctx.0 = Some(StatCtxInner {
+                            public: inst.cfg.counts_toward_totals(),
+                            sortie,
+                            round,
+                            seq,
+                        });
                     }
                 }
             }
@@ -2876,7 +2991,9 @@ impl StatsDb {
             if !step.stats.is_empty() {
                 let count = step.stats.len();
                 for (ts, st) in step.stats {
-                    if let Err(e) = task::block_in_place(|| self.add_stat(&inst, &mut ctx, ts, st)) {
+                    if let Err(e) =
+                        task::block_in_place(|| self.add_stat(&inst, &mut ctx, ts, st))
+                    {
                         warn!("[{}] failed to add stat from JSONL: {e:?}", inst.id);
                     }
                 }
@@ -2906,11 +3023,7 @@ impl StatsDb {
     ) -> Result<()> {
         let id = RoundId::new(&self.db)?;
         let key = (sortie.clone(), id);
-        let r = Round {
-            start,
-            end: None,
-            winner: None,
-        };
+        let r = Round { start, end: None, winner: None };
         info!("[{}] new_round: inserting round id={id:?} sortie={sortie:?}", inst.id);
         self.seq.insert(&key, &seqnum)?;
         self.round.insert(&key, &r)?;
@@ -2936,10 +3049,8 @@ impl StatsDb {
     ) -> Result<()> {
         let inner = ctx.get_mut()?;
         let key = (inner.sortie.clone(), inner.round);
-        let mut round = self
-            .round
-            .get(&key)?
-            .ok_or_else(|| anyhow!("round not found"))?;
+        let mut round =
+            self.round.get(&key)?.ok_or_else(|| anyhow!("round not found"))?;
         round.end = Some(time);
         round.winner = winner;
         let _ = self.round.insert(&key, &round)?;
@@ -2964,7 +3075,11 @@ impl StatsDb {
         Ok(())
     }
 
-    fn with_group<F: FnMut(&mut Group)>(&self, k: (RoundId, GroupId), mut f: F) -> Result<()> {
+    fn with_group<F: FnMut(&mut Group)>(
+        &self,
+        k: (RoundId, GroupId),
+        mut f: F,
+    ) -> Result<()> {
         self.groups
             .fetch_and_update(&k, |g| match g {
                 None => None,
@@ -3056,13 +3171,8 @@ impl StatsDb {
                 continue;
             }
             let enid = match &shot.shooter {
-                Who::AI {
-                    ucid: None, uid, ..
-                } => EnId::Unit(*uid),
-                Who::Player { ucid, .. }
-                | Who::AI {
-                    ucid: Some(ucid), ..
-                } => {
+                Who::AI { ucid: None, uid, .. } => EnId::Unit(*uid),
+                Who::Player { ucid, .. } | Who::AI { ucid: Some(ucid), .. } => {
                     if !credited.contains(&EnId::Player(*ucid)) {
                         self.pilots.with_pilot_and_aggregates(
                             *ucid,
@@ -3143,7 +3253,10 @@ impl StatsDb {
     }
 
     /// The `n` pilots with the most XP: (ucid, name, xp, level).
-    pub(crate) fn xp_leaderboard(&self, n: usize) -> Result<Vec<(Ucid, String, u64, u64)>> {
+    pub(crate) fn xp_leaderboard(
+        &self,
+        n: usize,
+    ) -> Result<Vec<(Ucid, String, u64, u64)>> {
         let mut out = vec![];
         for (ucid, xp, level) in self.progress.top(n)? {
             let name = self
@@ -3157,10 +3270,12 @@ impl StatsDb {
         Ok(out)
     }
 
-
     /// Get all pilots with their aggregate stats, sorted by total kills descending.
     /// If `round` is Some, only stats from that round are included; otherwise all-time.
-    pub(crate) fn pilot_leaderboard(&self, round: Option<RoundId>) -> Result<Vec<(Ucid, String, Aggregates)>> {
+    pub(crate) fn pilot_leaderboard(
+        &self,
+        round: Option<RoundId>,
+    ) -> Result<Vec<(Ucid, String, Aggregates)>> {
         match round {
             None => {
                 // All-time: use pre-aggregated totals. These are already the
@@ -3171,47 +3286,58 @@ impl StatsDb {
                     let (ucid, pilot) = r?;
                     // Rows the all-zero "no player" ucid earned before it
                     // was filtered out at ingest.
-                    if ucid == Ucid::default() { continue; }
+                    if ucid == Ucid::default() {
+                        continue;
+                    }
                     let name = pilot.name.last().map(|s| s.clone()).unwrap_or_default();
                     entries.push((ucid, name, pilot.total));
                 }
                 entries.sort_by(|a, b| {
-                    (b.2.air_kills + b.2.ground_kills).cmp(&(a.2.air_kills + a.2.ground_kills))
+                    (b.2.air_kills + b.2.ground_kills)
+                        .cmp(&(a.2.air_kills + a.2.ground_kills))
                 });
                 Ok(entries)
             }
             Some(rid) => {
                 // Per-round: sum aggregates tree entries for this round across all vehicles
-                let mut map: std::collections::HashMap<Ucid, Aggregates> = std::collections::HashMap::new();
+                let mut map: std::collections::HashMap<Ucid, Aggregates> =
+                    std::collections::HashMap::new();
                 for r in self.pilots.aggregates.iter() {
                     let ((ucid, _vehicle, round_id), agg) = r?;
-                    if round_id != rid || ucid == Ucid::default() { continue; }
+                    if round_id != rid || ucid == Ucid::default() {
+                        continue;
+                    }
                     let e = map.entry(ucid).or_insert_with(Aggregates::default);
-                    e.air_kills       += agg.air_kills;
-                    e.ground_kills    += agg.ground_kills;
-                    e.captures        += agg.captures;
-                    e.repairs         += agg.repairs;
+                    e.air_kills += agg.air_kills;
+                    e.ground_kills += agg.ground_kills;
+                    e.captures += agg.captures;
+                    e.repairs += agg.repairs;
                     e.supply_transfers += agg.supply_transfers;
-                    e.troops          += agg.troops;
-                    e.farps           += agg.farps;
-                    e.deploys         += agg.deploys;
-                    e.actions         += agg.actions;
-                    e.deaths          += agg.deaths;
-                    e.hours           += agg.hours;
-                    e.donated_points  += agg.donated_points;
+                    e.troops += agg.troops;
+                    e.farps += agg.farps;
+                    e.deploys += agg.deploys;
+                    e.actions += agg.actions;
+                    e.deaths += agg.deaths;
+                    e.hours += agg.hours;
+                    e.donated_points += agg.donated_points;
                 }
                 let mut entries: Vec<(Ucid, String, Aggregates)> = map
                     .into_iter()
                     .map(|(ucid, agg)| {
-                        let name = self.pilots.pilots.get(&ucid)
-                            .ok().flatten()
+                        let name = self
+                            .pilots
+                            .pilots
+                            .get(&ucid)
+                            .ok()
+                            .flatten()
                             .and_then(|p| p.name.last().cloned())
                             .unwrap_or_default();
                         (ucid, name, agg)
                     })
                     .collect();
                 entries.sort_by(|a, b| {
-                    (b.2.air_kills + b.2.ground_kills).cmp(&(a.2.air_kills + a.2.ground_kills))
+                    (b.2.air_kills + b.2.ground_kills)
+                        .cmp(&(a.2.air_kills + a.2.ground_kills))
                 });
                 Ok(entries)
             }
@@ -3263,14 +3389,24 @@ impl StatsDb {
 
     /// Get the latest round for each scenario
     /// Pilot points for active round, sorted descending
-    pub(crate) fn pilot_points(&self, round: RoundId) -> Result<Vec<(std::string::String, i32, std::string::String)>> {
+    pub(crate) fn pilot_points(
+        &self,
+        round: RoundId,
+    ) -> Result<Vec<(std::string::String, i32, std::string::String)>> {
         // Returns Vec<(name, points, side)>
         let mut result = Vec::new();
         for r in self.pilots.round_info.iter() {
             let ((ucid, rid), ri) = r?;
-            if rid != round { continue; }
-            if ri.points == 0 { continue; }
-            let name = self.pilots.pilots.get(&ucid)?
+            if rid != round {
+                continue;
+            }
+            if ri.points == 0 {
+                continue;
+            }
+            let name = self
+                .pilots
+                .pilots
+                .get(&ucid)?
                 .and_then(|p| p.name.last().map(|s| s.to_string()))
                 .unwrap_or_default();
             let side = format!("{:?}", ri.side.1);
@@ -3281,13 +3417,18 @@ impl StatsDb {
     }
 
     /// Most captured objectives for a round, sorted by capture count desc
-    pub(crate) fn most_captured(&self, round: RoundId) -> Result<Vec<(std::string::String, u32)>> {
+    pub(crate) fn most_captured(
+        &self,
+        round: RoundId,
+    ) -> Result<Vec<(std::string::String, u32)>> {
         // Returns Vec<(objective_name, capture_count)>
         let mut result = Vec::new();
         for r in self.objective_captures.scan_prefix(&round)? {
             let ((_, oid), count) = r?;
             // Look up objective name
-            let name = self.objectives.get(&(round, oid))?
+            let name = self
+                .objectives
+                .get(&(round, oid))?
                 .map(|o| o.name.to_string())
                 .unwrap_or_else(|| format!("{:?}", oid));
             result.push((name, count));
@@ -3327,7 +3468,11 @@ impl StatsDb {
         Ok(out)
     }
 
-    pub(crate) fn news_put(&self, round: RoundId, digest: &crate::news::NewsDigest) -> Result<()> {
+    pub(crate) fn news_put(
+        &self,
+        round: RoundId,
+        digest: &crate::news::NewsDigest,
+    ) -> Result<()> {
         let json = serde_json::to_string(digest)?;
         self.news.insert(&(round, digest.day.clone()), &json)?;
         Ok(())
@@ -3375,7 +3520,8 @@ impl StatsDb {
         meta: &crate::news_image::ImageMeta,
     ) -> Result<()> {
         let json = serde_json::to_string(meta)?;
-        self.news_image_meta.insert(&(inst.to_string(), round, day.to_string()), &json)?;
+        self.news_image_meta
+            .insert(&(inst.to_string(), round, day.to_string()), &json)?;
         Ok(())
     }
 
@@ -3389,11 +3535,17 @@ impl StatsDb {
         bytes: &[u8],
         meta: &crate::news_image::ImageMeta,
     ) -> Result<()> {
-        self.news_image_data.insert(&(inst.to_string(), round, day.to_string()), &bytes.to_vec())?;
+        self.news_image_data
+            .insert(&(inst.to_string(), round, day.to_string()), &bytes.to_vec())?;
         self.news_image_meta_put(inst, round, day, meta)
     }
 
-    pub(crate) fn news_image_get(&self, inst: &str, round: RoundId, day: &str) -> Result<Option<Vec<u8>>> {
+    pub(crate) fn news_image_get(
+        &self,
+        inst: &str,
+        round: RoundId,
+        day: &str,
+    ) -> Result<Option<Vec<u8>>> {
         self.news_image_data.get(&(inst.to_string(), round, day.to_string()))
     }
 
@@ -3408,7 +3560,11 @@ impl StatsDb {
         Ok(())
     }
 
-    pub(crate) fn recent_captures(&self, round: RoundId, limit: usize) -> Result<Vec<CaptureRecord>> {
+    pub(crate) fn recent_captures(
+        &self,
+        round: RoundId,
+        limit: usize,
+    ) -> Result<Vec<CaptureRecord>> {
         let mut result = Vec::new();
         for r in self.captures.scan_prefix(&round)?.rev() {
             let (_, rec) = r?;
@@ -3421,7 +3577,10 @@ impl StatsDb {
     }
 
     /// Aircraft usage stats for a round, sorted by sortie count desc
-    pub(crate) fn aircraft_usage(&self, round: RoundId) -> Result<Vec<(std::string::String, u32, f32)>> {
+    pub(crate) fn aircraft_usage(
+        &self,
+        round: RoundId,
+    ) -> Result<Vec<(std::string::String, u32, f32)>> {
         // Returns Vec<(vehicle_type, sortie_count, total_hours)>
         let mut result = Vec::new();
         for r in self.aircraft_sorties.scan_prefix(&round)? {
@@ -3433,14 +3592,31 @@ impl StatsDb {
     }
 
     /// Get connected pilots for a round with name, side, and current aircraft type
-    pub(crate) fn connected_pilots(&self, round: RoundId) -> Result<Vec<(std::string::String, std::string::String, Side, Option<std::string::String>)>> {
+    pub(crate) fn connected_pilots(
+        &self,
+        round: RoundId,
+    ) -> Result<
+        Vec<(
+            std::string::String,
+            std::string::String,
+            Side,
+            Option<std::string::String>,
+        )>,
+    > {
         // Returns Vec<(ucid, name, side, aircraft_type)> for currently connected pilots
         let mut result = Vec::new();
         for r in self.pilots.round_info.iter() {
             let ((ucid, rid), ri) = r?;
-            if rid != round { continue; }
-            if ri.connected.is_none() { continue; }
-            let name = self.pilots.pilots.get(&ucid)?
+            if rid != round {
+                continue;
+            }
+            if ri.connected.is_none() {
+                continue;
+            }
+            let name = self
+                .pilots
+                .pilots
+                .get(&ucid)?
                 .and_then(|p| p.name.last().map(|s| s.to_string()))
                 .unwrap_or_default();
             let aircraft = ri.slot.and_then(|s| s.vehicle).map(|v| format!("{}", v));
@@ -3451,23 +3627,32 @@ impl StatsDb {
     }
 
     /// Count registered pilots per side and online pilots for a round
-    pub(crate) fn pilot_side_counts(&self, round: RoundId) -> Result<(u32, u32, u32, u32)> {
+    pub(crate) fn pilot_side_counts(
+        &self,
+        round: RoundId,
+    ) -> Result<(u32, u32, u32, u32)> {
         // Returns (blue_registered, red_registered, blue_online, red_online)
         let mut blue_reg = 0u32;
-        let mut red_reg  = 0u32;
+        let mut red_reg = 0u32;
         let mut blue_online = 0u32;
-        let mut red_online  = 0u32;
+        let mut red_online = 0u32;
         for r in self.pilots.round_info.iter() {
             let ((_, rid), ri) = r?;
-            if rid != round { continue; }
+            if rid != round {
+                continue;
+            }
             match ri.side.1 {
                 Side::Blue => {
                     blue_reg += 1;
-                    if ri.connected.is_some() { blue_online += 1; }
+                    if ri.connected.is_some() {
+                        blue_online += 1;
+                    }
                 }
                 Side::Red => {
                     red_reg += 1;
-                    if ri.connected.is_some() { red_online += 1; }
+                    if ri.connected.is_some() {
+                        red_online += 1;
+                    }
                 }
                 _ => {}
             }
@@ -3498,7 +3683,10 @@ impl StatsDb {
     /// older session than the newest. Sessions are few (one per mission
     /// start), so read the keys -- never the values, which may not decode --
     /// and sort them properly. The on-disk format is unchanged.
-    fn get_engine_session(&self, k: &(RoundId, DateTime<Utc>)) -> Result<Option<Session>> {
+    fn get_engine_session(
+        &self,
+        k: &(RoundId, DateTime<Utc>),
+    ) -> Result<Option<Session>> {
         match self.session_v2.get(k)? {
             None => Ok(None),
             Some(r) => Ok(Some(Session {
@@ -3510,11 +3698,16 @@ impl StatsDb {
         }
     }
 
-    fn put_engine_session(&self, k: &(RoundId, DateTime<Utc>), s: &Session) -> Result<()> {
+    fn put_engine_session(
+        &self,
+        k: &(RoundId, DateTime<Utc>),
+        s: &Session,
+    ) -> Result<()> {
         let rec = SessionRec {
             stop_time: s.stop_time,
             end: s.end.clone(),
-            cfg_json: serde_json::to_string(&s.cfg).context("encoding a session's engine config")?,
+            cfg_json: serde_json::to_string(&s.cfg)
+                .context("encoding a session's engine config")?,
         };
         self.session_v2.insert(k, &rec)?;
         // a migrated legacy copy would otherwise linger in the old tree
@@ -3522,12 +3715,16 @@ impl StatsDb {
         Ok(())
     }
 
-    fn session_keys_by_time(&self, round: Option<RoundId>) -> Result<Vec<(RoundId, DateTime<Utc>)>> {
+    fn session_keys_by_time(
+        &self,
+        round: Option<RoundId>,
+    ) -> Result<Vec<(RoundId, DateTime<Utc>)>> {
         let iter = match round {
             Some(r) => self.session_v2.scan_prefix(&r)?,
             None => self.session_v2.iter(),
         };
-        let mut keys: Vec<(RoundId, DateTime<Utc>)> = iter.keys_only().filter_map(|k| k.ok()).collect();
+        let mut keys: Vec<(RoundId, DateTime<Utc>)> =
+            iter.keys_only().filter_map(|k| k.ok()).collect();
         keys.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
         Ok(keys)
     }
@@ -3622,7 +3819,9 @@ impl StatsDb {
     }
 
     /// Bans recorded by bflib in the latest session's Cfg (read-only mirror)
-    pub(crate) fn session_bans_from_cfg(&self) -> Result<Vec<(Ucid, std::string::String, Option<DateTime<Utc>>)>> {
+    pub(crate) fn session_bans_from_cfg(
+        &self,
+    ) -> Result<Vec<(Ucid, std::string::String, Option<DateTime<Utc>>)>> {
         // Skip records that fail to deserialize (e.g. written by an older/
         // incompatible build) instead of letting one bad entry break this
         // for every session that comes after it -- see latest_session_end.
@@ -3635,7 +3834,6 @@ impl StatsDb {
         }
         Ok(out)
     }
-
 
     // ── DCS unit range database snapshots ────────────────────────────────────
 
@@ -3650,16 +3848,22 @@ impl StatsDb {
         let key = (inst.to_string(), version.to_string());
         self.unit_db.insert(&key, &json.to_string())?;
         let prev = self.unit_db_latest.get(&inst.to_string())?;
-        self.unit_db_latest
-            .insert(&inst.to_string(), &version.to_string())?;
+        self.unit_db_latest.insert(&inst.to_string(), &version.to_string())?;
         Ok(prev.filter(|p| p != version))
     }
 
-    pub(crate) fn unit_db_json(&self, inst: &str, version: &str) -> Result<Option<std::string::String>> {
+    pub(crate) fn unit_db_json(
+        &self,
+        inst: &str,
+        version: &str,
+    ) -> Result<Option<std::string::String>> {
         Ok(self.unit_db.get(&(inst.to_string(), version.to_string()))?)
     }
 
-    pub(crate) fn unit_db_latest(&self, inst: &str) -> Result<Option<(std::string::String, std::string::String)>> {
+    pub(crate) fn unit_db_latest(
+        &self,
+        inst: &str,
+    ) -> Result<Option<(std::string::String, std::string::String)>> {
         let Some(version) = self.unit_db_latest.get(&inst.to_string())? else {
             return Ok(None);
         };
@@ -3673,7 +3877,10 @@ impl StatsDb {
     /// DCS says. An entry in `cfg.artillery.units` overrides the harvest, so a
     /// disagreement is either a patch worth absorbing or an override worth
     /// keeping -- but it should never be a surprise.
-    pub(crate) fn unit_db_stale_overrides(&self, inst: &str) -> Result<Vec<StaleOverride>> {
+    pub(crate) fn unit_db_stale_overrides(
+        &self,
+        inst: &str,
+    ) -> Result<Vec<StaleOverride>> {
         let Some((_, json)) = self.unit_db_latest(inst)? else {
             return Ok(vec![]);
         };
@@ -3735,7 +3942,8 @@ impl StatsDb {
             if !line.side.eq_ignore_ascii_case(side) {
                 continue;
             }
-            let ns = k.rsplit(':').next().and_then(|n| n.parse::<i64>().ok()).unwrap_or(0);
+            let ns =
+                k.rsplit(':').next().and_then(|n| n.parse::<i64>().ok()).unwrap_or(0);
             out.push((ns, line));
             if out.len() >= limit {
                 break;
@@ -3746,11 +3954,16 @@ impl StatsDb {
 
     /// Every admin commander override, by pilot. A record that no longer
     /// parses is skipped (and logged), not fatal.
-    pub(crate) fn commander_grants(&self) -> Result<HashMap<Ucid, crate::command::GrantRecord>> {
+    pub(crate) fn commander_grants(
+        &self,
+    ) -> Result<HashMap<Ucid, crate::command::GrantRecord>> {
         let mut out = HashMap::new();
         for r in self.commander_grants.iter() {
             let (k, v) = r?;
-            match (k.parse::<Ucid>(), serde_json::from_str::<crate::command::GrantRecord>(&v)) {
+            match (
+                k.parse::<Ucid>(),
+                serde_json::from_str::<crate::command::GrantRecord>(&v),
+            ) {
                 (Ok(u), Ok(g)) => {
                     out.insert(u, g);
                 }
@@ -3761,7 +3974,11 @@ impl StatsDb {
     }
 
     /// Set (Some) or clear (None) an admin's override for one pilot.
-    pub(crate) fn set_commander_grant(&self, ucid: &Ucid, rec: Option<&crate::command::GrantRecord>) -> Result<()> {
+    pub(crate) fn set_commander_grant(
+        &self,
+        ucid: &Ucid,
+        rec: Option<&crate::command::GrantRecord>,
+    ) -> Result<()> {
         let key = ucid.to_string();
         match rec {
             Some(r) => {
@@ -3799,7 +4016,8 @@ impl StatsDb {
             }
         }
         out.sort_by(|(_, a), (_, b)| {
-            section_rank(&a.section).cmp(&section_rank(&b.section))
+            section_rank(&a.section)
+                .cmp(&section_rank(&b.section))
                 .then(a.section.cmp(&b.section))
                 .then(a.order.cmp(&b.order))
         });
@@ -3899,7 +4117,11 @@ impl StatsDb {
                 // An active-round registration is never superseded, and only
                 // another active-round row may replace one.
                 Some((true, _, _)) if !is_active => continue,
-                Some((was_active, t, _)) if *was_active == is_active && ri.side.0 <= *t => continue,
+                Some((was_active, t, _))
+                    if *was_active == is_active && ri.side.0 <= *t =>
+                {
+                    continue
+                }
                 _ => {}
             }
             best.insert(ucid, (is_active, ri.side.0, ri.side.1));
@@ -3962,7 +4184,12 @@ impl StatsDb {
 
     /// `(captures for side, of those uploaded by uploader)` this round -- the
     /// two upload quotas, from one pass.
-    pub(crate) fn intel_counts(&self, round: RoundId, side: Side, uploader: &str) -> Result<(usize, usize)> {
+    pub(crate) fn intel_counts(
+        &self,
+        round: RoundId,
+        side: Side,
+        uploader: &str,
+    ) -> Result<(usize, usize)> {
         let caps = self.intel_list(round, Some(side))?;
         let mine = caps.iter().filter(|(_, c)| c.uploaded_by == uploader).count();
         Ok((caps.len(), mine))
@@ -3998,8 +4225,9 @@ impl StatsDb {
         let row = match self.intel_dir() {
             Some(dir) => {
                 std::fs::create_dir_all(&dir)?;
-                std::fs::write(dir.join(id.to_string()), &bytes)
-                    .with_context(|| format!("writing intel image {id} to {}", dir.display()))?;
+                std::fs::write(dir.join(id.to_string()), &bytes).with_context(|| {
+                    format!("writing intel image {id} to {}", dir.display())
+                })?;
                 IntelImage { content_type, data: None }
             }
             None => IntelImage { content_type, data: Some(bytes) },
@@ -4010,16 +4238,20 @@ impl StatsDb {
 
     /// Resolve an image to `(content_type, bytes)`, reading from disk if it
     /// was stored there.
-    pub(crate) fn intel_get_image(&self, id: &Uuid) -> Result<Option<(std::string::String, Vec<u8>)>> {
+    pub(crate) fn intel_get_image(
+        &self,
+        id: &Uuid,
+    ) -> Result<Option<(std::string::String, Vec<u8>)>> {
         let Some(row) = self.intel_images.get(id)? else { return Ok(None) };
         let bytes = match row.data {
             Some(b) => b,
             None => {
-                let dir = self
-                    .intel_dir()
-                    .ok_or_else(|| anyhow!("intel image {id} is on disk but --intel-dir is not set"))?;
-                std::fs::read(dir.join(id.to_string()))
-                    .with_context(|| format!("reading intel image {id} from {}", dir.display()))?
+                let dir = self.intel_dir().ok_or_else(|| {
+                    anyhow!("intel image {id} is on disk but --intel-dir is not set")
+                })?;
+                std::fs::read(dir.join(id.to_string())).with_context(|| {
+                    format!("reading intel image {id} from {}", dir.display())
+                })?
             }
         };
         Ok(Some((row.content_type, bytes)))
@@ -4178,67 +4410,433 @@ impl StatsDb {
         }
         let now = Utc::now();
         let seed: &[(&str, &str, &str, i32, &str)] = &[
-            ("introduction", "What is Fowl Engine?", "Introduction", 0, include_str!("../seed_wiki/introduction.md")),
-            ("getting-started/welcome", "Welcome", "Getting Started", 0, include_str!("../seed_wiki/getting-started/welcome.md")),
-            ("getting-started/joining-team", "Joining a Team", "Getting Started", 1, include_str!("../seed_wiki/getting-started/joining-team.md")),
-            ("getting-started/hud-and-menus", "Understanding the Menus", "Getting Started", 2, include_str!("../seed_wiki/getting-started/hud-and-menus.md")),
-            ("getting-started/cockpit-overlay", "Vector Strike Cockpit: Panel & Wheel", "Getting Started", 3, include_str!("../seed_wiki/getting-started/cockpit-overlay.md")),
-            ("playbooks/first-sortie", "Your First Sortie", "Playbooks", 0, include_str!("../seed_wiki/playbooks/first-sortie.md")),
-            ("playbooks/reading-live-ops", "Reading the Live Ops Dashboard", "Playbooks", 1, include_str!("../seed_wiki/playbooks/reading-live-ops.md")),
-            ("playbooks/capturing-a-base", "Capturing a Base", "Playbooks", 2, include_str!("../seed_wiki/playbooks/capturing-a-base.md")),
-            ("playbooks/cas-with-jtac", "Flying CAS With a JTAC", "Playbooks", 3, include_str!("../seed_wiki/playbooks/cas-with-jtac.md")),
-            ("playbooks/running-crates", "Running Crates & Building a Base", "Playbooks", 4, include_str!("../seed_wiki/playbooks/running-crates.md")),
-            ("playbooks/calling-support", "Calling AWACS, Tankers & CAP", "Playbooks", 5, include_str!("../seed_wiki/playbooks/calling-support.md")),
-            ("playbooks/flight-replay", "Debriefing With Flight Replay", "Playbooks", 6, include_str!("../seed_wiki/playbooks/flight-replay.md")),
-            ("gameplay/objectives", "Objectives", "Core Gameplay", 0, include_str!("../seed_wiki/gameplay/objectives.md")),
-            ("gameplay/reading-the-map", "Reading the F10 Map", "Core Gameplay", 1, include_str!("../seed_wiki/gameplay/reading-the-map.md")),
-            ("gameplay/capturing-objectives", "Capturing Objectives", "Core Gameplay", 2, include_str!("../seed_wiki/gameplay/capturing-objectives.md")),
-            ("gameplay/logistics", "Logistics & Supply", "Core Gameplay", 3, include_str!("../seed_wiki/gameplay/logistics.md")),
-            ("gameplay/points-and-lives", "Points and Lives", "Core Gameplay", 4, include_str!("../seed_wiki/gameplay/points-and-lives.md")),
-            ("gameplay/chat-commands", "Chat Commands", "Core Gameplay", 5, include_str!("../seed_wiki/gameplay/chat-commands.md")),
-            ("gameplay/gci", "Live GCI (AWACS Calls)", "Core Gameplay", 6, include_str!("../seed_wiki/gameplay/gci.md")),
-            ("gameplay/briefing", "The Auto-Generated Briefing", "Core Gameplay", 7, include_str!("../seed_wiki/gameplay/briefing.md")),
-            ("gameplay/comms-plan", "Comms Plan", "Core Gameplay", 8, include_str!("../seed_wiki/gameplay/comms-plan.md")),
-            ("gameplay/tasking-board", "The Tasking Board", "Core Gameplay", 9, include_str!("../seed_wiki/gameplay/tasking-board.md")),
-            ("gameplay/war-economy", "Materiel & the War Economy", "Core Gameplay", 10, include_str!("../seed_wiki/gameplay/war-economy.md")),
-            ("gameplay/navaids", "Navaids & Approaches", "Core Gameplay", 11, include_str!("../seed_wiki/gameplay/navaids.md")),
-            ("gameplay/carrier-ops", "Carrier Operations", "Core Gameplay", 12, include_str!("../seed_wiki/gameplay/carrier-ops.md")),
-            ("gameplay/your-task", "Your Task & Rookie Mode", "Core Gameplay", 13, include_str!("../seed_wiki/gameplay/your-task.md")),
-            ("gameplay/war-effort", "The War Effort Bar", "Core Gameplay", 14, include_str!("../seed_wiki/gameplay/war-effort.md")),
-            ("gameplay/progression", "XP, Levels & Squadrons", "Core Gameplay", 15, include_str!("../seed_wiki/gameplay/progression.md")),
-            ("gameplay/round-rules", "Rear Bases, Era Weapons & Round Length", "Core Gameplay", 16, include_str!("../seed_wiki/gameplay/round-rules.md")),
-            ("gameplay/war-diary", "The War Diary", "Core Gameplay", 17, include_str!("../seed_wiki/gameplay/war-diary.md")),
-            ("gameplay/objective-buildings", "Buildings at an Objective: What to Look For", "Core Gameplay", 18, include_str!("../seed_wiki/gameplay/objective-buildings.md")),
-            ("f10-menu/overview", "Overview", "F10 Menu Systems", 0, include_str!("../seed_wiki/f10-menu/overview.md")),
-            ("f10-menu/actions", "Actions Menu", "F10 Menu Systems", 1, include_str!("../seed_wiki/f10-menu/actions.md")),
-            ("f10-menu/jtac", "JTAC System", "F10 Menu Systems", 2, include_str!("../seed_wiki/f10-menu/jtac.md")),
-            ("f10-menu/cargo", "Cargo Operations", "F10 Menu Systems", 3, include_str!("../seed_wiki/f10-menu/cargo.md")),
-            ("f10-menu/troops", "Troop Transport", "F10 Menu Systems", 4, include_str!("../seed_wiki/f10-menu/troops.md")),
-            ("f10-menu/ewr", "GCI / EWR", "F10 Menu Systems", 5, include_str!("../seed_wiki/f10-menu/ewr.md")),
-            ("f10-menu/recon", "Reconnaissance", "F10 Menu Systems", 6, include_str!("../seed_wiki/f10-menu/recon.md")),
-            ("f10-menu/objectives", "Objectives Menu", "F10 Menu Systems", 7, include_str!("../seed_wiki/f10-menu/objectives.md")),
-            ("f10-menu/info", "Info Menu", "F10 Menu Systems", 8, include_str!("../seed_wiki/f10-menu/info.md")),
-            ("f10-menu/csar", "Combat Search & Rescue", "F10 Menu Systems", 9, include_str!("../seed_wiki/f10-menu/csar.md")),
-            ("advanced/artillery", "Artillery Missions", "Advanced Topics", 0, include_str!("../seed_wiki/advanced/artillery.md")),
-            ("advanced/alcm", "Air-Launched Cruise Missiles", "Advanced Topics", 1, include_str!("../seed_wiki/advanced/alcm.md")),
-            ("reference/chat-commands", "Chat Command List", "Reference", 0, include_str!("../seed_wiki/reference/chat-commands.md")),
-            ("reference/action-types", "Action Types", "Reference", 1, include_str!("../seed_wiki/reference/action-types.md")),
-            ("reference/deployables", "Deployable Units", "Reference", 2, include_str!("../seed_wiki/reference/deployables.md")),
-            ("reference/faq", "FAQ", "Reference", 3, include_str!("../seed_wiki/reference/faq.md")),
-            ("reference/aircraft-roster", "Aircraft Roster", "Reference", 4, include_str!("../seed_wiki/reference/aircraft-roster.md")),
-            ("reference/tips", "Tips & Best Practices", "Reference", 5, include_str!("../seed_wiki/reference/tips.md")),
-            ("reference/changelog", "Changelog — v2.0", "Reference", 6, include_str!("../seed_wiki/reference/changelog.md")),
-            ("advanced/c130-airdrop", "C-130 Hercules & Airdrop", "Advanced Topics", 2, include_str!("../seed_wiki/advanced/c130-airdrop.md")),
-            ("advanced/deployables-guide", "Deployables Guide", "Advanced Topics", 3, include_str!("../seed_wiki/advanced/deployables-guide.md")),
-            ("advanced/recon-intel-map", "Recon Intel Map (TARPS)", "Advanced Topics", 4, include_str!("../seed_wiki/advanced/recon-intel-map.md")),
-            ("advanced/helo-missions", "AI Helo Missions", "Advanced Topics", 5, include_str!("../seed_wiki/advanced/helo-missions.md")),
-            ("advanced/ai-opposition", "AI Opposition (CAP & Helo Patrols)", "Advanced Topics", 6, include_str!("../seed_wiki/advanced/ai-opposition.md")),
-            ("advanced/air-life", "Wingmen, AI Packages & Civil Traffic", "Advanced Topics", 7, include_str!("../seed_wiki/advanced/air-life.md")),
-            ("advanced/modern-war", "Modern War: EW, Air Defence, Raids & Tempo", "Advanced Topics", 8, include_str!("../seed_wiki/advanced/modern-war.md")),
-            ("advanced/ground-war", "Ground War: Formations on the March", "Advanced Topics", 9, include_str!("../seed_wiki/advanced/ground-war.md")),
-            ("advanced/theatre-hq", "Theatre HQ: the AI Commander", "Advanced Topics", 10, include_str!("../seed_wiki/advanced/theatre-hq.md")),
-            ("advanced/command", "Command: the Commander's Map", "Advanced Topics", 11, include_str!("../seed_wiki/advanced/command.md")),
-            ("advanced/strike-missions", "AI Strike Missions", "Advanced Topics", 12, include_str!("../seed_wiki/advanced/strike-missions.md")),
+            (
+                "introduction",
+                "What is Fowl Engine?",
+                "Introduction",
+                0,
+                include_str!("../seed_wiki/introduction.md"),
+            ),
+            (
+                "getting-started/welcome",
+                "Welcome",
+                "Getting Started",
+                0,
+                include_str!("../seed_wiki/getting-started/welcome.md"),
+            ),
+            (
+                "getting-started/joining-team",
+                "Joining a Team",
+                "Getting Started",
+                1,
+                include_str!("../seed_wiki/getting-started/joining-team.md"),
+            ),
+            (
+                "getting-started/hud-and-menus",
+                "Understanding the Menus",
+                "Getting Started",
+                2,
+                include_str!("../seed_wiki/getting-started/hud-and-menus.md"),
+            ),
+            (
+                "getting-started/cockpit-overlay",
+                "Vector Strike Cockpit: Panel & Wheel",
+                "Getting Started",
+                3,
+                include_str!("../seed_wiki/getting-started/cockpit-overlay.md"),
+            ),
+            (
+                "playbooks/first-sortie",
+                "Your First Sortie",
+                "Playbooks",
+                0,
+                include_str!("../seed_wiki/playbooks/first-sortie.md"),
+            ),
+            (
+                "playbooks/reading-live-ops",
+                "Reading the Live Ops Dashboard",
+                "Playbooks",
+                1,
+                include_str!("../seed_wiki/playbooks/reading-live-ops.md"),
+            ),
+            (
+                "playbooks/capturing-a-base",
+                "Capturing a Base",
+                "Playbooks",
+                2,
+                include_str!("../seed_wiki/playbooks/capturing-a-base.md"),
+            ),
+            (
+                "playbooks/cas-with-jtac",
+                "Flying CAS With a JTAC",
+                "Playbooks",
+                3,
+                include_str!("../seed_wiki/playbooks/cas-with-jtac.md"),
+            ),
+            (
+                "playbooks/running-crates",
+                "Running Crates & Building a Base",
+                "Playbooks",
+                4,
+                include_str!("../seed_wiki/playbooks/running-crates.md"),
+            ),
+            (
+                "playbooks/calling-support",
+                "Calling AWACS, Tankers & CAP",
+                "Playbooks",
+                5,
+                include_str!("../seed_wiki/playbooks/calling-support.md"),
+            ),
+            (
+                "playbooks/flight-replay",
+                "Debriefing With Flight Replay",
+                "Playbooks",
+                6,
+                include_str!("../seed_wiki/playbooks/flight-replay.md"),
+            ),
+            (
+                "gameplay/objectives",
+                "Objectives",
+                "Core Gameplay",
+                0,
+                include_str!("../seed_wiki/gameplay/objectives.md"),
+            ),
+            (
+                "gameplay/reading-the-map",
+                "Reading the F10 Map",
+                "Core Gameplay",
+                1,
+                include_str!("../seed_wiki/gameplay/reading-the-map.md"),
+            ),
+            (
+                "gameplay/capturing-objectives",
+                "Capturing Objectives",
+                "Core Gameplay",
+                2,
+                include_str!("../seed_wiki/gameplay/capturing-objectives.md"),
+            ),
+            (
+                "gameplay/logistics",
+                "Logistics & Supply",
+                "Core Gameplay",
+                3,
+                include_str!("../seed_wiki/gameplay/logistics.md"),
+            ),
+            (
+                "gameplay/points-and-lives",
+                "Points and Lives",
+                "Core Gameplay",
+                4,
+                include_str!("../seed_wiki/gameplay/points-and-lives.md"),
+            ),
+            (
+                "gameplay/chat-commands",
+                "Chat Commands",
+                "Core Gameplay",
+                5,
+                include_str!("../seed_wiki/gameplay/chat-commands.md"),
+            ),
+            (
+                "gameplay/gci",
+                "Live GCI (AWACS Calls)",
+                "Core Gameplay",
+                6,
+                include_str!("../seed_wiki/gameplay/gci.md"),
+            ),
+            (
+                "gameplay/briefing",
+                "The Auto-Generated Briefing",
+                "Core Gameplay",
+                7,
+                include_str!("../seed_wiki/gameplay/briefing.md"),
+            ),
+            (
+                "gameplay/comms-plan",
+                "Comms Plan",
+                "Core Gameplay",
+                8,
+                include_str!("../seed_wiki/gameplay/comms-plan.md"),
+            ),
+            (
+                "gameplay/tasking-board",
+                "The Tasking Board",
+                "Core Gameplay",
+                9,
+                include_str!("../seed_wiki/gameplay/tasking-board.md"),
+            ),
+            (
+                "gameplay/war-economy",
+                "Materiel & the War Economy",
+                "Core Gameplay",
+                10,
+                include_str!("../seed_wiki/gameplay/war-economy.md"),
+            ),
+            (
+                "gameplay/navaids",
+                "Navaids & Approaches",
+                "Core Gameplay",
+                11,
+                include_str!("../seed_wiki/gameplay/navaids.md"),
+            ),
+            (
+                "gameplay/carrier-ops",
+                "Carrier Operations",
+                "Core Gameplay",
+                12,
+                include_str!("../seed_wiki/gameplay/carrier-ops.md"),
+            ),
+            (
+                "gameplay/your-task",
+                "Your Task & Rookie Mode",
+                "Core Gameplay",
+                13,
+                include_str!("../seed_wiki/gameplay/your-task.md"),
+            ),
+            (
+                "gameplay/war-effort",
+                "The War Effort Bar",
+                "Core Gameplay",
+                14,
+                include_str!("../seed_wiki/gameplay/war-effort.md"),
+            ),
+            (
+                "gameplay/progression",
+                "XP, Levels & Squadrons",
+                "Core Gameplay",
+                15,
+                include_str!("../seed_wiki/gameplay/progression.md"),
+            ),
+            (
+                "gameplay/round-rules",
+                "Rear Bases, Era Weapons & Round Length",
+                "Core Gameplay",
+                16,
+                include_str!("../seed_wiki/gameplay/round-rules.md"),
+            ),
+            (
+                "gameplay/war-diary",
+                "The War Diary",
+                "Core Gameplay",
+                17,
+                include_str!("../seed_wiki/gameplay/war-diary.md"),
+            ),
+            (
+                "gameplay/objective-buildings",
+                "Buildings at an Objective: What to Look For",
+                "Core Gameplay",
+                18,
+                include_str!("../seed_wiki/gameplay/objective-buildings.md"),
+            ),
+            (
+                "f10-menu/overview",
+                "Overview",
+                "F10 Menu Systems",
+                0,
+                include_str!("../seed_wiki/f10-menu/overview.md"),
+            ),
+            (
+                "f10-menu/actions",
+                "Actions Menu",
+                "F10 Menu Systems",
+                1,
+                include_str!("../seed_wiki/f10-menu/actions.md"),
+            ),
+            (
+                "f10-menu/jtac",
+                "JTAC System",
+                "F10 Menu Systems",
+                2,
+                include_str!("../seed_wiki/f10-menu/jtac.md"),
+            ),
+            (
+                "f10-menu/cargo",
+                "Cargo Operations",
+                "F10 Menu Systems",
+                3,
+                include_str!("../seed_wiki/f10-menu/cargo.md"),
+            ),
+            (
+                "f10-menu/troops",
+                "Troop Transport",
+                "F10 Menu Systems",
+                4,
+                include_str!("../seed_wiki/f10-menu/troops.md"),
+            ),
+            (
+                "f10-menu/ewr",
+                "GCI / EWR",
+                "F10 Menu Systems",
+                5,
+                include_str!("../seed_wiki/f10-menu/ewr.md"),
+            ),
+            (
+                "f10-menu/recon",
+                "Reconnaissance",
+                "F10 Menu Systems",
+                6,
+                include_str!("../seed_wiki/f10-menu/recon.md"),
+            ),
+            (
+                "f10-menu/objectives",
+                "Objectives Menu",
+                "F10 Menu Systems",
+                7,
+                include_str!("../seed_wiki/f10-menu/objectives.md"),
+            ),
+            (
+                "f10-menu/info",
+                "Info Menu",
+                "F10 Menu Systems",
+                8,
+                include_str!("../seed_wiki/f10-menu/info.md"),
+            ),
+            (
+                "f10-menu/csar",
+                "Combat Search & Rescue",
+                "F10 Menu Systems",
+                9,
+                include_str!("../seed_wiki/f10-menu/csar.md"),
+            ),
+            (
+                "advanced/artillery",
+                "Artillery Missions",
+                "Advanced Topics",
+                0,
+                include_str!("../seed_wiki/advanced/artillery.md"),
+            ),
+            (
+                "advanced/alcm",
+                "Air-Launched Cruise Missiles",
+                "Advanced Topics",
+                1,
+                include_str!("../seed_wiki/advanced/alcm.md"),
+            ),
+            (
+                "reference/chat-commands",
+                "Chat Command List",
+                "Reference",
+                0,
+                include_str!("../seed_wiki/reference/chat-commands.md"),
+            ),
+            (
+                "reference/action-types",
+                "Action Types",
+                "Reference",
+                1,
+                include_str!("../seed_wiki/reference/action-types.md"),
+            ),
+            (
+                "reference/deployables",
+                "Deployable Units",
+                "Reference",
+                2,
+                include_str!("../seed_wiki/reference/deployables.md"),
+            ),
+            (
+                "reference/faq",
+                "FAQ",
+                "Reference",
+                3,
+                include_str!("../seed_wiki/reference/faq.md"),
+            ),
+            (
+                "reference/aircraft-roster",
+                "Aircraft Roster",
+                "Reference",
+                4,
+                include_str!("../seed_wiki/reference/aircraft-roster.md"),
+            ),
+            (
+                "reference/tips",
+                "Tips & Best Practices",
+                "Reference",
+                5,
+                include_str!("../seed_wiki/reference/tips.md"),
+            ),
+            (
+                "reference/changelog",
+                "Changelog — v2.0",
+                "Reference",
+                6,
+                include_str!("../seed_wiki/reference/changelog.md"),
+            ),
+            (
+                "advanced/c130-airdrop",
+                "C-130 Hercules & Airdrop",
+                "Advanced Topics",
+                2,
+                include_str!("../seed_wiki/advanced/c130-airdrop.md"),
+            ),
+            (
+                "advanced/deployables-guide",
+                "Deployables Guide",
+                "Advanced Topics",
+                3,
+                include_str!("../seed_wiki/advanced/deployables-guide.md"),
+            ),
+            (
+                "advanced/recon-intel-map",
+                "Recon Intel Map (TARPS)",
+                "Advanced Topics",
+                4,
+                include_str!("../seed_wiki/advanced/recon-intel-map.md"),
+            ),
+            (
+                "advanced/helo-missions",
+                "AI Helo Missions",
+                "Advanced Topics",
+                5,
+                include_str!("../seed_wiki/advanced/helo-missions.md"),
+            ),
+            (
+                "advanced/ai-opposition",
+                "AI Opposition (CAP & Helo Patrols)",
+                "Advanced Topics",
+                6,
+                include_str!("../seed_wiki/advanced/ai-opposition.md"),
+            ),
+            (
+                "advanced/air-life",
+                "Wingmen, AI Packages & Civil Traffic",
+                "Advanced Topics",
+                7,
+                include_str!("../seed_wiki/advanced/air-life.md"),
+            ),
+            (
+                "advanced/modern-war",
+                "Modern War: EW, Air Defence, Raids & Tempo",
+                "Advanced Topics",
+                8,
+                include_str!("../seed_wiki/advanced/modern-war.md"),
+            ),
+            (
+                "advanced/ground-war",
+                "Ground War: Formations on the March",
+                "Advanced Topics",
+                9,
+                include_str!("../seed_wiki/advanced/ground-war.md"),
+            ),
+            (
+                "advanced/theatre-hq",
+                "Theatre HQ: the AI Commander",
+                "Advanced Topics",
+                10,
+                include_str!("../seed_wiki/advanced/theatre-hq.md"),
+            ),
+            (
+                "advanced/command",
+                "Command: the Commander's Map",
+                "Advanced Topics",
+                11,
+                include_str!("../seed_wiki/advanced/command.md"),
+            ),
+            (
+                "advanced/strike-missions",
+                "AI Strike Missions",
+                "Advanced Topics",
+                12,
+                include_str!("../seed_wiki/advanced/strike-missions.md"),
+            ),
         ];
         let mut refreshed = 0u32;
         for (slug, title, section, order, content) in seed {
@@ -4261,14 +4859,17 @@ impl StatsDb {
                 Some(_) => refreshed += 1,
                 None => {}
             }
-            self.wiki_pages.insert(&slug.to_string(), &WikiPage {
-                title: title.to_string(),
-                section: section.to_string(),
-                order: *order,
-                content: content.to_string(),
-                updated_at: now,
-                updated_by: "seed".to_string(),
-            })?;
+            self.wiki_pages.insert(
+                &slug.to_string(),
+                &WikiPage {
+                    title: title.to_string(),
+                    section: section.to_string(),
+                    order: *order,
+                    content: content.to_string(),
+                    updated_at: now,
+                    updated_by: "seed".to_string(),
+                },
+            )?;
         }
         if refreshed > 0 {
             info!("refreshed {refreshed} un-edited bfwiki page(s) from updated seed content");
@@ -4285,50 +4886,177 @@ impl StatsDb {
     fn seed_wiki_images_if_empty(&self) -> Result<()> {
         let now = Utc::now();
         let seed: &[(&str, &[u8])] = &[
-            ("cf08da53-e826-49b2-8b67-7ddded3cbb74", include_bytes!("../seed_wiki/images/server-browser.jpeg")),
-            ("934a41dc-d2ad-4b52-8dfd-60cbdc4deb78", include_bytes!("../seed_wiki/images/objective-types.jpeg")),
-            ("0ce0f6d9-ab3e-4f5b-87e3-799b0e2964cd", include_bytes!("../seed_wiki/images/patriot-site.jpeg")),
-            ("f2ad53a9-2e98-4925-bced-de97267fc7e6", include_bytes!("../seed_wiki/images/carrier-group.jpeg")),
-            ("f0af8d1d-8ae3-4a78-a361-27d14e55aa33", include_bytes!("../seed_wiki/images/csar-rescue.jpeg")),
-            ("7d6453ff-8e35-4304-8a34-d61e680b7f83", include_bytes!("../seed_wiki/images/convoy-interdiction.jpeg")),
-            ("1e34aa38-f253-4652-b725-c30cc1553a38", include_bytes!("../seed_wiki/images/nine-line-brief.jpeg")),
-            ("76185372-d487-422b-a6ea-89de0da561d8", include_bytes!("../seed_wiki/images/c130-hero.jpeg")),
-            ("61a90050-7359-4ada-b0c9-41f09dc26a34", include_bytes!("../seed_wiki/images/airdrop-parachute.jpeg")),
-            ("fab0866b-a54d-4e0a-9647-d246a700d5a6", include_bytes!("../seed_wiki/images/lapes-extraction.jpeg")),
-            ("3ce5c418-9d0b-429a-be7e-687032cb147f", include_bytes!("../seed_wiki/images/objective-capture.jpeg")),
-            ("b7c7cf5d-7559-4a43-b97e-b304cc4d8ccb", include_bytes!("../seed_wiki/images/himars-strike.jpeg")),
-            ("441295e3-48c3-4737-b308-e5f91812884c", include_bytes!("../seed_wiki/images/f10-menu-overview.jpeg")),
-            ("ccf9a836-dfdb-4bf6-a6cd-1fb77a55ac9a", include_bytes!("../seed_wiki/images/actions-menu.jpeg")),
-            ("fe035065-f175-4f73-babe-9681513a3b93", include_bytes!("../seed_wiki/images/cargo-menu.jpeg")),
-            ("a645d067-42f4-4059-a31a-e2e5e378cfa0", include_bytes!("../seed_wiki/images/troop-transport.jpeg")),
-            ("b68ad72b-f981-4957-986d-b301edcc4216", include_bytes!("../seed_wiki/images/ewr-report.jpeg")),
-            ("7fc9ec2b-79a6-46d1-b61f-27dd1a313ee9", include_bytes!("../seed_wiki/images/alcm-strike.jpeg")),
-            ("ed912e81-5a74-493c-a691-2bfff1541054", include_bytes!("../seed_wiki/images/kneeboard-hud.jpeg")),
-            ("d7eee98b-0f14-4ed3-a1e0-3bf815ffde9a", include_bytes!("../seed_wiki/images/aircraft-roster.jpeg")),
-            ("f5701fbb-6bec-4db2-b96b-7bd33d41880f", include_bytes!("../seed_wiki/images/sa22-pantsir.jpeg")),
-            ("2ca24e67-39ef-4941-8713-3195728bd999", include_bytes!("../seed_wiki/images/cockpit-panel-menu.jpeg")),
-            ("56eaa9cf-0803-4eae-9226-802ad10c2eeb", include_bytes!("../seed_wiki/images/cockpit-panel-cargo.jpeg")),
-            ("de33e85d-f738-4cb7-b515-9fe24e15592e", include_bytes!("../seed_wiki/images/cockpit-panel-cargo-category.jpeg")),
-            ("9171f745-71d3-44e9-93fc-4c91f11aa070", include_bytes!("../seed_wiki/images/cockpit-panel-status.jpeg")),
-            ("9e5839e7-b4cc-46a0-a092-497663354263", include_bytes!("../seed_wiki/images/cockpit-panel-ewr.jpeg")),
-            ("05732d53-90e8-402b-9e50-f333720a706b", include_bytes!("../seed_wiki/images/cockpit-panel-log.jpeg")),
-            ("e260230b-1070-4e58-896a-cad801e27529", include_bytes!("../seed_wiki/images/cockpit-panel-wheel-editor.jpeg")),
-            ("cb4d087b-8805-487e-a4ff-e1a95386dc24", include_bytes!("../seed_wiki/images/cockpit-wheel-arc.jpeg")),
-            ("9d90d6b9-13b8-4052-8684-12d5c5605742", include_bytes!("../seed_wiki/images/cockpit-wheel-info.jpeg")),
-            ("f7e01aaf-8460-48c5-a6dc-81ab6f36fb17", include_bytes!("../seed_wiki/images/cockpit-wheel-blue.jpeg")),
-            ("e6ad2b68-688a-4002-8be6-02f83031c5fb", include_bytes!("../seed_wiki/images/cockpit-settings.jpeg")),
-            ("da866270-2d36-4ebb-8582-49420aaa561a", include_bytes!("../seed_wiki/images/cockpit-icons.jpeg")),
+            (
+                "cf08da53-e826-49b2-8b67-7ddded3cbb74",
+                include_bytes!("../seed_wiki/images/server-browser.jpeg"),
+            ),
+            (
+                "934a41dc-d2ad-4b52-8dfd-60cbdc4deb78",
+                include_bytes!("../seed_wiki/images/objective-types.jpeg"),
+            ),
+            (
+                "0ce0f6d9-ab3e-4f5b-87e3-799b0e2964cd",
+                include_bytes!("../seed_wiki/images/patriot-site.jpeg"),
+            ),
+            (
+                "f2ad53a9-2e98-4925-bced-de97267fc7e6",
+                include_bytes!("../seed_wiki/images/carrier-group.jpeg"),
+            ),
+            (
+                "f0af8d1d-8ae3-4a78-a361-27d14e55aa33",
+                include_bytes!("../seed_wiki/images/csar-rescue.jpeg"),
+            ),
+            (
+                "7d6453ff-8e35-4304-8a34-d61e680b7f83",
+                include_bytes!("../seed_wiki/images/convoy-interdiction.jpeg"),
+            ),
+            (
+                "1e34aa38-f253-4652-b725-c30cc1553a38",
+                include_bytes!("../seed_wiki/images/nine-line-brief.jpeg"),
+            ),
+            (
+                "76185372-d487-422b-a6ea-89de0da561d8",
+                include_bytes!("../seed_wiki/images/c130-hero.jpeg"),
+            ),
+            (
+                "61a90050-7359-4ada-b0c9-41f09dc26a34",
+                include_bytes!("../seed_wiki/images/airdrop-parachute.jpeg"),
+            ),
+            (
+                "fab0866b-a54d-4e0a-9647-d246a700d5a6",
+                include_bytes!("../seed_wiki/images/lapes-extraction.jpeg"),
+            ),
+            (
+                "3ce5c418-9d0b-429a-be7e-687032cb147f",
+                include_bytes!("../seed_wiki/images/objective-capture.jpeg"),
+            ),
+            (
+                "b7c7cf5d-7559-4a43-b97e-b304cc4d8ccb",
+                include_bytes!("../seed_wiki/images/himars-strike.jpeg"),
+            ),
+            (
+                "441295e3-48c3-4737-b308-e5f91812884c",
+                include_bytes!("../seed_wiki/images/f10-menu-overview.jpeg"),
+            ),
+            (
+                "ccf9a836-dfdb-4bf6-a6cd-1fb77a55ac9a",
+                include_bytes!("../seed_wiki/images/actions-menu.jpeg"),
+            ),
+            (
+                "fe035065-f175-4f73-babe-9681513a3b93",
+                include_bytes!("../seed_wiki/images/cargo-menu.jpeg"),
+            ),
+            (
+                "a645d067-42f4-4059-a31a-e2e5e378cfa0",
+                include_bytes!("../seed_wiki/images/troop-transport.jpeg"),
+            ),
+            (
+                "b68ad72b-f981-4957-986d-b301edcc4216",
+                include_bytes!("../seed_wiki/images/ewr-report.jpeg"),
+            ),
+            (
+                "7fc9ec2b-79a6-46d1-b61f-27dd1a313ee9",
+                include_bytes!("../seed_wiki/images/alcm-strike.jpeg"),
+            ),
+            (
+                "ed912e81-5a74-493c-a691-2bfff1541054",
+                include_bytes!("../seed_wiki/images/kneeboard-hud.jpeg"),
+            ),
+            (
+                "d7eee98b-0f14-4ed3-a1e0-3bf815ffde9a",
+                include_bytes!("../seed_wiki/images/aircraft-roster.jpeg"),
+            ),
+            (
+                "f5701fbb-6bec-4db2-b96b-7bd33d41880f",
+                include_bytes!("../seed_wiki/images/sa22-pantsir.jpeg"),
+            ),
+            (
+                "2ca24e67-39ef-4941-8713-3195728bd999",
+                include_bytes!("../seed_wiki/images/cockpit-panel-menu.jpeg"),
+            ),
+            (
+                "56eaa9cf-0803-4eae-9226-802ad10c2eeb",
+                include_bytes!("../seed_wiki/images/cockpit-panel-cargo.jpeg"),
+            ),
+            (
+                "de33e85d-f738-4cb7-b515-9fe24e15592e",
+                include_bytes!("../seed_wiki/images/cockpit-panel-cargo-category.jpeg"),
+            ),
+            (
+                "9171f745-71d3-44e9-93fc-4c91f11aa070",
+                include_bytes!("../seed_wiki/images/cockpit-panel-status.jpeg"),
+            ),
+            (
+                "9e5839e7-b4cc-46a0-a092-497663354263",
+                include_bytes!("../seed_wiki/images/cockpit-panel-ewr.jpeg"),
+            ),
+            (
+                "05732d53-90e8-402b-9e50-f333720a706b",
+                include_bytes!("../seed_wiki/images/cockpit-panel-log.jpeg"),
+            ),
+            (
+                "e260230b-1070-4e58-896a-cad801e27529",
+                include_bytes!("../seed_wiki/images/cockpit-panel-wheel-editor.jpeg"),
+            ),
+            (
+                "cb4d087b-8805-487e-a4ff-e1a95386dc24",
+                include_bytes!("../seed_wiki/images/cockpit-wheel-arc.jpeg"),
+            ),
+            (
+                "9d90d6b9-13b8-4052-8684-12d5c5605742",
+                include_bytes!("../seed_wiki/images/cockpit-wheel-info.jpeg"),
+            ),
+            (
+                "f7e01aaf-8460-48c5-a6dc-81ab6f36fb17",
+                include_bytes!("../seed_wiki/images/cockpit-wheel-blue.jpeg"),
+            ),
+            (
+                "e6ad2b68-688a-4002-8be6-02f83031c5fb",
+                include_bytes!("../seed_wiki/images/cockpit-settings.jpeg"),
+            ),
+            (
+                "da866270-2d36-4ebb-8582-49420aaa561a",
+                include_bytes!("../seed_wiki/images/cockpit-icons.jpeg"),
+            ),
             // Labelled placeholders until real screenshots are taken. Images
             // are served immutable and never re-seeded, so a real screenshot
             // goes in under a NEW id (here and in objective-buildings.md).
-            ("bde0527a-d33b-44ea-927a-7e5457673883", include_bytes!("../seed_wiki/images/objective-buildings-f10-pins.jpeg")),
-            ("57e704c4-7cbf-4382-92aa-437a3398ffb7", include_bytes!("../seed_wiki/images/objective-buildings-warehouse.jpeg")),
-            ("9bb0383e-2611-4b7b-a31c-9005c9aeeefa", include_bytes!("../seed_wiki/images/objective-buildings-industrial.jpeg")),
-            ("00a8ea81-cb97-47c4-99d3-b28ceb8f470c", include_bytes!("../seed_wiki/images/objective-buildings-fuel.jpeg")),
-            ("b1e85974-8c99-4a90-834b-be855f21ca6b", include_bytes!("../seed_wiki/images/objective-buildings-destroyed.jpeg")),
-            ("b0a22f34-8776-4cfb-8bc8-a003c9d9c759", include_bytes!("../seed_wiki/images/objective-buildings-command-center.jpeg")),
-            ("6c1f61f3-239d-4e32-bfb6-a4f65a773bdb", include_bytes!("../seed_wiki/images/objective-buildings-farp.jpeg")),
-            ("ad2ed420-c314-4aab-b685-9404872fe3b3", include_bytes!("../seed_wiki/images/objective-buildings-placed-logi.jpeg")),
+            (
+                "bde0527a-d33b-44ea-927a-7e5457673883",
+                include_bytes!("../seed_wiki/images/objective-buildings-f10-pins.jpeg"),
+            ),
+            (
+                "57e704c4-7cbf-4382-92aa-437a3398ffb7",
+                include_bytes!("../seed_wiki/images/objective-buildings-warehouse.jpeg"),
+            ),
+            (
+                "9bb0383e-2611-4b7b-a31c-9005c9aeeefa",
+                include_bytes!("../seed_wiki/images/objective-buildings-industrial.jpeg"),
+            ),
+            (
+                "00a8ea81-cb97-47c4-99d3-b28ceb8f470c",
+                include_bytes!("../seed_wiki/images/objective-buildings-fuel.jpeg"),
+            ),
+            (
+                "b1e85974-8c99-4a90-834b-be855f21ca6b",
+                include_bytes!("../seed_wiki/images/objective-buildings-destroyed.jpeg"),
+            ),
+            (
+                "b0a22f34-8776-4cfb-8bc8-a003c9d9c759",
+                include_bytes!(
+                    "../seed_wiki/images/objective-buildings-command-center.jpeg"
+                ),
+            ),
+            (
+                "6c1f61f3-239d-4e32-bfb6-a4f65a773bdb",
+                include_bytes!("../seed_wiki/images/objective-buildings-farp.jpeg"),
+            ),
+            (
+                "ad2ed420-c314-4aab-b685-9404872fe3b3",
+                include_bytes!(
+                    "../seed_wiki/images/objective-buildings-placed-logi.jpeg"
+                ),
+            ),
         ];
         let mut added = 0usize;
         for (id, data) in seed {
@@ -4337,12 +5065,15 @@ impl StatsDb {
                 continue;
             }
             added += 1;
-            self.wiki_images.insert(&id, &WikiImage {
-                content_type: "image/jpeg".to_string(),
-                data: data.to_vec(),
-                uploaded_at: now,
-                uploaded_by: "seed".to_string(),
-            })?;
+            self.wiki_images.insert(
+                &id,
+                &WikiImage {
+                    content_type: "image/jpeg".to_string(),
+                    data: data.to_vec(),
+                    uploaded_at: now,
+                    uploaded_by: "seed".to_string(),
+                },
+            )?;
         }
         if added > 0 {
             info!("seeded {added} bfwiki image(s)");
@@ -4442,7 +5173,10 @@ impl StatsDb {
     }
 
     /// Get objectives for a given round
-    pub(crate) fn objectives_for_round(&self, round: RoundId) -> Result<Vec<(ObjectiveId, Objective)>> {
+    pub(crate) fn objectives_for_round(
+        &self,
+        round: RoundId,
+    ) -> Result<Vec<(ObjectiveId, Objective)>> {
         let mut objs = Vec::new();
         for r in self.objectives.scan_prefix(&round)? {
             let ((_, oid), obj) = r?;
@@ -4461,11 +5195,14 @@ impl StatsDb {
     /// opposite of the capturer). A base that started neutral is therefore
     /// counted as the loser's until it falls -- close, not exact.
     pub(crate) fn round_report(&self, rid: RoundId) -> Result<Option<RoundReport>> {
-        let Some((_, _, round)) = self.all_rounds()?.into_iter().find(|(_, id, _)| *id == rid) else {
+        let Some((_, _, round)) =
+            self.all_rounds()?.into_iter().find(|(_, id, _)| *id == rid)
+        else {
             return Ok(None);
         };
         let start = round.start;
-        let end = round.end.unwrap_or_else(Utc::now).max(start + chrono::Duration::hours(1));
+        let end =
+            round.end.unwrap_or_else(Utc::now).max(start + chrono::Duration::hours(1));
         let span = (end - start).num_seconds();
         let bucket_secs: i64 = if span <= 2 * 86400 {
             3600
@@ -4475,7 +5212,9 @@ impl StatsDb {
             86400
         };
         let n = ((span + bucket_secs - 1) / bucket_secs).max(1) as usize;
-        let idx = |t: DateTime<Utc>| ((t - start).num_seconds() / bucket_secs).clamp(0, n as i64 - 1) as usize;
+        let idx = |t: DateTime<Utc>| {
+            ((t - start).num_seconds() / bucket_secs).clamp(0, n as i64 - 1) as usize
+        };
         let mut buckets: Vec<ReportBucket> = (0..n)
             .map(|i| ReportBucket {
                 t: start + chrono::Duration::seconds(i as i64 * bucket_secs),
@@ -4491,7 +5230,9 @@ impl StatsDb {
             if r_id != rid || !seen.insert(kid) {
                 continue;
             }
-            let Some(shot) = dead.shots.iter().find(|s| s.hit).or_else(|| dead.shots.first()) else {
+            let Some(shot) =
+                dead.shots.iter().find(|s| s.hit).or_else(|| dead.shots.first())
+            else {
                 continue;
             };
             let air = self.victim_is_air(rid, &dead.victim)?;
@@ -4533,7 +5274,8 @@ impl StatsDb {
         }
         let mut next = 0;
         for (i, b) in buckets.iter_mut().enumerate() {
-            let bucket_end = start + chrono::Duration::seconds((i as i64 + 1) * bucket_secs);
+            let bucket_end =
+                start + chrono::Duration::seconds((i as i64 + 1) * bucket_secs);
             while next < caps.len() && caps[next].time < bucket_end {
                 let c = &caps[next];
                 match c.side {
@@ -4596,7 +5338,10 @@ impl StatsDb {
     /// A pilot's lifetime totals as the public sees them. Test-instance rounds
     /// are already excluded: they never reach `Pilot.total` in the first place
     /// (see `with_pilot_and_aggregates`).
-    pub(crate) fn pilot_detail(&self, ucid: &Ucid) -> Result<Option<(String, Aggregates)>> {
+    pub(crate) fn pilot_detail(
+        &self,
+        ucid: &Ucid,
+    ) -> Result<Option<(String, Aggregates)>> {
         match self.pilots.pilots.get(ucid)? {
             None => Ok(None),
             Some(pilot) => {
@@ -4607,7 +5352,10 @@ impl StatsDb {
     }
 
     /// All sorties for a pilot across all rounds, sorted chronologically
-    pub(crate) fn pilot_sorties(&self, ucid: &Ucid) -> Result<Vec<(RoundId, SortieId, Sortie)>> {
+    pub(crate) fn pilot_sorties(
+        &self,
+        ucid: &Ucid,
+    ) -> Result<Vec<(RoundId, SortieId, Sortie)>> {
         let mut result = Vec::new();
         for r in self.pilots.sortie.scan_prefix(ucid)? {
             let ((_, round_id, sortie_id), sortie) = r?;
@@ -4619,31 +5367,38 @@ impl StatsDb {
     }
 
     /// Per-round aggregates for a pilot, enriched with scenario name
-    pub(crate) fn pilot_round_breakdown(&self, ucid: &Ucid) -> Result<Vec<(Scenario, RoundId, Aggregates)>> {
+    pub(crate) fn pilot_round_breakdown(
+        &self,
+        ucid: &Ucid,
+    ) -> Result<Vec<(Scenario, RoundId, Aggregates)>> {
         // Build a round_id → scenario lookup
-        let mut rid_to_scenario: std::collections::HashMap<RoundId, Scenario> = std::collections::HashMap::new();
+        let mut rid_to_scenario: std::collections::HashMap<RoundId, Scenario> =
+            std::collections::HashMap::new();
         for r in self.round.iter() {
             let ((scenario, rid), _) = r?;
             rid_to_scenario.insert(rid, scenario);
         }
         // Sum aggregates per round for this pilot
-        let mut map: std::collections::HashMap<RoundId, Aggregates> = std::collections::HashMap::new();
+        let mut map: std::collections::HashMap<RoundId, Aggregates> =
+            std::collections::HashMap::new();
         for r in self.pilots.aggregates.iter() {
             let ((u, _vehicle, round_id), agg) = r?;
-            if u != *ucid { continue; }
+            if u != *ucid {
+                continue;
+            }
             let e = map.entry(round_id).or_insert_with(Aggregates::default);
-            e.air_kills        += agg.air_kills;
-            e.ground_kills     += agg.ground_kills;
-            e.captures         += agg.captures;
-            e.repairs          += agg.repairs;
+            e.air_kills += agg.air_kills;
+            e.ground_kills += agg.ground_kills;
+            e.captures += agg.captures;
+            e.repairs += agg.repairs;
             e.supply_transfers += agg.supply_transfers;
-            e.troops           += agg.troops;
-            e.farps            += agg.farps;
-            e.deploys          += agg.deploys;
-            e.actions          += agg.actions;
-            e.deaths           += agg.deaths;
-            e.hours            += agg.hours;
-            e.donated_points   += agg.donated_points;
+            e.troops += agg.troops;
+            e.farps += agg.farps;
+            e.deploys += agg.deploys;
+            e.actions += agg.actions;
+            e.deaths += agg.deaths;
+            e.hours += agg.hours;
+            e.donated_points += agg.donated_points;
         }
         let mut result: Vec<(Scenario, RoundId, Aggregates)> = map
             .into_iter()
@@ -4671,7 +5426,10 @@ impl StatsDb {
     }
 
     /// All deploys done by a specific pilot, all rounds, newest first.
-    pub(crate) fn pilot_deploys_for(&self, ucid: &Ucid) -> Result<Vec<(RoundId, DeployRecord)>> {
+    pub(crate) fn pilot_deploys_for(
+        &self,
+        ucid: &Ucid,
+    ) -> Result<Vec<(RoundId, DeployRecord)>> {
         let mut result = Vec::new();
         for r in self.deploys.scan_prefix(ucid)? {
             let ((_, round_id, _), rec) = r?;
@@ -4769,7 +5527,9 @@ impl StatsDb {
             let mine: Vec<&bfprotocols::shots::Shot> = dead
                 .shots
                 .iter()
-                .filter(|s| matches!(&s.shooter, Who::Player { ucid: u, .. } if u == ucid))
+                .filter(
+                    |s| matches!(&s.shooter, Who::Player { ucid: u, .. } if u == ucid),
+                )
                 .collect();
             if mine.is_empty() {
                 continue;
@@ -4789,10 +5549,13 @@ impl StatsDb {
             // Same crediting rule as `record_kill`: when anyone hit, only the
             // hitters get the kill.
             let any_hit = dead.shots.iter().any(|s| s.hit);
-            let credited = mine
-                .iter()
-                .find(|s| s.hit)
-                .or_else(|| if any_hit { None } else { mine.first() });
+            let credited = mine.iter().find(|s| s.hit).or_else(|| {
+                if any_hit {
+                    None
+                } else {
+                    mine.first()
+                }
+            });
             let Some(&shot) = credited else { continue };
             let Some(i) = locate(rid, shot.time, 0) else { continue };
             let air = self.victim_is_air(rid, &dead.victim)?;
@@ -4822,11 +5585,14 @@ impl StatsDb {
         // round rather than a walk of the whole kills tree. A death with no
         // stored kill record had no shooter at all (crash, collision).
         let me = EnId::Player(*ucid);
-        let rounds: std::collections::BTreeSet<RoundId> = out.iter().map(|o| o.round_id).collect();
+        let rounds: std::collections::BTreeSet<RoundId> =
+            out.iter().map(|o| o.round_id).collect();
         for rid in rounds {
             for r in self.kill_seen.scan_prefix(&(rid, me))? {
                 let ((_, _, ms), kid) = r?;
-                let Some(time) = DateTime::<Utc>::from_timestamp_millis(ms) else { continue };
+                let Some(time) = DateTime::<Utc>::from_timestamp_millis(ms) else {
+                    continue;
+                };
                 let Some(i) = locate(rid, time, DEATH_GRACE_SECS) else { continue };
                 if out[i].death.is_some() {
                     continue;
@@ -4838,9 +5604,9 @@ impl StatsDb {
                         break;
                     }
                 }
-                let shot = dead
-                    .as_ref()
-                    .and_then(|d| d.shots.iter().find(|s| s.hit).or_else(|| d.shots.first()));
+                let shot = dead.as_ref().and_then(|d| {
+                    d.shots.iter().find(|s| s.hit).or_else(|| d.shots.first())
+                });
                 let killer_ucid = shot.and_then(|s| s.shooter.ucid().copied());
                 let by_self = killer_ucid.as_ref() == Some(ucid);
                 let teamkill = !by_self
@@ -4858,7 +5624,8 @@ impl StatsDb {
                     killer_ucid: killer_ucid.map(|u| u.to_string()),
                     killer_name: killer_ucid.and_then(|u| self.pilot_name(&u)),
                     killer_side: shot.map(|s| side_name(&s.shooter)),
-                    killer_type: shot.and_then(|s| s.shooter_typ.as_ref().map(|t| t.to_string())),
+                    killer_type: shot
+                        .and_then(|s| s.shooter_typ.as_ref().map(|t| t.to_string())),
                     weapon: shot.and_then(weapon_of),
                     teamkill,
                 });
@@ -4880,7 +5647,12 @@ impl StatsDb {
             o.deploys.sort_by(|a, b| a.time.cmp(&b.time));
             o.weapons = tally
                 .into_iter()
-                .map(|(weapon, (shots, hits, kills))| SortieWeapon { weapon, shots, hits, kills })
+                .map(|(weapon, (shots, hits, kills))| SortieWeapon {
+                    weapon,
+                    shots,
+                    hits,
+                    kills,
+                })
                 .collect();
             o.weapons.sort_by(|a, b| b.kills.cmp(&a.kills).then(b.shots.cmp(&a.shots)));
         }
@@ -4893,7 +5665,8 @@ impl StatsDb {
         // returns only AI-made kills (EnId::Unit sorts after EnId::Player) and
         // never reaches player kills once the cap is hit. Collect the whole
         // round, dedupe multi-shooter kills by KillId, then sort by time.
-        let mut seen: std::collections::HashSet<KillId> = std::collections::HashSet::new();
+        let mut seen: std::collections::HashSet<KillId> =
+            std::collections::HashSet::new();
         let mut kills = Vec::new();
         for r in self.kills.iter() {
             let ((_, rid, kid), dead) = r?;
@@ -4933,12 +5706,9 @@ impl StatsDb {
     pub(crate) fn victim_tags(&self, round: RoundId, victim: &Who) -> Option<UnitTags> {
         match victim {
             Who::Player { .. } => None,
-            Who::AI { uid, .. } => self
-                .units
-                .get(&(round, EnId::Unit(*uid)))
-                .ok()
-                .flatten()
-                .map(|u| u.tags),
+            Who::AI { uid, .. } => {
+                self.units.get(&(round, EnId::Unit(*uid))).ok().flatten().map(|u| u.tags)
+            }
         }
     }
 
@@ -5041,37 +5811,39 @@ impl StatsDb {
                 // sortie, and new_round() would clobber the live current_sortie
                 // with it, silently redirecting RPC/log subscriptions to a path
                 // that doesn't exist. Only fall back to that guess with nothing.
-                let sortie = inst
-                    .current_sortie
-                    .lock()
-                    .unwrap()
-                    .clone()
-                    .or_else(|| {
-                        cfg.netidx_base.as_ref().map(|p| {
-                            let s = format!("{p}");
-                            String::from(s.rsplit('/').next().unwrap_or("unknown"))
-                        })
-                    });
+                let sortie = inst.current_sortie.lock().unwrap().clone().or_else(|| {
+                    cfg.netidx_base.as_ref().map(|p| {
+                        let s = format!("{p}");
+                        String::from(s.rsplit('/').next().unwrap_or("unknown"))
+                    })
+                });
                 match sortie {
                     Some(sortie) => {
                         // Reattach to the sortie's existing open round if there is
                         // one, instead of spawning a duplicate. A second round id
                         // fragments stats -- deploys/kills/health land in a round
                         // the dashboard never queries.
-                        let open = self.last_seq_for(inst, &sortie)?.and_then(|(round, seq)| {
-                            match self.round.get(&(sortie.clone(), round)) {
-                                Ok(Some(r)) if r.end.is_none() => Some((round, seq)),
-                                _ => None,
-                            }
-                        });
+                        let open =
+                            self.last_seq_for(inst, &sortie)?.and_then(|(round, seq)| {
+                                match self.round.get(&(sortie.clone(), round)) {
+                                    Ok(Some(r)) if r.end.is_none() => Some((round, seq)),
+                                    _ => None,
+                                }
+                            });
                         match open {
                             Some((round, seq)) => {
                                 info!(
                                     "[{}] SessionStart: reattaching to open round {round:?} for sortie {sortie:?}",
                                     inst.id
                                 );
-                                *inst.current_sortie.lock().unwrap() = Some(sortie.clone());
-                                ctx.0 = Some(StatCtxInner { public: inst.cfg.counts_toward_totals(), sortie, round, seq });
+                                *inst.current_sortie.lock().unwrap() =
+                                    Some(sortie.clone());
+                                ctx.0 = Some(StatCtxInner {
+                                    public: inst.cfg.counts_toward_totals(),
+                                    sortie,
+                                    round,
+                                    seq,
+                                });
                             }
                             None => {
                                 info!(
@@ -5100,11 +5872,7 @@ impl StatsDb {
             Stat::SessionStart { stop, cfg } => {
                 self.put_engine_session(
                     &(ctx.round, time),
-                    &Session {
-                        cfg: (*cfg).clone(),
-                        stop_time: stop,
-                        end: None,
-                    },
+                    &Session { cfg: (*cfg).clone(), stop_time: stop, end: None },
                 )?;
                 // A fresh engine session means no DCS client can possibly be
                 // connected yet (they haven't done onPlayerTryConnect this
@@ -5122,18 +5890,16 @@ impl StatsDb {
                     .collect();
                 info!(
                     "SessionStart: clearing {} stale connected flag(s) in round {:?}",
-                    stale.len(), ctx.round
+                    stale.len(),
+                    ctx.round
                 );
                 for ucid in stale {
-                    self.pilots
-                        .with_pilot_round_info(ucid, ctx.round, |ri| ri.connected = None)?;
+                    self.pilots.with_pilot_round_info(ucid, ctx.round, |ri| {
+                        ri.connected = None
+                    })?;
                 }
             }
-            Stat::SessionEnd {
-                api_perf,
-                perf,
-                frame,
-            } => {
+            Stat::SessionEnd { api_perf, perf, frame } => {
                 // The round's newest session by start time -- not the last
                 // key, which can be an older one (see session_keys_by_time).
                 let newest = self.session_keys_by_time(Some(ctx.round))?.pop();
@@ -5144,23 +5910,13 @@ impl StatsDb {
                 match current {
                     None => bail!("no session for {} is in progress", &ctx.sortie),
                     Some((k, mut session)) => {
-                        session.end = Some(SessionEnd {
-                            api: api_perf,
-                            engine: perf,
-                            frame,
-                            time,
-                        });
+                        session.end =
+                            Some(SessionEnd { api: api_perf, engine: perf, frame, time });
                         self.put_engine_session(&k, &session)?;
                     }
                 }
             }
-            Stat::Objective {
-                name,
-                id,
-                pos,
-                owner,
-                kind,
-            } => {
+            Stat::Objective { name, id, pos, owner, kind } => {
                 // bflib re-emits Stat::Objective for every objective on a mission
                 // reload. If we already have this objective in the current round,
                 // keep its health/logi/supply/fuel rather than resetting to 100 --
@@ -5190,12 +5946,7 @@ impl StatsDb {
             Stat::ObjectiveDestroyed { id } => {
                 self.objectives.remove(&(ctx.round, id))?;
             }
-            Stat::ObjectiveHealth {
-                id,
-                last_change,
-                health,
-                logi,
-            } => {
+            Stat::ObjectiveHealth { id, last_change, health, logi } => {
                 self.with_objective((ctx.round, id), |o| {
                     o.last_change = last_change;
                     o.health = health;
@@ -5286,10 +6037,7 @@ impl StatsDb {
                     // if it is there, but never throw away the whole stat --
                     // the pilot's action count above has already landed.
                     if let Err(e) = self.with_group((ctx.round, gid), |group| {
-                        group.kind = GroupKind::Action {
-                            by,
-                            name: action.clone(),
-                        }
+                        group.kind = GroupKind::Action { by, name: action.clone() }
                     }) {
                         debug!("Action: group {gid:?} not tracked yet ({e})");
                     }
@@ -5310,21 +6058,12 @@ impl StatsDb {
                 // actually spawn in DCS -- the deploy is queued), so tag it if
                 // present but never fail the whole stat over a missing row.
                 if let Err(e) = self.with_group((ctx.round, gid), |group| {
-                    group.kind = GroupKind::Troop {
-                        by,
-                        name: troop.clone(),
-                    }
+                    group.kind = GroupKind::Troop { by, name: troop.clone() }
                 }) {
                     debug!("DeployTroop: group {gid:?} not tracked yet ({e})");
                 }
             }
-            Stat::DeployGroup {
-                by,
-                gid,
-                deployable,
-                aircraft,
-                method,
-            } => {
+            Stat::DeployGroup { by, gid, deployable, aircraft, method } => {
                 // Idempotency guard -- see `deploy_seen`. One deployed group =
                 // one (round, gid). A redelivered `Stat::DeployGroup` bails here
                 // before bumping the counter or minting a second DeployId.
@@ -5344,10 +6083,7 @@ impl StatsDb {
                 // See DeployTroop above -- the group row may not exist yet.
                 // Recording the deploy (counter + log) must not depend on it.
                 if let Err(e) = self.with_group((ctx.round, gid), |group| {
-                    group.kind = GroupKind::Deployed {
-                        by,
-                        name: deployable.clone(),
-                    }
+                    group.kind = GroupKind::Deployed { by, name: deployable.clone() }
                 }) {
                     debug!("DeployGroup: group {gid:?} not tracked yet ({e})");
                 }
@@ -5364,11 +6100,7 @@ impl StatsDb {
                     },
                 )?;
             }
-            Stat::DeployFarp {
-                by,
-                oid,
-                deployable: _,
-            } => {
+            Stat::DeployFarp { by, oid, deployable: _ } => {
                 self.pilots.with_pilot_and_aggregates(
                     by,
                     ctx.round,
@@ -5381,12 +6113,7 @@ impl StatsDb {
                 }
                 self.with_objective((ctx.round, oid), |o| o.by = Some(by))?;
             }
-            Stat::Register {
-                name,
-                id,
-                side,
-                initial_points,
-            } => {
+            Stat::Register { name, id, side, initial_points } => {
                 self.pilots.saw_pilot(id, name)?;
                 self.pilots.with_pilot_round_info(id, ctx.round, |ri| {
                     ri.side = (time, side);
@@ -5418,17 +6145,10 @@ impl StatsDb {
                 })?;
             }
             Stat::Deslot { id } => {
-                self.pilots
-                    .with_pilot_round_info(id, ctx.round, |ri| ri.slot = None)?;
+                self.pilots.with_pilot_round_info(id, ctx.round, |ri| ri.slot = None)?;
                 self.units.remove(&(ctx.round, EnId::Player(id)))?;
             }
-            Stat::Unit {
-                id,
-                gid,
-                owner,
-                typ,
-                pos,
-            } => {
+            Stat::Unit { id, gid, owner, typ, pos } => {
                 self.units.fetch_and_update(&(ctx.round, id), |_| {
                     Some(Unit {
                         dead: false,
@@ -5460,11 +6180,7 @@ impl StatsDb {
                     }
                 }
             }
-            Stat::Detected {
-                id,
-                detected,
-                source,
-            } => {
+            Stat::Detected { id, detected, source } => {
                 self.detected.update_and_fetch(&(ctx.round, id), |d| {
                     let mut d = d.unwrap_or_default();
                     if detected {
@@ -5496,7 +6212,8 @@ impl StatsDb {
                         vehicle = sl.vehicle.clone()
                     }
                 })?;
-                let vehicle = vehicle.ok_or_else(|| anyhow!("{id} takeoff without slotting"))?;
+                let vehicle =
+                    vehicle.ok_or_else(|| anyhow!("{id} takeoff without slotting"))?;
                 // Only commit the dedup key once the sortie is definitely going
                 // to be recorded -- a "takeoff without slotting" bail above may
                 // just be a replay running ahead of its `Stat::Slot`, and must
@@ -5504,15 +6221,12 @@ impl StatsDb {
                 self.sortie_seen.insert(&dedup_key, &sid)?;
                 // Track sortie count per aircraft type
                 let ac_key = (ctx.round, vehicle.to_string());
-                let (prev_cnt, prev_hrs) = self.aircraft_sorties.get(&ac_key)?.unwrap_or((0, 0.0));
+                let (prev_cnt, prev_hrs) =
+                    self.aircraft_sorties.get(&ac_key)?.unwrap_or((0, 0.0));
                 self.aircraft_sorties.insert(&ac_key, &(prev_cnt + 1, prev_hrs))?;
                 self.pilots.sortie.insert(
                     &(id, ctx.round, sid),
-                    &Sortie {
-                        takeoff: time,
-                        land: None,
-                        vehicle,
-                    },
+                    &Sortie { takeoff: time, land: None, vehicle },
                 )?;
             }
             Stat::Land { id } => {
@@ -5528,12 +6242,19 @@ impl StatsDb {
                 // the slot. Neither is actionable and neither should credit
                 // hours, so drop it quietly rather than failing the stat.
                 let Some(sid) = sid else {
-                    debug!("{id} landed with no active sortie -- orphan or replay, ignoring");
+                    debug!(
+                        "{id} landed with no active sortie -- orphan or replay, ignoring"
+                    );
                     return Ok(());
                 };
                 // Belt and braces: if the parked sortie is somehow already
                 // landed, a redelivery is in play -- don't credit hours twice.
-                if self.pilots.sortie.get(&(id, ctx.round, sid))?.is_some_and(|s| s.land.is_some()) {
+                if self
+                    .pilots
+                    .sortie
+                    .get(&(id, ctx.round, sid))?
+                    .is_some_and(|s| s.land.is_some())
+                {
                     return Ok(());
                 }
                 // Add flight hours to aircraft sortie totals
@@ -5543,11 +6264,18 @@ impl StatsDb {
                     vehicle_str = Some(s.vehicle.to_string());
                 })?;
                 if let Some(v) = vehicle_str {
-                    let hours = (time - self.pilots.sortie.get(&(id, ctx.round, sid))?
-                        .map(|s| s.takeoff).unwrap_or(time))
-                        .num_seconds() as f32 / 3600.0;
+                    let hours = (time
+                        - self
+                            .pilots
+                            .sortie
+                            .get(&(id, ctx.round, sid))?
+                            .map(|s| s.takeoff)
+                            .unwrap_or(time))
+                    .num_seconds() as f32
+                        / 3600.0;
                     let ac_key = (ctx.round, v);
-                    let (cnt, prev_hrs) = self.aircraft_sorties.get(&ac_key)?.unwrap_or((0, 0.0));
+                    let (cnt, prev_hrs) =
+                        self.aircraft_sorties.get(&ac_key)?.unwrap_or((0, 0.0));
                     self.aircraft_sorties.insert(&ac_key, &(cnt, prev_hrs + hours))?;
                     // Also credit hours to pilot total and per-round aggregates
                     self.pilots.with_pilot_and_aggregates(
@@ -5567,17 +6295,14 @@ impl StatsDb {
                 })?;
             }
             Stat::Kill(dead) => self.record_kill(ctx, dead)?,
-            Stat::Points {
-                id,
-                points,
-                reason: _,
-            } => {
+            Stat::Points { id, points, reason: _ } => {
                 self.pilots
                     .with_pilot_round_info(id, ctx.round, |ri| ri.points += points)?;
             }
             Stat::PointsTransfer { from, to, points } => {
-                self.pilots
-                    .with_pilot_round_info(from, ctx.round, |ri| ri.points -= points as i32)?;
+                self.pilots.with_pilot_round_info(from, ctx.round, |ri| {
+                    ri.points -= points as i32
+                })?;
                 self.pilots.with_pilot_and_aggregates(
                     from,
                     ctx.round,
@@ -5585,8 +6310,9 @@ impl StatsDb {
                     |p| p.total.donated_points += points,
                     |a| a.donated_points += points,
                 )?;
-                self.pilots
-                    .with_pilot_round_info(to, ctx.round, |ri| ri.points += points as i32)?;
+                self.pilots.with_pilot_round_info(to, ctx.round, |ri| {
+                    ri.points += points as i32
+                })?;
             }
             Stat::Bind { id, token } => {
                 let token = Uuid::from_str(&token)?;
@@ -5605,7 +6331,15 @@ impl StatsDb {
             Stat::PointsTransferToObjective { from: _, to: _, points: _ } => {
                 // Not currently tracked in database
             }
-            Stat::Weather { temp_c, wind_speed_kts, wind_from_deg, cloud_base_m, qnh_hpa, cloud_density, visibility_m } => {
+            Stat::Weather {
+                temp_c,
+                wind_speed_kts,
+                wind_from_deg,
+                cloud_base_m,
+                qnh_hpa,
+                cloud_density,
+                visibility_m,
+            } => {
                 if let Ok(mut w) = inst.latest_weather.write() {
                     *w = Some(WeatherSnapshot {
                         temp_c,
@@ -5619,7 +6353,8 @@ impl StatsDb {
                 }
             }
             Stat::CombatLog { side, kind, text, pos, formation } => {
-                let key = combat_log_key(ctx.round, time.timestamp_nanos_opt().unwrap_or(0));
+                let key =
+                    combat_log_key(ctx.round, time.timestamp_nanos_opt().unwrap_or(0));
                 let line = CombatLogLine {
                     at: time.timestamp(),
                     side: format!("{side:?}"),
@@ -5645,8 +6380,7 @@ impl StatsDb {
                 // Future: track in dedicated tables
             }
         };
-        self.seq
-            .insert(&(ctx.sortie.clone(), ctx.round), &time)?;
+        self.seq.insert(&(ctx.sortie.clone(), ctx.round), &time)?;
         ctx.seq = time;
         Ok(())
     }
@@ -5675,7 +6409,11 @@ impl StatsDb {
         Ok(())
     }
 
-    pub(crate) fn store_oauth_state(&self, state: Uuid, return_to: Option<std::string::String>) -> Result<()> {
+    pub(crate) fn store_oauth_state(
+        &self,
+        state: Uuid,
+        return_to: Option<std::string::String>,
+    ) -> Result<()> {
         let expires = Utc::now() + chrono::Duration::minutes(10);
         self.auth_states.insert(&state, &OAuthState { expires, return_to })?;
         Ok(())
@@ -5684,7 +6422,10 @@ impl StatsDb {
     /// Consumes the one-time state, returning the stored `return_to` (which
     /// may itself be `None`, if the login started without one) if it was
     /// valid and unexpired -- outer `None` means reject the callback outright.
-    pub(crate) fn take_oauth_state(&self, state: Uuid) -> Result<Option<Option<std::string::String>>> {
+    pub(crate) fn take_oauth_state(
+        &self,
+        state: Uuid,
+    ) -> Result<Option<Option<std::string::String>>> {
         match self.auth_states.remove(&state)? {
             None => Ok(None),
             Some(s) if s.expires > Utc::now() => Ok(Some(s.return_to)),
@@ -5760,13 +6501,18 @@ impl StatsDb {
     // ── Admin audit log ──────────────────────────────────────────────
 
     pub(crate) fn audit_put(&self, e: &AuditEntry) -> Result<()> {
-        self.admin_audit.insert(&(e.at.timestamp_micros(), Uuid::new_v4().as_u128() as u32), e)?;
+        self.admin_audit
+            .insert(&(e.at.timestamp_micros(), Uuid::new_v4().as_u128() as u32), e)?;
         Ok(())
     }
 
     /// Up to `limit` entries older than `before` (all of them without it),
     /// newest first.
-    pub(crate) fn audit_list(&self, limit: usize, before: Option<DateTime<Utc>>) -> Result<Vec<AuditEntry>> {
+    pub(crate) fn audit_list(
+        &self,
+        limit: usize,
+        before: Option<DateTime<Utc>>,
+    ) -> Result<Vec<AuditEntry>> {
         let end = before.map_or(i64::MAX, |b| b.timestamp_micros());
         let mut out = Vec::new();
         for r in self.admin_audit.range(..(end, 0u32))?.rev() {
@@ -5785,8 +6531,13 @@ impl StatsDb {
         if n <= AUDIT_KEEP {
             return Ok(0);
         }
-        let old: Vec<(i64, u32)> =
-            self.admin_audit.iter().keys_only().take(n - AUDIT_KEEP).filter_map(|k| k.ok()).collect();
+        let old: Vec<(i64, u32)> = self
+            .admin_audit
+            .iter()
+            .keys_only()
+            .take(n - AUDIT_KEEP)
+            .filter_map(|k| k.ok())
+            .collect();
         for k in &old {
             self.admin_audit.delete(k)?;
         }
@@ -5827,7 +6578,8 @@ impl StatsDb {
         alt: f64,
         hdg: f64,
     ) -> Result<()> {
-        self.trail_points.insert(&(round_id, unit_id.clone(), ts), &(lat, lon, alt, hdg))?;
+        self.trail_points
+            .insert(&(round_id, unit_id.clone(), ts), &(lat, lon, alt, hdg))?;
         Ok(())
     }
 
@@ -5835,9 +6587,9 @@ impl StatsDb {
         // Keep last 30 minutes of trail history
         let cutoff = Utc::now().timestamp() - 1800;
         let mut points = Vec::new();
-        for item in self.trail_points.range(
-            (round_id, std::string::String::new(), cutoff)..,
-        )? {
+        for item in
+            self.trail_points.range((round_id, std::string::String::new(), cutoff)..)?
+        {
             let ((rid, unit_id, ts), (lat, lon, alt, hdg)) = item?;
             if rid != round_id {
                 break;
@@ -5914,8 +6666,12 @@ impl StatsDb {
         purge_prefixed!(self.session_v2);
         // legacy rows may not decode, so they go by key alone
         for round in rounds.iter() {
-            let keys: Vec<_> =
-                self.session.scan_prefix(round)?.keys_only().filter_map(|k| k.ok()).collect();
+            let keys: Vec<_> = self
+                .session
+                .scan_prefix(round)?
+                .keys_only()
+                .filter_map(|k| k.ok())
+                .collect();
             for k in keys {
                 self.session.delete(&k)?;
             }
@@ -6063,7 +6819,8 @@ impl StatsDb {
                 t.ground_kills = t.ground_kills.saturating_sub(d.ground_kills);
                 t.captures = t.captures.saturating_sub(d.captures);
                 t.repairs = t.repairs.saturating_sub(d.repairs);
-                t.supply_transfers = t.supply_transfers.saturating_sub(d.supply_transfers);
+                t.supply_transfers =
+                    t.supply_transfers.saturating_sub(d.supply_transfers);
                 t.troops = t.troops.saturating_sub(d.troops);
                 t.farps = t.farps.saturating_sub(d.farps);
                 t.deploys = t.deploys.saturating_sub(d.deploys);
@@ -6110,7 +6867,9 @@ impl StatsDb {
         // Trails & weather
         self.trail_points.clear()?;
         self.round_instance.clear()?;
-        if let Ok(mut w) = inst.latest_weather.write() { *w = None; }
+        if let Ok(mut w) = inst.latest_weather.write() {
+            *w = None;
+        }
         // Recon intel (TARPS) -- per-round picture, gone on reset (incl. any
         // on-disk photo files)
         self.intel_purge_all()?;
@@ -6203,12 +6962,8 @@ impl StatsDb {
     /// re-ingests *every* instance that reads a JSONL -- rebuilding only one
     /// would delete the others' data with nothing to replay it back from.
     pub(crate) fn request_jsonl_rebuild(&self) -> Result<()> {
-        let readers: Vec<_> = self
-            .0
-            .states
-            .values()
-            .filter(|st| st.stats_jsonl.is_some())
-            .collect();
+        let readers: Vec<_> =
+            self.0.states.values().filter(|st| st.stats_jsonl.is_some()).collect();
         if readers.is_empty() {
             bail!("no instance is reading from a stats.jsonl -- use the --rebuild-stats flag offline instead");
         }
@@ -6270,11 +7025,8 @@ impl StatsDb {
         // ── round / seq: collapse to one ────────────────────────────────
         let start = rounds.iter().map(|(_, r)| r.start).min().unwrap();
         let any_open = rounds.iter().any(|(_, r)| r.end.is_none());
-        let end = if any_open {
-            None
-        } else {
-            rounds.iter().filter_map(|(_, r)| r.end).max()
-        };
+        let end =
+            if any_open { None } else { rounds.iter().filter_map(|(_, r)| r.end).max() };
         let winner = rounds.iter().rev().find_map(|(_, r)| r.winner);
         for (rid, _) in &rounds {
             self.round.remove(&(scenario.clone(), *rid))?;
@@ -6318,9 +7070,9 @@ impl StatsDb {
                 continue;
             }
             self.pilots.aggregates.remove(&(u.clone(), v.clone(), rid))?;
-            self.pilots
-                .aggregates
-                .fetch_and_update(&(u.clone(), v.clone(), canonical), |cur| {
+            self.pilots.aggregates.fetch_and_update(
+                &(u.clone(), v.clone(), canonical),
+                |cur| {
                     let mut c = cur.unwrap_or_default();
                     c.air_kills += agg.air_kills;
                     c.ground_kills += agg.ground_kills;
@@ -6335,7 +7087,8 @@ impl StatsDb {
                     c.hours += agg.hours;
                     c.donated_points += agg.donated_points;
                     Some(c)
-                })?;
+                },
+            )?;
             moved += 1;
         }
 
@@ -6382,10 +7135,8 @@ impl StatsDb {
         }
 
         // ── kills (EnId, RoundId, KillId): re-key (id unique) ───────────
-        for ((en, rid, kid), dead) in self
-            .kills
-            .iter()
-            .collect::<Result<Vec<((EnId, RoundId, KillId), Dead)>>>()?
+        for ((en, rid, kid), dead) in
+            self.kills.iter().collect::<Result<Vec<((EnId, RoundId, KillId), Dead)>>>()?
         {
             if !fork_ids.contains(&rid) {
                 continue;
@@ -6512,28 +7263,72 @@ impl StatsDb {
         let round_tree_ids: HashSet<RoundId> =
             round_entries.iter().map(|(_, rid, _)| *rid).collect();
         let mut ids: HashSet<RoundId> = round_tree_ids.clone();
-        for r in self.seq.iter() { ids.insert(r?.0 .1); }
-        for r in self.pilots.aggregates.iter() { ids.insert(r?.0 .2); }
-        for r in self.pilots.sortie.iter() { ids.insert(r?.0 .1); }
-        for r in self.pilots.round_info.iter() { ids.insert(r?.0 .1); }
-        for k in self.session_v2.iter().keys_only() { ids.insert(k?.0); }
-        for r in self.kills.iter() { ids.insert(r?.0 .1); }
-        for r in self.kill_seen.iter() { ids.insert(r?.0 .0); }
-        for r in self.sortie_seen.iter() { ids.insert(r?.0 .0); }
-        for r in self.deploy_seen.iter() { ids.insert(r?.0 .0); }
-        for r in self.units.iter() { ids.insert(r?.0 .0); }
-        for r in self.groups.iter() { ids.insert(r?.0 .0); }
-        for r in self.detected.iter() { ids.insert(r?.0 .0); }
-        for r in self.objectives.iter() { ids.insert(r?.0 .0); }
-        for r in self.equipment.iter() { ids.insert(r?.0 .0); }
-        for r in self.liquids.iter() { ids.insert(r?.0 .0); }
-        for r in self.trail_points.iter() { ids.insert(r?.0 .0); }
-        for r in self.objective_captures.iter() { ids.insert(r?.0 .0); }
-        for r in self.captures.iter() { ids.insert(r?.0 .0); }
-        for r in self.deploys.iter() { ids.insert(r?.0 .1); }
-        for r in self.aircraft_sorties.iter() { ids.insert(r?.0 .0); }
-        for r in self.intel_captures.iter() { ids.insert(r?.0 .0); }
-        for r in self.intel_markup.iter() { ids.insert(r?.0 .0); }
+        for r in self.seq.iter() {
+            ids.insert(r?.0 .1);
+        }
+        for r in self.pilots.aggregates.iter() {
+            ids.insert(r?.0 .2);
+        }
+        for r in self.pilots.sortie.iter() {
+            ids.insert(r?.0 .1);
+        }
+        for r in self.pilots.round_info.iter() {
+            ids.insert(r?.0 .1);
+        }
+        for k in self.session_v2.iter().keys_only() {
+            ids.insert(k?.0);
+        }
+        for r in self.kills.iter() {
+            ids.insert(r?.0 .1);
+        }
+        for r in self.kill_seen.iter() {
+            ids.insert(r?.0 .0);
+        }
+        for r in self.sortie_seen.iter() {
+            ids.insert(r?.0 .0);
+        }
+        for r in self.deploy_seen.iter() {
+            ids.insert(r?.0 .0);
+        }
+        for r in self.units.iter() {
+            ids.insert(r?.0 .0);
+        }
+        for r in self.groups.iter() {
+            ids.insert(r?.0 .0);
+        }
+        for r in self.detected.iter() {
+            ids.insert(r?.0 .0);
+        }
+        for r in self.objectives.iter() {
+            ids.insert(r?.0 .0);
+        }
+        for r in self.equipment.iter() {
+            ids.insert(r?.0 .0);
+        }
+        for r in self.liquids.iter() {
+            ids.insert(r?.0 .0);
+        }
+        for r in self.trail_points.iter() {
+            ids.insert(r?.0 .0);
+        }
+        for r in self.objective_captures.iter() {
+            ids.insert(r?.0 .0);
+        }
+        for r in self.captures.iter() {
+            ids.insert(r?.0 .0);
+        }
+        for r in self.deploys.iter() {
+            ids.insert(r?.0 .1);
+        }
+        for r in self.aircraft_sorties.iter() {
+            ids.insert(r?.0 .0);
+        }
+        for r in self.intel_captures.iter() {
+            ids.insert(r?.0 .0);
+        }
+        for r in self.intel_markup.iter() {
+            ids.insert(r?.0 .0);
+        }
 
         if ids.len() <= 1 {
             return Ok(format!(
@@ -6579,11 +7374,8 @@ impl StatsDb {
         fork_ids.remove(&canonical);
 
         let canon_entry = round_entries.iter().find(|(_, rid, _)| *rid == canonical);
-        let start = round_entries
-            .iter()
-            .map(|(_, _, r)| r.start)
-            .min()
-            .unwrap_or_else(Utc::now);
+        let start =
+            round_entries.iter().map(|(_, _, r)| r.start).min().unwrap_or_else(Utc::now);
         // Keep the campaign open unless the canonical round is itself a
         // genuinely-ended round.
         let end = canon_entry.and_then(|(_, _, r)| r.end);
@@ -6701,7 +7493,10 @@ impl StatsDb {
     }
 
     /// `new_offline` on a given storage engine.
-    pub(crate) fn new_offline_on<P: AsRef<Path>>(path: P, backend: crate::storage::Backend) -> Result<Self> {
+    pub(crate) fn new_offline_on<P: AsRef<Path>>(
+        path: P,
+        backend: crate::storage::Backend,
+    ) -> Result<Self> {
         let cfg: InstanceCfg = serde_json::from_value(serde_json::json!({
             "id": crate::instance::DEFAULT_INSTANCE,
         }))?;
@@ -6712,9 +7507,17 @@ impl StatsDb {
 #[cfg(test)]
 impl StatsDb {
     /// A round of `inst`'s, for route tests.
-    pub(crate) fn insert_test_round(&self, rid: RoundId, inst: &str, start: DateTime<Utc>) {
+    pub(crate) fn insert_test_round(
+        &self,
+        rid: RoundId,
+        inst: &str,
+        start: DateTime<Utc>,
+    ) {
         self.round
-            .insert(&(Scenario::from("campaign"), rid), &Round { start, end: Some(start), winner: None })
+            .insert(
+                &(Scenario::from("campaign"), rid),
+                &Round { start, end: Some(start), winner: None },
+            )
             .unwrap();
         self.round_instance.insert(&rid, &inst.to_string()).unwrap();
     }
@@ -6757,13 +7560,15 @@ mod session_key_tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn legacy_sessions_are_rekeyed_and_keep_working() {
-        let tmp = std::env::temp_dir().join(format!("bfdb-session-test-{}", Uuid::new_v4()));
+        let tmp =
+            std::env::temp_dir().join(format!("bfdb-session-test-{}", Uuid::new_v4()));
         let live = Uuid::new_v4();
         let stale = Uuid::new_v4();
         {
             // what a bfdb from before session_key left behind
             let db = sled::open(tmp.join("db")).unwrap();
-            let old: Tree<Uuid, LegacySessionData> = Tree::open(&db, "auth_sessions").unwrap();
+            let old: Tree<Uuid, LegacySessionData> =
+                Tree::open(&db, "auth_sessions").unwrap();
             let row = |hours: i64, admin: bool| LegacySessionData {
                 discord_id: "42".into(),
                 username: "pilot".into(),
@@ -6798,15 +7603,20 @@ mod round_number_tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn rounds_are_numbered_per_server_in_start_order() {
-        let tmp = std::env::temp_dir().join(format!("bfdb-number-test-{}", Uuid::new_v4()));
+        let tmp =
+            std::env::temp_dir().join(format!("bfdb-number-test-{}", Uuid::new_v4()));
         let db = StatsDb::new_offline(tmp.join("db")).unwrap();
         let t0 = Utc::now();
         // Ids as sled hands them out: nothing like 1, 2, 3, and not in order.
-        let rounds = [(RoundId(108_000_656), 120i64), (RoundId(0), 0), (RoundId(54_000_002), 60)];
+        let rounds =
+            [(RoundId(108_000_656), 120i64), (RoundId(0), 0), (RoundId(54_000_002), 60)];
         for (rid, mins) in rounds {
             let start = t0 + chrono::Duration::minutes(mins);
             db.round
-                .insert(&(Scenario::from("campaign"), rid), &Round { start, end: None, winner: None })
+                .insert(
+                    &(Scenario::from("campaign"), rid),
+                    &Round { start, end: None, winner: None },
+                )
                 .unwrap();
         }
         let n = db.round_numbers().unwrap();
@@ -6824,7 +7634,8 @@ mod merge_rounds_tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn collapses_forked_campaign_rounds() {
-        let tmp = std::env::temp_dir().join(format!("bfdb-merge-test-{}", Uuid::new_v4()));
+        let tmp =
+            std::env::temp_dir().join(format!("bfdb-merge-test-{}", Uuid::new_v4()));
         let db = StatsDb::new_offline(tmp.join("db")).unwrap();
         let scen = Scenario::from("campaign");
         let t0 = Utc::now();
@@ -6839,7 +7650,15 @@ mod merge_rounds_tests {
             db.round
                 .insert(
                     &(scen.clone(), rid),
-                    &Round { start, end: if open { None } else { Some(start + chrono::Duration::minutes(30)) }, winner: None },
+                    &Round {
+                        start,
+                        end: if open {
+                            None
+                        } else {
+                            Some(start + chrono::Duration::minutes(30))
+                        },
+                        winner: None,
+                    },
                 )
                 .unwrap();
             db.seq.insert(&(scen.clone(), rid), &start).unwrap();
@@ -6850,7 +7669,10 @@ mod merge_rounds_tests {
         for (rid, ak) in [(r1, 2u32), (r2, 3), (r3, 5)] {
             db.pilots
                 .aggregates
-                .insert(&(ucid, veh.clone(), rid), &Aggregates { air_kills: ak, ..Default::default() })
+                .insert(
+                    &(ucid, veh.clone(), rid),
+                    &Aggregates { air_kills: ak, ..Default::default() },
+                )
                 .unwrap();
         }
         let oid = ObjectiveId::from(1i64);
@@ -6861,7 +7683,10 @@ mod merge_rounds_tests {
         for (rid, pts) in [(r1, 5i32), (r3, 42)] {
             db.pilots
                 .round_info
-                .insert(&(ucid, rid), &PilotRoundInfo { points: pts, ..Default::default() })
+                .insert(
+                    &(ucid, rid),
+                    &PilotRoundInfo { points: pts, ..Default::default() },
+                )
                 .unwrap();
         }
 
@@ -6896,7 +7721,8 @@ mod merge_rounds_tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn merge_all_sweeps_orphan_round_ids() {
-        let tmp = std::env::temp_dir().join(format!("bfdb-mergeall-test-{}", Uuid::new_v4()));
+        let tmp =
+            std::env::temp_dir().join(format!("bfdb-mergeall-test-{}", Uuid::new_v4()));
         let db = StatsDb::new_offline(tmp.join("db")).unwrap();
         let scen = Scenario::from("campaign");
         let t0 = Utc::now();
@@ -6947,7 +7773,8 @@ mod intel_storage_tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn on_disk_photo_round_trip() {
-        let tmp = std::env::temp_dir().join(format!("bfdb-intel-test-{}", Uuid::new_v4()));
+        let tmp =
+            std::env::temp_dir().join(format!("bfdb-intel-test-{}", Uuid::new_v4()));
         let db_path = tmp.join("db");
         let img_dir = tmp.join("photos");
         let db = StatsDb::new_offline(&db_path).unwrap();
@@ -6978,7 +7805,8 @@ mod intel_storage_tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn in_db_photo_when_no_dir() {
-        let tmp = std::env::temp_dir().join(format!("bfdb-intel-test-{}", Uuid::new_v4()));
+        let tmp =
+            std::env::temp_dir().join(format!("bfdb-intel-test-{}", Uuid::new_v4()));
         let db = StatsDb::new_offline(tmp.join("db")).unwrap();
         let id = Uuid::new_v4();
         db.intel_put_image(id, "image/jpeg".into(), vec![1, 2, 3]).unwrap();
@@ -7014,12 +7842,22 @@ mod off_slot_credit_tests {
         };
         let kill = || {
             db.pilots
-                .with_pilot_and_aggregates(ucid, rid, true, |p| p.total.ground_kills += 1, |a| a.ground_kills += 1)
+                .with_pilot_and_aggregates(
+                    ucid,
+                    rid,
+                    true,
+                    |p| p.total.ground_kills += 1,
+                    |a| a.ground_kills += 1,
+                )
                 .unwrap()
         };
         // Two kills from the Tactical Commander slot, one from a jet.
         db.pilots
-            .with_pilot_round_info(ucid, rid, slot(SlotId::ArtilleryCommander(Side::Blue, 1), None))
+            .with_pilot_round_info(
+                ucid,
+                rid,
+                slot(SlotId::ArtilleryCommander(Side::Blue, 1), None),
+            )
             .unwrap();
         kill();
         kill();
@@ -7065,7 +7903,8 @@ mod jsonl_tail_tests {
     }
 
     fn append(path: &Path, sorties: &[&str]) {
-        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path).unwrap();
+        let mut f =
+            std::fs::OpenOptions::new().create(true).append(true).open(path).unwrap();
         for s in sorties {
             f.write_all(line(s).as_bytes()).unwrap();
         }
@@ -7163,10 +8002,20 @@ mod jsonl_tail_tests {
         append(&live, &["a"]);
         let full = line("b");
         let (head, tail) = full.split_at(10);
-        std::fs::OpenOptions::new().append(true).open(&live).unwrap().write_all(head.as_bytes()).unwrap();
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&live)
+            .unwrap()
+            .write_all(head.as_bytes())
+            .unwrap();
         let mut cur = JsonlCursor::default();
         assert_eq!(drain(&live, &mut cur), ["a"]);
-        std::fs::OpenOptions::new().append(true).open(&live).unwrap().write_all(tail.as_bytes()).unwrap();
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&live)
+            .unwrap()
+            .write_all(tail.as_bytes())
+            .unwrap();
         assert_eq!(drain(&live, &mut cur), ["b"]);
         let _ = std::fs::remove_dir_all(&dir);
     }

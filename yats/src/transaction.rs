@@ -12,11 +12,7 @@ pub struct TransactionalTree<'a, K, V> {
 
 impl<'a, K, V> TransactionalTree<'a, K, V> {
     pub(crate) fn new(sled: &'a sled::transaction::TransactionalTree) -> Self {
-        Self {
-            inner: sled,
-            _key: PhantomData,
-            _value: PhantomData,
-        }
+        Self { inner: sled, _key: PhantomData, _value: PhantomData }
     }
 
     pub fn insert(
@@ -28,38 +24,54 @@ impl<'a, K, V> TransactionalTree<'a, K, V> {
         K: KV,
         V: KV,
     {
-        let k_ser = serialize(key).map_err(|e| ConflictableTransactionError::Abort(e.into()))?;
-        let v_ser = serialize(value).map_err(|e| ConflictableTransactionError::Abort(e.into()))?;
+        let k_ser =
+            serialize(key).map_err(|e| ConflictableTransactionError::Abort(e.into()))?;
+        let v_ser = serialize(value)
+            .map_err(|e| ConflictableTransactionError::Abort(e.into()))?;
         Ok(self
             .inner
             .insert(k_ser, v_ser)?
-            .map(|v| deserialize(&v).map_err(|e| ConflictableTransactionError::Abort(e.into())))
+            .map(|v| {
+                deserialize(&v).map_err(|e| ConflictableTransactionError::Abort(e.into()))
+            })
             .transpose()?)
     }
 
-    pub fn remove(&self, key: &K) -> Res<Option<V>, ConflictableTransactionError<anyhow::Error>>
+    pub fn remove(
+        &self,
+        key: &K,
+    ) -> Res<Option<V>, ConflictableTransactionError<anyhow::Error>>
     where
         K: KV,
         V: KV,
     {
-        let k_ser = serialize(key).map_err(|e| ConflictableTransactionError::Abort(e.into()))?;
+        let k_ser =
+            serialize(key).map_err(|e| ConflictableTransactionError::Abort(e.into()))?;
         Ok(self
             .inner
             .remove(k_ser)?
-            .map(|v| deserialize(&v).map_err(|e| ConflictableTransactionError::Abort(e.into())))
+            .map(|v| {
+                deserialize(&v).map_err(|e| ConflictableTransactionError::Abort(e.into()))
+            })
             .transpose()?)
     }
 
-    pub fn get(&self, key: &K) -> Res<Option<V>, ConflictableTransactionError<anyhow::Error>>
+    pub fn get(
+        &self,
+        key: &K,
+    ) -> Res<Option<V>, ConflictableTransactionError<anyhow::Error>>
     where
         K: KV,
         V: KV,
     {
-        let k_ser = serialize(key).map_err(|e| ConflictableTransactionError::Abort(e.into()))?;
+        let k_ser =
+            serialize(key).map_err(|e| ConflictableTransactionError::Abort(e.into()))?;
         Ok(self
             .inner
             .get(k_ser)?
-            .map(|v| deserialize(&v).map_err(|e| ConflictableTransactionError::Abort(e.into())))
+            .map(|v| {
+                deserialize(&v).map_err(|e| ConflictableTransactionError::Abort(e.into()))
+            })
             .transpose()?)
     }
 
@@ -117,21 +129,24 @@ impl_transactional!(K0, V0, 0, K1, V1, 1, K2, V2, 2);
 impl_transactional!(K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3);
 impl_transactional!(K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4);
 impl_transactional!(K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5);
-impl_transactional!(K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5, K6, V6, 6);
 impl_transactional!(
-    K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5, K6, V6, 6, K7, V7, 7
+    K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5, K6, V6, 6
 );
 impl_transactional!(
-    K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5, K6, V6, 6, K7, V7, 7, K8, V8,
-    8
+    K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5, K6, V6, 6, K7, V7,
+    7
 );
 impl_transactional!(
-    K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5, K6, V6, 6, K7, V7, 7, K8, V8,
-    8, K9, V9, 9
+    K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5, K6, V6, 6, K7, V7,
+    7, K8, V8, 8
 );
 impl_transactional!(
-    K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5, K6, V6, 6, K7, V7, 7, K8, V8,
-    8, K9, V9, 9, K10, V10, 10
+    K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5, K6, V6, 6, K7, V7,
+    7, K8, V8, 8, K9, V9, 9
+);
+impl_transactional!(
+    K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5, K6, V6, 6, K7, V7,
+    7, K8, V8, 8, K9, V9, 9, K10, V10, 10
 );
 
 #[test]

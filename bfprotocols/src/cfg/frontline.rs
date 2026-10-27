@@ -27,7 +27,7 @@ pub(super) fn default_frontline_samples() -> usize {
 }
 
 pub(super) fn default_territory_zone_alpha() -> f32 {
-    0.15  // 15% opacity for subtle territory shading
+    0.15 // 15% opacity for subtle territory shading
 }
 
 pub(super) fn default_frontline_max_marks() -> usize {

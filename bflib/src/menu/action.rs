@@ -3,8 +3,8 @@ use crate::{
     Context,
     db::{
         actions::{
-            ActionArgs, ActionCmd, AddTaskArgs, TaskAt, WithObj, WithPos, WithPosAndGroup,
-            WithTask, move_cost, waypoint_accepts,
+            ActionArgs, ActionCmd, AddTaskArgs, TaskAt, WithObj, WithPos,
+            WithPosAndGroup, WithTask, move_cost, waypoint_accepts,
         },
         group::DeployKind,
         tasks::TaskId,
@@ -44,16 +44,7 @@ fn run_action(
     cmd: ActionCmd,
 ) -> Result<()> {
     let spctx = SpawnCtx::new(lua)?;
-    ctx.db.start_action(
-        lua,
-        perf,
-        &spctx,
-        &ctx.idx,
-        &ctx.jtac,
-        side,
-        Some(ucid),
-        cmd,
-    )?;
+    ctx.db.start_action(lua, perf, &spctx, &ctx.idx, &ctx.jtac, side, Some(ucid), cmd)?;
     if let Some(mark) = mark {
         ctx.db.ephemeral.msgs().delete_mark(mark);
     }
@@ -74,62 +65,32 @@ fn do_pos_action(
 ) -> Result<()> {
     let pos = Vector2::new(pos.0.x, pos.0.z);
     let args = match &action.kind {
-        ActionKind::Attackers(cfg) => ActionArgs::Attackers(WithPos {
-            cfg: cfg.clone(),
-            pos,
-        }),
-        ActionKind::Sead(cfg) => ActionArgs::Sead(WithPos {
-            cfg: cfg.clone(),
-            pos,
-        }),
-        ActionKind::Awacs(cfg) => ActionArgs::Awacs(WithPos {
-            cfg: cfg.clone(),
-            pos,
-        }),
-        ActionKind::CruiseMissileSpawn(cfg) => ActionArgs::CruiseMissileSpawn(WithPos {
-            cfg: cfg.clone(),
-            pos,
-        }),
-        ActionKind::FatCow(cfg) => ActionArgs::FatCow(WithPos {
-            cfg: cfg.clone(),
-            pos,
-        }),
-        ActionKind::Deployable(cfg) => ActionArgs::Deployable(WithPos {
-            cfg: cfg.clone(),
-            pos,
-        }),
-        ActionKind::Drone(cfg) => ActionArgs::Drone(WithPos {
-            cfg: cfg.clone(),
-            pos,
-        }),
-        ActionKind::Fighters(cfg) => ActionArgs::Fighters(WithPos {
-            cfg: cfg.clone(),
-            pos,
-        }),
-        ActionKind::Tanker(cfg) => ActionArgs::Tanker(WithPos {
-            cfg: cfg.clone(),
-            pos,
-        }),
-        ActionKind::Paratrooper(cfg) => ActionArgs::Paratrooper(WithPos {
-            cfg: cfg.clone(),
-            pos,
-        }),
-        ActionKind::Nuke(cfg) => ActionArgs::Nuke(WithPos {
-            cfg: cfg.clone(),
-            pos,
-        }),
-        ActionKind::Artillery(cfg) => ActionArgs::Artillery(WithPos {
-            cfg: cfg.clone(),
-            pos,
-        }),
-        ActionKind::Recon(cfg) => ActionArgs::Recon(WithPos {
-            cfg: cfg.clone(),
-            pos,
-        }),
-        ActionKind::Strike(cfg) => ActionArgs::Strike(WithPos {
-            cfg: cfg.clone(),
-            pos,
-        }),
+        ActionKind::Attackers(cfg) => {
+            ActionArgs::Attackers(WithPos { cfg: cfg.clone(), pos })
+        }
+        ActionKind::Sead(cfg) => ActionArgs::Sead(WithPos { cfg: cfg.clone(), pos }),
+        ActionKind::Awacs(cfg) => ActionArgs::Awacs(WithPos { cfg: cfg.clone(), pos }),
+        ActionKind::CruiseMissileSpawn(cfg) => {
+            ActionArgs::CruiseMissileSpawn(WithPos { cfg: cfg.clone(), pos })
+        }
+        ActionKind::FatCow(cfg) => ActionArgs::FatCow(WithPos { cfg: cfg.clone(), pos }),
+        ActionKind::Deployable(cfg) => {
+            ActionArgs::Deployable(WithPos { cfg: cfg.clone(), pos })
+        }
+        ActionKind::Drone(cfg) => ActionArgs::Drone(WithPos { cfg: cfg.clone(), pos }),
+        ActionKind::Fighters(cfg) => {
+            ActionArgs::Fighters(WithPos { cfg: cfg.clone(), pos })
+        }
+        ActionKind::Tanker(cfg) => ActionArgs::Tanker(WithPos { cfg: cfg.clone(), pos }),
+        ActionKind::Paratrooper(cfg) => {
+            ActionArgs::Paratrooper(WithPos { cfg: cfg.clone(), pos })
+        }
+        ActionKind::Nuke(cfg) => ActionArgs::Nuke(WithPos { cfg: cfg.clone(), pos }),
+        ActionKind::Artillery(cfg) => {
+            ActionArgs::Artillery(WithPos { cfg: cfg.clone(), pos })
+        }
+        ActionKind::Recon(cfg) => ActionArgs::Recon(WithPos { cfg: cfg.clone(), pos }),
+        ActionKind::Strike(cfg) => ActionArgs::Strike(WithPos { cfg: cfg.clone(), pos }),
         ActionKind::Bomber(_)
         | ActionKind::AddTask(_)
         | ActionKind::RemoveTask(_)
@@ -148,17 +109,20 @@ fn do_pos_action(
         | ActionKind::CarrierRepair
         | ActionKind::CarrierRespawn
         | ActionKind::Reinforce(_)
-        | ActionKind::NavalCruiseMissileStrike(_) => bail!("invalid action type for this menu item"),
+        | ActionKind::NavalCruiseMissileStrike(_) => {
+            bail!("invalid action type for this menu item")
+        }
     };
     let cmd = ActionCmd { name, action, args };
     run_action(ctx, perf, lua, side, slot, ucid, Some(mark), cmd)
 }
 
-fn side_slot_action(ctx: &mut Context, ucid: &Ucid, name: &str) -> Result<(Side, SlotId, Action)> {
-    let player = ctx
-        .db
-        .player(ucid)
-        .ok_or_else(|| anyhow!("no such player"))?;
+fn side_slot_action(
+    ctx: &mut Context,
+    ucid: &Ucid,
+    name: &str,
+) -> Result<(Side, SlotId, Action)> {
+    let player = ctx.db.player(ucid).ok_or_else(|| anyhow!("no such player"))?;
     let side = player.side;
     let slot = player
         .current_slot
@@ -178,7 +142,10 @@ fn side_slot_action(ctx: &mut Context, ucid: &Ucid, name: &str) -> Result<(Side,
     Ok((side, slot, action))
 }
 
-fn run_pos_action(lua: MizLua, arg: ArgQuad<Ucid, String, LuaVec3, MarkId>) -> Result<()> {
+fn run_pos_action(
+    lua: MizLua,
+    arg: ArgQuad<Ucid, String, LuaVec3, MarkId>,
+) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
     let mut perf_guard = Perf::get_mut();
@@ -227,56 +194,34 @@ fn do_pos_group_action(
 ) -> Result<()> {
     let pos = Vector2::new(pos.0.x, pos.0.z);
     let args = match &action.kind {
-        ActionKind::TankerWaypoint => ActionArgs::TankerWaypoint(WithPosAndGroup {
-            cfg: (),
-            pos,
-            group,
-        }),
-        ActionKind::AwacsWaypoint => ActionArgs::AwacsWaypoint(WithPosAndGroup {
-            cfg: (),
-            pos,
-            group,
-        }),
-        ActionKind::CruiseMissileWaypoint => ActionArgs::CruiseMissileWaypoint(WithPosAndGroup {
-            cfg: (),
-            pos,
-            group,
-        }),
-        ActionKind::FighersWaypoint => ActionArgs::FightersWaypoint(WithPosAndGroup {
-            cfg: (),
-            pos,
-            group,
-        }),
-        ActionKind::DroneWaypoint => ActionArgs::DroneWaypoint(WithPosAndGroup {
-            cfg: (),
-            pos,
-            group,
-        }),
-        ActionKind::AttackersWaypoint => ActionArgs::AttackersWaypoint(WithPosAndGroup {
-            cfg: (),
-            pos,
-            group,
-        }),
-        ActionKind::SeadWaypoint => ActionArgs::SeadWaypoint(WithPosAndGroup {
-            cfg: (),
-            pos,
-            group,
-        }),
-        ActionKind::Move(cfg) => ActionArgs::Move(WithPosAndGroup {
-            cfg: cfg.clone(),
-            pos,
-            group,
-        }),
-        ActionKind::Rtb => ActionArgs::Rtb(WithPosAndGroup {
-            cfg: (),
-            pos,
-            group,
-        }),
-        ActionKind::CarrierWaypoint => ActionArgs::CarrierWaypoint(WithPosAndGroup {
-            cfg: (),
-            pos,
-            group,
-        }),
+        ActionKind::TankerWaypoint => {
+            ActionArgs::TankerWaypoint(WithPosAndGroup { cfg: (), pos, group })
+        }
+        ActionKind::AwacsWaypoint => {
+            ActionArgs::AwacsWaypoint(WithPosAndGroup { cfg: (), pos, group })
+        }
+        ActionKind::CruiseMissileWaypoint => {
+            ActionArgs::CruiseMissileWaypoint(WithPosAndGroup { cfg: (), pos, group })
+        }
+        ActionKind::FighersWaypoint => {
+            ActionArgs::FightersWaypoint(WithPosAndGroup { cfg: (), pos, group })
+        }
+        ActionKind::DroneWaypoint => {
+            ActionArgs::DroneWaypoint(WithPosAndGroup { cfg: (), pos, group })
+        }
+        ActionKind::AttackersWaypoint => {
+            ActionArgs::AttackersWaypoint(WithPosAndGroup { cfg: (), pos, group })
+        }
+        ActionKind::SeadWaypoint => {
+            ActionArgs::SeadWaypoint(WithPosAndGroup { cfg: (), pos, group })
+        }
+        ActionKind::Move(cfg) => {
+            ActionArgs::Move(WithPosAndGroup { cfg: cfg.clone(), pos, group })
+        }
+        ActionKind::Rtb => ActionArgs::Rtb(WithPosAndGroup { cfg: (), pos, group }),
+        ActionKind::CarrierWaypoint => {
+            ActionArgs::CarrierWaypoint(WithPosAndGroup { cfg: (), pos, group })
+        }
         ActionKind::Attackers(_)
         | ActionKind::AddTask(_)
         | ActionKind::RemoveTask(_)
@@ -299,7 +244,9 @@ fn do_pos_group_action(
         | ActionKind::Recon(_)
         | ActionKind::Reinforce(_)
         | ActionKind::Strike(_)
-        | ActionKind::NavalCruiseMissileStrike(_) => bail!("invalid action type for this menu item"),
+        | ActionKind::NavalCruiseMissileStrike(_) => {
+            bail!("invalid action type for this menu item")
+        }
     };
     let cmd = ActionCmd { name, action, args };
     run_action(ctx, perf, lua, side, slot, ucid, Some(mark), cmd)
@@ -355,14 +302,12 @@ fn do_objective_action(
     action: Action,
 ) -> Result<()> {
     let args = match &action.kind {
-        ActionKind::LogisticsRepair(cfg) => ActionArgs::LogisticsRepair(WithObj {
-            cfg: cfg.clone(),
-            oid,
-        }),
-        ActionKind::Reinforce(cfg) => ActionArgs::Reinforce(WithObj {
-            cfg: cfg.clone(),
-            oid,
-        }),
+        ActionKind::LogisticsRepair(cfg) => {
+            ActionArgs::LogisticsRepair(WithObj { cfg: cfg.clone(), oid })
+        }
+        ActionKind::Reinforce(cfg) => {
+            ActionArgs::Reinforce(WithObj { cfg: cfg.clone(), oid })
+        }
         ActionKind::TankerWaypoint
         | ActionKind::AddTask(_)
         | ActionKind::RemoveTask(_)
@@ -393,13 +338,18 @@ fn do_objective_action(
         | ActionKind::Artillery(_)
         | ActionKind::Recon(_)
         | ActionKind::Strike(_)
-        | ActionKind::NavalCruiseMissileStrike(_) => bail!("invalid action type for this menu item"),
+        | ActionKind::NavalCruiseMissileStrike(_) => {
+            bail!("invalid action type for this menu item")
+        }
     };
     let cmd = ActionCmd { name, action, args };
     run_action(ctx, perf, lua, side, slot, ucid, None, cmd)
 }
 
-fn run_objective_action(lua: MizLua, arg: ArgTriple<Ucid, String, ObjectiveId>) -> Result<()> {
+fn run_objective_action(
+    lua: MizLua,
+    arg: ArgTriple<Ucid, String, ObjectiveId>,
+) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
     let mut perf_guard = Perf::get_mut();
@@ -445,10 +395,7 @@ fn do_enemy_objective_action(
 ) -> Result<()> {
     let args = match &action.kind {
         ActionKind::NavalCruiseMissileStrike(cfg) => {
-            ActionArgs::NavalCruiseMissileStrike(WithObj {
-                cfg: cfg.clone(),
-                oid,
-            })
+            ActionArgs::NavalCruiseMissileStrike(WithObj { cfg: cfg.clone(), oid })
         }
         ActionKind::Strike(cfg) if cfg.mission.targets_objective() => {
             let pos = ctx.db.objective(&oid)?.pos();
@@ -584,7 +531,10 @@ fn run_add_objective_task(
     Ok(())
 }
 
-fn run_add_task(lua: MizLua, arg: ArgPent<Ucid, String, LuaVec3, MarkId, String>) -> Result<()> {
+fn run_add_task(
+    lua: MizLua,
+    arg: ArgPent<Ucid, String, LuaVec3, MarkId, String>,
+) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
     let mut perf_guard = Perf::get_mut();
@@ -631,10 +581,9 @@ fn do_remove_task(
     action: Action,
 ) -> Result<()> {
     let args = match &action.kind {
-        ActionKind::RemoveTask(cfg) => ActionArgs::RemoveTask(WithTask {
-            cfg: cfg.clone(),
-            task,
-        }),
+        ActionKind::RemoveTask(cfg) => {
+            ActionArgs::RemoveTask(WithTask { cfg: cfg.clone(), task })
+        }
         _ => bail!("invalid action type for this menu item"),
     };
     let cmd = ActionCmd { name, action, args };
@@ -674,7 +623,10 @@ fn run_remove_task(lua: MizLua, arg: ArgTriple<Ucid, String, TaskId>) -> Result<
     Ok(())
 }
 
-fn run_global_artillery(lua: MizLua, arg: ArgQuad<Ucid, SlotId, LuaVec3, MarkId>) -> Result<()> {
+fn run_global_artillery(
+    lua: MizLua,
+    arg: ArgQuad<Ucid, SlotId, LuaVec3, MarkId>,
+) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
     let mut perf_guard = Perf::get_mut();
@@ -698,13 +650,16 @@ fn run_global_artillery(lua: MizLua, arg: ArgQuad<Ucid, SlotId, LuaVec3, MarkId>
         kind: ActionKind::Artillery(cfg.clone()),
     };
     let args = ActionArgs::Artillery(WithPos { cfg, pos });
-    let cmd = ActionCmd {
-        name: "request-fires".into(),
-        action,
-        args,
-    };
+    let cmd = ActionCmd { name: "request-fires".into(), action, args };
     match ctx.db.start_action(
-        lua, perf, &spctx, &ctx.idx, &ctx.jtac, side, Some(arg.fst), cmd,
+        lua,
+        perf,
+        &spctx,
+        &ctx.idx,
+        &ctx.jtac,
+        side,
+        Some(arg.fst),
+        cmd,
     ) {
         Ok(_) => {
             ctx.db.ephemeral.msgs().delete_mark(arg.fth);
@@ -732,20 +687,25 @@ fn side_has_artillery(ctx: &Context, side: Side) -> bool {
         .get(&side)
         .map(|gids| {
             gids.into_iter().any(|gid| {
-                ctx.db.persisted.groups.get(gid).map(|g| {
-                    g.units.into_iter().any(|uid| {
-                        ctx.db
-                            .persisted
-                            .units
-                            .get(uid)
-                            .map(|u| {
-                                !u.dead
-                                    && (u.tags.0.contains(UnitTag::Artillery)
-                                        || u.tags.0.contains(UnitTag::Launcher))
-                            })
-                            .unwrap_or(false)
+                ctx.db
+                    .persisted
+                    .groups
+                    .get(gid)
+                    .map(|g| {
+                        g.units.into_iter().any(|uid| {
+                            ctx.db
+                                .persisted
+                                .units
+                                .get(uid)
+                                .map(|u| {
+                                    !u.dead
+                                        && (u.tags.0.contains(UnitTag::Artillery)
+                                            || u.tags.0.contains(UnitTag::Launcher))
+                                })
+                                .unwrap_or(false)
+                        })
                     })
-                }).unwrap_or(false)
+                    .unwrap_or(false)
             })
         })
         .unwrap_or(false)
@@ -758,10 +718,7 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
     let world = World::singleton(lua)?;
     mc.remove_command_for_group(arg.snd, vec!["Actions>>".into()].into())?;
     let root = mc.add_submenu_for_group(arg.snd, "Actions".into(), None)?;
-    let player = ctx
-        .db
-        .player(&arg.fst)
-        .ok_or_else(|| anyhow!("unknown player"))?;
+    let player = ctx.db.player(&arg.fst).ok_or_else(|| anyhow!("unknown player"))?;
     let actions = ctx
         .db
         .ephemeral
@@ -801,9 +758,8 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
         if text.is_empty() {
             blank.push((mk.id, mk.pos.0));
         } else if text.len() <= 24 {
-            let e = named
-                .entry(String::from(text))
-                .or_insert_with(|| (mk.id, mk.pos.0, 0));
+            let e =
+                named.entry(String::from(text)).or_insert_with(|| (mk.id, mk.pos.0, 0));
             e.2 += 1;
         }
     }
@@ -837,7 +793,8 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                 None => name.clone(),
                 Some(me) => {
                     // DCS map x is north, z is east. True bearing, "045/12km".
-                    let brg = (pos.z - me.z).atan2(pos.x - me.x).to_degrees().rem_euclid(360.);
+                    let brg =
+                        (pos.z - me.z).atan2(pos.x - me.x).to_degrees().rem_euclid(360.);
                     String::from(format_compact!(
                         "{name} {:03}/{:.0}km",
                         (brg.round() as u32) % 360,
@@ -888,17 +845,31 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
         // objectives_by_group to see which groups belong to carrier objectives
         let mut carrier_group_ids: Vec<DbGid> = Vec::new();
         if carrier {
-            info!("[ACTION_MENU] Collecting carrier groups for action '{}'. Total carrier objectives: {}",
-                  name, ctx.db.persisted.carrier_groups.len());
+            info!(
+                "[ACTION_MENU] Collecting carrier groups for action '{}'. Total carrier objectives: {}",
+                name,
+                ctx.db.persisted.carrier_groups.len()
+            );
             for (gid, oid) in ctx.db.persisted.objectives_by_group.into_iter() {
                 if ctx.db.persisted.carrier_groups.contains(oid)
-                    && ctx.db.objective(oid).map(|o| o.owner == player.side).unwrap_or(false)
+                    && ctx
+                        .db
+                        .objective(oid)
+                        .map(|o| o.owner == player.side)
+                        .unwrap_or(false)
                 {
                     carrier_group_ids.push(*gid);
-                    info!("[ACTION_MENU] Added carrier group {:?} from objective {:?} for action '{}'", gid, oid, name);
+                    info!(
+                        "[ACTION_MENU] Added carrier group {:?} from objective {:?} for action '{}'",
+                        gid, oid, name
+                    );
                 }
             }
-            info!("[ACTION_MENU] Found {} carrier groups total for action '{}'", carrier_group_ids.len(), name);
+            info!(
+                "[ACTION_MENU] Found {} carrier groups total for action '{}'",
+                carrier_group_ids.len(),
+                name
+            );
         }
 
         let iter: Box<dyn Iterator<Item = &DbGid>> = if carrier {
@@ -950,9 +921,12 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                         None
                     }
                 }
-                DeployKind::Objective { .. } | DeployKind::ObjectiveDeprecated if action => {
+                DeployKind::Objective { .. } | DeployKind::ObjectiveDeprecated
+                    if action =>
+                {
                     // Check if this is a carrier group for CarrierWaypoint action
-                    if let Some(origin_id) = ctx.db.persisted.objectives_by_group.get(gid) {
+                    if let Some(origin_id) = ctx.db.persisted.objectives_by_group.get(gid)
+                    {
                         if let Ok(obj) = ctx.db.objective(origin_id) {
                             // Check if this objective is a carrier group
                             if ctx.db.persisted.carrier_groups.contains(origin_id) {
@@ -1044,11 +1018,7 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                     &mc,
                     obj.name.clone(),
                     run_objective_action,
-                    ArgTriple {
-                        fst: arg.fst,
-                        snd: name.clone(),
-                        trd: *oid,
-                    },
+                    ArgTriple { fst: arg.fst, snd: name.clone(), trd: *oid },
                 )?;
             }
         }
@@ -1069,11 +1039,7 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                     &mc,
                     String::from(format_compact!("{} ({down} down)", obj.name)),
                     run_objective_action,
-                    ArgTriple {
-                        fst: arg.fst,
-                        snd: name.clone(),
-                        trd: *oid,
-                    },
+                    ArgTriple { fst: arg.fst, snd: name.clone(), trd: *oid },
                 )?;
             }
         }
@@ -1090,11 +1056,7 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                     &mc,
                     obj.name.clone(),
                     run_enemy_objective_action,
-                    ArgTriple {
-                        fst: arg.fst,
-                        snd: name.clone(),
-                        trd: *oid,
-                    },
+                    ArgTriple { fst: arg.fst, snd: name.clone(), trd: *oid },
                 )?;
             }
         }
@@ -1106,7 +1068,10 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
     // objectives it can sensibly be posted against -- enemy held ones to
     // capture, friendly ones to resupply. Both lists page at 8 entries,
     // since DCS only shows about ten items per menu level.
-    let add_task_types = |root: GroupSubMenu, name: String, cfg: &TaskCfg| -> Result<()> {
+    let add_task_types = |root: GroupSubMenu,
+                          name: String,
+                          cfg: &TaskCfg|
+     -> Result<()> {
         let mut p = Pager::new(arg.snd, root);
         for typ in &cfg.types {
             match typ.target {
@@ -1137,7 +1102,10 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                             if capture {
                                 obj.owner != player.side
                                     && obj.owner != Side::Neutral
-                                    && crate::db::markup::objective_visible_to(obj, player.side)
+                                    && crate::db::markup::objective_visible_to(
+                                        obj,
+                                        player.side,
+                                    )
                             } else {
                                 obj.owner == player.side
                             }
@@ -1183,11 +1151,7 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                 &mc,
                 label,
                 run_remove_task,
-                ArgTriple {
-                    fst: arg.fst,
-                    snd: name.clone(),
-                    trd: id,
-                },
+                ArgTriple { fst: arg.fst, snd: name.clone(), trd: id },
             )?;
         }
         Ok(())
@@ -1210,11 +1174,7 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                 "Yes, do it!".into(),
                 Some(jt_root.clone()),
                 call_bomber,
-                ArgTriple {
-                    fst: jtac.gid(),
-                    snd: arg.fst,
-                    trd: name.clone(),
-                },
+                ArgTriple { fst: jtac.gid(), snd: arg.fst, trd: name.clone() },
             )?;
         }
         Ok(())
@@ -1351,24 +1311,19 @@ pub(crate) fn init_action_menu_for_slot(
     ucid: &Ucid,
 ) -> Result<()> {
     let mc = MissionCommands::singleton(lua)?;
-    let si = ctx
-        .db
-        .ephemeral
-        .get_slot_info(slot)
-        .context("getting slot info")?;
+    let si = ctx.db.ephemeral.get_slot_info(slot).context("getting slot info")?;
     ctx.subscribed_action_menus.remove(slot);
-    mc.remove_command_for_group(si.miz_gid, GroupCommandItem::from(vec!["Actions>>".into()]))?;
+    mc.remove_command_for_group(
+        si.miz_gid,
+        GroupCommandItem::from(vec!["Actions>>".into()]),
+    )?;
     mc.remove_submenu_for_group(si.miz_gid, GroupSubMenu::from(vec!["Actions".into()]))?;
     mc.add_command_for_group(
         si.miz_gid,
         "Actions>>".into(),
         None,
         add_action_menu,
-        ArgTriple {
-            fst: *ucid,
-            snd: si.miz_gid,
-            trd: *slot,
-        },
+        ArgTriple { fst: *ucid, snd: si.miz_gid, trd: *slot },
     )?;
     Ok(())
 }

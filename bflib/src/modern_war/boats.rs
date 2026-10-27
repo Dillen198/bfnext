@@ -26,11 +26,12 @@ for more details.
 //! leaves alone.
 
 use super::{humans, water_near};
-use crate::{airlife::dist, Context};
+use crate::{Context, airlife::dist};
 use bfprotocols::cfg::{BoatRaidsCfg, TempoCfg, UnitTag};
-use chrono::{prelude::*, Duration};
+use chrono::{Duration, prelude::*};
 use compact_str::format_compact;
 use dcso3::{
+    LuaEnv, LuaVec2, LuaVec3, MizLua, String, Vector2, Vector3,
     coalition::{Coalition, Side},
     controller::{MissionPoint, PointType, Task},
     country::Country,
@@ -39,12 +40,11 @@ use dcso3::{
     land::Land,
     trigger::Trigger,
     unit::Unit,
-    LuaEnv, LuaVec2, LuaVec3, MizLua, String, Vector2, Vector3,
 };
 use fxhash::FxHashMap;
 use log::{info, warn};
 use mlua::{FromLua, Value};
-use rand::{thread_rng, Rng};
+use rand::{Rng, thread_rng};
 
 pub(crate) const USV_PREFIX: &str = "USV ";
 
@@ -152,7 +152,10 @@ fn pick_target(
         .objectives()
         .filter(|(_, o)| {
             o.owner() == side
-                && matches!(o.kind(), bfprotocols::db::objective::ObjectiveKind::NavalBase)
+                && matches!(
+                    o.kind(),
+                    bfprotocols::db::objective::ObjectiveKind::NavalBase
+                )
         })
         .map(|(_, o)| o.pos())
         .collect();
@@ -165,7 +168,10 @@ fn pick_target(
             continue;
         }
         let Some(tpos) = unit_pos(lua, u.name.as_str()) else { continue };
-        let Some(base) = bases.iter().copied().min_by(|a, b| dist(*a, tpos).total_cmp(&dist(*b, tpos)))
+        let Some(base) = bases
+            .iter()
+            .copied()
+            .min_by(|a, b| dist(*a, tpos).total_cmp(&dist(*b, tpos)))
         else {
             continue;
         };
@@ -235,7 +241,10 @@ pub(crate) fn tick(
                     if let Ok(c) = g.get_controller() {
                         let _ = c.set_task(Task::Mission {
                             airborne: None,
-                            route: vec![point(here, cfg.speed_ms), point(target, cfg.speed_ms)],
+                            route: vec![
+                                point(here, cfg.speed_ms),
+                                point(target, cfg.speed_ms),
+                            ],
                         });
                     }
                     let r = &mut ctx.modern_war.boats.raids[ri];
@@ -246,7 +255,9 @@ pub(crate) fn tick(
                             15,
                             true,
                             side.opposite(),
-                            format_compact!("Fast boats closing on our {label} -- engage them!"),
+                            format_compact!(
+                                "Fast boats closing on our {label} -- engage them!"
+                            ),
                         );
                     }
                     None
@@ -273,18 +284,31 @@ pub(crate) fn tick(
             continue;
         }
         let r = ctx.modern_war.boats.raids.swap_remove(ri);
-        info!("boats: raid {} on {} over, {}/{} hit", r.id, r.target_label, r.hits, r.launched);
+        info!(
+            "boats: raid {} on {} over, {}/{} hit",
+            r.id, r.target_label, r.hits, r.launched
+        );
         ctx.db.ephemeral.msgs().panel_to_side(
             15,
             false,
             r.side,
-            format_compact!("Sea-drone attack on the enemy {}: {}/{} boats reached it.", r.target_label, r.hits, r.launched),
+            format_compact!(
+                "Sea-drone attack on the enemy {}: {}/{} boats reached it.",
+                r.target_label,
+                r.hits,
+                r.launched
+            ),
         );
         ctx.db.ephemeral.msgs().panel_to_side(
             15,
             false,
             r.side.opposite(),
-            format_compact!("Sea-drone attack on our {} is over: {} of {} boats hit.", r.target_label, r.hits, r.launched),
+            format_compact!(
+                "Sea-drone attack on our {} is over: {} of {} boats hit.",
+                r.target_label,
+                r.hits,
+                r.launched
+            ),
         );
     }
     // New raids.
@@ -294,7 +318,9 @@ pub(crate) fn tick(
     for side in [Side::Blue, Side::Red] {
         let factor = ctx.modern_war.tempo.factor(tempo, side, now);
         let jitter: f64 = thread_rng().gen_range(0.7..1.3);
-        let wait = Duration::seconds((cfg.interval_secs as f64 * jitter * factor.max(0.1)) as i64);
+        let wait = Duration::seconds(
+            (cfg.interval_secs as f64 * jitter * factor.max(0.1)) as i64,
+        );
         let Some(next) = ctx.modern_war.boats.next.get(&side).copied() else {
             ctx.modern_war.boats.next.insert(side, now + wait / 2);
             continue;
@@ -303,7 +329,9 @@ pub(crate) fn tick(
             continue;
         }
         ctx.modern_war.boats.next.insert(side, now + wait);
-        let Some((target_unit, label, start)) = pick_target(lua, ctx, cfg, side) else { continue };
+        let Some((target_unit, label, start)) = pick_target(lua, ctx, cfg, side) else {
+            continue;
+        };
         let Some(tpos) = unit_pos(lua, target_unit.as_str()) else { continue };
         ctx.modern_war.boats.seq += 1;
         let id = ctx.modern_war.boats.seq;
@@ -311,9 +339,18 @@ pub(crate) fn tick(
         let lateral = Vector2::new(-dir.y, dir.x);
         let mut launched = 0;
         for n in 0..cfg.boats_per_raid {
-            let at = start + lateral * ((n as f64 - (cfg.boats_per_raid as f64 - 1.) / 2.) * 200.);
+            let at = start
+                + lateral * ((n as f64 - (cfg.boats_per_raid as f64 - 1.) / 2.) * 200.);
             let name = format_compact!("{USV_PREFIX}{id}-{n}");
-            match spawn_boat(lua, side, name.as_str(), cfg.boat_type.as_str(), at, tpos, cfg.speed_ms) {
+            match spawn_boat(
+                lua,
+                side,
+                name.as_str(),
+                cfg.boat_type.as_str(),
+                at,
+                tpos,
+                cfg.speed_ms,
+            ) {
                 Ok(()) => {
                     launched += 1;
                     let secs = cfg.max_range_m / cfg.speed_ms.max(1.) * 1.5;
@@ -327,12 +364,16 @@ pub(crate) fn tick(
             }
         }
         if launched > 0 {
-            info!("boats: {side:?} raid {id}: {launched} boats at {label} ({target_unit})");
+            info!(
+                "boats: {side:?} raid {id}: {launched} boats at {label} ({target_unit})"
+            );
             ctx.db.ephemeral.msgs().panel_to_side(
                 15,
                 false,
                 side,
-                format_compact!("Sea drones launched: {launched} boats running at an enemy {label}."),
+                format_compact!(
+                    "Sea drones launched: {launched} boats running at an enemy {label}."
+                ),
             );
             ctx.modern_war.boats.raids.push(BoatRaid {
                 id,

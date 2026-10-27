@@ -25,22 +25,21 @@ mod recon;
 mod troop;
 mod wingman;
 
-use crate::{db::Db, Context};
-use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
+use crate::{Context, db::Db};
+use anyhow::{Context as AnyhowContext, Result, anyhow, bail};
 use bfprotocols::cfg::Cfg;
 use compact_str::format_compact;
 use dcso3::{
-    as_tbl,
+    MizLua, String, as_tbl,
     coalition::Side,
     env::miz::{GroupId, Miz},
     lua_err,
     mission_commands::{GroupCommandItem, GroupSubMenu, MissionCommands},
     net::SlotId,
-    MizLua, String,
 };
 
 use log::{debug, error, warn};
-use mlua::{prelude::*, Value};
+use mlua::{Value, prelude::*};
 use std::sync::Arc;
 
 /// DCS caps every F10 menu at **10 entries**. Anything past that is silently
@@ -84,21 +83,13 @@ const ROOT_MENU_BUDGET: u32 = PAGE_ITEMS;
 impl Pager {
     /// Page inside `root`, which is assumed empty.
     pub(crate) fn new(group: GroupId, root: GroupSubMenu) -> Self {
-        Pager {
-            group,
-            cur: root,
-            used: 0,
-        }
+        Pager { group, cur: root, used: 0 }
     }
 
     /// Page inside `root`, which already has `used` entries on it (fixed
     /// commands added before the variable-length list starts).
     pub(crate) fn with_used(group: GroupId, root: GroupSubMenu, used: u32) -> Self {
-        Pager {
-            group,
-            cur: root,
-            used,
-        }
+        Pager { group, cur: root, used }
     }
 
     /// The menu the next entry should go on, spilling to a new `More >>` page
@@ -107,7 +98,11 @@ impl Pager {
     pub(crate) fn page(&mut self, mc: &MissionCommands) -> Result<GroupSubMenu> {
         if self.used + 1 >= PAGE_ITEMS {
             self.cur = mc
-                .add_submenu_for_group(self.group, "More >>".into(), Some(self.cur.clone()))
+                .add_submenu_for_group(
+                    self.group,
+                    "More >>".into(),
+                    Some(self.cur.clone()),
+                )
                 .context("adding More >> page")?;
             self.used = 0;
         }
@@ -169,10 +164,7 @@ where
 {
     fn from_lua(value: LuaValue, _lua: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("ArgTuple", None, value).map_err(lua_err)?;
-        Ok(Self {
-            fst: tbl.raw_get(1)?,
-            snd: tbl.raw_get(2)?,
-        })
+        Ok(Self { fst: tbl.raw_get(1)?, snd: tbl.raw_get(2)? })
     }
 }
 
@@ -206,11 +198,7 @@ where
 {
     fn from_lua(value: LuaValue, _lua: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("ArgTriple", None, value).map_err(lua_err)?;
-        Ok(Self {
-            fst: tbl.raw_get(1)?,
-            snd: tbl.raw_get(2)?,
-            trd: tbl.raw_get(3)?,
-        })
+        Ok(Self { fst: tbl.raw_get(1)?, snd: tbl.raw_get(2)?, trd: tbl.raw_get(3)? })
     }
 }
 
@@ -317,10 +305,7 @@ fn slot_for_group(lua: MizLua, ctx: &Context, gid: &GroupId) -> Result<(Side, Sl
         .ok_or_else(|| anyhow!("no such group {:?}", gid))?;
     let units = group.group.units().context("getting units")?;
     if units.len() > 1 {
-        bail!(
-            "groups with more than one member can't spawn crates {:?}",
-            gid
-        )
+        bail!("groups with more than one member can't spawn crates {:?}", gid)
     }
     let unit = units.first().context("getting first unit")?;
     Ok((group.side, unit.slot().context("getting unit slot")?))
@@ -384,17 +369,26 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
                 Some(ucid) => *ucid,
                 None => return Ok(()),
             };
-            let si = ctx
-                .db
-                .ephemeral
-                .get_slot_info(slot)
-                .context("getting slot info")?;
+            let si = ctx.db.ephemeral.get_slot_info(slot).context("getting slot info")?;
             // Copy values from si before mutable borrows of ctx
             let miz_gid = si.miz_gid;
             let si_side = si.side;
             let si_typ = si.typ.clone();
-            for name in ["GCI/EWR", "Cargo", "C-130 Cargo", "CSAR", "Troops", "Actions", "Flight", "Recon", "Wingman"] {
-                if let Err(e) = mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec![name.into()])) {
+            for name in [
+                "GCI/EWR",
+                "Cargo",
+                "C-130 Cargo",
+                "CSAR",
+                "Troops",
+                "Actions",
+                "Flight",
+                "Recon",
+                "Wingman",
+            ] {
+                if let Err(e) = mc.remove_submenu_for_group(
+                    miz_gid,
+                    GroupSubMenu::from(vec![name.into()]),
+                ) {
                     warn!("slot {slot:?}: could not remove the old {name} menu: {e:?}");
                 }
             }
@@ -449,11 +443,19 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
             }
             let cap = CarryCap::from_typ(&cfg, si_typ.as_str());
 
-            let is_c130 = ctx.db.ephemeral.cfg.c130_cargo
+            let is_c130 = ctx
+                .db
+                .ephemeral
+                .cfg
+                .c130_cargo
                 .as_ref()
                 .map(|c| c.enabled_vehicles.contains(&si_typ))
                 .unwrap_or(false);
-            let is_helo_dynamic = ctx.db.ephemeral.cfg.helo_cargo
+            let is_helo_dynamic = ctx
+                .db
+                .ephemeral
+                .cfg
+                .helo_cargo
                 .as_ref()
                 .map(|c| c.enabled_vehicles.contains(&si_typ))
                 .unwrap_or(false);
@@ -461,39 +463,73 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
             let cargo_ok = ctx.db.ephemeral.cfg.rules.cargo.check(&ucid);
             let mut cargo_root: Option<&'static str> = None;
             if is_c130 && cargo_ok {
-                built(true, "C-130 Cargo", cargo::add_c130_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid));
+                built(
+                    true,
+                    "C-130 Cargo",
+                    cargo::add_c130_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid),
+                );
                 cargo_root = Some("C-130 Cargo");
             } else if is_helo_dynamic && cargo_ok {
-                built(true, "Cargo", cargo::add_helo_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid));
+                built(
+                    true,
+                    "Cargo",
+                    cargo::add_helo_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid),
+                );
                 cargo_root = Some("Cargo");
             } else if cap.crates && cargo_ok {
-                built(true, "Cargo", cargo::add_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid));
+                built(
+                    true,
+                    "Cargo",
+                    cargo::add_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid),
+                );
                 cargo_root = Some("Cargo");
             }
-            if ctx.db.ephemeral.cfg.csar.as_ref().map(|c| c.enabled).unwrap_or(false) && cargo_ok {
+            if ctx.db.ephemeral.cfg.csar.as_ref().map(|c| c.enabled).unwrap_or(false)
+                && cargo_ok
+            {
                 // Inside the cargo menu when there is one: a cargo helo with
                 // CSAR, troops, JTAC, actions, ground forces and a wingman
                 // was the eleventh root menu, and DCS dropped Info.
                 let parent = cargo_root.map(|n| GroupSubMenu::from(vec![n.into()]));
-                built(parent.is_none(), "CSAR", cargo::add_csar_menu_for_group(&mc, miz_gid, parent));
+                built(
+                    parent.is_none(),
+                    "CSAR",
+                    cargo::add_csar_menu_for_group(&mc, miz_gid, parent),
+                );
             }
             if cap.troops && ctx.db.ephemeral.cfg.rules.troops.check(&ucid) {
-                built(true, "Troops", troop::add_troops_menu_for_group(&cfg, &mc, &si_side, miz_gid));
+                built(
+                    true,
+                    "Troops",
+                    troop::add_troops_menu_for_group(&cfg, &mc, &si_side, miz_gid),
+                );
             }
             if ctx.db.ephemeral.cfg.rules.jtac.check(&ucid) {
                 built(true, "JTAC", jtac::init_jtac_menu_for_slot(ctx, lua, slot));
             }
             if ctx.db.ephemeral.cfg.rules.actions.check(&ucid) {
-                built(true, "Actions", action::init_action_menu_for_slot(ctx, lua, slot, &ucid));
+                built(
+                    true,
+                    "Actions",
+                    action::init_action_menu_for_slot(ctx, lua, slot, &ucid),
+                );
             }
             if cfg
                 .ground_war
                 .as_ref()
                 .map_or(false, |g| g.enabled && g.command_rule.check(&ucid))
             {
-                built(true, "Ground Forces", ground::init_ground_menu_for_slot(&mc, miz_gid, ucid));
+                built(
+                    true,
+                    "Ground Forces",
+                    ground::init_ground_menu_for_slot(&mc, miz_gid, ucid),
+                );
             }
-            built(true, "Objectives", objectives::init_objectives_menu_for_slot(ctx, lua, slot));
+            built(
+                true,
+                "Objectives",
+                objectives::init_objectives_menu_for_slot(ctx, lua, slot),
+            );
             built(true, "Info", info::init_info_menu_for_slot(ctx, lua, slot));
             if root_menus > ROOT_MENU_BUDGET {
                 error!(
@@ -537,10 +573,14 @@ pub(super) fn process_init_queue(ctx: &mut Context, lua: MizLua) {
                 let tries = ctx.menu_init_retries.entry(slot.clone()).or_default();
                 *tries = tries.saturating_add(1);
                 if *tries <= MENU_INIT_RETRIES {
-                    warn!("menus for slot {slot:?} incomplete (attempt {tries}), will retry: {e:?}");
+                    warn!(
+                        "menus for slot {slot:?} incomplete (attempt {tries}), will retry: {e:?}"
+                    );
                     retry.push(slot);
                 } else {
-                    error!("giving up on menus for slot {slot:?} after {tries} attempts: {e:?}");
+                    error!(
+                        "giving up on menus for slot {slot:?} after {tries} attempts: {e:?}"
+                    );
                     ctx.menu_init_retries.remove(&slot);
                 }
             }

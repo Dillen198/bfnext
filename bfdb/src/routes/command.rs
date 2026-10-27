@@ -30,7 +30,8 @@ pub(crate) async fn api_groundwar(
         vec![("side", Value::from(side_str.to_string()))],
     )
     .await?;
-    let mut v: serde_json::Value = serde_json::from_str(&raw).map_err(anyhow::Error::from)?;
+    let mut v: serde_json::Value =
+        serde_json::from_str(&raw).map_err(anyhow::Error::from)?;
     let can = c.commands(&db, &inst);
     let status = c.command_status(&db, &inst);
     if let Some(o) = v.as_object_mut() {
@@ -69,7 +70,8 @@ pub(crate) async fn api_groundwar_command(
         .into());
     };
     if !c.commands(&db, &inst) {
-        let status = task::block_in_place(|| command::status_of(&db, &inst, ucid)).ok().flatten();
+        let status =
+            task::block_in_place(|| command::status_of(&db, &inst, ucid)).ok().flatten();
         return Err(websec::forbidden(command::refusal(&inst, status.as_ref())).into());
     }
     let cmd = serde_json::to_string(&body).map_err(anyhow::Error::from)?;
@@ -112,20 +114,28 @@ pub(crate) async fn api_hq(
         vec![("side", Value::from(side_str.to_string())), ("ucid", Value::from(ucid))],
     )
     .await?;
-    let mut v: serde_json::Value = serde_json::from_str(&raw).map_err(anyhow::Error::from)?;
+    let mut v: serde_json::Value =
+        serde_json::from_str(&raw).map_err(anyhow::Error::from)?;
     if let Some(o) = v.as_object_mut() {
         let engine_says = o.get("can_command").and_then(|b| b.as_bool()).unwrap_or(false);
         let commander = !c.god_mode
             && c.ucid().map_or(false, |u| {
-                task::block_in_place(|| command::is_commander(&db, &inst, u, c.side)).unwrap_or(false)
+                task::block_in_place(|| command::is_commander(&db, &inst, u, c.side))
+                    .unwrap_or(false)
             });
         if c.session.is_admin {
             if let Some(u) = c.ucid() {
                 command::note_admin(*u);
             }
         }
-        o.insert("can_command".into(), serde_json::json!(c.session.is_admin || engine_says || commander));
-        o.insert("can_request".into(), serde_json::json!(!c.god_mode && c.ucid().is_some()));
+        o.insert(
+            "can_command".into(),
+            serde_json::json!(c.session.is_admin || engine_says || commander),
+        );
+        o.insert(
+            "can_request".into(),
+            serde_json::json!(!c.god_mode && c.ucid().is_some()),
+        );
         o.insert("god_mode".into(), serde_json::json!(c.god_mode));
     }
     Ok(json_response(v.to_string()))
@@ -147,10 +157,14 @@ pub(crate) async fn api_hq_command(
     use bfprotocols::hq::HqCommand;
     use netidx::publisher::Value;
     let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
-    let is_request = matches!(body, HqCommand::Request { .. } | HqCommand::CancelRequest { .. });
+    let is_request =
+        matches!(body, HqCommand::Request { .. } | HqCommand::CancelRequest { .. });
     let ucid = if is_request {
         if c.god_mode {
-            return Err(websec::forbidden("asking for support needs a pilot registered on a side this campaign").into());
+            return Err(websec::forbidden(
+                "asking for support needs a pilot registered on a side this campaign",
+            )
+            .into());
         }
         match c.ucid() {
             Some(u) => u.to_string(),
@@ -190,17 +204,25 @@ pub(crate) async fn api_hq_command(
 
 /// One engine call per side per this long, however many commanders are
 /// watching: the picture reads every own unit's position out of DCS.
-pub(crate) const COMMAND_PICTURE_TTL: std::time::Duration = std::time::Duration::from_millis(3000);
+pub(crate) const COMMAND_PICTURE_TTL: std::time::Duration =
+    std::time::Duration::from_millis(3000);
 
-pub(crate) static COMMAND_CACHE: std::sync::LazyLock<websec::CacheMap<std::string::String, Arc<std::string::String>>> =
-    std::sync::LazyLock::new(websec::CacheMap::new);
+pub(crate) static COMMAND_CACHE: std::sync::LazyLock<
+    websec::CacheMap<std::string::String, Arc<std::string::String>>,
+> = std::sync::LazyLock::new(websec::CacheMap::new);
 
 /// The last picture the engine did send, per instance and side, served when
 /// a refresh fails -- for this long, after which the error shows instead.
 pub(crate) static COMMAND_LAST_GOOD: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<std::string::String, (std::time::Instant, Arc<std::string::String>)>>,
+    std::sync::Mutex<
+        std::collections::HashMap<
+            std::string::String,
+            (std::time::Instant, Arc<std::string::String>),
+        >,
+    >,
 > = std::sync::LazyLock::new(Default::default);
-pub(crate) const COMMAND_STALE_MAX: std::time::Duration = std::time::Duration::from_secs(120);
+pub(crate) const COMMAND_STALE_MAX: std::time::Duration =
+    std::time::Duration::from_secs(120);
 
 /// GET /api/command — the command map's picture of the caller's side: its
 /// own AI flights, convoys, deployed units, troops, batteries and carrier
@@ -226,7 +248,11 @@ pub(crate) async fn api_command_log(
         _ => "Blue",
     };
     let before = query.get("before").and_then(|b| b.parse::<i64>().ok());
-    let limit = query.get("limit").and_then(|l| l.parse::<usize>().ok()).unwrap_or(200).clamp(1, 500);
+    let limit = query
+        .get("limit")
+        .and_then(|l| l.parse::<usize>().ok())
+        .unwrap_or(200)
+        .clamp(1, 500);
     let lines = task::block_in_place(|| -> anyhow::Result<_> {
         let Some(round) = db.active_round_id(&inst.id)? else { return Ok(vec![]) };
         db.combat_log(round, side, before, limit)
@@ -260,9 +286,14 @@ pub(crate) async fn api_command(
     let fresh = COMMAND_CACHE
         .entry(&key)
         .get_or_refresh(COMMAND_PICTURE_TTL, || async {
-            call_engine_rpc_str_patient(&db, &inst, "query-command", vec![("side", Value::from(side_str.to_string()))])
-                .await
-                .map(Arc::new)
+            call_engine_rpc_str_patient(
+                &db,
+                &inst,
+                "query-command",
+                vec![("side", Value::from(side_str.to_string()))],
+            )
+            .await
+            .map(Arc::new)
         })
         .await;
     // A busy engine misses a refresh now and then; the map keeps the last
@@ -276,12 +307,15 @@ pub(crate) async fn api_command(
                 (raw, None)
             }
             Err(e) => match last.get(&key) {
-                Some((at, raw)) if at.elapsed() < COMMAND_STALE_MAX => (raw.clone(), Some(at.elapsed().as_secs())),
+                Some((at, raw)) if at.elapsed() < COMMAND_STALE_MAX => {
+                    (raw.clone(), Some(at.elapsed().as_secs()))
+                }
                 _ => return Err(e),
             },
         }
     };
-    let mut v: serde_json::Value = serde_json::from_str(&raw).map_err(anyhow::Error::from)?;
+    let mut v: serde_json::Value =
+        serde_json::from_str(&raw).map_err(anyhow::Error::from)?;
     let can = (c.god_mode && c.session.is_admin) || c.commands(&db, &inst);
     let status = c.command_status(&db, &inst);
     if let Some(o) = v.as_object_mut() {
@@ -312,7 +346,10 @@ pub(crate) async fn api_command_order(
     let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
     let ucid = if c.god_mode {
         if !c.session.is_admin {
-            return Err(websec::forbidden("commanding needs a pilot registered on a side").into());
+            return Err(websec::forbidden(
+                "commanding needs a pilot registered on a side",
+            )
+            .into());
         }
         std::string::String::new()
     } else {
@@ -323,8 +360,11 @@ pub(crate) async fn api_command_order(
             .into());
         };
         if !c.commands(&db, &inst) {
-            let status = task::block_in_place(|| command::status_of(&db, &inst, u)).ok().flatten();
-            return Err(websec::forbidden(command::refusal(&inst, status.as_ref())).into());
+            let status =
+                task::block_in_place(|| command::status_of(&db, &inst, u)).ok().flatten();
+            return Err(
+                websec::forbidden(command::refusal(&inst, status.as_ref())).into()
+            );
         }
         u.to_string()
     };
@@ -333,7 +373,11 @@ pub(crate) async fn api_command_order(
         _ => "blue",
     };
     let order = serde_json::to_string(&body).map_err(anyhow::Error::from)?;
-    log::info!("[{}] command order from {} ({side_str}): {order}", inst.id, c.session.username);
+    log::info!(
+        "[{}] command order from {} ({side_str}): {order}",
+        inst.id,
+        c.session.username
+    );
     let raw = call_engine_rpc_str_patient(
         &db,
         &inst,
@@ -427,8 +471,15 @@ pub(crate) async fn api_admin_commander_grant(
     });
     task::block_in_place(|| db.set_commander_grant(&ucid, rec.as_ref()))?;
     command::invalidate();
-    audit(&db, &session, "commander access", Some(&format!("{ucid} -> {:?}", body.grant)), Some(&inst.id));
-    let ids: Vec<InstanceId> = db.instances().all().iter().map(|c| Arc::from(c.id.as_str())).collect();
+    audit(
+        &db,
+        &session,
+        "commander access",
+        Some(&format!("{ucid} -> {:?}", body.grant)),
+        Some(&inst.id),
+    );
+    let ids: Vec<InstanceId> =
+        db.instances().all().iter().map(|c| Arc::from(c.id.as_str())).collect();
     for id in ids {
         let st = db.state(&id);
         command::push(&db, &st).await;
@@ -454,25 +505,41 @@ pub(crate) async fn api_commander_spawn(
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let who = require_admin(session_id, db.clone()).await?;
-    audit(&db, &who, "spawn", Some(&format!("{} at {}", body.item_type, body.airbase)), Some(&inst.id));
+    audit(
+        &db,
+        &who,
+        "spawn",
+        Some(&format!("{} at {}", body.item_type, body.airbase)),
+        Some(&inst.id),
+    );
 
     use netidx::publisher::Value;
 
     let details_json = call_engine_rpc_str(
-        &db, &inst, "query-objective", vec![("name", Value::from(body.airbase.clone()))],
-    ).await?;
+        &db,
+        &inst,
+        "query-objective",
+        vec![("name", Value::from(body.airbase.clone()))],
+    )
+    .await?;
     let details: bfprotocols::api::ObjectiveDetails = serde_json::from_str(&details_json)
         .map_err(|e| Error(anyhow::anyhow!("bad objective details from engine: {e}")))?;
     let (x, z) = details.info.pos;
     let side = details.info.owner;
 
-    let spawn_json = call_engine_rpc_str(&db, &inst, "spawn-deployable", vec![
-        ("side", Value::from(side.to_str())),
-        ("name", Value::from(body.item_type.clone())),
-        ("x", Value::from(x)),
-        ("z", Value::from(z)),
-        ("heading", Value::from(0.0)),
-    ]).await?;
+    let spawn_json = call_engine_rpc_str(
+        &db,
+        &inst,
+        "spawn-deployable",
+        vec![
+            ("side", Value::from(side.to_str())),
+            ("name", Value::from(body.item_type.clone())),
+            ("x", Value::from(x)),
+            ("z", Value::from(z)),
+            ("heading", Value::from(0.0)),
+        ],
+    )
+    .await?;
     let result: serde_json::Value = serde_json::from_str(&spawn_json)
         .unwrap_or_else(|_| serde_json::json!({"success": true}));
     Ok(warp::reply::json(&result))
@@ -494,10 +561,22 @@ pub(crate) async fn api_admin_priority(
 ) -> std::result::Result<impl warp::Reply, Error> {
     let who = require_admin(session_id, db.clone()).await?;
     use netidx::publisher::Value;
-    call_engine_rpc_str(&db, &inst, "set-objective-priority", vec![
-        ("objective", Value::from(body.objective.clone())),
-        ("priority", Value::from(body.priority)),
-    ]).await?;
-    audit(&db, &who, "objective priority", Some(&format!("{} = {}", body.objective, body.priority)), Some(&inst.id));
+    call_engine_rpc_str(
+        &db,
+        &inst,
+        "set-objective-priority",
+        vec![
+            ("objective", Value::from(body.objective.clone())),
+            ("priority", Value::from(body.priority)),
+        ],
+    )
+    .await?;
+    audit(
+        &db,
+        &who,
+        "objective priority",
+        Some(&format!("{} = {}", body.objective, body.priority)),
+        Some(&inst.id),
+    );
     Ok(warp::reply::json(&serde_json::json!({"ok": true, "priority": body.priority})))
 }

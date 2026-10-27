@@ -8,8 +8,8 @@
 //! loads exactly as before (normally Anonymous).
 
 use crate::instance::InstanceCfg;
-use anyhow::{Context, Result, bail};
-use fowlbg::netidx::{Tls, load_config};
+use anyhow::{bail, Context, Result};
+use fowlbg::netidx::{load_config, Tls};
 use netidx::subscriber::{Subscriber, SubscriberBuilder};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -21,8 +21,10 @@ use std::{
 /// `fowlbg::netidx::Tls`, the same as `netidx_tls` in the engine configs).
 pub(crate) fn load_tls_file(path: Option<&Path>) -> Result<Option<Tls>> {
     let Some(path) = path else { return Ok(None) };
-    let txt = std::fs::read_to_string(path).with_context(|| format!("reading --netidx-tls {}", path.display()))?;
-    let tls: Tls = serde_json::from_str(&txt).with_context(|| format!("parsing --netidx-tls {}", path.display()))?;
+    let txt = std::fs::read_to_string(path)
+        .with_context(|| format!("reading --netidx-tls {}", path.display()))?;
+    let tls: Tls = serde_json::from_str(&txt)
+        .with_context(|| format!("parsing --netidx-tls {}", path.display()))?;
     tls.validate().with_context(|| format!("--netidx-tls {}", path.display()))?;
     Ok(Some(tls))
 }
@@ -78,12 +80,17 @@ pub(crate) fn subscribers(
             Some(p) => format!("netidx config {}", p.display()),
             None => "the default netidx config".to_string(),
         };
-        let ncfg = load_config(path.as_deref(), tls.as_ref()).with_context(|| format!("instance {id:?}: loading {what}"))?;
+        let ncfg = load_config(path.as_deref(), tls.as_ref())
+            .with_context(|| format!("instance {id:?}: loading {what}"))?;
         if let Some(p) = &path {
             log::info!("instance {id:?}: netidx via {}", p.display());
         }
         if let Some(t) = &tls {
-            log::info!("netidx: {what} uses TLS to resolver {} as {}", t.resolver_name, t.certificate);
+            log::info!(
+                "netidx: {what} uses TLS to resolver {} as {}",
+                t.resolver_name,
+                t.certificate
+            );
         }
         subscribers.insert(path, SubscriberBuilder::new().config(ncfg).build()?);
     }
@@ -160,7 +167,12 @@ mod tests {
         vs2.netidx_tls = Some(tls("resolver.campaign.fowl", "other.fowl"));
         f[1] = Arc::new(vs2);
         let e = plan(&f, None).unwrap_err().to_string();
-        assert!(e.contains("\"vs1\"") && e.contains("\"vs2\"") && e.contains("default netidx client config"), "{e}");
+        assert!(
+            e.contains("\"vs1\"")
+                && e.contains("\"vs2\"")
+                && e.contains("default netidx client config"),
+            "{e}"
+        );
         // agreeing with the default is fine
         let t = tls("resolver.campaign.fowl", "other.fowl");
         assert!(plan(&f, Some(&t)).is_ok());
@@ -170,7 +182,10 @@ mod tests {
     fn a_bad_instance_block_is_reported() {
         let mut f = fleet();
         let mut vs1 = (*f[0]).clone();
-        vs1.netidx_tls = Some(Tls { domain: Some("example.com".into()), ..tls("resolver.campaign.fowl", "bfdb.fowl") });
+        vs1.netidx_tls = Some(Tls {
+            domain: Some("example.com".into()),
+            ..tls("resolver.campaign.fowl", "bfdb.fowl")
+        });
         f[0] = Arc::new(vs1);
         let e = format!("{:?}", plan(&f, None).unwrap_err());
         assert!(e.contains("vs1") && e.contains("not under"), "{e}");
@@ -179,11 +194,19 @@ mod tests {
     #[test]
     fn tls_file() {
         assert_eq!(load_tls_file(None).unwrap(), None);
-        let dir = std::env::temp_dir().join(format!("bfdb-netidx-tls-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("bfdb-netidx-tls-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("tls.json");
-        std::fs::write(&p, serde_json::to_string(&tls("resolver.campaign.fowl", "bfdb.fowl")).unwrap()).unwrap();
-        assert_eq!(load_tls_file(Some(&p)).unwrap(), Some(tls("resolver.campaign.fowl", "bfdb.fowl")));
+        std::fs::write(
+            &p,
+            serde_json::to_string(&tls("resolver.campaign.fowl", "bfdb.fowl")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            load_tls_file(Some(&p)).unwrap(),
+            Some(tls("resolver.campaign.fowl", "bfdb.fowl"))
+        );
         std::fs::write(&p, r#"{"trusted": "a"}"#).unwrap();
         assert!(load_tls_file(Some(&p)).is_err());
         let _ = std::fs::remove_dir_all(&dir);

@@ -10,7 +10,10 @@ fn main() {
     let lua = here.join("..").join("Scripts").join("Hooks").join("bfcockpit.lua");
     println!("cargo:rerun-if-changed={}", lua.display());
     println!("cargo:rerun-if-changed=build_info.rs");
-    let script = fs::read_to_string(&lua).ok().and_then(|s| script_version_of(&s)).unwrap_or_else(|| "unknown".into());
+    let script = fs::read_to_string(&lua)
+        .ok()
+        .and_then(|s| script_version_of(&s))
+        .unwrap_or_else(|| "unknown".into());
     let git = git_rev_of(&here);
     println!("cargo:rustc-env=BFCOCKPIT_SCRIPT_VERSION={script}");
     println!("cargo:rustc-env=BFCOCKPIT_NET_GIT={git}");

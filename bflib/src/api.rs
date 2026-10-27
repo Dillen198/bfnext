@@ -13,10 +13,10 @@
 //! Mission scripts can define `vector_strike.on_event(ev)` to receive
 //! `{ type = "achievement" | "alert", message = "..." }`.
 
-use crate::{admin, with_context, Context};
-use anyhow::{bail, Result};
+use crate::{Context, admin, with_context};
+use anyhow::{Result, bail};
 use bfprotocols::db::group::GroupId;
-use dcso3::{coalition::Side, wrap_f, LuaEnv, MizLua, Vector2};
+use dcso3::{LuaEnv, MizLua, Vector2, coalition::Side, wrap_f};
 use std::cell::RefCell;
 
 fn loaded(ctx: &mut Context) -> Result<&mut Context> {
@@ -39,7 +39,9 @@ pub fn register(lua: MizLua) -> Result<()> {
         "get_objectives",
         lua.inner().create_function(|lua, ()| {
             wrap_f("vector_strike.get_objectives", MizLua(lua), |lua| {
-                with_context(lua, "get_objectives", |ctx| json(&admin::query_objectives(ctx)))
+                with_context(lua, "get_objectives", |ctx| {
+                    json(&admin::query_objectives(ctx))
+                })
             })
         })?,
     )?;
@@ -107,7 +109,14 @@ pub fn register(lua: MizLua) -> Result<()> {
                     with_context(lua, "spawn_deployable", |ctx| {
                         let side = side.parse::<Side>()?;
                         let pos = Vector2::new(x, y);
-                        let gid = admin::api_spawn_deployable(loaded(ctx)?, lua, side, &name, pos, heading)?;
+                        let gid = admin::api_spawn_deployable(
+                            loaded(ctx)?,
+                            lua,
+                            side,
+                            &name,
+                            pos,
+                            heading,
+                        )?;
                         Ok(Some(gid.to_string()))
                     })
                 })
@@ -123,7 +132,14 @@ pub fn register(lua: MizLua) -> Result<()> {
                     with_context(lua, "spawn_troop", |ctx| {
                         let side = side.parse::<Side>()?;
                         let pos = Vector2::new(x, y);
-                        let gid = admin::api_spawn_troop(loaded(ctx)?, lua, side, &name, pos, heading)?;
+                        let gid = admin::api_spawn_troop(
+                            loaded(ctx)?,
+                            lua,
+                            side,
+                            &name,
+                            pos,
+                            heading,
+                        )?;
                         Ok(Some(gid.to_string()))
                     })
                 })
@@ -146,14 +162,16 @@ pub fn register(lua: MizLua) -> Result<()> {
 
     api.set(
         "add_points",
-        lua.inner().create_function(|lua, (player, amount, reason): (String, i32, String)| {
-            wrap_f("vector_strike.add_points", MizLua(lua), |lua| {
-                with_context(lua, "add_points", |ctx| {
-                    admin::api_add_points(loaded(ctx)?, &player, amount, &reason)?;
-                    Ok(true)
+        lua.inner().create_function(
+            |lua, (player, amount, reason): (String, i32, String)| {
+                wrap_f("vector_strike.add_points", MizLua(lua), |lua| {
+                    with_context(lua, "add_points", |ctx| {
+                        admin::api_add_points(loaded(ctx)?, &player, amount, &reason)?;
+                        Ok(true)
+                    })
                 })
-            })
-        })?,
+            },
+        )?,
     )?;
 
     globals.set("vector_strike", api)?;

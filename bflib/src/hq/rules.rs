@@ -33,8 +33,8 @@ for more details.
 
 use super::picture::{self, ObjSummary};
 use crate::{
-    db::events::{CampaignEvent, EventScheduler},
     Context,
+    db::events::{CampaignEvent, EventScheduler},
 };
 use bfprotocols::{
     cfg::{CampaignEventsCfg, SmartCommanderCfg},
@@ -42,7 +42,7 @@ use bfprotocols::{
 };
 use chrono::prelude::*;
 use compact_str::CompactString;
-use dcso3::{coalition::Side, Vector2};
+use dcso3::{Vector2, coalition::Side};
 use log::info;
 use rand::Rng;
 use smallvec::SmallVec;
@@ -149,7 +149,8 @@ impl Inputs {
 
 /// Damage and shortage at a target, the core of every strike's value.
 fn weakness(t: &ObjSummary) -> f64 {
-    (100u8.saturating_sub(t.health)) as f64 * 0.8 + (100u8.saturating_sub(t.supply)) as f64 * 0.4
+    (100u8.saturating_sub(t.health)) as f64 * 0.8
+        + (100u8.saturating_sub(t.supply)) as f64 * 0.4
 }
 
 /// Score everything `side` could buy now: (what, cost, value).
@@ -175,7 +176,13 @@ pub(crate) fn score(
                     continue;
                 }
                 let proximity = if d < inp.arty_range * 0.5 { 1.5 } else { 1.0 };
-                let strategic = if tgt.is_logi_hub { 1.5 } else if tgt.is_factory { 1.2 } else { 1.0 };
+                let strategic = if tgt.is_logi_hub {
+                    1.5
+                } else if tgt.is_factory {
+                    1.2
+                } else {
+                    1.0
+                };
                 let capturable = if tgt.capturable { 40.0 } else { 0.0 };
                 let value = (20.0 + weakness(tgt) + capturable) * proximity * strategic;
                 if best.as_ref().map_or(true, |(_, v)| value > *v) {
@@ -218,7 +225,13 @@ pub(crate) fn score(
             if shooters.is_empty() {
                 continue;
             }
-            let strategic = if tgt.is_logi_hub { 2.0 } else if tgt.is_factory { 1.6 } else { 1.0 };
+            let strategic = if tgt.is_logi_hub {
+                2.0
+            } else if tgt.is_factory {
+                1.6
+            } else {
+                1.0
+            };
             let capturable = if tgt.capturable { 60.0 } else { 0.0 };
             let value = (30.0 + weakness(tgt) + capturable) * strategic;
             if best.as_ref().map_or(true, |(_, v)| value > *v) {
@@ -249,7 +262,8 @@ pub(crate) fn score(
         } else {
             enemy.iter().map(|o| o.supply as f64).sum::<f64>() / enemy.len() as f64
         };
-        let value = 30.0 + inp.enemy_convoys as f64 * 20.0 + (100.0 - enemy_avg_supply) * 0.6;
+        let value =
+            30.0 + inp.enemy_convoys as f64 * 20.0 + (100.0 - enemy_avg_supply) * 0.6;
         out.push((Buy::Ambush, sc.ambush_cost, value));
     }
 
@@ -257,14 +271,19 @@ pub(crate) fn score(
     // the side already, the cooldown since the last one is over, at least
     // three jets are up on one side, and the enemy has at least
     // `cap_min_friendly_pilots` more than we do.
-    if sc.cap_cost > 0 && inp.treasury >= sc.cap_cost && ev.enemy_cap_enabled && !inp.cap_covered {
+    if sc.cap_cost > 0
+        && inp.treasury >= sc.cap_cost
+        && ev.enemy_cap_enabled
+        && !inp.cap_covered
+    {
         let cooled = inp
             .cap_last_ended
             .map_or(true, |t| (now - t).num_seconds() >= sc.cap_cooldown_secs as i64);
         if cooled && inp.friendly_air.max(inp.enemy_air) >= 3 {
             let gap = inp.enemy_air.saturating_sub(inp.friendly_air);
             if gap >= sc.cap_min_friendly_pilots {
-                let threatened = friendly.iter().filter(|o| o.threatened || o.capturable).count();
+                let threatened =
+                    friendly.iter().filter(|o| o.threatened || o.capturable).count();
                 let value = 40.0 + gap as f64 * 15.0 + threatened as f64 * 10.0;
                 out.push((Buy::DispatchCap, sc.cap_cost, value));
             }
@@ -288,12 +307,20 @@ pub(crate) fn best(scored: &[(Buy, i64, f64)]) -> Option<(Buy, i64)> {
 /// Is `side` due a look? Every `interval` seconds, every
 /// `EMERGENCY_INTERVAL_SECS` while one of its objectives is in danger, and at
 /// once if it was never looked at.
-pub(crate) fn due(last: Option<DateTime<Utc>>, now: DateTime<Utc>, interval: u32, emergency: bool) -> bool {
+pub(crate) fn due(
+    last: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+    interval: u32,
+    emergency: bool,
+) -> bool {
     let elapsed = last.map_or(i64::MAX, |t| (now - t).num_seconds());
     elapsed >= if emergency { EMERGENCY_INTERVAL_SECS } else { interval as i64 }
 }
 
-fn last_check(scheduler: &mut EventScheduler, side: Side) -> Option<&mut Option<DateTime<Utc>>> {
+fn last_check(
+    scheduler: &mut EventScheduler,
+    side: Side,
+) -> Option<&mut Option<DateTime<Utc>>> {
     match side {
         Side::Blue => Some(&mut scheduler.last_commander_check_blue),
         Side::Red => Some(&mut scheduler.last_commander_check_red),
@@ -310,7 +337,10 @@ pub(crate) fn tick(ctx: &mut Context, now: DateTime<Utc>) {
         return;
     }
     ctx.hq.rules_last = now;
-    let Some(ev) = ctx.db.ephemeral.cfg.campaign_events.clone().filter(|e| e.enabled) else { return };
+    let Some(ev) = ctx.db.ephemeral.cfg.campaign_events.clone().filter(|e| e.enabled)
+    else {
+        return;
+    };
     let mut messages: Vec<CompactString> = Vec::new();
     let mut effects = Vec::new();
     let candidates = ctx.event_scheduler.build_candidates(&ctx.db);
@@ -329,7 +359,8 @@ pub(crate) fn tick(ctx: &mut Context, now: DateTime<Utc>) {
         let capture = friendly.iter().any(|o| o.being_captured);
         // The cap on concurrent events is per side, and a base actually
         // being captured gets through it.
-        let running = ctx.event_scheduler.active_events.iter().filter(|e| e.side() == side).count();
+        let running =
+            ctx.event_scheduler.active_events.iter().filter(|e| e.side() == side).count();
         if running >= ev.max_concurrent_events as usize && !capture {
             continue;
         }
@@ -379,26 +410,54 @@ pub(crate) fn tick(ctx: &mut Context, now: DateTime<Utc>) {
         let created = match buy {
             Buy::Barrage { src_oid, src_side, target_oid, target_pos, target_name } => {
                 scheduler.spawn_barrage_event(
-                    &ev, now, src_oid, src_side, target_oid, target_pos, target_name, &mut messages,
+                    &ev,
+                    now,
+                    src_oid,
+                    src_side,
+                    target_oid,
+                    target_pos,
+                    target_name,
+                    &mut messages,
                 );
                 true
             }
             Buy::MissileStrike { side, shooter_gids, target_pos, target_name } => {
                 scheduler.spawn_missile_strike_event(
-                    &ev, now, side, shooter_gids, target_pos, target_name, &mut messages,
+                    &ev,
+                    now,
+                    side,
+                    shooter_gids,
+                    target_pos,
+                    target_name,
+                    &mut messages,
                 );
                 true
             }
             Buy::Ambush => scheduler.spawn_convoy_ambush(
-                &ctx.db, &ev, now, side, &candidates, &mut messages, &mut effects, None,
+                &ctx.db,
+                &ev,
+                now,
+                side,
+                &candidates,
+                &mut messages,
+                &mut effects,
+                None,
             ),
-            Buy::DispatchCap => scheduler.spawn_commander_cap(&ctx.db, &ev, now, side, &mut messages),
+            Buy::DispatchCap => {
+                scheduler.spawn_commander_cap(&ctx.db, &ev, now, side, &mut messages)
+            }
         };
         if !created {
-            info!("[Commander] {:?} {} found nothing to act on, treasury not charged", side, label);
+            info!(
+                "[Commander] {:?} {} found nothing to act on, treasury not charged",
+                side, label
+            );
             continue;
         }
-        info!("[Commander] {:?} spending {} treasury on {} (emergency={})", side, cost, label, emergency);
+        info!(
+            "[Commander] {:?} spending {} treasury on {} (emergency={})",
+            side, cost, label, emergency
+        );
         super::treasury::pay(&mut ctx.db, side, cost);
         // One event per pass.
         break;
@@ -451,7 +510,12 @@ mod tests {
     }
 
     fn inputs() -> Inputs {
-        Inputs { treasury: 1000, arty_range: 30_000., alcm_range: 200_000., ..Default::default() }
+        Inputs {
+            treasury: 1000,
+            arty_range: 30_000.,
+            alcm_range: 200_000.,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -460,11 +524,19 @@ mod tests {
         let mut src = obj(1, 0., 100, 100);
         src.has_fire_groups = true;
         // too close (< 5 km), weak; in range, healthy; in range, weak; out of range
-        let enemy = [obj(10, 4_000., 0, 0), obj(11, 20_000., 100, 100), obj(12, 25_000., 10, 50), obj(13, 40_000., 0, 0)];
+        let enemy = [
+            obj(10, 4_000., 0, 0),
+            obj(11, 20_000., 100, 100),
+            obj(12, 25_000., 10, 50),
+            obj(13, 40_000., 0, 0),
+        ];
         let scored = score(Side::Blue, &sc, &ev, &inputs(), &[src], &enemy, t0());
-        let barrage = scored.iter().find(|(b, ..)| matches!(b, Buy::Barrage { .. })).unwrap();
+        let barrage =
+            scored.iter().find(|(b, ..)| matches!(b, Buy::Barrage { .. })).unwrap();
         match &barrage.0 {
-            Buy::Barrage { target_oid, .. } => assert_eq!(*target_oid, ObjectiveId::from(12)),
+            Buy::Barrage { target_oid, .. } => {
+                assert_eq!(*target_oid, ObjectiveId::from(12))
+            }
             _ => unreachable!(),
         }
         // (20 + 90*0.8 + 50*0.4) * 1.0 (not within half range) * 1.0
@@ -479,7 +551,9 @@ mod tests {
         src.has_fire_groups = true;
         let enemy = [obj(12, 25_000., 10, 50)];
         let poor = Inputs { treasury: 99, ..inputs() };
-        assert!(score(Side::Blue, &sc, &ev, &poor, &[src.clone()], &enemy, t0()).is_empty());
+        assert!(
+            score(Side::Blue, &sc, &ev, &poor, &[src.clone()], &enemy, t0()).is_empty()
+        );
         ev.barrage_enabled = false;
         assert!(score(Side::Blue, &sc, &ev, &inputs(), &[src], &enemy, t0()).is_empty());
     }
@@ -492,7 +566,8 @@ mod tests {
         let mut inp = inputs();
         inp.missile_groups.push((gid, Some(Vector2::new(0., 0.))));
         let scored = score(Side::Red, &sc, &ev, &inp, &[], &enemy, t0());
-        let (b, cost, _) = scored.iter().find(|(b, ..)| matches!(b, Buy::MissileStrike { .. })).unwrap();
+        let (b, cost, _) =
+            scored.iter().find(|(b, ..)| matches!(b, Buy::MissileStrike { .. })).unwrap();
         assert_eq!(*cost, 150);
         match b {
             Buy::MissileStrike { shooter_gids, target_pos, .. } => {

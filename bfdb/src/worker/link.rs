@@ -39,23 +39,53 @@ pub(crate) enum Msg {
         news_draw: bool,
     },
     /// bfdb -> worker: accepted. Nothing else is sent before it.
-    Welcome { protocol: u32, version: String },
+    Welcome {
+        protocol: u32,
+        version: String,
+    },
     /// worker -> bfdb: call an engine procedure for a voice service.
     /// `optional` is `StatsDb::call_engine_rpc_optional`, else the counted
     /// `call_engine_rpc_str`. Every argument the services pass is a string.
-    Rpc { id: u64, inst: String, proc_name: String, args: Vec<(String, String)>, optional: bool },
+    Rpc {
+        id: u64,
+        inst: String,
+        proc_name: String,
+        args: Vec<(String, String)>,
+        optional: bool,
+    },
     /// worker -> bfdb: one GCI transcript line (the JSON /ws/gci carries).
-    GciLine { inst: String, line: String },
+    GciLine {
+        inst: String,
+        line: String,
+    },
     /// worker -> bfdb, after Welcome: the transcript so far, oldest first.
-    GciBacklog { inst: String, lines: Vec<String> },
+    GciBacklog {
+        inst: String,
+        lines: Vec<String>,
+    },
     /// worker -> bfdb: a range ATC transmission starts / ends on the live
     /// feed. Its audio comes as binary frames.
-    LiveOn { inst: String, station: String, who: String, text: String },
-    LiveOff { inst: String, station: String },
+    LiveOn {
+        inst: String,
+        station: String,
+        who: String,
+        text: String,
+    },
+    LiveOff {
+        inst: String,
+        station: String,
+    },
     /// bfdb -> worker: a request.
-    Req { id: u64, op: Op },
+    Req {
+        id: u64,
+        op: Op,
+    },
     /// Either way: the answer to `Rpc` or `Req` `id`.
-    Reply { id: u64, ok: Option<serde_json::Value>, err: Option<RemoteErr> },
+    Reply {
+        id: u64,
+        ok: Option<serde_json::Value>,
+        err: Option<RemoteErr>,
+    },
 }
 
 /// What bfdb asks of the worker.
@@ -94,7 +124,13 @@ pub(crate) struct RemoteErr {
 
 impl RemoteErr {
     pub(crate) fn new(status: u16, msg: impl Into<String>) -> Self {
-        Self { status, msg: msg.into(), billed: false, rate_limited: false, retry_secs: None }
+        Self {
+            status,
+            msg: msg.into(),
+            billed: false,
+            rate_limited: false,
+            retry_secs: None,
+        }
     }
 
     /// The link itself failed: no worker, gone mid-call, or no answer.
@@ -113,7 +149,9 @@ impl RemoteErr {
     /// Back into the error the local call would have returned.
     pub(crate) fn into_anyhow(self) -> anyhow::Error {
         match warp::http::StatusCode::from_u16(self.status) {
-            Ok(status) if self.status != 0 => anyhow::Error::new(crate::websec::ApiError { status, msg: self.msg }),
+            Ok(status) if self.status != 0 => {
+                anyhow::Error::new(crate::websec::ApiError { status, msg: self.msg })
+            }
             _ => anyhow::anyhow!(self.msg),
         }
     }
@@ -134,7 +172,10 @@ pub(crate) enum Frame {
 
 /// A live-feed audio chunk: `[1][inst len][inst][station len][station][s16le]`.
 pub(crate) fn audio_frame(inst: &str, station: &str, pcm: &[i16]) -> Vec<u8> {
-    let (i, s) = (&inst.as_bytes()[..inst.len().min(255)], &station.as_bytes()[..station.len().min(255)]);
+    let (i, s) = (
+        &inst.as_bytes()[..inst.len().min(255)],
+        &station.as_bytes()[..station.len().min(255)],
+    );
     let mut b = Vec::with_capacity(3 + i.len() + s.len() + pcm.len() * 2);
     b.push(1);
     b.push(i.len() as u8);
@@ -161,7 +202,11 @@ pub(crate) fn parse_audio_frame(b: &[u8]) -> Option<(String, String, Vec<i16>)> 
         return None;
     }
     let pcm = pcm.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
-    Some((String::from_utf8(inst.to_vec()).ok()?, String::from_utf8(station.to_vec()).ok()?, pcm))
+    Some((
+        String::from_utf8(inst.to_vec()).ok()?,
+        String::from_utf8(station.to_vec()).ok()?,
+        pcm,
+    ))
 }
 
 type Pending = HashMap<u64, oneshot::Sender<Result<serde_json::Value, RemoteErr>>>;
@@ -179,7 +224,14 @@ impl Peer {
     /// writer task drains.
     pub(crate) fn new() -> (Arc<Self>, mpsc::Receiver<Frame>) {
         let (out, rx) = mpsc::channel(OUT_QUEUE);
-        (Arc::new(Self { out, pending: Mutex::new(HashMap::new()), next: AtomicU64::new(1) }), rx)
+        (
+            Arc::new(Self {
+                out,
+                pending: Mutex::new(HashMap::new()),
+                next: AtomicU64::new(1),
+            }),
+            rx,
+        )
     }
 
     /// Queue a message. False when the link is gone or backed up.
@@ -216,13 +268,21 @@ impl Peer {
             Ok(Err(_)) => Err(RemoteErr::link("the worker link closed before answering")),
             Err(_) => {
                 self.pending.lock().unwrap().remove(&id);
-                Err(RemoteErr::link(format!("no answer over the worker link in {}s", timeout.as_secs())))
+                Err(RemoteErr::link(format!(
+                    "no answer over the worker link in {}s",
+                    timeout.as_secs()
+                )))
             }
         }
     }
 
     /// Hand a reply to whoever is waiting on it.
-    pub(crate) fn resolve(&self, id: u64, ok: Option<serde_json::Value>, err: Option<RemoteErr>) {
+    pub(crate) fn resolve(
+        &self,
+        id: u64,
+        ok: Option<serde_json::Value>,
+        err: Option<RemoteErr>,
+    ) {
         if let Some(tx) = self.pending.lock().unwrap().remove(&id) {
             let _ = tx.send(match (ok, err) {
                 (_, Some(e)) => Err(e),
@@ -266,16 +326,33 @@ mod tests {
 
     #[test]
     fn messages_keep_their_shape() {
-        let m = Msg::Rpc { id: 3, inst: "a".into(), proc_name: "query-gci".into(), args: vec![("side".into(), "blue".into())], optional: false };
+        let m = Msg::Rpc {
+            id: 3,
+            inst: "a".into(),
+            proc_name: "query-gci".into(),
+            args: vec![("side".into(), "blue".into())],
+            optional: false,
+        };
         let s = serde_json::to_string(&m).unwrap();
-        assert_eq!(s, r#"{"t":"rpc","id":3,"inst":"a","proc_name":"query-gci","args":[["side","blue"]],"optional":false}"#);
-        let r: Msg = serde_json::from_str(r#"{"t":"reply","id":3,"ok":null,"err":{"status":422,"msg":"no slot"}}"#).unwrap();
+        assert_eq!(
+            s,
+            r#"{"t":"rpc","id":3,"inst":"a","proc_name":"query-gci","args":[["side","blue"]],"optional":false}"#
+        );
+        let r: Msg = serde_json::from_str(
+            r#"{"t":"reply","id":3,"ok":null,"err":{"status":422,"msg":"no slot"}}"#,
+        )
+        .unwrap();
         match r {
-            Msg::Reply { id: 3, ok: None, err: Some(e) } => assert_eq!((e.status, e.billed), (422, false)),
+            Msg::Reply { id: 3, ok: None, err: Some(e) } => {
+                assert_eq!((e.status, e.billed), (422, false))
+            }
             other => panic!("{other:?}"),
         }
         let q = Msg::Req { id: 9, op: Op::AtcTranscript { inst: "r".into(), since: 5 } };
-        assert_eq!(serde_json::to_string(&q).unwrap(), r#"{"t":"req","id":9,"op":{"op":"atc_transcript","inst":"r","since":5}}"#);
+        assert_eq!(
+            serde_json::to_string(&q).unwrap(),
+            r#"{"t":"req","id":9,"op":{"op":"atc_transcript","inst":"r","since":5}}"#
+        );
     }
 
     #[test]
@@ -284,7 +361,8 @@ mod tests {
         let back = RemoteErr::from_anyhow(&e).into_anyhow();
         let a = back.downcast_ref::<crate::websec::ApiError>().unwrap();
         assert_eq!((a.status.as_u16(), a.msg.as_str()), (422, "you must be in a slot"));
-        let plain = RemoteErr::from_anyhow(&anyhow::anyhow!("disk on fire")).into_anyhow();
+        let plain =
+            RemoteErr::from_anyhow(&anyhow::anyhow!("disk on fire")).into_anyhow();
         assert!(plain.downcast_ref::<crate::websec::ApiError>().is_none());
     }
 
@@ -303,9 +381,15 @@ mod tests {
             p.fail_all();
         });
         let op = |inst: &str| Op::AtcTranscript { inst: inst.into(), since: 0 };
-        let v = peer.call(|id| Msg::Req { id, op: op("a") }, Duration::from_secs(5)).await.unwrap();
+        let v = peer
+            .call(|id| Msg::Req { id, op: op("a") }, Duration::from_secs(5))
+            .await
+            .unwrap();
         assert_eq!(v, serde_json::json!("ok"));
-        let e = peer.call(|id| Msg::Req { id, op: op("b") }, Duration::from_secs(5)).await.unwrap_err();
+        let e = peer
+            .call(|id| Msg::Req { id, op: op("b") }, Duration::from_secs(5))
+            .await
+            .unwrap_err();
         assert_eq!(e.status, 503);
         echo.await.unwrap();
     }

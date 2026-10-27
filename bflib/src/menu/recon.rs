@@ -14,12 +14,12 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
-use super::{slot_for_group, Pager};
+use super::{Pager, slot_for_group};
 use anyhow::{Context as ErrContext, Result};
 use dcso3::{
+    MizLua,
     env::miz::GroupId,
     mission_commands::{GroupSubMenu, MissionCommands},
-    MizLua,
 };
 
 fn start_recon(lua: MizLua, gid: GroupId) -> Result<()> {

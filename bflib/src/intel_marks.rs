@@ -8,15 +8,15 @@
 
 use anyhow::{Context as _, Result};
 use dcso3::{
+    Color, LuaVec3, MizLua, Vector2, Vector3,
     coalition::Side,
     coord::{Coord, LLPos},
     trigger::{CircleSpec, LineSpec, LineType, MarkId, RectSpec, TextSpec},
-    Color, LuaVec3, MizLua, Vector2, Vector3,
 };
 use fxhash::{FxHashMap, FxHashSet};
 use log::warn;
 use serde::Deserialize;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use std::str::FromStr;
 
 #[derive(Debug, Deserialize)]
@@ -60,7 +60,9 @@ fn parse_hex_rgb(s: &str) -> Option<(u8, u8, u8)> {
 
 fn hex_color(s: &str, alpha: f32) -> Color {
     match parse_hex_rgb(s) {
-        Some((r, g, b)) => Color::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, alpha),
+        Some((r, g, b)) => {
+            Color::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, alpha)
+        }
         None => Color::yellow(alpha),
     }
 }
@@ -81,11 +83,7 @@ fn decimate<T: Copy>(pts: &[T], max: usize) -> Vec<T> {
 }
 
 fn ground(coord: &Coord, p: [f64; 2]) -> Result<LuaVec3> {
-    let v = coord.ll_to_lo(LLPos {
-        latitude: p[0],
-        longitude: p[1],
-        altitude: 0.0,
-    })?;
+    let v = coord.ll_to_lo(LLPos { latitude: p[0], longitude: p[1], altitude: 0.0 })?;
     // Map drawing wants (x, 0, z) — drop the terrain altitude.
     Ok(LuaVec3(Vector3::new(v.0.x, 0.0, v.0.z)))
 }
@@ -131,14 +129,15 @@ pub fn reconcile(
             "circle" | "rect" => m.points.iter().take(2).copied().collect(),
             _ => decimate(&m.points, MAX_LINE_POINTS),
         };
-        let pts: Vec<LuaVec3> = match pts.iter().map(|p| ground(&coord, *p)).collect::<Result<_>>() {
-            Ok(pts) => pts,
-            Err(e) => {
-                warn!("intel mark {} could not be placed, skipping it: {e:?}", m.id);
-                state.insert(m.id.clone(), ids);
-                continue;
-            }
-        };
+        let pts: Vec<LuaVec3> =
+            match pts.iter().map(|p| ground(&coord, *p)).collect::<Result<_>>() {
+                Ok(pts) => pts,
+                Err(e) => {
+                    warn!("intel mark {} could not be placed, skipping it: {e:?}", m.id);
+                    state.insert(m.id.clone(), ids);
+                    continue;
+                }
+            };
 
         match m.kind.as_str() {
             "circle" if pts.len() >= 2 => {
@@ -227,7 +226,8 @@ pub fn reconcile(
     }
 
     // Remove marks whose source item is gone.
-    let stale: Vec<String> = state.keys().filter(|k| !seen.contains(*k)).cloned().collect();
+    let stale: Vec<String> =
+        state.keys().filter(|k| !seen.contains(*k)).cloned().collect();
     for k in stale {
         if let Some(ids) = state.remove(&k) {
             for id in ids {

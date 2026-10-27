@@ -148,7 +148,9 @@ const ORDER: [&str; 5] = ["forrestal", "kuznetsov", "cdg", "tarawa", "nimitz"];
 
 fn file() -> &'static File {
     static F: OnceLock<File> = OnceLock::new();
-    F.get_or_init(|| serde_json::from_str(DECKS_JSON).expect("shared/carriers/decks.json"))
+    F.get_or_init(|| {
+        serde_json::from_str(DECKS_JSON).expect("shared/carriers/decks.json")
+    })
 }
 
 /// The engine's deck for the classes it grades.
@@ -167,7 +169,10 @@ fn class_key(carrier_type: &str) -> &'static str {
     let f = file();
     for k in ORDER {
         let Some(c) = f.classes.get(k) else { continue };
-        if c.matches.split('|').any(|m| !m.is_empty() && t.contains(&m.to_ascii_lowercase())) {
+        if c.matches
+            .split('|')
+            .any(|m| !m.is_empty() && t.contains(&m.to_ascii_lowercase()))
+        {
             return k;
         }
     }
@@ -179,7 +184,11 @@ fn hull_no(carrier_type: &str) -> Option<String> {
     // "CVN_73", "CVN-71", "LHA_1": the digits after the type letters
     for pre in ["CVN", "CV", "LHA", "LHD", "R"] {
         if let Some(i) = t.find(pre) {
-            let digits: String = t[i + pre.len()..].trim_start_matches(['_', '-', ' ']).chars().take_while(|c| c.is_ascii_digit()).collect();
+            let digits: String = t[i + pre.len()..]
+                .trim_start_matches(['_', '-', ' '])
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
             if !digits.is_empty() && digits.len() <= 3 {
                 return Some(digits);
             }
@@ -232,8 +241,16 @@ pub(crate) fn plan_for(carrier_type: &str) -> Plan {
         island: s(&base.island),
         island_top: s(&base.island_top),
         elevators: base.elevators.iter().map(|e| s(e)).collect(),
-        cats: base.cats.iter().map(|(a, b)| ((a.0 * sf, a.1 * sr), (b.0 * sf, b.1 * sr))).collect(),
-        runs: base.runs.iter().map(|(a, b)| ((a.0 * sf, a.1 * sr), (b.0 * sf, b.1 * sr))).collect(),
+        cats: base
+            .cats
+            .iter()
+            .map(|(a, b)| ((a.0 * sf, a.1 * sr), (b.0 * sf, b.1 * sr)))
+            .collect(),
+        runs: base
+            .runs
+            .iter()
+            .map(|(a, b)| ((a.0 * sf, a.1 * sr), (b.0 * sf, b.1 * sr)))
+            .collect(),
         spots: s(&base.spots),
         ski_jump: sp(&base.ski_jump),
         lens: sp(&base.lens),
@@ -241,8 +258,18 @@ pub(crate) fn plan_for(carrier_type: &str) -> Plan {
         landing_len: c.landing_len,
         landing_half_w: c.landing_half_w,
         side_hull: base.side.hull.iter().map(|(a, z)| (a * sf, *z)).collect(),
-        side_island: base.side.island.iter().map(|v| v.iter().map(|(a, z)| (a * sf, *z)).collect()).collect(),
-        side_elevators: base.side.near_elevators.iter().map(|(a, b)| (a * sf, b * sf)).collect(),
+        side_island: base
+            .side
+            .island
+            .iter()
+            .map(|v| v.iter().map(|(a, z)| (a * sf, *z)).collect())
+            .collect(),
+        side_elevators: base
+            .side
+            .near_elevators
+            .iter()
+            .map(|(a, b)| (a * sf, b * sf))
+            .collect(),
         side_silhouette: base.side.silhouette.iter().map(|(a, z)| (a * sf, *z)).collect(),
         hull_no: hull_no(carrier_type),
     }
@@ -268,7 +295,10 @@ impl Plan {
         let a = -self.g.angle_deg.to_radians();
         let fwd = (-a.cos(), a.sin());
         let right = (a.sin(), a.cos());
-        let k = (self.lp_from_stern() - self.g.stern_offset_m * right.0, -self.g.stern_offset_m * right.1);
+        let k = (
+            self.lp_from_stern() - self.g.stern_offset_m * right.0,
+            -self.g.stern_offset_m * right.1,
+        );
         (k.0 + p.0 * fwd.0 + p.1 * right.0, k.1 + p.0 * fwd.1 + p.1 * right.1)
     }
 
@@ -324,19 +354,54 @@ mod tests {
 
     #[test]
     fn every_class_has_a_plan_and_agrees_with_the_engine() {
-        for (t, k) in [("CVN_71", "nimitz"), ("Stennis", "nimitz"), ("Forrestal", "forrestal"), ("KUZNECOW", "kuznetsov"), ("LHA_Tarawa", "tarawa"), ("Charles de Gaulle", "cdg")] {
+        for (t, k) in [
+            ("CVN_71", "nimitz"),
+            ("Stennis", "nimitz"),
+            ("Forrestal", "forrestal"),
+            ("KUZNECOW", "kuznetsov"),
+            ("LHA_Tarawa", "tarawa"),
+            ("Charles de Gaulle", "cdg"),
+        ] {
             let p = plan_for(t);
             assert_eq!(p.key, k, "{t}");
-            assert!(p.outline.len() > 4 && p.side_hull.len() > 4 && !p.island.is_empty(), "{t}");
+            assert!(
+                p.outline.len() > 4 && p.side_hull.len() > 4 && !p.island.is_empty(),
+                "{t}"
+            );
             // every plan point inside the ship's length
-            assert!(p.outline.iter().all(|q| q.0 >= -0.01 && q.0 <= p.length + 0.5), "{t}");
+            assert!(
+                p.outline.iter().all(|q| q.0 >= -0.01 && q.0 <= p.length + 0.5),
+                "{t}"
+            );
         }
         // the file's grading block is the engine's, for the classes the engine grades
-        for (k, kind) in [("nimitz", CarrierKind::Nimitz), ("forrestal", CarrierKind::Forrestal), ("kuznetsov", CarrierKind::Kuznetsov), ("tarawa", CarrierKind::Tarawa)] {
+        for (k, kind) in [
+            ("nimitz", CarrierKind::Nimitz),
+            ("forrestal", CarrierKind::Forrestal),
+            ("kuznetsov", CarrierKind::Kuznetsov),
+            ("tarawa", CarrierKind::Tarawa),
+        ] {
             let g = &file().classes[k].grading;
             let e = kind.deck();
-            assert_eq!((g.stern_m, g.stern_offset_m, g.deck_height_m, g.angle_deg, g.wires_m, g.glideslope_deg),
-                (e.stern_m, e.stern_offset_m, e.deck_height_m, e.angle_deg, e.wires_m, e.glideslope_deg), "{k}");
+            assert_eq!(
+                (
+                    g.stern_m,
+                    g.stern_offset_m,
+                    g.deck_height_m,
+                    g.angle_deg,
+                    g.wires_m,
+                    g.glideslope_deg
+                ),
+                (
+                    e.stern_m,
+                    e.stern_offset_m,
+                    e.deck_height_m,
+                    e.angle_deg,
+                    e.wires_m,
+                    e.glideslope_deg
+                ),
+                "{k}"
+            );
         }
         assert_eq!(plan_for("CVN_73").hull_no.as_deref(), Some("73"));
     }

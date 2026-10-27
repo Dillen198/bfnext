@@ -11,9 +11,14 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
-use crate::object::DcsOidExt;
 use super::{as_tbl, coalition::Side, country::Country, object::Object};
-use crate::{airbase::Airbase, coalition::Static, object::{DcsObject, DcsOid}, wrapped_prim, wrapped_table, LuaEnv, MizLua};
+use crate::object::DcsOidExt;
+use crate::{
+    airbase::Airbase,
+    coalition::Static,
+    object::{DcsObject, DcsOid},
+    wrapped_prim, wrapped_table, LuaEnv, MizLua,
+};
 use anyhow::{anyhow, bail, Result};
 use mlua::{prelude::*, Value};
 use serde_derive::Serialize;
@@ -32,15 +37,9 @@ impl StaticObject {
             .metatable()
             .ok_or_else(|| anyhow!("returned static object has no meta table"))?;
         if mt.raw_get::<String>("className_")?.as_str() == "Airbase" {
-            Ok(Static::Airbase(Airbase::from_lua(
-                Value::Table(tbl),
-                lua.inner(),
-            )?))
+            Ok(Static::Airbase(Airbase::from_lua(Value::Table(tbl), lua.inner())?))
         } else {
-            Ok(Static::Static(StaticObject::from_lua(
-                Value::Table(tbl),
-                lua.inner(),
-            )?))
+            Ok(Static::Static(StaticObject::from_lua(Value::Table(tbl), lua.inner())?))
         }
     }
 
@@ -63,7 +62,7 @@ impl StaticObject {
     pub fn get_country(&self) -> Result<Country> {
         Ok(self.t.call_method("getCountry", ())?)
     }
- 
+
     pub fn get_life(&self) -> Result<i64> {
         Ok(self.t.call_method("getLife", ())?)
     }
@@ -91,7 +90,6 @@ impl StaticObject {
     }
 }
 
-
 #[derive(Debug, Clone)]
 pub struct ClassStatic;
 
@@ -102,10 +100,7 @@ impl DcsObject for StaticObject {
         let t = lua.inner().create_table()?;
         t.set_metatable(Some(lua.inner().globals().raw_get(&**id.class)?));
         t.raw_set("id_", id.id)?;
-        let t = StaticObject {
-            t,
-            lua: lua.inner().clone(),
-        };
+        let t = StaticObject { t, lua: lua.inner().clone() };
         if !t.is_exist()? {
             bail!("{} is an invalid object", id.id)
         }
@@ -114,11 +109,7 @@ impl DcsObject for StaticObject {
 
     fn get_instance_dyn<T>(lua: MizLua, id: &DcsOid<T>) -> Result<Self> {
         id.check_implements(lua, "StaticObject")?;
-        let id = DcsOid {
-            id: id.id,
-            class: id.class.clone(),
-            t: PhantomData,
-        };
+        let id = DcsOid { id: id.id, class: id.class.clone(), t: PhantomData };
         Self::get_instance(lua, &id)
     }
 

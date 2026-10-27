@@ -11,15 +11,16 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
-use crate::simple_enum_unknown;
 use super::{
     airbase::Airbase,
     as_tbl,
-    country::Country, env,
+    country::Country,
+    env,
     group::{Group, GroupCategory},
     static_object::StaticObject,
     unit::Unit,
 };
+use crate::simple_enum_unknown;
 use crate::{record_perf, wrapped_table, LuaEnv, MizLua, Sequence};
 use anyhow::{anyhow, Result};
 use mlua::{prelude::*, Value};
@@ -53,8 +54,7 @@ impl Coalition {
     ) -> Result<Group> {
         Ok(record_perf!(
             add_group,
-            self.t
-                .call_function("addGroup", (country, category, data))?
+            self.t.call_function("addGroup", (country, category, data))?
         ))
     }
 
@@ -71,15 +71,9 @@ impl Coalition {
             .metatable()
             .ok_or_else(|| anyhow!("returned static object has no meta table"))?;
         if mt.raw_get::<String>("className_")?.as_str() == "Airbase" {
-            Ok(Static::Airbase(Airbase::from_lua(
-                Value::Table(tbl),
-                &self.lua,
-            )?))
+            Ok(Static::Airbase(Airbase::from_lua(Value::Table(tbl), &self.lua)?))
         } else {
-            Ok(Static::Static(StaticObject::from_lua(
-                Value::Table(tbl),
-                &self.lua,
-            )?))
+            Ok(Static::Static(StaticObject::from_lua(Value::Table(tbl), &self.lua)?))
         }
     }
 
@@ -104,9 +98,7 @@ impl Coalition {
         side: Side,
         service: Service,
     ) -> Result<Sequence<Unit>> {
-        Ok(self
-            .t
-            .call_function("getServiceProviders", (side, service))?)
+        Ok(self.t.call_function("getServiceProviders", (side, service))?)
     }
 
     pub fn get_country_coalition(&self, country: Country) -> Result<Side> {
@@ -121,7 +113,12 @@ mod tests {
     #[test]
     fn service_ids_round_trip_and_tolerate_new_ones() {
         let lua = Lua::new();
-        for (id, s) in [(0, Service::Atc), (1, Service::Awacs), (2, Service::Tanker), (3, Service::Fac)] {
+        for (id, s) in [
+            (0, Service::Atc),
+            (1, Service::Awacs),
+            (2, Service::Tanker),
+            (3, Service::Fac),
+        ] {
             assert_eq!(Service::from_lua(Value::Integer(id), &lua).unwrap(), s);
             assert!(matches!(s.into_lua(&lua).unwrap(), Value::Integer(i) if i == id));
         }

@@ -107,7 +107,9 @@ fn run(args: &Args, interactive: bool) -> Result<()> {
                 if !scan.near_misses.is_empty() {
                     println!();
                     println!("  These look like DCS folders but have no Config folder, so they");
-                    println!("  are not profiles (usually a mod manager's, or a module's own");
+                    println!(
+                        "  are not profiles (usually a mod manager's, or a module's own"
+                    );
                     println!("  data folder):");
                     for m in &scan.near_misses {
                         println!("    {}", m.display());
@@ -120,7 +122,9 @@ fn run(args: &Args, interactive: bool) -> Result<()> {
             None => {
                 println!("  None of the folders you named exist.");
                 println!();
-                println!("  A DCS profile is the folder containing Config and Logs -- the one");
+                println!(
+                    "  A DCS profile is the folder containing Config and Logs -- the one"
+                );
                 println!("  DCS writes to, not the one it is installed in. For example:");
             }
         }

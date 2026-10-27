@@ -154,21 +154,9 @@ impl FromLua for AttackParams {
             } else {
                 None
             },
-            point: if tbl.raw_get("point")? {
-                tbl.raw_get("point")?
-            } else {
-                None
-            },
-            x: if tbl.raw_get("x")? {
-                tbl.raw_get("x")?
-            } else {
-                None
-            },
-            y: if tbl.raw_get("y")? {
-                tbl.raw_get("y")?
-            } else {
-                None
-            },
+            point: if tbl.raw_get("point")? { tbl.raw_get("point")? } else { None },
+            x: if tbl.raw_get("x")? { tbl.raw_get("x")? } else { None },
+            y: if tbl.raw_get("y")? { tbl.raw_get("y")? } else { None },
         })
     }
 }
@@ -653,16 +641,14 @@ impl FromLua for Task {
 }
 
 impl Task {
-    fn decode(
-        root: &LuaTable,
-        id: &str,
-        params: LuaTable,
-        lua: &Lua,
-    ) -> LuaResult<Self> {
+    fn decode(root: &LuaTable, id: &str, params: LuaTable, lua: &Lua) -> LuaResult<Self> {
         match id {
             "Land" => Ok(Self::Land {
                 point: params.raw_get("point")?,
-                duration: if params.raw_get::<Option<bool>>("durationFlag")?.unwrap_or(false) {
+                duration: if params
+                    .raw_get::<Option<bool>>("durationFlag")?
+                    .unwrap_or(false)
+                {
                     params.raw_get("duration")?
                 } else {
                     None
@@ -780,7 +766,9 @@ impl Task {
             "AttachTrailer" => Ok(Self::AttachTrailer {
                 tractor: params.raw_get("unitIdTractor")?,
                 trailer: params.raw_get("unitIdTrailer")?,
-                on_start_mission: params.raw_get::<Option<bool>>("onStartMission")?.unwrap_or(false),
+                on_start_mission: params
+                    .raw_get::<Option<bool>>("onStartMission")?
+                    .unwrap_or(false),
             }),
             "DetachTrailer" => Ok(Self::DetachTrailer {
                 tractor: params.raw_get("unitIdTractor")?,
@@ -880,21 +868,13 @@ impl IntoLua for Task {
                 params.raw_set("point", point)?;
                 atp.push_tbl(&params)?;
             }
-            Self::Strafing {
-                point,
-                length,
-                params: atp,
-            } => {
+            Self::Strafing { point, length, params: atp } => {
                 root.raw_set("id", "Strafing")?;
                 params.raw_set("point", point)?;
                 params.raw_set("length", length)?;
                 atp.push_tbl(&params)?;
             }
-            Self::CarpetBombing {
-                point,
-                carpet_length,
-                params: atp,
-            } => {
+            Self::CarpetBombing { point, carpet_length, params: atp } => {
                 root.raw_set("id", "CarpetBombing")?;
                 params.raw_set("point", point)?;
                 params.raw_set("carpetLength", carpet_length)?;
@@ -905,21 +885,12 @@ impl IntoLua for Task {
                 params.raw_set("point", point)?;
                 atp.push_tbl(&params)?;
             }
-            Self::BombRunway {
-                runway,
-                params: atp,
-            } => {
+            Self::BombRunway { runway, params: atp } => {
                 root.raw_set("id", "BombingRunway")?;
                 params.raw_set("runwayId", runway)?;
                 atp.push_tbl(&params)?;
             }
-            Self::Orbit {
-                pattern,
-                point,
-                point2,
-                speed,
-                altitude,
-            } => {
+            Self::Orbit { pattern, point, point2, speed, altitude } => {
                 root.raw_set("id", "Orbit")?;
                 params.raw_set("pattern", pattern)?;
                 params.raw_set("point", point)?;
@@ -944,22 +915,13 @@ impl IntoLua for Task {
                 root.raw_set("id", "FollowBigFormation")?;
                 fp.push_tbl(&params)?;
             }
-            Self::Escort {
-                engagement_dist_max,
-                target_types,
-                params: fp,
-            } => {
+            Self::Escort { engagement_dist_max, target_types, params: fp } => {
                 root.raw_set("id", "Escort")?;
                 params.raw_set("engagementDistMax", engagement_dist_max)?;
                 params.raw_set("targetTypes", target_types)?;
                 fp.push_tbl(&params)?;
             }
-            Self::Embarking {
-                pos,
-                groups_for_embarking,
-                duration,
-                distribution,
-            } => {
+            Self::Embarking { pos, groups_for_embarking, duration, distribution } => {
                 root.raw_set("id", "Embarking")?;
                 params.raw_set("x", pos.x)?;
                 params.raw_set("y", pos.y)?;
@@ -1037,10 +999,7 @@ impl IntoLua for Task {
                     params.raw_set("zoneId", zone)?;
                 }
             }
-            Self::GoToWaypoint {
-                from_waypoint,
-                to_waypoint,
-            } => {
+            Self::GoToWaypoint { from_waypoint, to_waypoint } => {
                 root.raw_set("id", "goToWaypoint")?;
                 params.raw_set("fromWaypointIndex", from_waypoint)?;
                 params.raw_set("goToWaypointIndex", to_waypoint)?;
@@ -1060,12 +1019,7 @@ impl IntoLua for Task {
                     params.raw_set("lastWptIndex", wpi)?;
                 }
             }
-            Self::RecoveryTanker {
-                group,
-                speed,
-                altitude,
-                last_wpt_idx,
-            } => {
+            Self::RecoveryTanker { group, speed, altitude, last_wpt_idx } => {
                 root.raw_set("id", "RecoveryTanker")?;
                 params.raw_set("groupId", group)?;
                 params.raw_set("speed", speed)?;
@@ -1087,11 +1041,7 @@ impl IntoLua for Task {
                 params.raw_set("x", pos.x)?;
                 params.raw_set("y", pos.y)?;
             }
-            Self::EngageTargets {
-                target_types,
-                max_dist,
-                priority,
-            } => {
+            Self::EngageTargets { target_types, max_dist, priority } => {
                 root.raw_set("id", "EngageTargets")?;
                 params.raw_set("targetTypes", target_types)?;
                 if let Some(d) = max_dist {
@@ -1104,12 +1054,7 @@ impl IntoLua for Task {
                     params.raw_set("priority", p)?;
                 }
             }
-            Self::EngageTargetsInZone {
-                point,
-                zone_radius,
-                target_types,
-                priority,
-            } => {
+            Self::EngageTargetsInZone { point, zone_radius, target_types, priority } => {
                 root.raw_set("id", "EngageTargetsInZone")?;
                 params.raw_set("point", point)?;
                 params.raw_set("zoneRadius", zone_radius)?;
@@ -1118,11 +1063,7 @@ impl IntoLua for Task {
                     params.raw_set("priority", p)?;
                 }
             }
-            Self::EngageGroup {
-                group,
-                params: atp,
-                priority,
-            } => {
+            Self::EngageGroup { group, params: atp, priority } => {
                 root.raw_set("id", "EngageGroup")?;
                 params.raw_set("groupId", group)?;
                 atp.push_tbl(&params)?;
@@ -1130,11 +1071,7 @@ impl IntoLua for Task {
                     params.raw_set("priority", p)?;
                 }
             }
-            Self::EngageUnit {
-                unit,
-                params: atp,
-                priority,
-            } => {
+            Self::EngageUnit { unit, params: atp, priority } => {
                 root.raw_set("id", "EngageUnit")?;
                 params.raw_set("unitId", unit)?;
                 atp.push_tbl(&params)?;
@@ -1145,11 +1082,7 @@ impl IntoLua for Task {
             Self::AWACS => root.raw_set("id", "AWACS")?,
             Self::Tanker => root.raw_set("id", "Tanker")?,
             Self::EWR => root.raw_set("id", "EWR")?,
-            Self::FACEngageGroup {
-                group,
-                params: fp,
-                priority,
-            } => {
+            Self::FACEngageGroup { group, params: fp, priority } => {
                 root.raw_set("id", "FAC_EngageGroup")?;
                 params.raw_set("groupId", group)?;
                 fp.push_tbl(&params)?;
@@ -1157,10 +1090,7 @@ impl IntoLua for Task {
                     params.raw_set("priority", p)?;
                 }
             }
-            Self::FAC {
-                params: fp,
-                priority,
-            } => {
+            Self::FAC { params: fp, priority } => {
                 root.raw_set("id", "FAC")?;
                 fp.push_tbl(&params)?;
                 if let Some(p) = priority {
@@ -1185,16 +1115,11 @@ impl IntoLua for Task {
                 let tbl = lua.create_table()?;
                 for (i, task) in tasks.into_iter().enumerate() {
                     tbl.push(task)?;
-                    tbl.raw_get::<LuaTable>(i + 1)?
-                        .raw_set("number", i + 1)?;
+                    tbl.raw_get::<LuaTable>(i + 1)?.raw_set("number", i + 1)?;
                 }
                 params.raw_set("tasks", tbl)?;
             }
-            Self::ControlledTask {
-                mut task,
-                condition,
-                stop_condition,
-            } => {
+            Self::ControlledTask { mut task, condition, stop_condition } => {
                 let task = mem::replace(task.as_mut(), Task::AWACS);
                 root.raw_set("id", "ControlledTask")?;
                 params.raw_set("task", task)?;
@@ -1380,32 +1305,20 @@ impl IntoLua for Command {
                 params.raw_set("callname", callname)?;
                 params.raw_set("number", number)?;
             }
-            Self::SetFrequency {
-                frequency,
-                modulation,
-                power,
-            } => {
+            Self::SetFrequency { frequency, modulation, power } => {
                 root.raw_set("id", "SetFrequency")?;
                 params.raw_set("frequency", frequency)?;
                 params.raw_set("modulation", modulation)?;
                 params.raw_set("power", power)?;
             }
-            Self::SetFrequencyForUnit {
-                frequency,
-                modulation,
-                power,
-                unit,
-            } => {
+            Self::SetFrequencyForUnit { frequency, modulation, power, unit } => {
                 root.raw_set("id", "SetFrequencyForUnit")?;
                 params.raw_set("frequency", frequency)?;
                 params.raw_set("modulation", modulation)?;
                 params.raw_set("power", power)?;
                 params.raw_set("unitId", unit)?;
             }
-            Self::SwitchWaypoint {
-                from_waypoint,
-                to_waypoint,
-            } => {
+            Self::SwitchWaypoint { from_waypoint, to_waypoint } => {
                 root.raw_set("id", "SwitchWaypoint")?;
                 params.raw_set("fromWaypointIndex", from_waypoint)?;
                 params.raw_set("goToWaypointIndex", to_waypoint)?;
@@ -1463,11 +1376,7 @@ impl IntoLua for Command {
                 }
             }
             Self::DeactivateBeacon => root.raw_set("id", "DeactivateBeacon")?,
-            Self::ActivateICLS {
-                channel,
-                unit,
-                name,
-            } => {
+            Self::ActivateICLS { channel, unit, name } => {
                 root.raw_set("id", "ActivateICLS")?;
                 params.raw_set("type", 131584)?;
                 params.raw_set("channel", channel)?;
@@ -1477,12 +1386,7 @@ impl IntoLua for Command {
                 }
             }
             Self::DeactivateICLS => root.raw_set("id", "DeactivateICLS")?,
-            Self::ActivateGci {
-                unit,
-                center,
-                channel,
-                radius,
-            } => {
+            Self::ActivateGci { unit, center, channel, radius } => {
                 root.raw_set("id", "ActivateGCI")?;
                 params.raw_set("unitId", unit)?;
                 params.raw_set("x", center.x)?;
@@ -1491,13 +1395,7 @@ impl IntoLua for Command {
                 params.raw_set("radius", radius)?;
             }
             Self::DeactivateGci => root.raw_set("id", "DeactivateGCI")?,
-            Self::ActivateJammer {
-                gps,
-                glonass,
-                radio,
-                band_mhz,
-                spoof_point,
-            } => {
+            Self::ActivateJammer { gps, glonass, radio, band_mhz, spoof_point } => {
                 root.raw_set("id", "ActivateJammer")?;
                 params.raw_set("gpsSpoofing", gps)?;
                 params.raw_set("glonassSpoofing", glonass)?;
@@ -1532,12 +1430,7 @@ impl IntoLua for Command {
                 }
             }
             Self::Start => root.raw_set("id", "Start")?,
-            Self::TransmitMessage {
-                duration,
-                subtitle,
-                looping,
-                file,
-            } => {
+            Self::TransmitMessage { duration, subtitle, looping, file } => {
                 root.raw_set("id", "TransmitMessage")?;
                 params.raw_set("file", file)?;
                 if let Some(d) = duration {
@@ -1557,11 +1450,7 @@ impl IntoLua for Command {
                 root.raw_set("id", "SMOKE_ON_OFF")?;
                 params.raw_set("value", on)?
             }
-            Self::ActivateLink4 {
-                unit,
-                frequency,
-                name,
-            } => {
+            Self::ActivateLink4 { unit, frequency, name } => {
                 root.raw_set("id", "ActivateLink4")?;
                 params.raw_set("unitId", unit)?;
                 params.raw_set("frequency", frequency)?;
@@ -1648,7 +1537,9 @@ impl FromLua for Command {
             }),
             "DeactivateGCI" => Ok(Self::DeactivateGci),
             "ActivateJammer" => Ok(Self::ActivateJammer {
-                gps: params.raw_get::<Option<GnssJamming>>("gpsSpoofing")?.unwrap_or(GnssJamming::Off),
+                gps: params
+                    .raw_get::<Option<GnssJamming>>("gpsSpoofing")?
+                    .unwrap_or(GnssJamming::Off),
                 glonass: params
                     .raw_get::<Option<GnssJamming>>("glonassSpoofing")?
                     .unwrap_or(GnssJamming::Off),
@@ -1906,12 +1797,15 @@ impl AirOption {
         // `Custom` catch-all, so it round-trips unchanged.
         let attr_or_none = |val: Value| match val {
             Value::String(s) => {
-                let attrs = Attributes::new(lua).map_err(|e| err(&format_compact!("{}", e)))?;
+                let attrs =
+                    Attributes::new(lua).map_err(|e| err(&format_compact!("{}", e)))?;
                 let s = s.to_string_lossy();
                 if !s.starts_with("none") {
                     for name in s.split(';').map(|n| n.trim()).filter(|n| !n.is_empty()) {
-                        let attr =
-                            Attribute::from_lua(Value::String(lua.create_string(name)?), lua)?;
+                        let attr = Attribute::from_lua(
+                            Value::String(lua.create_string(name)?),
+                            lua,
+                        )?;
                         attrs
                             .set(attr, true)
                             .map_err(|e| err(&format_compact!("{}", e)))?;
@@ -2040,9 +1934,7 @@ impl GroundOption {
             8 => Ok(Self::DisperseOnAttack(FromLua::from_lua(val, lua)?)),
             9 => Ok(Self::AlarmState(FromLua::from_lua(val, lua)?)),
             20 => Ok(Self::EngageAirWeapons(FromLua::from_lua(val, lua)?)),
-            24 => Ok(Self::AcEngagementRangeRestriction(FromLua::from_lua(
-                val, lua,
-            )?)),
+            24 => Ok(Self::AcEngagementRangeRestriction(FromLua::from_lua(val, lua)?)),
             35 => Ok(Self::AllowFormationSideSwap(FromLua::from_lua(val, lua)?)),
             27 => Ok(Self::AltRestrictionMin(FromLua::from_lua(val, lua)?)),
             28 => Ok(Self::RestrictTarget(FromLua::from_lua(val, lua)?)),
@@ -2153,9 +2045,7 @@ impl FromLuaMulti for DetectedTargetInfo {
             lua,
         )?;
         let is_visible = FromLua::from_lua(
-            values
-                .pop_front()
-                .ok_or_else(|| cvt_err("DetectedTargetInfo:is_visible"))?,
+            values.pop_front().ok_or_else(|| cvt_err("DetectedTargetInfo:is_visible"))?,
             lua,
         )?;
         let last_time_seen = FromLua::from_lua(
@@ -2165,9 +2055,7 @@ impl FromLuaMulti for DetectedTargetInfo {
             lua,
         )?;
         let type_known = FromLua::from_lua(
-            values
-                .pop_front()
-                .ok_or_else(|| cvt_err("DetectedTargetInfo:type_known"))?,
+            values.pop_front().ok_or_else(|| cvt_err("DetectedTargetInfo:type_known"))?,
             lua,
         )?;
         let distance_known = FromLua::from_lua(
@@ -2380,7 +2268,10 @@ mod decode_tests {
         };
         // The Mission Editor's spelling of StopTransmission now decodes.
         let st = eval(&lua, "{ id = 'StopTransmission', params = {} }");
-        assert!(matches!(Command::from_lua(st, &lua).unwrap(), Command::StopTransmission));
+        assert!(matches!(
+            Command::from_lua(st, &lua).unwrap(),
+            Command::StopTransmission
+        ));
     }
 
     #[test]
@@ -2400,7 +2291,8 @@ mod decode_tests {
         let back = Task::from_lua(v, &lua).unwrap();
         assert!(matches!(back, Task::AttachTrailer { on_start_mission: true, .. }));
         // The ME's shape for a trailer drop decodes too.
-        let src = "{ id = 'DetachTrailer', params = { unitIdTractor = 7, x = 1, y = 2 } }";
+        let src =
+            "{ id = 'DetachTrailer', params = { unitIdTractor = 7, x = 1, y = 2 } }";
         let back = Task::from_lua(eval(&lua, src), &lua).unwrap();
         assert!(matches!(back, Task::DetachTrailer { .. }));
     }
@@ -2422,7 +2314,15 @@ mod decode_tests {
     #[test]
     fn new_options_decode() {
         let lua = Lua::new();
-        for (tag, val) in [("31", "false"), ("27", "200"), ("28", "1"), ("36", "3"), ("38", "2"), ("1", "5"), ("0", "0")] {
+        for (tag, val) in [
+            ("31", "false"),
+            ("27", "200"),
+            ("28", "1"),
+            ("36", "3"),
+            ("38", "2"),
+            ("1", "5"),
+            ("0", "0"),
+        ] {
             let src = format!(
                 "{{ id = 'WrappedAction', params = {{ action = {{ id = 'Option', params = {{ name = {tag}, value = {val} }} }} }} }}"
             );

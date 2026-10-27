@@ -15,19 +15,17 @@ for more details.
 */
 
 use super::{
-    cargo::{Cargo, C130Cargo},
+    cargo::{C130Cargo, Cargo},
     ghosts::GhostTracker,
-
     group::{DeployKind, SpawnedGroup, SpawnedUnit},
     intel::IntelDatabase,
     logistics::LogiStage,
-    recon::ReconSession,
     map_layer::MapLayer,
     markup::ObjectiveMarkup,
     objective::Objective,
     persisted::Persisted,
+    recon::ReconSession,
 };
-use bfprotocols::db::objective::ObjectiveKind;
 use crate::{
     bg::Task,
     maybe,
@@ -35,11 +33,12 @@ use crate::{
     spawnctx::{Despawn, SpawnCtx, SpawnLoc, Spawned},
 };
 use anyhow::{Context, Result, anyhow, bail};
+use bfprotocols::db::objective::ObjectiveKind;
 use bfprotocols::{
     cfg::{
-        Action, ActionKind, AiPlaneCfg, AwacsCfg, BomberCfg, Cfg, Crate, Deployable, DeployableCfg,
-        DeployableKind, DeployableObjective, DroneCfg, ReinforceCfg, Troop, UnitTag, Vehicle,
-        VictoryCondition, WarehouseConfig,
+        Action, ActionKind, AiPlaneCfg, AwacsCfg, BomberCfg, Cfg, Crate, Deployable,
+        DeployableCfg, DeployableKind, DeployableObjective, DroneCfg, ReinforceCfg,
+        Troop, UnitTag, Vehicle, VictoryCondition, WarehouseConfig,
     },
     db::{
         group::{GroupId, UnitId},
@@ -89,7 +88,6 @@ pub struct SlotInfo {
     pub miz_gid: miz::GroupId,
     pub side: Side,
 }
-
 
 /// Metadata for a group that was created from inline config rather than a .miz template.
 /// Stored in Ephemeral so that spawn_group can build a synthetic Lua group table for DCS.
@@ -248,10 +246,24 @@ pub struct Ephemeral {
     /// grid cell instead of spreading out.
     pub(super) c130_spawn_queue: BTreeMap<
         DateTime<Utc>,
-        Vec<(Side, String, ObjectiveId, Ucid, String, Crate, usize, bool, Vector2, Vector2, f64, Option<String>)>,
+        Vec<(
+            Side,
+            String,
+            ObjectiveId,
+            Ucid,
+            String,
+            Crate,
+            usize,
+            bool,
+            Vector2,
+            Vector2,
+            f64,
+            Option<String>,
+        )>,
     >,
     /// Supply convoy tracking: convoy_id -> SupplyConvoy
-    pub(super) active_convoys: FxHashMap<super::logistics::ConvoyId, super::logistics::SupplyConvoy>,
+    pub(super) active_convoys:
+        FxHashMap<super::logistics::ConvoyId, super::logistics::SupplyConvoy>,
     /// Track last convoy spawn time per side to throttle spawning
     pub(super) last_convoy_spawn: FxHashMap<Side, DateTime<Utc>>,
     /// When a supply run was last dispatched to each objective, whatever the
@@ -272,21 +284,24 @@ pub struct Ephemeral {
     /// Counter for generating unique convoy IDs
     pub(super) convoy_counter: u32,
     /// Air logistics route tracking: route_id -> AirLogisticsRoute
-    pub(super) active_air_routes: FxHashMap<super::logistics::LogiRouteId, super::logistics::AirLogisticsRoute>,
+    pub(super) active_air_routes:
+        FxHashMap<super::logistics::LogiRouteId, super::logistics::AirLogisticsRoute>,
     /// Track last air route spawn time per side to throttle spawning
     pub(super) last_air_route_spawn: FxHashMap<Side, DateTime<Utc>>,
     pub(crate) pending_achievements: Vec<String>,
     /// Counter for generating unique air route IDs
     pub(super) air_route_counter: u32,
     /// Sea logistics route tracking: route_id -> SeaLogisticsRoute
-    pub(super) active_sea_routes: FxHashMap<super::logistics::LogiRouteId, super::logistics::SeaLogisticsRoute>,
+    pub(super) active_sea_routes:
+        FxHashMap<super::logistics::LogiRouteId, super::logistics::SeaLogisticsRoute>,
     /// Track last sea route spawn time per side to throttle spawning
     pub(super) last_sea_route_spawn: FxHashMap<Side, DateTime<Utc>>,
     /// Counter for generating unique sea route IDs
     pub(super) sea_route_counter: u32,
     /// AI helo mission tracking (F10-callable troop insertion / resource
     /// delivery): mission_id -> HeloMission
-    pub(super) active_helo_missions: FxHashMap<super::logistics::HeloMissionId, super::logistics::HeloMission>,
+    pub(super) active_helo_missions:
+        FxHashMap<super::logistics::HeloMissionId, super::logistics::HeloMission>,
     /// Convoy / cargo flight / sea route / helo mission ids the theatre HQ
     /// launched and wants to hear the end of (`crate::hq`).
     pub(crate) hq_watch: FxHashSet<CompactString>,
@@ -294,7 +309,8 @@ pub struct Ephemeral {
     pub(crate) hq_outcomes: FxHashMap<CompactString, bool>,
     /// Threat-aware routing state for those missions, see `helo_route`. Not
     /// persisted: a mission load drops the helos anyway.
-    pub(super) helo_routes: FxHashMap<super::logistics::HeloMissionId, super::helo_route::HeloRouteState>,
+    pub(super) helo_routes:
+        FxHashMap<super::logistics::HeloMissionId, super::helo_route::HeloRouteState>,
     /// Counter for generating unique helo mission IDs
     pub(super) helo_mission_counter: u32,
     pub(super) deployable_idx: FxHashMap<Side, Arc<DeployableIndex>>,
@@ -385,7 +401,8 @@ pub struct Ephemeral {
     /// Tracks when enemy troops first entered an objective zone (for capture momentum timer).
     /// Maps ObjectiveId -> (capturing Side, entry DateTime, last_seen DateTime).
     /// last_seen is updated each tick troops are in zone; cleared only after a grace period.
-    pub(super) capture_progress: FxHashMap<ObjectiveId, (dcso3::coalition::Side, DateTime<Utc>, DateTime<Utc>)>,
+    pub(super) capture_progress:
+        FxHashMap<ObjectiveId, (dcso3::coalition::Side, DateTime<Utc>, DateTime<Utc>)>,
     /// Last time an objective changed hands (captured or fell to Neutral). No
     /// fresh capture timer may start against it until `capture_cooldown_secs`
     /// have passed -- stops a base with capture-capable troops from both sides
@@ -394,7 +411,8 @@ pub struct Ephemeral {
     /// Throttle for the "captureable but no capturing troops detected" diagnostic
     /// log in check_capture (one line per objective per 15s).
     /// When each objective's [CAPTURE_DIAG] was last logged, and what it said.
-    pub(super) last_capture_debug: FxHashMap<ObjectiveId, (DateTime<Utc>, std::string::String)>,
+    pub(super) last_capture_debug:
+        FxHashMap<ObjectiveId, (DateTime<Utc>, std::string::String)>,
     /// Last time treasury income was deposited (Smart Commander).
     pub(crate) last_treasury_income: DateTime<Utc>,
     /// The mission clock's hour (0-23), sampled each time kills are
@@ -512,7 +530,8 @@ pub struct Ephemeral {
     /// F10 marks drawn from the dashboard's recon markup (bfdb `intel-marks`
     /// RPC), keyed by the source markup id. Not persisted -- redrawn on the
     /// next push after a restart.
-    pub(crate) intel_map_marks: FxHashMap<std::string::String, SmallVec<[dcso3::trigger::MarkId; 4]>>,
+    pub(crate) intel_map_marks:
+        FxHashMap<std::string::String, SmallVec<[dcso3::trigger::MarkId; 4]>>,
     /// Ghost-unit reconciliation state (see `db::ghosts`). Session-scoped on
     /// purpose: every unit's DCS object is re-learned after a load anyway.
     pub(super) ghosts: GhostTracker,
@@ -555,9 +574,11 @@ fn stock_for_ground_start(
             fuel_kg += match payload.raw_get::<LuaValue>("fuel")? {
                 LuaValue::Integer(i) => i as f64,
                 LuaValue::Number(n) => n,
-                LuaValue::String(s) => {
-                    s.to_str().ok().and_then(|s| s.trim().parse::<f64>().ok()).unwrap_or(0.)
-                }
+                LuaValue::String(s) => s
+                    .to_str()
+                    .ok()
+                    .and_then(|s| s.trim().parse::<f64>().ok())
+                    .unwrap_or(0.),
                 _ => 0.,
             };
         }
@@ -577,7 +598,9 @@ fn stock_for_ground_start(
         added.push(format_compact!("{} kg jet fuel (had {have})", need - have));
     }
     if !added.is_empty() {
-        info!("[GROUND_START] {name}: stocked {field}'s warehouse with {added:?} for the start");
+        info!(
+            "[GROUND_START] {name}: stocked {field}'s warehouse with {added:?} for the start"
+        );
     }
     Ok(())
 }
@@ -754,9 +777,8 @@ fn keep_fixed_structures_out_of_lead(units: &LuaTable) -> Result<Lead> {
     if n == 0 {
         return Ok(Lead::Ok);
     }
-    let mut all: Vec<LuaTable> = (1..=n)
-        .map(|i| units.raw_get(i))
-        .collect::<LuaResult<_>>()?;
+    let mut all: Vec<LuaTable> =
+        (1..=n).map(|i| units.raw_get(i)).collect::<LuaResult<_>>()?;
     let fixed = |t: &LuaTable| {
         t.raw_get::<std::string::String>("type")
             .map(|typ| NO_LEAD_TYPES.contains(&typ.as_str()))
@@ -783,14 +805,32 @@ impl Ephemeral {
 
     /// Where `side`'s convoys, cargo flights, supply ships and helo missions
     /// are headed.
-    pub(crate) fn transport_destinations(&self, side: Side) -> impl Iterator<Item = ObjectiveId> + '_ {
+    pub(crate) fn transport_destinations(
+        &self,
+        side: Side,
+    ) -> impl Iterator<Item = ObjectiveId> + '_ {
         self.active_convoys
             .values()
             .filter(move |c| c.side == side)
             .map(|c| c.destination)
-            .chain(self.active_air_routes.values().filter(move |r| r.side == side).map(|r| r.destination))
-            .chain(self.active_sea_routes.values().filter(move |r| r.side == side).map(|r| r.destination))
-            .chain(self.active_helo_missions.values().filter(move |m| m.side == side).map(|m| m.destination))
+            .chain(
+                self.active_air_routes
+                    .values()
+                    .filter(move |r| r.side == side)
+                    .map(|r| r.destination),
+            )
+            .chain(
+                self.active_sea_routes
+                    .values()
+                    .filter(move |r| r.side == side)
+                    .map(|r| r.destination),
+            )
+            .chain(
+                self.active_helo_missions
+                    .values()
+                    .filter(move |m| m.side == side)
+                    .map(|m| m.destination),
+            )
     }
 
     /// A transport has ended; if the theatre HQ is following it, tell it how.
@@ -803,7 +843,10 @@ impl Ephemeral {
     /// Write the veterans list in the background.
     pub(super) fn save_veterans(&self) {
         if let Some(path) = &self.veterans_path {
-            self.do_bg(Task::SaveVeterans(path.clone(), self.veterans.iter().copied().collect()));
+            self.do_bg(Task::SaveVeterans(
+                path.clone(),
+                self.veterans.iter().copied().collect(),
+            ));
         }
     }
 
@@ -881,7 +924,9 @@ impl Ephemeral {
                 spots
                     .iter()
                     .filter(|s| s.usable_by(helicopter))
-                    .filter(|s| !heavy || s.term_type == dcso3::airbase::term_type::OPEN_BIG)
+                    .filter(|s| {
+                        !heavy || s.term_type == dcso3::airbase::term_type::OPEN_BIG
+                    })
                     .count()
             })
             .unwrap_or(0);
@@ -891,14 +936,18 @@ impl Ephemeral {
     /// Whether the ramp watch removed a stuck flight from `oid` within the
     /// last `RAMP_BLOCK_SECS` (see `ramp_blocked`).
     pub(super) fn ramp_blocked(&self, oid: &ObjectiveId) -> bool {
-        self.ramp_blocked
-            .get(oid)
-            .map_or(false, |t| self.now() - *t < chrono::Duration::seconds(RAMP_BLOCK_SECS))
+        self.ramp_blocked.get(oid).map_or(false, |t| {
+            self.now() - *t < chrono::Duration::seconds(RAMP_BLOCK_SECS)
+        })
     }
 
     /// Once a second: flash the F10 icon of every base under attack
     /// (threatened) or being captured, and stop when it is clear.
-    pub(super) fn flash_objective_markup(&mut self, persisted: &Persisted, now: DateTime<Utc>) {
+    pub(super) fn flash_objective_markup(
+        &mut self,
+        persisted: &Persisted,
+        now: DateTime<Utc>,
+    ) {
         if self
             .last_markup_flash
             .is_some_and(|t| now - t < chrono::Duration::milliseconds(1000))
@@ -947,7 +996,10 @@ impl Ephemeral {
         self.tracked_scenery.contains_key(id)
     }
 
-    pub fn get_slot_info_by_miz_gid(&self, gid: &miz::GroupId) -> Option<(SlotId, &SlotInfo)> {
+    pub fn get_slot_info_by_miz_gid(
+        &self,
+        gid: &miz::GroupId,
+    ) -> Option<(SlotId, &SlotInfo)> {
         self.slot_by_miz_gid
             .get(gid)
             .and_then(|sl| self.slot_info.get(sl).map(|s| (*sl, s)))
@@ -963,11 +1015,9 @@ impl Ephemeral {
         // Missing campaign_events still means the default 180s, not instant.
         let total = match self.capture_total_secs.get(oid) {
             Some(t) => (*t).max(0) as u32,
-            None => self
-                .cfg
-                .campaign_events
-                .as_ref()
-                .map_or(180, |c| c.capture_time_secs),
+            None => {
+                self.cfg.campaign_events.as_ref().map_or(180, |c| c.capture_time_secs)
+            }
         };
         if total == 0 {
             return None;
@@ -994,9 +1044,16 @@ impl Ephemeral {
             .map(|(pct, secs)| (bucket_pct(pct), bucket_eta(secs)))
     }
 
-    fn repair_pct_for(&self, persisted: &Persisted, obj: &Objective) -> Option<(u8, i64)> {
-        if let ObjectiveKind::CarrierGroup { repair_start_time: Some(start), .. } = &obj.kind {
-            let total = self.cfg.carrier.as_ref().map(|c| c.repair_time).unwrap_or(600) as f64;
+    fn repair_pct_for(
+        &self,
+        persisted: &Persisted,
+        obj: &Objective,
+    ) -> Option<(u8, i64)> {
+        if let ObjectiveKind::CarrierGroup { repair_start_time: Some(start), .. } =
+            &obj.kind
+        {
+            let total =
+                self.cfg.carrier.as_ref().map(|c| c.repair_time).unwrap_or(600) as f64;
             if total <= 0.0 {
                 return None;
             }
@@ -1020,7 +1077,8 @@ impl Ephemeral {
             if !total.is_finite() || total <= 0.0 {
                 return None;
             }
-            let elapsed = (self.now() - obj.repair_clock_start()).num_seconds().max(0) as f64;
+            let elapsed =
+                (self.now() - obj.repair_clock_start()).num_seconds().max(0) as f64;
             // A working repair resets last_change_ts each tick it fires, so a
             // real countdown never sits past `total`. If elapsed has run well
             // past it, the repair is blocked (contested, no revivable groups,
@@ -1125,8 +1183,17 @@ impl Ephemeral {
         let convoys = &self.active_convoys;
         let air = &self.active_air_routes;
         let sea = &self.active_sea_routes;
-        let csar_capture_mins = self.cfg.csar.as_ref().map(|c| c.capture_timer).unwrap_or(0);
-        self.map_layer.update_all(persisted, convoys, air, sea, csar_capture_mins, now, &mut self.msgs);
+        let csar_capture_mins =
+            self.cfg.csar.as_ref().map(|c| c.capture_timer).unwrap_or(0);
+        self.map_layer.update_all(
+            persisted,
+            convoys,
+            air,
+            sea,
+            csar_capture_mins,
+            now,
+            &mut self.msgs,
+        );
     }
 
     /// Draw a fire-mission overlay on the F10 map.  Replaces the inline
@@ -1162,13 +1229,17 @@ impl Ephemeral {
         // the player Recon Pass -- run decay/marks if either is configured.
         let elint_cfg = match self.cfg.elint.as_ref() {
             Some(c) => c.clone(),
-            None if self.cfg.player_recon.is_some() => bfprotocols::cfg::ElintConfig::default(),
+            None if self.cfg.player_recon.is_some() => {
+                bfprotocols::cfg::ElintConfig::default()
+            }
             None => return,
         };
         // Real elapsed seconds, clamped: the first tick after load (or after
         // a long stall) must not delete the whole picture in one step.
         let dt = match self.last_intel_decay {
-            Some(last) => ((now - last).num_milliseconds() as f64 / 1000.).clamp(0., 120.),
+            Some(last) => {
+                ((now - last).num_milliseconds() as f64 / 1000.).clamp(0., 120.)
+            }
             None => 0.,
         };
         self.last_intel_decay = Some(now);
@@ -1177,13 +1248,16 @@ impl Ephemeral {
         // marks on the map; they come out here rather than being stranded.
         removed.append(&mut std::mem::take(&mut self.intel_db.orphaned_marks));
         for (shape, pin, ring) in removed {
-            self.map_layer
-                .remove_intel_contact_marks(shape, pin, ring, &mut self.msgs);
+            self.map_layer.remove_intel_contact_marks(shape, pin, ring, &mut self.msgs);
         }
         let ids = updated;
         for id in ids {
             if let Some(contact) = self.intel_db.contacts.get_mut(&id) {
-                self.map_layer.update_intel_contact_mark(contact, &elint_cfg, &mut self.msgs);
+                self.map_layer.update_intel_contact_mark(
+                    contact,
+                    &elint_cfg,
+                    &mut self.msgs,
+                );
             }
         }
     }
@@ -1196,7 +1270,14 @@ impl Ephemeral {
         side: dcso3::coalition::Side,
         now: DateTime<Utc>,
     ) {
-        self.map_layer.on_recon_result(target_pos, scan_radius_m, unit_count, side, now, &mut self.msgs);
+        self.map_layer.on_recon_result(
+            target_pos,
+            scan_radius_m,
+            unit_count,
+            side,
+            now,
+            &mut self.msgs,
+        );
     }
 
     pub fn on_objective_threatened(
@@ -1206,9 +1287,14 @@ impl Ephemeral {
         obj_name: &str,
         now: DateTime<Utc>,
     ) {
-        self.map_layer.on_objective_threatened(obj_pos, side, obj_name, now, &mut self.msgs);
+        self.map_layer.on_objective_threatened(
+            obj_pos,
+            side,
+            obj_name,
+            now,
+            &mut self.msgs,
+        );
     }
-
 
     pub fn on_objective_under_attack(
         &mut self,
@@ -1218,7 +1304,14 @@ impl Ephemeral {
         ttl_secs: i64,
         now: DateTime<Utc>,
     ) {
-        self.map_layer.on_objective_under_attack(obj_pos, side, obj_name, ttl_secs, now, &mut self.msgs);
+        self.map_layer.on_objective_under_attack(
+            obj_pos,
+            side,
+            obj_name,
+            ttl_secs,
+            now,
+            &mut self.msgs,
+        );
     }
 
     pub fn push_sync_warehouse(&mut self, oid: ObjectiveId, vehicle: Vehicle) {
@@ -1327,7 +1420,9 @@ impl Ephemeral {
                         let n = self.despawn_failures.entry(gid).or_default();
                         *n = n.saturating_add(1);
                         if *n < MAX_ATTEMPTS {
-                            warn!("despawn of {gid} failed (attempt {n}), retrying: {e:?}");
+                            warn!(
+                                "despawn of {gid} failed (attempt {n}), retrying: {e:?}"
+                            );
                             self.despawnq.push_back((gid, despawn));
                         } else {
                             error!("despawn of {gid} failed {n} times, giving up: {e:?}");
@@ -1499,7 +1594,11 @@ impl Ephemeral {
 
     /// True while `oid`'s airbase was found gone less than
     /// `AIRBASE_GONE_RETRY` ago; after that one sync tries it again.
-    pub(super) fn airbase_gone_recently(&self, oid: &ObjectiveId, now: DateTime<Utc>) -> bool {
+    pub(super) fn airbase_gone_recently(
+        &self,
+        oid: &ObjectiveId,
+        now: DateTime<Utc>,
+    ) -> bool {
         self.airbase_gone
             .get(oid)
             .is_some_and(|t| now - *t < chrono::Duration::minutes(AIRBASE_GONE_RETRY_MIN))
@@ -1529,13 +1628,14 @@ impl Ephemeral {
         deployables: &[Deployable],
     ) -> Result<()> {
         let idx = Arc::make_mut(self.deployable_idx.entry(side).or_default());
-        idx.crates_by_name
-            .insert(repair_crate.name.clone(), repair_crate);
+        idx.crates_by_name.insert(repair_crate.name.clone(), repair_crate);
         if let Some(whcfg) = whcfg.as_ref() {
             // Register fuel transfer crate
             if let Some(fuel_cr) = whcfg.supply_transfer_fuel_crate.get(&side) {
                 match idx.crates_by_name.entry(fuel_cr.name.clone()) {
-                    Entry::Occupied(_) => bail!("multiple {} crates for side {side}", fuel_cr.name),
+                    Entry::Occupied(_) => {
+                        bail!("multiple {} crates for side {side}", fuel_cr.name)
+                    }
                     Entry::Vacant(e) => {
                         e.insert(fuel_cr.clone());
                     }
@@ -1544,7 +1644,9 @@ impl Ephemeral {
             // Register weapons transfer crate
             if let Some(weapons_cr) = whcfg.supply_transfer_weapons_crate.get(&side) {
                 match idx.crates_by_name.entry(weapons_cr.name.clone()) {
-                    Entry::Occupied(_) => bail!("multiple {} crates for side {side}", weapons_cr.name),
+                    Entry::Occupied(_) => {
+                        bail!("multiple {} crates for side {side}", weapons_cr.name)
+                    }
                     Entry::Vacant(e) => {
                         e.insert(weapons_cr.clone());
                     }
@@ -1554,13 +1656,12 @@ impl Ephemeral {
         for dep in deployables.iter() {
             if let DeployableKind::Group { template } = &dep.kind {
                 miz.get_group_by_name(mizidx, GroupKind::Any, side, template)?
-                    .ok_or_else(|| anyhow!("missing deployable template {:?} {:?}", side, dep))?;
+                    .ok_or_else(|| {
+                        anyhow!("missing deployable template {:?} {:?}", side, dep)
+                    })?;
             }
             if !points && dep.cost > 0 {
-                bail!(
-                    "the points system is disabled, but {:?} costs points",
-                    dep.path
-                )
+                bail!("the points system is disabled, but {:?} costs points", dep.path)
             }
             let name = match dep.path.last() {
                 None => bail!("deployable with empty path {:?}", dep),
@@ -1592,7 +1693,9 @@ impl Ephemeral {
             }
             for cr in dep.crates.iter() {
                 match idx.deployables_by_crates.entry(cr.name.clone()) {
-                    Entry::Occupied(_) => bail!("multiple deployables use crate {}", cr.name),
+                    Entry::Occupied(_) => {
+                        bail!("multiple deployables use crate {}", cr.name)
+                    }
                     Entry::Vacant(e) => {
                         if idx.deployables_by_repair.contains_key(&cr.name) {
                             bail!(
@@ -1635,7 +1738,9 @@ impl Ephemeral {
                 let mut names = FxHashSet::default();
                 for name in parts.iter().chain(pad_templates.iter()) {
                     miz.get_group_by_name(mizidx, GroupKind::Any, side, name)?
-                        .ok_or_else(|| anyhow!("missing farp template {:?} {:?}", side, name))?;
+                        .ok_or_else(|| {
+                            anyhow!("missing farp template {:?} {:?}", side, name)
+                        })?;
                     if !names.insert(name) {
                         bail!(
                             "deployables with logistics must use unique templates for each part {name} is reused"
@@ -1658,7 +1763,9 @@ impl Ephemeral {
                     }
                     let gifo = miz
                         .get_group_by_name(mizidx, GroupKind::Any, side, pad)?
-                        .ok_or_else(|| anyhow!("missing pad template {:?} {:?}", side, pad))?;
+                        .ok_or_else(|| {
+                            anyhow!("missing pad template {:?} {:?}", side, pad)
+                        })?;
                     for unit in gifo.group.units()? {
                         let unit = unit?;
                         let uname = unit.name()?;
@@ -1720,17 +1827,11 @@ impl Ephemeral {
     }
 
     pub fn force_player_to_spectators(&mut self, ucid: &Ucid) {
-        self.force_to_spectators
-            .entry(self.now())
-            .or_default()
-            .push(ucid.clone())
+        self.force_to_spectators.entry(self.now()).or_default().push(ucid.clone())
     }
 
     pub fn force_player_to_spectators_at(&mut self, ucid: &Ucid, ts: DateTime<Utc>) {
-        self.force_to_spectators
-            .entry(ts)
-            .or_default()
-            .push(ucid.clone())
+        self.force_to_spectators.entry(ts).or_default().push(ucid.clone())
     }
 
     pub(super) fn player_deslot(
@@ -1742,7 +1843,9 @@ impl Ephemeral {
         if let Some(ucid) = self.players_by_slot.swap_remove(slot) {
             if let Some(expected_ucid) = expected_ucid {
                 if expected_ucid != ucid {
-                    error!("players_by_slot ucid mismatch {expected_ucid} vs {ucid} in slot {slot}")
+                    error!(
+                        "players_by_slot ucid mismatch {expected_ucid} vs {ucid} in slot {slot}"
+                    )
                 }
             }
             info!("deslotting player {ucid}");
@@ -1768,7 +1871,9 @@ impl Ephemeral {
             // instancing (ramp death, quick disconnect), or the unit mapping
             // was already torn down by an earlier event. The caller handles
             // None. Not worth an ERROR every time it happens.
-            debug!("deslot {slot} {ucid}: no unit id (never instanced or already cleaned)");
+            debug!(
+                "deslot {slot} {ucid}: no unit id (never instanced or already cleaned)"
+            );
         }
         None
     }
@@ -1807,9 +1912,7 @@ impl Ephemeral {
     }
 
     pub fn player_in_unit(&self, id: &DcsOid<ClassUnit>) -> Option<&Ucid> {
-        self.slot_by_object_id
-            .get(id)
-            .and_then(|slot| self.players_by_slot.get(slot))
+        self.slot_by_object_id.get(id).and_then(|slot| self.players_by_slot.get(slot))
     }
 
     pub fn panel_to_player<S: Into<String>>(
@@ -1820,10 +1923,8 @@ impl Ephemeral {
         msg: S,
     ) {
         if let Some(player) = persisted.players.get(ucid) {
-            if let Some(ifo) = player
-                .current_slot
-                .as_ref()
-                .and_then(|(s, _)| self.slot_info.get(s))
+            if let Some(ifo) =
+                player.current_slot.as_ref().and_then(|(s, _)| self.slot_info.get(s))
             {
                 let miz_id = ifo.miz_gid;
                 self.msgs().panel_to_group(duration, false, miz_id, msg);
@@ -1870,7 +1971,8 @@ impl Ephemeral {
             }
         };
         check_unit_classification()?;
-        if let Some(VictoryCondition::MapOwned { fraction }) = cfg.auto_reset.map(|vc| vc.condition)
+        if let Some(VictoryCondition::MapOwned { fraction }) =
+            cfg.auto_reset.map(|vc| vc.condition)
         {
             if fraction > 1. || fraction < 0. {
                 bail!("auto_reset fraction must be between 0 and 1")
@@ -1882,7 +1984,8 @@ impl Ephemeral {
         }
         let points = cfg.points.is_some();
         for (side, deployables) in cfg.deployables.iter() {
-            let repair_crate = maybe!(cfg.repair_crate, side, "side repair crate")?.clone();
+            let repair_crate =
+                maybe!(cfg.repair_crate, side, "side repair crate")?.clone();
             self.index_deployables_for_side(
                 miz,
                 mizidx,
@@ -1897,7 +2000,9 @@ impl Ephemeral {
             let idx = Arc::make_mut(self.deployable_idx.entry(*side).or_default());
             for troop in troops {
                 miz.get_group_by_name(mizidx, GroupKind::Any, *side, &troop.template)?
-                    .ok_or_else(|| anyhow!("missing troop template {:?} {:?}", side, troop.name))?;
+                    .ok_or_else(|| {
+                        anyhow!("missing troop template {:?} {:?}", side, troop.name)
+                    })?;
                 if !points && troop.cost > 0 {
                     bail!(
                         "the points system is disabled but {} troops cost points",
@@ -2004,7 +2109,9 @@ impl Ephemeral {
         for (side, actions) in &cfg.actions {
             for (name, act) in actions {
                 if let Err(e) = check_action(side, act) {
-                    error!("{side:?} action {name} is disabled, fix the cfg or the miz: {e:?}");
+                    error!(
+                        "{side:?} action {name} is disabled, fix the cfg or the miz: {e:?}"
+                    );
                     broken.push((*side, name.clone()));
                 }
             }
@@ -2043,7 +2150,9 @@ impl Ephemeral {
         let fuel = match payload.raw_get::<LuaValue>("fuel")? {
             LuaValue::Integer(i) => Some(i as f64),
             LuaValue::Number(n) => Some(n),
-            LuaValue::String(s) => s.to_str().ok().and_then(|s| s.trim().parse::<f64>().ok()),
+            LuaValue::String(s) => {
+                s.to_str().ok().and_then(|s| s.trim().parse::<f64>().ok())
+            }
             _ => None,
         };
         if fuel.is_some_and(|f| f > 0.) {
@@ -2105,8 +2214,9 @@ impl Ephemeral {
         // Check if this is a carrier group defined in config, or falls back to prefix matching
         // For carrier groups, spawn via coalition.addGroup() with positions set to the saved
         // state so the carrier appears directly at its last known location.
-        let carrier_cfg = self.cfg.carrier.as_ref()
-            .and_then(|c| c.groups.iter().find(|g| g.template.as_str() == group.template_name.as_str()));
+        let carrier_cfg = self.cfg.carrier.as_ref().and_then(|c| {
+            c.groups.iter().find(|g| g.template.as_str() == group.template_name.as_str())
+        });
 
         let is_carrier_group = carrier_cfg.is_some()
             || group.template_name.starts_with("BCARRIER")
@@ -2117,8 +2227,10 @@ impl Ephemeral {
             let display_name = carrier_cfg
                 .map(|c| c.display_name.clone())
                 .unwrap_or_else(|| group.template_name.clone());
-            info!("[CARRIER_SPAWN] Activating carrier group {} (template: {}, display: {})",
-                  group.name, group.template_name, display_name);
+            info!(
+                "[CARRIER_SPAWN] Activating carrier group {} (template: {}, display: {})",
+                group.name, group.template_name, display_name
+            );
 
             // Build map of template_name -> persisted unit data for position lookup
             let by_tname: FxHashMap<&str, &SpawnedUnit> = group
@@ -2126,11 +2238,7 @@ impl Ephemeral {
                 .into_iter()
                 .filter_map(|uid| {
                     persisted.units.get(uid).and_then(|u| {
-                        if u.dead {
-                            None
-                        } else {
-                            Some((u.template_name.as_str(), u))
-                        }
+                        if u.dead { None } else { Some((u.template_name.as_str(), u)) }
                     })
                 })
                 .collect();
@@ -2139,8 +2247,18 @@ impl Ephemeral {
             // original miz data, then spawn via coalition.addGroup() which reads directly
             // from the Lua table — so the carrier spawns at the saved positions.
             let miz_template = spctx
-                .get_template(idx, GroupKind::Any, group.side, group.template_name.as_str())
-                .with_context(|| format_compact!("getting carrier miz template {}", group.template_name))?;
+                .get_template(
+                    idx,
+                    GroupKind::Any,
+                    group.side,
+                    group.template_name.as_str(),
+                )
+                .with_context(|| {
+                    format_compact!(
+                        "getting carrier miz template {}",
+                        group.template_name
+                    )
+                })?;
 
             // Must disable lateActivation in the clone so coalition.addGroup() spawns it immediately.
             miz_template.group.set("lateActivation", false)?;
@@ -2148,7 +2266,8 @@ impl Ephemeral {
             // Set each unit's position in the cloned template to the saved position.
             // Also update the group centroid and route waypoints to prevent circling.
             {
-                let units = miz_template.group.units().context("getting carrier miz units")?;
+                let units =
+                    miz_template.group.units().context("getting carrier miz units")?;
                 let mut centroid_x = 0.0f64;
                 let mut centroid_y = 0.0f64;
                 let mut count = 0u32;
@@ -2157,8 +2276,15 @@ impl Ephemeral {
                         let unit_name = unit.name()?;
                         if let Some(su) = by_tname.get(unit_name.as_str()) {
                             let dist = na::distance(&su.pos.into(), &su.spawn_pos.into());
-                            info!("[CARRIER_SPAWN] Setting unit '{}' position: ({:.0}, {:.0}) -> ({:.0}, {:.0}), dist={:.0}m",
-                                  unit_name, su.spawn_pos.x, su.spawn_pos.y, su.pos.x, su.pos.y, dist);
+                            info!(
+                                "[CARRIER_SPAWN] Setting unit '{}' position: ({:.0}, {:.0}) -> ({:.0}, {:.0}), dist={:.0}m",
+                                unit_name,
+                                su.spawn_pos.x,
+                                su.spawn_pos.y,
+                                su.pos.x,
+                                su.pos.y,
+                                dist
+                            );
                             unit.set_pos(su.pos)?;
                             unit.set_heading(su.heading)?;
                             centroid_x += su.pos.x;
@@ -2176,7 +2302,8 @@ impl Ephemeral {
 
                     // Override all route waypoints to the carrier's saved position so DCS
                     // doesn't send it circling to old ME waypoints before StopRoute takes effect.
-                    if let Ok(route) = miz_template.group.raw_get::<mlua::Table>("route") {
+                    if let Ok(route) = miz_template.group.raw_get::<mlua::Table>("route")
+                    {
                         if let Ok(points) = route.raw_get::<mlua::Table>("points") {
                             let num_points = points.raw_len();
                             for i in 1..=(num_points as i64) {
@@ -2185,18 +2312,25 @@ impl Ephemeral {
                                     point.raw_set("y", cy)?;
                                 }
                             }
-                            info!("[CARRIER_SPAWN] Set all {} route waypoints to ({:.0}, {:.0})", num_points, cx, cy);
+                            info!(
+                                "[CARRIER_SPAWN] Set all {} route waypoints to ({:.0}, {:.0})",
+                                num_points, cx, cy
+                            );
                         }
                     }
                 }
             }
 
             // Spawn via coalition.addGroup() — the carrier appears directly at the saved positions.
-            let dcs_group = match spctx.spawn(miz_template)
-                .with_context(|| format_compact!("spawning carrier group {}", group.template_name))? {
+            let dcs_group = match spctx.spawn(miz_template).with_context(|| {
+                format_compact!("spawning carrier group {}", group.template_name)
+            })? {
                 Spawned::Group(g) => g,
-                other => bail!("[CARRIER_SPAWN] Expected Group from carrier spawn of {}, got {:?}",
-                               group.template_name, other),
+                other => bail!(
+                    "[CARRIER_SPAWN] Expected Group from carrier spawn of {}, got {:?}",
+                    group.template_name,
+                    other
+                ),
             };
             let oid = dcs_group.object_id()?.erased();
             self.object_id_by_gid.insert(group.id, oid.clone());
@@ -2204,8 +2338,11 @@ impl Ephemeral {
 
             // Manually register each unit's DCS object ID mappings.
             // DCS does NOT fire S_EVENT_BIRTH for coalition.addGroup(), so we must do this here.
-            info!("[CARRIER_SPAWN] Registering units from activated group {} ({} persisted units)",
-                  group.template_name, group.units.len());
+            info!(
+                "[CARRIER_SPAWN] Registering units from activated group {} ({} persisted units)",
+                group.template_name,
+                group.units.len()
+            );
             let mut needs_repositioning = false;
             match dcs_group.get_units() {
                 Ok(dcs_units) => {
@@ -2213,7 +2350,10 @@ impl Ephemeral {
                         let dcs_unit = match dcs_unit_res {
                             Ok(u) => u,
                             Err(e) => {
-                                error!("[CARRIER_SPAWN] Failed to get DCS unit from sequence: {:?}", e);
+                                error!(
+                                    "[CARRIER_SPAWN] Failed to get DCS unit from sequence: {:?}",
+                                    e
+                                );
                                 continue;
                             }
                         };
@@ -2221,14 +2361,21 @@ impl Ephemeral {
                             Ok(dcs_unit_name) => {
                                 // Log actual DCS position after activation to verify position fix
                                 match dcs_unit.get_ground_position() {
-                                    Ok(pos) => info!("[CARRIER_SPAWN] DCS unit '{}' activated at position ({:.0}, {:.0})",
-                                                     dcs_unit_name, pos.0.x, pos.0.y),
-                                    Err(e) => info!("[CARRIER_SPAWN] Could not read position for '{}': {:?}",
-                                                    dcs_unit_name, e),
+                                    Ok(pos) => info!(
+                                        "[CARRIER_SPAWN] DCS unit '{}' activated at position ({:.0}, {:.0})",
+                                        dcs_unit_name, pos.0.x, pos.0.y
+                                    ),
+                                    Err(e) => info!(
+                                        "[CARRIER_SPAWN] Could not read position for '{}': {:?}",
+                                        dcs_unit_name, e
+                                    ),
                                 }
                                 let uid_match = group.units.into_iter().find_map(|uid| {
                                     persisted.units.get(uid).and_then(|u| {
-                                        if !u.dead && u.template_name.as_str() == dcs_unit_name.as_str() {
+                                        if !u.dead
+                                            && u.template_name.as_str()
+                                                == dcs_unit_name.as_str()
+                                        {
                                             Some((*uid, u))
                                         } else {
                                             None
@@ -2238,15 +2385,24 @@ impl Ephemeral {
                                 if let Some((uid, unit)) = uid_match {
                                     match dcs_unit.object_id() {
                                         Ok(unit_oid) => {
-                                            info!("[CARRIER_SPAWN] Registering carrier unit '{}' (uid={:?}) with DCS object_id {:?}",
-                                                  unit.name, uid, unit_oid);
-                                            self.uid_by_object_id.insert(unit_oid.clone(), uid);
-                                            self.object_id_by_uid.insert(uid, unit_oid.clone());
-                                            self.units_potentially_close_to_enemies.insert(uid);
-                                            if unit.tags.contains(UnitTag::Driveable) || unit.tags.contains(UnitTag::Boat) {
+                                            info!(
+                                                "[CARRIER_SPAWN] Registering carrier unit '{}' (uid={:?}) with DCS object_id {:?}",
+                                                unit.name, uid, unit_oid
+                                            );
+                                            self.uid_by_object_id
+                                                .insert(unit_oid.clone(), uid);
+                                            self.object_id_by_uid
+                                                .insert(uid, unit_oid.clone());
+                                            self.units_potentially_close_to_enemies
+                                                .insert(uid);
+                                            if unit.tags.contains(UnitTag::Driveable)
+                                                || unit.tags.contains(UnitTag::Boat)
+                                            {
                                                 self.units_able_to_move.insert(uid);
-                                                info!("[CARRIER_SPAWN] Added carrier unit '{}' to units_able_to_move",
-                                                      unit.name);
+                                                info!(
+                                                    "[CARRIER_SPAWN] Added carrier unit '{}' to units_able_to_move",
+                                                    unit.name
+                                                );
                                             }
                                             // Verify unit spawned at the expected position.
                                             // With coalition.addGroup() this should always be correct,
@@ -2255,19 +2411,42 @@ impl Ephemeral {
                                                 Ok(actual) => {
                                                     let expected = unit.pos;
                                                     let dist = na::distance(
-                                                        &na::Point2::new(actual.0.x, actual.0.y),
-                                                        &na::Point2::new(expected.x, expected.y),
+                                                        &na::Point2::new(
+                                                            actual.0.x, actual.0.y,
+                                                        ),
+                                                        &na::Point2::new(
+                                                            expected.x, expected.y,
+                                                        ),
                                                     );
-                                                    info!("[CARRIER_TELEPORT] Unit '{}': actual=({:.0},{:.0}) expected=({:.0},{:.0}) dist={:.0}m",
-                                                          unit.name, actual.0.x, actual.0.y, expected.x, expected.y, dist);
+                                                    info!(
+                                                        "[CARRIER_TELEPORT] Unit '{}': actual=({:.0},{:.0}) expected=({:.0},{:.0}) dist={:.0}m",
+                                                        unit.name,
+                                                        actual.0.x,
+                                                        actual.0.y,
+                                                        expected.x,
+                                                        expected.y,
+                                                        dist
+                                                    );
                                                     if dist > 100.0 {
                                                         needs_repositioning = true;
-                                                        info!("[CARRIER_TELEPORT] Teleporting '{}' {:.0}m to persisted position ({:.0},{:.0})",
-                                                              unit.name, dist, expected.x, expected.y);
+                                                        info!(
+                                                            "[CARRIER_TELEPORT] Teleporting '{}' {:.0}m to persisted position ({:.0},{:.0})",
+                                                            unit.name,
+                                                            dist,
+                                                            expected.x,
+                                                            expected.y
+                                                        );
                                                         match dcs_unit.as_object() {
                                                             Ok(obj) => {
-                                                                if let Err(e) = obj.set_position(unit.position) {
-                                                                    error!("[CARRIER_TELEPORT] Failed to teleport '{}': {:?}", unit.name, e);
+                                                                if let Err(e) = obj
+                                                                    .set_position(
+                                                                        unit.position,
+                                                                    )
+                                                                {
+                                                                    error!(
+                                                                        "[CARRIER_TELEPORT] Failed to teleport '{}': {:?}",
+                                                                        unit.name, e
+                                                                    );
                                                                 } else {
                                                                     match dcs_unit.get_ground_position() {
                                                                         Ok(after) => info!("[CARRIER_TELEPORT] '{}' now at ({:.0},{:.0}) after teleport",
@@ -2277,109 +2456,156 @@ impl Ephemeral {
                                                                     }
                                                                 }
                                                             }
-                                                            Err(e) => error!("[CARRIER_TELEPORT] Failed to get Object for '{}': {:?}", unit.name, e),
+                                                            Err(e) => error!(
+                                                                "[CARRIER_TELEPORT] Failed to get Object for '{}': {:?}",
+                                                                unit.name, e
+                                                            ),
                                                         }
                                                     } else {
-                                                        info!("[CARRIER_TELEPORT] '{}' already at correct position (dist={:.0}m), no teleport needed",
-                                                              unit.name, dist);
+                                                        info!(
+                                                            "[CARRIER_TELEPORT] '{}' already at correct position (dist={:.0}m), no teleport needed",
+                                                            unit.name, dist
+                                                        );
                                                     }
                                                 }
-                                                Err(e) => warn!("[CARRIER_TELEPORT] Could not read position for '{}' to check teleport: {:?}",
-                                                               unit.name, e),
+                                                Err(e) => warn!(
+                                                    "[CARRIER_TELEPORT] Could not read position for '{}' to check teleport: {:?}",
+                                                    unit.name, e
+                                                ),
                                             }
                                         }
                                         Err(e) => {
-                                            error!("[CARRIER_SPAWN] Failed to get object_id for '{}': {:?}",
-                                                   dcs_unit_name, e);
+                                            error!(
+                                                "[CARRIER_SPAWN] Failed to get object_id for '{}': {:?}",
+                                                dcs_unit_name, e
+                                            );
                                         }
                                     }
                                 } else {
-                                    info!("[CARRIER_SPAWN] DCS unit '{}' not matched to any persisted unit",
-                                           dcs_unit_name);
+                                    info!(
+                                        "[CARRIER_SPAWN] DCS unit '{}' not matched to any persisted unit",
+                                        dcs_unit_name
+                                    );
                                 }
                             }
                             Err(e) => {
-                                error!("[CARRIER_SPAWN] Failed to get name for DCS unit: {:?}", e);
+                                error!(
+                                    "[CARRIER_SPAWN] Failed to get name for DCS unit: {:?}",
+                                    e
+                                );
                             }
                         }
                     }
-                    info!("[CARRIER_SPAWN] Carrier unit registration complete for {} - units_able_to_move has {} entries",
-                          group.name, self.units_able_to_move.len());
+                    info!(
+                        "[CARRIER_SPAWN] Carrier unit registration complete for {} - units_able_to_move has {} entries",
+                        group.name,
+                        self.units_able_to_move.len()
+                    );
                 }
                 Err(e) => {
-                    error!("[CARRIER_SPAWN] Failed to get units from activated carrier group {}: {:?}",
-                           group.template_name, e);
+                    error!(
+                        "[CARRIER_SPAWN] Failed to get units from activated carrier group {}: {:?}",
+                        group.template_name, e
+                    );
                 }
             }
 
             // Immediately stop the carrier from following its mission editor route.
             // Without this, the carrier will circle through ME waypoints after activation.
-            let controller = dcs_group.get_controller()
+            let controller = dcs_group
+                .get_controller()
                 .context("getting carrier controller after activation")?;
-            controller.set_command(dcso3::controller::Command::StopRoute(true))
+            controller
+                .set_command(dcso3::controller::Command::StopRoute(true))
                 .context("issuing StopRoute to carrier")?;
-            controller.reset_task()
-                .context("resetting carrier tasks")?;
-            info!("[CARRIER_SPAWN] Issued StopRoute and resetTask for {} to prevent circling", group.template_name);
+            controller.reset_task().context("resetting carrier tasks")?;
+            info!(
+                "[CARRIER_SPAWN] Issued StopRoute and resetTask for {} to prevent circling",
+                group.template_name
+            );
 
             // If carrier had a commanded waypoint destination, issue movement command
             // to continue traveling there (starting from the correct activated position).
-            let waypoint_pos = persisted.objectives_by_group.get(&group.id)
+            let waypoint_pos = persisted
+                .objectives_by_group
+                .get(&group.id)
                 .and_then(|oid| {
-                    info!("[CARRIER_SPAWN] Group {} is linked to objective {:?}", group.template_name, oid);
+                    info!(
+                        "[CARRIER_SPAWN] Group {} is linked to objective {:?}",
+                        group.template_name, oid
+                    );
                     persisted.objectives.get(oid)
                 })
-                .and_then(|obj| {
-                    match &obj.kind {
-                        ObjectiveKind::CarrierGroup { waypoint, .. } => {
-                            info!("[CARRIER_SPAWN] Objective is CarrierGroup, waypoint={:?}", waypoint);
-                            waypoint.as_ref().map(|wp| *wp)
-                        }
-                        other => {
-                            info!("[CARRIER_SPAWN] Objective is not CarrierGroup: {:?}", mem::discriminant(other));
-                            None
-                        }
+                .and_then(|obj| match &obj.kind {
+                    ObjectiveKind::CarrierGroup { waypoint, .. } => {
+                        info!(
+                            "[CARRIER_SPAWN] Objective is CarrierGroup, waypoint={:?}",
+                            waypoint
+                        );
+                        waypoint.as_ref().map(|wp| *wp)
+                    }
+                    other => {
+                        info!(
+                            "[CARRIER_SPAWN] Objective is not CarrierGroup: {:?}",
+                            mem::discriminant(other)
+                        );
+                        None
                     }
                 });
 
             if let Some(target) = waypoint_pos {
                 let speed = if needs_repositioning {
-                    self.cfg.carrier.as_ref()
+                    self.cfg
+                        .carrier
+                        .as_ref()
                         .map(|c| c.spawn_repositioning_speed)
                         .unwrap_or(100.0)
                 } else {
                     self.cfg.carrier.as_ref().map(|c| c.movement_speed).unwrap_or(5.0)
                 };
-                info!("[CARRIER_SPAWN] Commanding carrier {} to continue to waypoint ({:.0}, {:.0}) at speed {:.1}{}",
-                      group.template_name, target.x, target.y, speed,
-                      if needs_repositioning { " (repositioning speed)" } else { "" });
+                info!(
+                    "[CARRIER_SPAWN] Commanding carrier {} to continue to waypoint ({:.0}, {:.0}) at speed {:.1}{}",
+                    group.template_name,
+                    target.x,
+                    target.y,
+                    speed,
+                    if needs_repositioning { " (repositioning speed)" } else { "" }
+                );
                 // Re-enable route following and set the new destination
-                controller.set_command(dcso3::controller::Command::StopRoute(false))
+                controller
+                    .set_command(dcso3::controller::Command::StopRoute(false))
                     .context("re-enabling carrier route")?;
-                controller.set_task(dcso3::controller::Task::Mission {
-                    route: vec![MissionPoint {
-                        action: None,
-                        airdrome_id: None,
-                        helipad: None,
-                        typ: PointType::TurningPoint,
-                        time_re_fu_ar: None,
-                        link_unit: None,
-                        pos: LuaVec2(target),
-                        alt: 0.,
-                        alt_typ: None,
-                        speed,
-                        speed_locked: None,
-                        eta: None,
-                        eta_locked: None,
-                        name: Some(dcso3::String::from("restore_waypoint")),
-                        task: Box::new(dcso3::controller::Task::ComboTask(vec![])),
-                    }],
-                    airborne: Some(false),
-                }).context("setting carrier waypoint restore task")?;
-                info!("[CARRIER_SPAWN] Waypoint task set successfully for {}", group.template_name);
+                controller
+                    .set_task(dcso3::controller::Task::Mission {
+                        route: vec![MissionPoint {
+                            action: None,
+                            airdrome_id: None,
+                            helipad: None,
+                            typ: PointType::TurningPoint,
+                            time_re_fu_ar: None,
+                            link_unit: None,
+                            pos: LuaVec2(target),
+                            alt: 0.,
+                            alt_typ: None,
+                            speed,
+                            speed_locked: None,
+                            eta: None,
+                            eta_locked: None,
+                            name: Some(dcso3::String::from("restore_waypoint")),
+                            task: Box::new(dcso3::controller::Task::ComboTask(vec![])),
+                        }],
+                        airborne: Some(false),
+                    })
+                    .context("setting carrier waypoint restore task")?;
+                info!(
+                    "[CARRIER_SPAWN] Waypoint task set successfully for {}",
+                    group.template_name
+                );
             } else {
-                info!("[CARRIER_SPAWN] Carrier {} activated at saved position with StopRoute, no active waypoint",
-                      group.template_name);
+                info!(
+                    "[CARRIER_SPAWN] Carrier {} activated at saved position with StopRoute, no active waypoint",
+                    group.template_name
+                );
             }
 
             // Carrier auto-navaids (TACAN / ICLS / ACLS / Link-4) are lit by
@@ -2420,9 +2646,13 @@ impl Ephemeral {
         // The warehouse of the field a parking start is built at, and its
         // name, so `stock_for_ground_start` can make sure it holds the
         // airframes and fuel the flight takes off with.
-        let mut start_warehouse: Option<(dcso3::warehouse::Warehouse, std::string::String)> =
-            None;
-        let (template, alive) = if let Some(spec) = self.synthetic_templates.get(group.template_name.as_str()).cloned() {
+        let mut start_warehouse: Option<(
+            dcso3::warehouse::Warehouse,
+            std::string::String,
+        )> = None;
+        let (template, alive) = if let Some(spec) =
+            self.synthetic_templates.get(group.template_name.as_str()).cloned()
+        {
             if alive_units.is_empty() {
                 record_perf(&mut perf.spawn, ts);
                 return Ok(None);
@@ -2474,16 +2704,21 @@ impl Ephemeral {
             group_tbl.raw_set("task", "Ground Nothing")?;
             group_tbl.raw_set("route", route_tbl)?;
             group_tbl.raw_set("units", units_tbl)?;
-            let miz_group = miz::Group::from_lua(LuaValue::Table(group_tbl), lua_inner)
-                .map_err(|e| anyhow!("building synthetic group table: {e}"))?;
+            let miz_group =
+                miz::Group::from_lua(LuaValue::Table(group_tbl), lua_inner)
+                    .map_err(|e| anyhow!("building synthetic group table: {e}"))?;
             use dcso3::env::miz::GroupInfo;
             let template = GroupInfo {
                 side: group.side,
                 country: spec.country,
                 category: match spec.category {
-                    GroupCategory::Ground | GroupCategory::Train => dcso3::env::miz::GroupKind::Vehicle,
+                    GroupCategory::Ground | GroupCategory::Train => {
+                        dcso3::env::miz::GroupKind::Vehicle
+                    }
                     GroupCategory::Ship => dcso3::env::miz::GroupKind::Ship,
-                    GroupCategory::Airplane | GroupCategory::Helicopter => dcso3::env::miz::GroupKind::Plane,
+                    GroupCategory::Airplane | GroupCategory::Helicopter => {
+                        dcso3::env::miz::GroupKind::Plane
+                    }
                 },
                 group: miz_group,
             };
@@ -2496,7 +2731,9 @@ impl Ephemeral {
                     group.side,
                     group.template_name.as_str(),
                 )
-                .with_context(|| format_compact!("getting template {}", group.template_name))?;
+                .with_context(|| {
+                    format_compact!("getting template {}", group.template_name)
+                })?;
             template.group.set("lateActivation", false)?;
             template.group.set("hidden", false)?;
             template.group.set("visible", true)?;
@@ -2520,7 +2757,11 @@ impl Ephemeral {
             let mut points: Vec<dcso3::controller::MissionPoint> = if mission.len() > 0 {
                 mission
             } else {
-                route.points().ok().map(|seq| seq.into_iter().filter_map(|p| p.ok()).collect()).unwrap_or_default()
+                route
+                    .points()
+                    .ok()
+                    .map(|seq| seq.into_iter().filter_map(|p| p.ok()).collect())
+                    .unwrap_or_default()
             };
 
             // Taken whether or not it is used: it belongs to this one spawn.
@@ -2566,24 +2807,32 @@ impl Ephemeral {
                     launch_oid.as_ref().and_then(|oid| persisted.objectives.get(oid)),
                 ) {
                     let dcs_side = ab.as_object().and_then(|o| o.get_coalition());
-                    if obj.owner == group.side && dcs_side.as_ref().ok() != Some(&group.side) {
+                    if obj.owner == group.side
+                        && dcs_side.as_ref().ok() != Some(&group.side)
+                    {
                         info!(
                             "[GROUND_START] {} DCS has {} as {:?}, handing it to {:?} before the start",
                             group.name, obj.name, dcs_side, group.side
                         );
                         if let Err(e) = ab.set_coalition(group.side) {
-                            warn!("[GROUND_START] could not hand {} to {:?}: {e:?}", obj.name, group.side);
+                            warn!(
+                                "[GROUND_START] could not hand {} to {:?}: {e:?}",
+                                obj.name, group.side
+                            );
                         }
                     }
                 }
                 let helicopter = template.category == GroupKind::Helicopter;
-                let heavy = alive_units.iter().any(|u| super::Db::needs_big_spot(u.typ.as_str()));
+                let heavy =
+                    alive_units.iter().any(|u| super::Db::needs_big_spot(u.typ.as_str()));
                 // Too big for any stand DCS offers on these maps: no taxi
                 // route exists, and DCS's own ATC crashed the server printing
                 // its "No path found for 'B-1B'" warning (twice on 27 Oct,
                 // Ramat David and Haifa). They air-start over the field.
                 let no_taxi = !helicopter
-                    && alive_units.iter().any(|u| super::Db::too_big_to_taxi(u.typ.as_str()));
+                    && alive_units
+                        .iter()
+                        .any(|u| super::Db::too_big_to_taxi(u.typ.as_str()));
                 // Whether this airframe may lift off from open ground when the
                 // field gives it no spot to park on.
                 let open_ground =
@@ -2635,7 +2884,9 @@ impl Ephemeral {
                         "[GROUND_START] {} is too big to taxi at this field's stands -- air-starting over it",
                         group.name
                     );
-                } else if let (Some(ab), Some((_, p, ab_cat))) = (airbase.as_ref(), ab_start.as_ref()) {
+                } else if let (Some(ab), Some((_, p, ab_cat))) =
+                    (airbase.as_ref(), ab_start.as_ref())
+                {
                     let want = alive_units.len().max(1);
                     match ab.get_parking_spots(true) {
                         Ok(spots) => {
@@ -2647,7 +2898,9 @@ impl Ephemeral {
                                 // A heavy on a fighter's spot is a wreck on
                                 // the taxiway: large open stands only.
                                 s.usable_by(helicopter)
-                                    && (!heavy || s.term_type == dcso3::airbase::term_type::OPEN_BIG)
+                                    && (!heavy
+                                        || s.term_type
+                                            == dcso3::airbase::term_type::OPEN_BIG)
                             });
                             usable.sort_by(|a, b| {
                                 a.preference(helicopter)
@@ -2680,7 +2933,8 @@ impl Ephemeral {
                                 // catches it: a helicopter lifts off from open
                                 // ground, fixed wing at a pad air-starts.
                                 let level = if helicopter
-                                    || *ab_cat != dcso3::airbase::AirbaseCategory::Airdrome
+                                    || *ab_cat
+                                        != dcso3::airbase::AirbaseCategory::Airdrome
                                 {
                                     log::Level::Info
                                 } else {
@@ -2771,11 +3025,12 @@ impl Ephemeral {
                             } else {
                                 dcso3::controller::PointType::TakeOffParkingHot
                             };
-                            first.action = Some(dcso3::controller::ActionTyp::Air(if cold {
-                                dcso3::controller::TurnMethod::FromParkingArea
-                            } else {
-                                dcso3::controller::TurnMethod::FromParkingAreaHot
-                            }));
+                            first.action =
+                                Some(dcso3::controller::ActionTyp::Air(if cold {
+                                    dcso3::controller::TurnMethod::FromParkingArea
+                                } else {
+                                    dcso3::controller::TurnMethod::FromParkingAreaHot
+                                }));
                             // FARP/helipad airbases hand back getPoint() with
                             // y = 0. A parking start at 0m BARO under hundreds
                             // of metres of terrain spawns the flight inside the
@@ -2805,7 +3060,8 @@ impl Ephemeral {
                                 | dcso3::airbase::AirbaseCategory::Ship => {
                                     first.airdrome_id = None;
                                     first.helipad = Some(*abid);
-                                    first.link_unit = Some(dcso3::env::miz::UnitId::from(abid.inner()));
+                                    first.link_unit =
+                                        Some(dcso3::env::miz::UnitId::from(abid.inner()));
                                 }
                             }
                             first.speed = 0.0;
@@ -2813,7 +3069,8 @@ impl Ephemeral {
                             first.eta = Some(dcso3::Time(0.));
                             first.eta_locked = Some(true);
                             if !helicopter {
-                                self.ramp_watch.insert(group.id, (self.now(), launch_oid));
+                                self.ramp_watch
+                                    .insert(group.id, (self.now(), launch_oid));
                             }
                             start_warehouse = airbase.as_ref().and_then(|ab| {
                                 let field = launch_oid
@@ -2847,11 +3104,12 @@ impl Ephemeral {
                             } else {
                                 dcso3::controller::PointType::TakeOffGroundHot
                             };
-                            first.action = Some(dcso3::controller::ActionTyp::Air(if cold {
-                                dcso3::controller::TurnMethod::FromGroundArea
-                            } else {
-                                dcso3::controller::TurnMethod::FromGroundAreaHot
-                            }));
+                            first.action =
+                                Some(dcso3::controller::ActionTyp::Air(if cold {
+                                    dcso3::controller::TurnMethod::FromGroundArea
+                                } else {
+                                    dcso3::controller::TurnMethod::FromGroundAreaHot
+                                }));
                             first.airdrome_id = None;
                             first.helipad = None;
                             first.link_unit = None;
@@ -3013,10 +3271,8 @@ impl Ephemeral {
                     }
                 }
             }
-            let by_tname: FxHashMap<&str, &SpawnedUnit> = alive_units
-                .iter()
-                .map(|u| (u.template_name.as_str(), *u))
-                .collect();
+            let by_tname: FxHashMap<&str, &SpawnedUnit> =
+                alive_units.iter().map(|u| (u.template_name.as_str(), *u)).collect();
             let alive = {
                 let units = template.group.units().context("getting units")?;
                 let mut i = 1;
@@ -3026,8 +3282,13 @@ impl Ephemeral {
                         None => units.remove(i)?,
                         Some(su) => {
                             if su.tags.contains(UnitTag::AWACS) {
-                                let stn = String::from(format_compact!("{:005o}", self.awacs_stn));
-                                if let Ok(props) = unit.raw_get::<LuaTable>("AddPropAircraft") {
+                                let stn = String::from(format_compact!(
+                                    "{:005o}",
+                                    self.awacs_stn
+                                ));
+                                if let Ok(props) =
+                                    unit.raw_get::<LuaTable>("AddPropAircraft")
+                                {
                                     self.awacs_stn -= 1;
                                     props.raw_set("STN_L16", stn)?;
                                 }
@@ -3058,7 +3319,10 @@ impl Ephemeral {
                             // and spawn the flight in the air.
                             match parking_plan.get(i as usize - 1) {
                                 Some(spot) => {
-                                    unit.set_pos(Vector2::new(spot.pos.0.x, spot.pos.0.z))?;
+                                    unit.set_pos(Vector2::new(
+                                        spot.pos.0.x,
+                                        spot.pos.0.z,
+                                    ))?;
                                     unit.set_alt(spot.pos.0.y)?;
                                     unit.set_alt_type("BARO")?;
                                     unit.set_parking(spot.term_index)?;
@@ -3146,7 +3410,9 @@ impl Ephemeral {
                 if let DeployKind::Crate { origin, .. } = &group.origin {
                     // Check if the origin objective is a carrier group
                     if let Some(obj) = persisted.objectives.get(origin) {
-                        if let ObjectiveKind::CarrierGroup { carrier_template, .. } = &obj.kind {
+                        if let ObjectiveKind::CarrierGroup { carrier_template, .. } =
+                            &obj.kind
+                        {
                             if !carrier_template.is_empty() {
                                 // carrier_template is the GROUP template name (e.g., "RCARRIER").
                                 // Unit template_names are mission editor names (e.g., "Kurznetsov"),
@@ -3154,20 +3420,46 @@ impl Ephemeral {
                                 // Match by GROUP membership instead: find groups matching carrier_template,
                                 // then look at their units.
                                 'carrier_search: for (_, cg) in &persisted.groups {
-                                    if cg.template_name.starts_with(carrier_template.as_str()) && cg.side == group.side {
+                                    if cg
+                                        .template_name
+                                        .starts_with(carrier_template.as_str())
+                                        && cg.side == group.side
+                                    {
                                         for uid in cg.units.into_iter() {
                                             if let Some(cu) = persisted.units.get(uid) {
                                                 if !cu.dead {
-                                                    if Unit::get_by_name(spctx.lua(), &cu.template_name).is_ok() {
-                                                        info!("[CARRIER_LINK] Re-establishing link for crate {:?} to carrier '{}'",
-                                                              group.id, cu.template_name);
-                                                        self.carrier_linked_groups.insert(group.id, cu.template_name.clone());
+                                                    if Unit::get_by_name(
+                                                        spctx.lua(),
+                                                        &cu.template_name,
+                                                    )
+                                                    .is_ok()
+                                                    {
+                                                        info!(
+                                                            "[CARRIER_LINK] Re-establishing link for crate {:?} to carrier '{}'",
+                                                            group.id, cu.template_name
+                                                        );
+                                                        self.carrier_linked_groups
+                                                            .insert(
+                                                                group.id,
+                                                                cu.template_name.clone(),
+                                                            );
                                                         break 'carrier_search;
                                                     }
-                                                    if Unit::get_by_name(spctx.lua(), &cu.name).is_ok() {
-                                                        info!("[CARRIER_LINK] Re-establishing link for crate {:?} to carrier '{}' (bflib name)",
-                                                              group.id, cu.name);
-                                                        self.carrier_linked_groups.insert(group.id, cu.name.clone());
+                                                    if Unit::get_by_name(
+                                                        spctx.lua(),
+                                                        &cu.name,
+                                                    )
+                                                    .is_ok()
+                                                    {
+                                                        info!(
+                                                            "[CARRIER_LINK] Re-establishing link for crate {:?} to carrier '{}' (bflib name)",
+                                                            group.id, cu.name
+                                                        );
+                                                        self.carrier_linked_groups
+                                                            .insert(
+                                                                group.id,
+                                                                cu.name.clone(),
+                                                            );
                                                         break 'carrier_search;
                                                     }
                                                 }
@@ -3228,8 +3520,12 @@ impl Ephemeral {
                     ),
                 }
             }
-            if let (Some((wh, field)), Some(_)) = (start_warehouse.as_ref(), parking_anchor) {
-                if let Err(e) = stock_for_ground_start(wh, &template.group, &group.name, field) {
+            if let (Some((wh, field)), Some(_)) =
+                (start_warehouse.as_ref(), parking_anchor)
+            {
+                if let Err(e) =
+                    stock_for_ground_start(wh, &template.group, &group.name, field)
+                {
                     warn!(
                         "[GROUND_START] {} could not stock {field}'s warehouse for its start: {e:?}",
                         group.name
@@ -3237,9 +3533,10 @@ impl Ephemeral {
                 }
             }
             let carrier_link_id = self.carrier_linked_groups.remove(&group.id);
-            let spawned = spctx
-                .spawn_with_link(template, carrier_link_id)
-                .with_context(|| format_compact!("spawning template {}", group.template_name))?;
+            let spawned =
+                spctx.spawn_with_link(template, carrier_link_id).with_context(|| {
+                    format_compact!("spawning template {}", group.template_name)
+                })?;
             match &spawned {
                 Spawned::Static(oid) => {
                     self.object_id_by_gid.insert(group.id, oid.clone());
@@ -3254,8 +3551,11 @@ impl Ephemeral {
                         _ => None,
                     };
                     if let Some(gci) = gci {
-                        if let Some(unit) = g.get_units()?.into_iter().filter_map(|u| u.ok()).next() {
-                            let controller = unit.get_controller()
+                        if let Some(unit) =
+                            g.get_units()?.into_iter().filter_map(|u| u.ok()).next()
+                        {
+                            let controller = unit
+                                .get_controller()
                                 .context("getting GCI unit controller")?;
                             controller
                                 .set_command(dcso3::controller::Command::ActivateGci {
@@ -3278,13 +3578,17 @@ impl Ephemeral {
                     // overridden on the next tick. Best effort -- never abort
                     // a spawn.
                     if let DeployKind::Deployed { .. } = &group.origin {
-                        if group.tags.contains(UnitTag::SAM) || group.tags.contains(UnitTag::AAA) {
+                        if group.tags.contains(UnitTag::SAM)
+                            || group.tags.contains(UnitTag::AAA)
+                        {
                             if let Ok(con) = g.get_controller() {
-                                if let Err(e) = con.set_option(dcso3::controller::AiOption::Ground(
-                                    dcso3::controller::GroundOption::AlarmState(
-                                        dcso3::controller::AlarmState::Red,
-                                    ),
-                                )) {
+                                if let Err(e) =
+                                    con.set_option(dcso3::controller::AiOption::Ground(
+                                        dcso3::controller::GroundOption::AlarmState(
+                                            dcso3::controller::AlarmState::Red,
+                                        ),
+                                    ))
+                                {
                                     warn!(
                                         "failed to set AlarmState::Red on deployed AD group {}: {e:?}",
                                         group.name
@@ -3300,7 +3604,9 @@ impl Ephemeral {
                             if let Some(navs) = persisted.navaids.get(origin) {
                                 for nav in navs {
                                     if nav.host_gid == Some(group.id) {
-                                        if let Err(e) = crate::navaids::activate_on_group(g, nav) {
+                                        if let Err(e) =
+                                            crate::navaids::activate_on_group(g, nav)
+                                        {
                                             warn!(
                                                 "navaid activation failed for objective {origin:?}: {e:?}"
                                             );
@@ -3345,4 +3651,3 @@ mod clock_tests {
         assert_eq!(e.now(), t0 + Duration::minutes(31));
     }
 }
-

@@ -11,21 +11,21 @@
 //! issued in the same frame as `addGroup` (DCS can crash), so they are queued
 //! as `Pending` actions and run a second or two later.
 
-use crate::util::{self, json_to_lua, V3};
-use anyhow::{anyhow, bail, Result};
+use crate::util::{self, V3, json_to_lua};
+use anyhow::{Result, anyhow, bail};
 use chrono::{DateTime, Duration, Utc};
 use dcso3::{
+    LuaEnv, MizLua,
     coalition::{Coalition, Side, Static},
     country::Country,
     env,
     group::{Group, GroupCategory},
     static_object::StaticObject,
-    LuaEnv, MizLua,
 };
 use fxhash::FxHashMap;
 use log::{info, warn};
 use mlua::prelude::*;
-use serde_json::{json, Value as J};
+use serde_json::{Value as J, json};
 use std::collections::BTreeMap;
 
 pub const AIRPLANE: i64 = 0;
@@ -187,7 +187,12 @@ pub fn air_group(s: &AirSpec) -> J {
 }
 
 /// One ground/ship unit: (type, position, heading deg).
-pub fn surface_group(name: &str, units: &[(String, V3, f64)], skill: &str, route: Vec<J>) -> J {
+pub fn surface_group(
+    name: &str,
+    units: &[(String, V3, f64)],
+    skill: &str,
+    route: Vec<J>,
+) -> J {
     let us: Vec<J> = units
         .iter()
         .enumerate()
@@ -212,7 +217,13 @@ pub fn surface_group(name: &str, units: &[(String, V3, f64)], skill: &str, route
     })
 }
 
-pub fn static_object(name: &str, typ: &str, p: V3, hdg: f64, cargo_mass: Option<f64>) -> J {
+pub fn static_object(
+    name: &str,
+    typ: &str,
+    p: V3,
+    hdg: f64,
+    cargo_mass: Option<f64>,
+) -> J {
     let mut s = json!({
         "name": name,
         "type": typ,
@@ -297,20 +308,42 @@ pub fn destroy_static(lua: MizLua, name: &str) {
 /// `<group>-<n>`, so a bare prefix test would put "RNG-ADV-50-1" in
 /// "RNG-ADV-5".
 pub fn in_group(unit: &str, group: &str) -> bool {
-    unit.len() > group.len() && unit.starts_with(group) && unit.as_bytes()[group.len()] == b'-'
+    unit.len() > group.len()
+        && unit.starts_with(group)
+        && unit.as_bytes()[group.len()] == b'-'
 }
 
 /// Deferred controller work.
 #[derive(Debug, Clone)]
 pub enum Pending {
-    GroupCommand { group: String, cmd: J },
-    GroupTask { group: String, task: J },
-    GroupOption { group: String, id: i64, value: J },
-    UnitCommand { unit: String, cmd: J },
+    GroupCommand {
+        group: String,
+        cmd: J,
+    },
+    GroupTask {
+        group: String,
+        task: J,
+    },
+    GroupOption {
+        group: String,
+        id: i64,
+        value: J,
+    },
+    UnitCommand {
+        unit: String,
+        cmd: J,
+    },
     /// radars on/off (`Group.enableEmission`)
-    Emission { group: String, on: bool },
+    Emission {
+        group: String,
+        on: bool,
+    },
     /// a ship's TACAN, once the ship exists and has a unit id
-    ShipTacan { group: String, unit: String, tacan: bfprotocols::range::cfg::TacanCfg },
+    ShipTacan {
+        group: String,
+        unit: String,
+        tacan: bfprotocols::range::cfg::TacanCfg,
+    },
 }
 
 /// What a spawn is, for the modules that drive it after creation.
@@ -426,13 +459,22 @@ impl Spawns {
                     Pending::UnitCommand { unit, cmd } => {
                         util::unit_controller_call(lua, unit, "setCommand", cmd.clone())
                     }
-                    Pending::Emission { group, on } => dcso3::group::Group::get_by_name(lua, group)
-                        .and_then(|g| g.enable_emission(*on))
-                        .map_err(|e| anyhow!("{e:?}")),
-                    Pending::ShipTacan { group, unit, tacan } => match first_unit_id(lua, group) {
-                        Some(id) => util::unit_controller_call(lua, unit, "setCommand", tacan_cmd(id, tacan, false)),
-                        None => Err(anyhow!("ship {unit} has no unit id yet")),
-                    },
+                    Pending::Emission { group, on } => {
+                        dcso3::group::Group::get_by_name(lua, group)
+                            .and_then(|g| g.enable_emission(*on))
+                            .map_err(|e| anyhow!("{e:?}"))
+                    }
+                    Pending::ShipTacan { group, unit, tacan } => {
+                        match first_unit_id(lua, group) {
+                            Some(id) => util::unit_controller_call(
+                                lua,
+                                unit,
+                                "setCommand",
+                                tacan_cmd(id, tacan, false),
+                            ),
+                            None => Err(anyhow!("ship {unit} has no unit id yet")),
+                        }
+                    }
                 };
                 if let Err(e) = r {
                     warn!("deferred controller action {p:?} failed: {e:?}")
@@ -506,5 +548,9 @@ pub fn bool_cmd(id: &str, v: bool) -> J {
 
 /// Unit id of the first unit of a group, once it exists.
 pub fn first_unit_id(lua: MizLua, group: &str) -> Option<i64> {
-    Group::get_by_name(lua, group).and_then(|g| g.get_unit(1)).and_then(|u| u.id()).ok().map(|id| id.inner())
+    Group::get_by_name(lua, group)
+        .and_then(|g| g.get_unit(1))
+        .and_then(|u| u.id())
+        .ok()
+        .map(|id| id.inner())
 }

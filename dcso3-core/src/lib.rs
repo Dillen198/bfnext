@@ -24,8 +24,8 @@ FITNESS FOR A PARTICULAR PURPOSE.
 //! dependency at all, which is what lets bfdb build and run without
 //! DCS's lua.dll.
 
-pub use schemars;
 use compact_str::CompactString;
+pub use schemars;
 use serde_derive::{Deserialize, Serialize};
 use std::{
     borrow::Borrow,
@@ -63,7 +63,16 @@ pub type Vector2 = nalgebra::base::Vector2<f64>;
 pub type Vector3 = nalgebra::base::Vector3<f64>;
 
 #[derive(
-    Debug, Clone, Default, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Default,
+    Hash,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
     schemars::JsonSchema,
 )]
 pub struct String(#[schemars(with = "std::string::String")] CompactString);
@@ -395,7 +404,9 @@ macro_rules! __lua_newtype {
                 value: $crate::__private::mlua::Value,
                 lua: &$crate::__private::mlua::Lua,
             ) -> $crate::__private::mlua::Result<Self> {
-                Ok(Self(<$type as $crate::__private::mlua::FromLua>::from_lua(value, lua)?))
+                Ok(Self(<$type as $crate::__private::mlua::FromLua>::from_lua(
+                    value, lua,
+                )?))
             }
         }
 

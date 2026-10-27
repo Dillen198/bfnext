@@ -9,21 +9,52 @@ use crate::*;
 /// -- SRS/EAM passwords included -- and the file used to be served raw to
 /// anyone who asked.
 pub(crate) const PUBLIC_CONFIG_KEYS: &[&str] = &[
-    "name", "shortName", "tagline", "version", "logoUrl", "description",
-    "discord", "server", "servers", "serverIp", "websiteUrl", "wikiUrl", "dashboardUrl", "donationUrl",
-    "blueLabel", "redLabel",
-    "accentColor", "accentHoverColor", "blueColor", "redColor",
-    "bgColor", "bgCardColor", "bgElevatedColor", "borderColor",
-    "mapCenter", "mapZoom",
-    "dashboardRightPanelWidth", "dashboardObjectivesHeight", "dashboardKillFeedCount",
-    "backgroundImage", "backgroundImageOpacity", "backgroundImageSize", "backgroundImageBlend",
-    "camoPattern", "camoOpacity",
-    "engineCredits", "serverCredits", "features", "joinSteps",
+    "name",
+    "shortName",
+    "tagline",
+    "version",
+    "logoUrl",
+    "description",
+    "discord",
+    "server",
+    "servers",
+    "serverIp",
+    "websiteUrl",
+    "wikiUrl",
+    "dashboardUrl",
+    "donationUrl",
+    "blueLabel",
+    "redLabel",
+    "accentColor",
+    "accentHoverColor",
+    "blueColor",
+    "redColor",
+    "bgColor",
+    "bgCardColor",
+    "bgElevatedColor",
+    "borderColor",
+    "mapCenter",
+    "mapZoom",
+    "dashboardRightPanelWidth",
+    "dashboardObjectivesHeight",
+    "dashboardKillFeedCount",
+    "backgroundImage",
+    "backgroundImageOpacity",
+    "backgroundImageSize",
+    "backgroundImageBlend",
+    "camoPattern",
+    "camoOpacity",
+    "engineCredits",
+    "serverCredits",
+    "features",
+    "joinSteps",
 ];
 
 /// campaign.json reduced to [`PUBLIC_CONFIG_KEYS`].
 pub(crate) fn public_campaign_config(raw: &str) -> String {
-    let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(raw) else {
+    let Ok(serde_json::Value::Object(map)) =
+        serde_json::from_str::<serde_json::Value>(raw)
+    else {
         return "{}".to_string();
     };
     let kept: serde_json::Map<std::string::String, serde_json::Value> = map
@@ -52,32 +83,33 @@ pub(crate) async fn api_rounds(
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let all = q.get("instance").map(|s| s == "all").unwrap_or(false);
-    let data = cached_json(format!("rounds:{}:{all}", inst.id), move || -> Result<String> {
-        let rounds = db.all_rounds()?;
-        let numbers = db.round_numbers()?;
-        let entries: Vec<_> = rounds
-            .iter()
-            .filter_map(|(scenario, rid, round)| {
-                let owner = db.round_instance_of(*rid);
-                if !all && owner != inst.id {
-                    return None;
-                }
-                Some(serde_json::json!({
-                    "id": rid.0,
-                    // What to call it: the id is a database key.
-                    "number": numbers.get(rid),
-                    "instance": owner.to_string(),
-                    "scenario": scenario.to_string(),
-                    "start": round.start.to_rfc3339(),
-                    "end": round.end.map(|d| d.to_rfc3339()),
-                    "active": round.end.is_none(),
-                    "winner": round.winner.map(|s| format!("{s:?}")),
-                }))
-            })
-            .collect();
-        Ok(serde_json::to_string(&entries)?)
-    })
-    .await?;
+    let data =
+        cached_json(format!("rounds:{}:{all}", inst.id), move || -> Result<String> {
+            let rounds = db.all_rounds()?;
+            let numbers = db.round_numbers()?;
+            let entries: Vec<_> = rounds
+                .iter()
+                .filter_map(|(scenario, rid, round)| {
+                    let owner = db.round_instance_of(*rid);
+                    if !all && owner != inst.id {
+                        return None;
+                    }
+                    Some(serde_json::json!({
+                        "id": rid.0,
+                        // What to call it: the id is a database key.
+                        "number": numbers.get(rid),
+                        "instance": owner.to_string(),
+                        "scenario": scenario.to_string(),
+                        "start": round.start.to_rfc3339(),
+                        "end": round.end.map(|d| d.to_rfc3339()),
+                        "active": round.end.is_none(),
+                        "winner": round.winner.map(|s| format!("{s:?}")),
+                    }))
+                })
+                .collect();
+            Ok(serde_json::to_string(&entries)?)
+        })
+        .await?;
     Ok(json_response(data))
 }
 
@@ -171,13 +203,16 @@ pub(crate) async fn api_round_report(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = cached_json(format!("round_report:{}:{id}", inst.id), move || -> Result<String> {
-        let rid = db::RoundId(id);
-        if db.round_instance_of(rid) != inst.id {
-            return Ok("null".into());
-        }
-        Ok(serde_json::to_string(&db.round_report(rid)?)?)
-    })
+    let data = cached_json(
+        format!("round_report:{}:{id}", inst.id),
+        move || -> Result<String> {
+            let rid = db::RoundId(id);
+            if db.round_instance_of(rid) != inst.id {
+                return Ok("null".into());
+            }
+            Ok(serde_json::to_string(&db.round_report(rid)?)?)
+        },
+    )
     .await?;
     Ok(json_response(data))
 }
@@ -190,50 +225,55 @@ pub(crate) async fn api_leaderboard(
     // ?round=<id> ranks one round; without it, all-time totals (so pilot
     // stats are never empty between rounds).
     let round = q.get("round").and_then(|r| r.parse::<u64>().ok());
-    let data = cached_json(format!("leaderboard:{}:{round:?}", inst.id), move || -> Result<String> {
-        let pilots = match round {
-            // Another instance's round is not this instance's to rank.
-            Some(id) if db.round_instance_of(db::RoundId(id)) != inst.id => vec![],
-            Some(id) => db.pilot_leaderboard(Some(db::RoundId(id)))?,
-            None => db.pilot_leaderboard(None)?,
-        };
-        // Coalition drives which service's rank insignia the dashboard draws
-        // for this pilot. Same resolution the recon-intel gate uses: the
-        // active round's registration, else the most recent side on record
-        // (this instance's rounds only). None for a pilot who never
-        // registered a side. One pass for the whole roster -- this used to be
-        // a prefix scan per pilot on every poll.
-        let sides: std::collections::HashMap<dcso3::net::Ucid, dcso3::coalition::Side> =
-            db.all_pilot_sides(&inst.id)?.into_iter().collect();
-        let entries: Vec<_> = pilots
-            .iter()
-            .map(|(ucid, name, agg)| {
-                let side = sides
-                    .get(ucid)
-                    // Debug, not Display: the rest of the API emits "Blue"/"Red",
-                    // while Side's Display is the DCS-side lowercase spelling.
-                    .map(|s| format!("{s:?}"));
-                serde_json::json!({
-                    "ucid": ucid.to_string(),
-                    "name": name.to_string(),
-                    "side": side,
-                    "air_kills": agg.air_kills,
-                    "ground_kills": agg.ground_kills,
-                    "captures": agg.captures,
-                    "repairs": agg.repairs,
-                    "supply_transfers": agg.supply_transfers,
-                    "troops": agg.troops,
-                    "farps": agg.farps,
-                    "deploys": agg.deploys,
-                    "actions": agg.actions,
-                    "deaths": agg.deaths,
-                    "hours": agg.hours,
-                    "donated_points": agg.donated_points,
+    let data = cached_json(
+        format!("leaderboard:{}:{round:?}", inst.id),
+        move || -> Result<String> {
+            let pilots = match round {
+                // Another instance's round is not this instance's to rank.
+                Some(id) if db.round_instance_of(db::RoundId(id)) != inst.id => vec![],
+                Some(id) => db.pilot_leaderboard(Some(db::RoundId(id)))?,
+                None => db.pilot_leaderboard(None)?,
+            };
+            // Coalition drives which service's rank insignia the dashboard draws
+            // for this pilot. Same resolution the recon-intel gate uses: the
+            // active round's registration, else the most recent side on record
+            // (this instance's rounds only). None for a pilot who never
+            // registered a side. One pass for the whole roster -- this used to be
+            // a prefix scan per pilot on every poll.
+            let sides: std::collections::HashMap<
+                dcso3::net::Ucid,
+                dcso3::coalition::Side,
+            > = db.all_pilot_sides(&inst.id)?.into_iter().collect();
+            let entries: Vec<_> = pilots
+                .iter()
+                .map(|(ucid, name, agg)| {
+                    let side = sides
+                        .get(ucid)
+                        // Debug, not Display: the rest of the API emits "Blue"/"Red",
+                        // while Side's Display is the DCS-side lowercase spelling.
+                        .map(|s| format!("{s:?}"));
+                    serde_json::json!({
+                        "ucid": ucid.to_string(),
+                        "name": name.to_string(),
+                        "side": side,
+                        "air_kills": agg.air_kills,
+                        "ground_kills": agg.ground_kills,
+                        "captures": agg.captures,
+                        "repairs": agg.repairs,
+                        "supply_transfers": agg.supply_transfers,
+                        "troops": agg.troops,
+                        "farps": agg.farps,
+                        "deploys": agg.deploys,
+                        "actions": agg.actions,
+                        "deaths": agg.deaths,
+                        "hours": agg.hours,
+                        "donated_points": agg.donated_points,
+                    })
                 })
-            })
-            .collect();
-        Ok(serde_json::to_string(&entries)?)
-    })
+                .collect();
+            Ok(serde_json::to_string(&entries)?)
+        },
+    )
     .await?;
     Ok(json_response(data))
 }
@@ -243,65 +283,69 @@ pub(crate) async fn api_objectives(
     round_id: Option<u64>,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let (mut entries, is_active) = task::block_in_place(|| -> Result<(Vec<serde_json::Value>, bool)> {
-        let rounds = db.latest_rounds_for(&inst.id)?;
-        let active_rid = rounds.iter().find(|(_, _, r)| r.end.is_none()).map(|(_, rid, _)| *rid);
-        let rid = match round_id {
-            // Another instance's round is not this instance's to show (and
-            // may be a private one).
-            Some(id) if db.round_instance_of(db::RoundId(id)) != inst.id => return Ok((vec![], false)),
-            Some(id) => db::RoundId(id),
-            None => match active_rid {
-                Some(rid) => rid,
-                None => match rounds.first() {
-                    Some((_, rid, _)) => *rid,
-                    None => return Ok((vec![], false)),
-                },
-            },
-        };
-        let is_active = active_rid == Some(rid);
-        let objs = db.objectives_for_round(rid)?;
-        let entries: Vec<_> = objs
-            .iter()
-            .filter_map(|(oid, obj)| {
-                // Special SAM sites are secret objectives -- hidden entirely.
-                if obj.kind.is_special_sam_site() {
-                    return None;
+    let (mut entries, is_active) =
+        task::block_in_place(|| -> Result<(Vec<serde_json::Value>, bool)> {
+            let rounds = db.latest_rounds_for(&inst.id)?;
+            let active_rid =
+                rounds.iter().find(|(_, _, r)| r.end.is_none()).map(|(_, rid, _)| *rid);
+            let rid = match round_id {
+                // Another instance's round is not this instance's to show (and
+                // may be a private one).
+                Some(id) if db.round_instance_of(db::RoundId(id)) != inst.id => {
+                    return Ok((vec![], false))
                 }
-                // Carrier groups are shown for status (health/supply/owner/etc)
-                // but their position is withheld -- it's mobile and sensitive.
-                let hide_pos = obj.kind.is_carrier_group();
-                Some(serde_json::json!({
-                    "id": format!("{:?}", oid),
-                    "name": obj.name.to_string(),
-                    "kind": obj.kind.name(),
-                    "owner": format!("{:?}", obj.owner),
-                    "lat": if hide_pos { 0.0 } else { obj.pos.latitude },
-                    "lon": if hide_pos { 0.0 } else { obj.pos.longitude },
-                    "health": obj.health,
-                    "logi": obj.logi,
-                    "supply": obj.supply,
-                    "fuel": obj.fuel,
-                    "last_change": obj.last_change.to_rfc3339(),
-                    // Overwritten below with live values for the active round,
-                    // when bflib is reachable. Historical rounds keep the defaults.
-                    "priority": false,
-                    "threatened": false,
-                    "captureable": false,
-                    // Whether owner/health/... below came from the running
-                    // engine or from the (possibly stale) persisted snapshot.
-                    // A consumer that diffs successive polls to detect state
-                    // CHANGES -- the Discord alert poller -- must ignore a
-                    // response where this is false: mixing live and stale
-                    // values across polls looks exactly like an objective
-                    // flipping owner or crossing a health threshold, and
-                    // produces an endless stream of phantom alerts.
-                    "live": false,
-                }))
-            })
-            .collect();
-        Ok((entries, is_active))
-    })?;
+                Some(id) => db::RoundId(id),
+                None => match active_rid {
+                    Some(rid) => rid,
+                    None => match rounds.first() {
+                        Some((_, rid, _)) => *rid,
+                        None => return Ok((vec![], false)),
+                    },
+                },
+            };
+            let is_active = active_rid == Some(rid);
+            let objs = db.objectives_for_round(rid)?;
+            let entries: Vec<_> = objs
+                .iter()
+                .filter_map(|(oid, obj)| {
+                    // Special SAM sites are secret objectives -- hidden entirely.
+                    if obj.kind.is_special_sam_site() {
+                        return None;
+                    }
+                    // Carrier groups are shown for status (health/supply/owner/etc)
+                    // but their position is withheld -- it's mobile and sensitive.
+                    let hide_pos = obj.kind.is_carrier_group();
+                    Some(serde_json::json!({
+                        "id": format!("{:?}", oid),
+                        "name": obj.name.to_string(),
+                        "kind": obj.kind.name(),
+                        "owner": format!("{:?}", obj.owner),
+                        "lat": if hide_pos { 0.0 } else { obj.pos.latitude },
+                        "lon": if hide_pos { 0.0 } else { obj.pos.longitude },
+                        "health": obj.health,
+                        "logi": obj.logi,
+                        "supply": obj.supply,
+                        "fuel": obj.fuel,
+                        "last_change": obj.last_change.to_rfc3339(),
+                        // Overwritten below with live values for the active round,
+                        // when bflib is reachable. Historical rounds keep the defaults.
+                        "priority": false,
+                        "threatened": false,
+                        "captureable": false,
+                        // Whether owner/health/... below came from the running
+                        // engine or from the (possibly stale) persisted snapshot.
+                        // A consumer that diffs successive polls to detect state
+                        // CHANGES -- the Discord alert poller -- must ignore a
+                        // response where this is false: mixing live and stale
+                        // values across polls looks exactly like an objective
+                        // flipping owner or crossing a health threshold, and
+                        // produces an endless stream of phantom alerts.
+                        "live": false,
+                    }))
+                })
+                .collect();
+            Ok((entries, is_active))
+        })?;
 
     // The priority flag is live engine state, not something bfdb persists on
     // its own -- refresh it from bflib for the currently active round only.
@@ -316,14 +360,18 @@ pub(crate) async fn api_objectives(
         let live = engine_objectives(&db, &inst).await;
         match &*live {
             Ok(json) => {
-                if let Ok(live) = serde_json::from_str::<Vec<bfprotocols::api::ObjectiveInfo>>(&json) {
+                if let Ok(live) =
+                    serde_json::from_str::<Vec<bfprotocols::api::ObjectiveInfo>>(&json)
+                {
                     // The persisted health/logi/supply/fuel can lag the engine
                     // (e.g. after a mission reload re-emits Stat::Objective at
                     // 100, or if the archive replay missed a batch), which made
                     // the tactical map disagree with the in-game markup. For the
                     // active round, take these straight from the engine.
-                    let by_name: std::collections::HashMap<&str, &bfprotocols::api::ObjectiveInfo> =
-                        live.iter().map(|o| (o.name.as_str(), o)).collect();
+                    let by_name: std::collections::HashMap<
+                        &str,
+                        &bfprotocols::api::ObjectiveInfo,
+                    > = live.iter().map(|o| (o.name.as_str(), o)).collect();
                     for entry in entries.iter_mut() {
                         if let Some(name) = entry.get("name").and_then(|n| n.as_str()) {
                             if let Some(&o) = by_name.get(name) {
@@ -332,9 +380,12 @@ pub(crate) async fn api_objectives(
                                 entry["logi"] = serde_json::json!(o.logi);
                                 entry["supply"] = serde_json::json!(o.supply);
                                 entry["fuel"] = serde_json::json!(o.fuel);
-                                entry["owner"] = serde_json::json!(format!("{:?}", o.owner));
-                                entry["threatened"] = serde_json::Value::Bool(o.threatened);
-                                entry["captureable"] = serde_json::Value::Bool(o.captureable);
+                                entry["owner"] =
+                                    serde_json::json!(format!("{:?}", o.owner));
+                                entry["threatened"] =
+                                    serde_json::Value::Bool(o.threatened);
+                                entry["captureable"] =
+                                    serde_json::Value::Bool(o.captureable);
                                 entry["live"] = serde_json::Value::Bool(true);
                             }
                         }
@@ -381,10 +432,13 @@ pub(crate) async fn api_frontline(
     };
     let data = task::block_in_place(|| -> Result<String> {
         let rounds = db.latest_rounds_for(&inst.id)?;
-        let active = rounds.iter().find(|(_, _, r)| r.end.is_none()).map(|(_, rid, _)| *rid);
+        let active =
+            rounds.iter().find(|(_, _, r)| r.end.is_none()).map(|(_, rid, _)| *rid);
         let rid = match round_id {
             // Another instance's round is not this instance's to show.
-            Some(id) if db.round_instance_of(db::RoundId(id)) != inst.id => return Ok("[]".to_string()),
+            Some(id) if db.round_instance_of(db::RoundId(id)) != inst.id => {
+                return Ok("[]".to_string())
+            }
             Some(id) => db::RoundId(id),
             None => match active {
                 Some(rid) => rid,
@@ -401,7 +455,12 @@ pub(crate) async fn api_frontline(
         // the same set bflib feeds the overlay.
         let ll: Vec<(f64, f64, dcso3::coalition::Side)> = objs
             .iter()
-            .filter(|(_, o)| matches!(o.owner, dcso3::coalition::Side::Blue | dcso3::coalition::Side::Red))
+            .filter(|(_, o)| {
+                matches!(
+                    o.owner,
+                    dcso3::coalition::Side::Blue | dcso3::coalition::Side::Red
+                )
+            })
             .filter(|(_, o)| !o.kind.is_carrier_group())
             .filter(|(_, o)| in_engine.map_or(true, |n| n.contains(o.name.as_str())))
             .map(|(_, o)| (o.pos.latitude, o.pos.longitude, o.owner))
@@ -417,8 +476,11 @@ pub(crate) async fn api_frontline(
         let lat0 = ll.iter().map(|(la, _, _)| *la).sum::<f64>() / ll.len() as f64;
         let lon0 = ll.iter().map(|(_, lo, _)| *lo).sum::<f64>() / ll.len() as f64;
         let coslat = lat0.to_radians().cos().max(1e-6);
-        let to_m = |lat: f64, lon: f64| ((lat - lat0) * M_PER_DEG, (lon - lon0) * M_PER_DEG * coslat);
-        let to_ll = |x: f64, y: f64| [lat0 + x / M_PER_DEG, lon0 + y / (M_PER_DEG * coslat)];
+        let to_m = |lat: f64, lon: f64| {
+            ((lat - lat0) * M_PER_DEG, (lon - lon0) * M_PER_DEG * coslat)
+        };
+        let to_ll =
+            |x: f64, y: f64| [lat0 + x / M_PER_DEG, lon0 + y / (M_PER_DEG * coslat)];
 
         let pts: Vec<(f64, f64, f64)> = ll
             .iter()
@@ -428,12 +490,12 @@ pub(crate) async fn api_frontline(
             })
             .collect();
 
-        let fl = bfprotocols::frontline::compute(&pts, &bfprotocols::frontline::Params::default());
+        let fl = bfprotocols::frontline::compute(
+            &pts,
+            &bfprotocols::frontline::Params::default(),
+        );
         let cvt = |lines: &[Vec<[f64; 2]>]| -> Vec<Vec<[f64; 2]>> {
-            lines
-                .iter()
-                .map(|l| l.iter().map(|q| to_ll(q[0], q[1])).collect())
-                .collect()
+            lines.iter().map(|l| l.iter().map(|q| to_ll(q[0], q[1])).collect()).collect()
         };
         let out = serde_json::json!({
             "mid": cvt(&fl.mid),
@@ -465,7 +527,12 @@ pub(crate) async fn api_briefing(
     };
     match tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        call_engine_rpc_str(&db, &inst, "query-briefing", vec![("side", Value::from(side.to_string()))]),
+        call_engine_rpc_str(
+            &db,
+            &inst,
+            "query-briefing",
+            vec![("side", Value::from(side.to_string()))],
+        ),
     )
     .await
     {
@@ -540,15 +607,18 @@ pub(crate) async fn api_situation(
 
     // Swap the engine's in-session guess at "recent" for the persisted capture
     // log, which survives mission restarts and names the pilots involved.
-    let mut rep: bfprotocols::situation::SituationReport = match serde_json::from_str(&raw) {
-        Ok(r) => r,
-        Err(e) => {
-            // Don't fail the request over an enrichment step -- hand the
-            // engine's own JSON through unchanged.
-            log::warn!("api_situation: could not parse engine report for enrichment: {e}");
-            return Ok(json_response(raw));
-        }
-    };
+    let mut rep: bfprotocols::situation::SituationReport =
+        match serde_json::from_str(&raw) {
+            Ok(r) => r,
+            Err(e) => {
+                // Don't fail the request over an enrichment step -- hand the
+                // engine's own JSON through unchanged.
+                log::warn!(
+                    "api_situation: could not parse engine report for enrichment: {e}"
+                );
+                return Ok(json_response(raw));
+            }
+        };
     let captures = task::block_in_place(|| -> Result<Vec<serde_json::Value>> {
         let rounds = db.latest_rounds_for(&inst.id)?;
         let Some((_, rid, _)) = rounds.iter().find(|(_, _, r)| r.end.is_none()) else {
@@ -575,9 +645,9 @@ pub(crate) async fn api_situation(
         for cap in &captures {
             let obj = cap["objective"].as_str().unwrap_or("?");
             let by_side = cap["side"].as_str().unwrap_or("?");
-            let pilots: Vec<&str> = cap["by"].as_array().map_or(vec![], |a| {
-                a.iter().filter_map(|v| v.as_str()).collect()
-            });
+            let pilots: Vec<&str> = cap["by"]
+                .as_array()
+                .map_or(vec![], |a| a.iter().filter_map(|v| v.as_str()).collect());
             let who = if pilots.is_empty() {
                 std::string::String::new()
             } else {
@@ -621,7 +691,9 @@ pub(crate) async fn api_kills(
         let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match round_id {
             // Another instance's round is not this instance's to show.
-            Some(id) if db.round_instance_of(db::RoundId(id)) != inst.id => return Ok("[]".to_string()),
+            Some(id) if db.round_instance_of(db::RoundId(id)) != inst.id => {
+                return Ok("[]".to_string())
+            }
             Some(id) => db::RoundId(id),
             None => match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
                 Some((_, rid, _)) => *rid,
@@ -693,10 +765,9 @@ pub(crate) async fn api_warehouse(
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     use netidx::publisher::Value;
-    let objective = query
-        .get("objective")
-        .cloned()
-        .ok_or_else(|| Error(websec::bad_request("missing ?objective=<id or exact name>")))?;
+    let objective = query.get("objective").cloned().ok_or_else(|| {
+        Error(websec::bad_request("missing ?objective=<id or exact name>"))
+    })?;
 
     // This MUST fail closed. require_coalition returns Err for "not logged in"
     // and "session expired" as well as "no coalition", and an earlier version
@@ -754,11 +825,18 @@ pub(crate) async fn api_warehouse(
         // while: stock moves slowly, and a drawer going blank helps nobody.
         Err(e) => match last.get(&key) {
             Some((at, raw)) if at.elapsed() < WAREHOUSE_STALE_MAX => {
-                log::debug!("api_warehouse: {objective}: {}; serving the read from {}s ago", e.0, at.elapsed().as_secs());
+                log::debug!(
+                    "api_warehouse: {objective}: {}; serving the read from {}s ago",
+                    e.0,
+                    at.elapsed().as_secs()
+                );
                 Ok(json_response(raw.to_string()))
             }
             _ => {
-                log::warn!("api_warehouse: query-warehouse failed for {objective}: {}", e.0);
+                log::warn!(
+                    "api_warehouse: query-warehouse failed for {objective}: {}",
+                    e.0
+                );
                 Err(e)
             }
         },
@@ -767,14 +845,21 @@ pub(crate) async fn api_warehouse(
 
 /// How long one engine read of a base's warehouse serves every viewer.
 pub(crate) const WAREHOUSE_TTL: std::time::Duration = std::time::Duration::from_secs(20);
-pub(crate) static WAREHOUSE_CACHE: std::sync::LazyLock<websec::CacheMap<std::string::String, Arc<std::string::String>>> =
-    std::sync::LazyLock::new(websec::CacheMap::new);
+pub(crate) static WAREHOUSE_CACHE: std::sync::LazyLock<
+    websec::CacheMap<std::string::String, Arc<std::string::String>>,
+> = std::sync::LazyLock::new(websec::CacheMap::new);
 /// The last read the engine did send, per instance, side and base, served
 /// when a refresh fails -- for this long, after which the error shows.
 pub(crate) static WAREHOUSE_LAST_GOOD: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<std::string::String, (std::time::Instant, Arc<std::string::String>)>>,
+    std::sync::Mutex<
+        std::collections::HashMap<
+            std::string::String,
+            (std::time::Instant, Arc<std::string::String>),
+        >,
+    >,
 > = std::sync::LazyLock::new(Default::default);
-pub(crate) const WAREHOUSE_STALE_MAX: std::time::Duration = std::time::Duration::from_secs(600);
+pub(crate) const WAREHOUSE_STALE_MAX: std::time::Duration =
+    std::time::Duration::from_secs(600);
 
 /// Whether the engine still needs to be told about this server info.
 ///
@@ -788,8 +873,9 @@ pub(crate) fn should_push_server_info(inst: &Inst, payload: &str) -> bool {
     use std::hash::{Hash, Hasher};
     use std::sync::{LazyLock, Mutex};
     const QUIET_SECS: i64 = 60;
-    static LAST: LazyLock<Mutex<std::collections::HashMap<std::string::String, (i64, u64)>>> =
-        LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+    static LAST: LazyLock<
+        Mutex<std::collections::HashMap<std::string::String, (i64, u64)>>,
+    > = LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
     let mut h = DefaultHasher::new();
     payload.hash(&mut h);
     let hash = h.finish();
@@ -847,7 +933,8 @@ pub(crate) fn stats_summary(db: &StatsDb, inst: &Inst) -> Result<serde_json::Val
         } else {
             0
         };
-        let total_kills: u32 = pilots.iter().map(|(_, _, a)| a.air_kills + a.ground_kills).sum();
+        let total_kills: u32 =
+            pilots.iter().map(|(_, _, a)| a.air_kills + a.ground_kills).sum();
         // Fallback only -- bflib's own session stop_time, used when
         // DCSServerBot isn't configured/reachable (see below, api_stats
         // prefers the bot's own scheduler restart time when available,
@@ -855,20 +942,23 @@ pub(crate) fn stats_summary(db: &StatsDb, inst: &Inst) -> Result<serde_json::Val
         let local_restart_at = active_round
             .and_then(|(_, rid, _)| db.active_session_stop(*rid))
             .map(|t| t.to_rfc3339());
-        let weather = db.latest_weather(&inst).map(|w| serde_json::json!({
-            "temp_c": w.temp_c,
-            "wind_speed_kts": w.wind_speed_kts,
-            "wind_from_deg": w.wind_from_deg,
-            "cloud_base_m": w.cloud_base_m,
-            "qnh_hpa": w.qnh_hpa,
-            "cloud_density": w.cloud_density,
-            "visibility_m": w.visibility_m,
-        }));
-        let (blue_reg, red_reg, blue_online, red_online) = if let Some((_, rid, _)) = active_round {
-            db.pilot_side_counts(*rid).unwrap_or_default()
-        } else {
-            (0, 0, 0, 0)
-        };
+        let weather = db.latest_weather(&inst).map(|w| {
+            serde_json::json!({
+                "temp_c": w.temp_c,
+                "wind_speed_kts": w.wind_speed_kts,
+                "wind_from_deg": w.wind_from_deg,
+                "cloud_base_m": w.cloud_base_m,
+                "qnh_hpa": w.qnh_hpa,
+                "cloud_density": w.cloud_density,
+                "visibility_m": w.visibility_m,
+            })
+        });
+        let (blue_reg, red_reg, blue_online, red_online) =
+            if let Some((_, rid, _)) = active_round {
+                db.pilot_side_counts(*rid).unwrap_or_default()
+            } else {
+                (0, 0, 0, 0)
+            };
         // Round history shown as a headline figure is the public one, so a
         // test instance's rounds don't inflate it. (`rounds` above is already
         // this instance's own, but when a private instance is selected by an
@@ -877,7 +967,9 @@ pub(crate) fn stats_summary(db: &StatsDb, inst: &Inst) -> Result<serde_json::Val
         let public_rounds = db.public_rounds()?;
         let total_rounds = match &public_rounds {
             None => rounds.len(),
-            Some(allowed) => rounds.iter().filter(|(_, rid, _)| allowed.contains(rid)).count(),
+            Some(allowed) => {
+                rounds.iter().filter(|(_, rid, _)| allowed.contains(rid)).count()
+            }
         };
         Ok(serde_json::json!({
             "total_pilots": pilots.len(),
@@ -917,7 +1009,11 @@ pub(crate) async fn stats_apply_bot_info(
     // it if it's actually still ahead of us -- a countdown to the past
     // just clamps to zero and sits there, which reads as broken rather
     // than "no restart currently scheduled".
-    if let Some(bot_restart_at) = bot_info.as_ref().and_then(|s| s.restart_time.as_deref()).and_then(parse_bot_datetime) {
+    if let Some(bot_restart_at) = bot_info
+        .as_ref()
+        .and_then(|s| s.restart_time.as_deref())
+        .and_then(parse_bot_datetime)
+    {
         if bot_restart_at > chrono::Utc::now() {
             value["restart_at"] = serde_json::json!(bot_restart_at.to_rfc3339());
         } else {
@@ -976,7 +1072,10 @@ pub(crate) async fn stats_apply_bot_info(
     }
 }
 
-pub(crate) async fn api_points(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
+pub(crate) async fn api_points(
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
     // pilot_points walks every pilot's every round; see ROUTE_CACHE.
     let data = cached_json(format!("points:{}", inst.id), move || -> Result<String> {
         let rounds = db.latest_rounds_for(&inst.id)?;
@@ -985,16 +1084,24 @@ pub(crate) async fn api_points(db: StatsDb, inst: Inst) -> std::result::Result<i
             None => return Ok("[]".to_string()),
         };
         let entries = db.pilot_points(rid)?;
-        let json: Vec<_> = entries.iter().map(|(name, pts, side)| serde_json::json!({
-            "name": name, "points": pts, "side": side,
-        })).collect();
+        let json: Vec<_> = entries
+            .iter()
+            .map(|(name, pts, side)| {
+                serde_json::json!({
+                    "name": name, "points": pts, "side": side,
+                })
+            })
+            .collect();
         Ok(serde_json::to_string(&json)?)
     })
     .await?;
     Ok(json_response(data))
 }
 
-pub(crate) async fn api_captures(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
+pub(crate) async fn api_captures(
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
     let data = cached_json(format!("captures:{}", inst.id), move || -> Result<String> {
         let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
@@ -1002,9 +1109,14 @@ pub(crate) async fn api_captures(db: StatsDb, inst: Inst) -> std::result::Result
             None => return Ok("[]".to_string()),
         };
         let entries = db.most_captured(rid)?;
-        let json: Vec<_> = entries.iter().map(|(name, count)| serde_json::json!({
-            "name": name, "count": count,
-        })).collect();
+        let json: Vec<_> = entries
+            .iter()
+            .map(|(name, count)| {
+                serde_json::json!({
+                    "name": name, "count": count,
+                })
+            })
+            .collect();
         Ok(serde_json::to_string(&json)?)
     })
     .await?;
@@ -1021,47 +1133,59 @@ pub(crate) async fn api_capture_events(
     offset: usize,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = cached_json(format!("capture_events:{}:{round_id:?}:{limit:?}:{offset}", inst.id), move || -> Result<String> {
-        let rounds = db.latest_rounds_for(&inst.id)?;
-        let rid = match round_id {
-            // Another instance's round is not this instance's to show.
-            Some(id) if db.round_instance_of(db::RoundId(id)) != inst.id => return Ok("[]".to_string()),
-            Some(id) => db::RoundId(id),
-            None => match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
-                Some((_, rid, _)) => *rid,
-                None => match rounds.first() {
+    let data = cached_json(
+        format!("capture_events:{}:{round_id:?}:{limit:?}:{offset}", inst.id),
+        move || -> Result<String> {
+            let rounds = db.latest_rounds_for(&inst.id)?;
+            let rid = match round_id {
+                // Another instance's round is not this instance's to show.
+                Some(id) if db.round_instance_of(db::RoundId(id)) != inst.id => {
+                    return Ok("[]".to_string())
+                }
+                Some(id) => db::RoundId(id),
+                None => match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
                     Some((_, rid, _)) => *rid,
-                    None => return Ok("[]".to_string()),
+                    None => match rounds.first() {
+                        Some((_, rid, _)) => *rid,
+                        None => return Ok("[]".to_string()),
+                    },
                 },
-            },
-        };
-        // Same cap as /api/kills: `?limit=` is the caller's to choose, and
-        // `?offset=` pages further back.
-        let limit = limit.unwrap_or(50).clamp(1, 500);
-        let offset = offset.min(10_000);
-        let entries: Vec<_> = db.recent_captures(rid, limit + offset)?.into_iter().skip(offset).collect();
-        let json: Vec<_> = entries
-            .iter()
-            .map(|c| {
-                serde_json::json!({
-                    "time": c.time.to_rfc3339(),
-                    "objective": c.objective_name,
-                    "side": format!("{:?}", c.side),
-                    // pilot display names (fall back to ucid only if unknown)
-                    "by": c.by.iter()
-                        .map(|u| db.pilot_name(u).unwrap_or_else(|| u.to_string()))
-                        .collect::<Vec<_>>(),
-                    "by_ucid": c.by.iter().map(|u| u.to_string()).collect::<Vec<_>>(),
+            };
+            // Same cap as /api/kills: `?limit=` is the caller's to choose, and
+            // `?offset=` pages further back.
+            let limit = limit.unwrap_or(50).clamp(1, 500);
+            let offset = offset.min(10_000);
+            let entries: Vec<_> = db
+                .recent_captures(rid, limit + offset)?
+                .into_iter()
+                .skip(offset)
+                .collect();
+            let json: Vec<_> = entries
+                .iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "time": c.time.to_rfc3339(),
+                        "objective": c.objective_name,
+                        "side": format!("{:?}", c.side),
+                        // pilot display names (fall back to ucid only if unknown)
+                        "by": c.by.iter()
+                            .map(|u| db.pilot_name(u).unwrap_or_else(|| u.to_string()))
+                            .collect::<Vec<_>>(),
+                        "by_ucid": c.by.iter().map(|u| u.to_string()).collect::<Vec<_>>(),
+                    })
                 })
-            })
-            .collect();
-        Ok(serde_json::to_string(&json)?)
-    })
+                .collect();
+            Ok(serde_json::to_string(&json)?)
+        },
+    )
     .await?;
     Ok(json_response(data))
 }
 
-pub(crate) async fn api_aircraft_usage(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
+pub(crate) async fn api_aircraft_usage(
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
     let data = cached_json(format!("aircraft_usage:{}", inst.id), move || -> Result<String> {
         let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
@@ -1078,7 +1202,10 @@ pub(crate) async fn api_aircraft_usage(db: StatsDb, inst: Inst) -> std::result::
     Ok(json_response(data))
 }
 
-pub(crate) async fn api_online(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
+pub(crate) async fn api_online(
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
     let data = cached_json(format!("online:{}", inst.id), move || -> Result<String> {
         let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
@@ -1086,14 +1213,17 @@ pub(crate) async fn api_online(db: StatsDb, inst: Inst) -> std::result::Result<i
             None => return Ok("[]".to_string()),
         };
         let pilots = db.connected_pilots(rid)?;
-        let entries: Vec<_> = pilots.iter().map(|(ucid, name, side, aircraft)| {
-            serde_json::json!({
-                "ucid": ucid,
-                "name": name,
-                "side": format!("{:?}", side),
-                "aircraft": aircraft,
+        let entries: Vec<_> = pilots
+            .iter()
+            .map(|(ucid, name, side, aircraft)| {
+                serde_json::json!({
+                    "ucid": ucid,
+                    "name": name,
+                    "side": format!("{:?}", side),
+                    "aircraft": aircraft,
+                })
             })
-        }).collect();
+            .collect();
         Ok(serde_json::to_string(&entries)?)
     })
     .await?;
@@ -1128,8 +1258,10 @@ pub(crate) async fn api_units(
                 let heading = (vel.z.atan2(vel.x).to_degrees() + 360.0) % 360.0;
                 let speed_mps = (vel.x * vel.x + vel.y * vel.y + vel.z * vel.z).sqrt();
                 let speed_kts = speed_mps * 1.94384;
-                let tags: Vec<String> = unit.tags.iter().map(|t| format!("{:?}", t)).collect();
-                let detected_by: Vec<String> = flags.iter().map(|d| format!("{:?}", d)).collect();
+                let tags: Vec<String> =
+                    unit.tags.iter().map(|t| format!("{:?}", t)).collect();
+                let detected_by: Vec<String> =
+                    flags.iter().map(|d| format!("{:?}", d)).collect();
                 serde_json::json!({
                     "id": format!("{}", eid),
                     "owner": format!("{:?}", unit.owner),
@@ -1168,42 +1300,47 @@ pub(crate) async fn api_trails(
             },
         };
         let points = db.get_trail_points(rid)?;
-        let entries: Vec<_> = points.iter().map(|p| serde_json::json!({
-            "id":  p.unit_id,
-            "lat": p.lat,
-            "lon": p.lon,
-            "alt": p.alt,
-            "hdg": p.hdg,
-            "ts":  p.ts,
-        })).collect();
+        let entries: Vec<_> = points
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "id":  p.unit_id,
+                    "lat": p.lat,
+                    "lon": p.lon,
+                    "alt": p.alt,
+                    "hdg": p.hdg,
+                    "ts":  p.ts,
+                })
+            })
+            .collect();
         Ok(serde_json::to_string(&entries)?)
     })
     .await?;
     Ok(json_response(data))
 }
 
-pub(crate) async fn api_unitdb(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
+pub(crate) async fn api_unitdb(
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
     let snap = task::block_in_place(|| db.unit_db_latest(&inst.id.to_string()))?;
     let body = match snap {
         Some((_, json)) => json,
-        None => String::from("{\"dcs_version\":null,\"harvested_at\":null,\"by_type\":{}}"),
+        None => {
+            String::from("{\"dcs_version\":null,\"harvested_at\":null,\"by_type\":{}}")
+        }
     };
-    Ok(warp::reply::with_header(
-        body,
-        "content-type",
-        "application/json",
-    ))
+    Ok(warp::reply::with_header(body, "content-type", "application/json"))
 }
-
 
 pub(crate) async fn api_unitdb_stale(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let stale = task::block_in_place(|| db.unit_db_stale_overrides(&inst.id.to_string()))?;
+    let stale =
+        task::block_in_place(|| db.unit_db_stale_overrides(&inst.id.to_string()))?;
     Ok(warp::reply::json(&stale))
 }
-
 
 /// SRS's own export (whether read from CLIENT_EXPORT_FILE_PATH or served by
 /// its optional HTTP_SERVER feature) uses PascalCase keys at the top level
@@ -1254,14 +1391,13 @@ pub(crate) async fn api_srs(srs_url: Arc<Option<String>>) -> Response {
     // outright), this would otherwise block the request indefinitely,
     // right through to Cloudflare's own ~100s edge timeout (a 524) instead
     // of falling back quickly like every other failure mode here already does.
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(3))
-        .build();
+    let client =
+        reqwest::Client::builder().timeout(std::time::Duration::from_secs(3)).build();
     let Ok(client) = client else { return empty.into_response() };
     match client.get(src).send().await {
         Ok(resp) => match resp.json::<serde_json::Value>().await {
             Ok(json) => warp::reply::json(&normalize_srs_json(json)).into_response(),
-            Err(_)   => empty.into_response(),
+            Err(_) => empty.into_response(),
         },
         Err(_) => empty.into_response(),
     }

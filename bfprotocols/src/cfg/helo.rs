@@ -176,12 +176,24 @@ impl Default for HeloThreatAvoidanceCfg {
     }
 }
 
-pub(super) fn default_helo_threat_margin() -> f64 { 1.25 }
-pub(super) fn default_helo_noe_agl_m() -> f64 { 40.0 }
-pub(super) fn default_helo_max_replans() -> u32 { 4 }
-pub(super) fn default_helo_min_replan_secs() -> u32 { 20 }
-pub(super) fn default_helo_unknown_threat_m() -> f64 { 10_000.0 }
-pub(super) fn default_helo_garrison_threat_m() -> f64 { 3_000.0 }
+pub(super) fn default_helo_threat_margin() -> f64 {
+    1.25
+}
+pub(super) fn default_helo_noe_agl_m() -> f64 {
+    40.0
+}
+pub(super) fn default_helo_max_replans() -> u32 {
+    4
+}
+pub(super) fn default_helo_min_replan_secs() -> u32 {
+    20
+}
+pub(super) fn default_helo_unknown_threat_m() -> f64 {
+    10_000.0
+}
+pub(super) fn default_helo_garrison_threat_m() -> f64 {
+    3_000.0
+}
 
 /// See `HeloInsertionCfg::ground_fallback`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -223,9 +235,15 @@ impl Default for HeloGroundFallbackCfg {
     }
 }
 
-pub(super) fn default_ground_fallback_speed_kph() -> f64 { 50.0 }
-pub(super) fn default_ground_fallback_arrive_m() -> f64 { 400.0 }
-pub(super) fn default_ground_fallback_max_range_m() -> f64 { 60_000.0 }
+pub(super) fn default_ground_fallback_speed_kph() -> f64 {
+    50.0
+}
+pub(super) fn default_ground_fallback_arrive_m() -> f64 {
+    400.0
+}
+pub(super) fn default_ground_fallback_max_range_m() -> f64 {
+    60_000.0
+}
 
 #[cfg(test)]
 mod ground_fallback_tests {
@@ -270,16 +288,36 @@ mod ground_fallback_tests {
     }
 }
 
-pub(super) fn default_helo_troop_name() -> String { String::from("Standard") }
-pub(super) fn default_helo_altitude_m() -> f64 { 500.0 }
-pub(super) fn default_helo_speed_kph() -> f64 { 220.0 }
-pub(super) fn default_helo_supply_cost() -> i32 { 50 }
-pub(super) fn default_helo_supply_per_item() -> u32 { 50 }
-pub(super) fn default_helo_max_range_m() -> f64 { 150_000.0 }
-pub(super) fn default_helo_landing_radius_m() -> f64 { 200.0 }
-pub(super) fn default_helo_terrain_clearance_m() -> f64 { 250.0 }
-pub(super) fn default_helo_max_altitude_m() -> f64 { 3500.0 }
-pub(super) fn default_helo_waypoint_spacing_m() -> f64 { 2500.0 }
+pub(super) fn default_helo_troop_name() -> String {
+    String::from("Standard")
+}
+pub(super) fn default_helo_altitude_m() -> f64 {
+    500.0
+}
+pub(super) fn default_helo_speed_kph() -> f64 {
+    220.0
+}
+pub(super) fn default_helo_supply_cost() -> i32 {
+    50
+}
+pub(super) fn default_helo_supply_per_item() -> u32 {
+    50
+}
+pub(super) fn default_helo_max_range_m() -> f64 {
+    150_000.0
+}
+pub(super) fn default_helo_landing_radius_m() -> f64 {
+    200.0
+}
+pub(super) fn default_helo_terrain_clearance_m() -> f64 {
+    250.0
+}
+pub(super) fn default_helo_max_altitude_m() -> f64 {
+    3500.0
+}
+pub(super) fn default_helo_waypoint_spacing_m() -> f64 {
+    2500.0
+}
 
 pub(super) fn default_scenery_fallback_logi() -> u8 {
     100

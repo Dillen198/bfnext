@@ -74,7 +74,11 @@ Reply with JSON only, no code fence, exactly these keys:
 Weights are 0.0-2.5, 1.0 normal. Use only objective ids listed in the brief.";
 
 fn yes(b: bool) -> &'static str {
-    if b { "Y" } else { "-" }
+    if b {
+        "Y"
+    } else {
+        "-"
+    }
 }
 
 /// The brief: the HQ view as compact text. Tables, not JSON -- a third of
@@ -101,7 +105,10 @@ fn brief(v: &HqView) -> String {
             s,
             "Current posture {:?}, main effort {}.",
             post,
-            v.main_effort.as_ref().map(|o| format!("{} (#{})", o.name, o.id)).unwrap_or_else(|| "none".into())
+            v.main_effort
+                .as_ref()
+                .map(|o| format!("{} (#{})", o.name, o.id))
+                .unwrap_or_else(|| "none".into())
         );
     }
     if !v.reasons.is_empty() {
@@ -157,7 +164,12 @@ fn brief(v: &HqView) -> String {
         p.enemy_air_detected, p.enemy_formations_in_contact
     );
     if !p.enemy_sams.is_empty() {
-        let v: Vec<String> = p.enemy_sams.iter().take(12).map(|c| format!("{} km from {}", c.near_km, c.near)).collect();
+        let v: Vec<String> = p
+            .enemy_sams
+            .iter()
+            .take(12)
+            .map(|c| format!("{} km from {}", c.near_km, c.near))
+            .collect();
         let _ = writeln!(s, "Known enemy air defence: {}.", v.join("; "));
     }
     if !p.enemy_ground.is_empty() {
@@ -165,7 +177,12 @@ fn brief(v: &HqView) -> String {
             .enemy_ground
             .iter()
             .take(12)
-            .map(|c| format!("{} x{} {} km from {} ({}m old)", c.class, c.count, c.near_km, c.near, c.age_mins))
+            .map(|c| {
+                format!(
+                    "{} x{} {} km from {} ({}m old)",
+                    c.class, c.count, c.near_km, c.near, c.age_mins
+                )
+            })
             .collect();
         let _ = writeln!(s, "Enemy ground seen: {}.", v.join("; "));
     }
@@ -176,14 +193,22 @@ fn brief(v: &HqView) -> String {
     );
 
     let _ = writeln!(s, "\nOPERATIONS AVAILABLE (cost): {}", {
-        let v: Vec<String> = v.available.iter().map(|(k, c)| format!("{} {c}", k.label())).collect();
+        let v: Vec<String> =
+            v.available.iter().map(|(k, c)| format!("{} {c}", k.label())).collect();
         v.join(", ")
     });
     if !v.record.is_empty() {
         let r: Vec<String> = v
             .record
             .iter()
-            .map(|r| format!("{} {}/{} succeeded", r.kind.label(), r.succeeded, r.succeeded + r.failed))
+            .map(|r| {
+                format!(
+                    "{} {}/{} succeeded",
+                    r.kind.label(),
+                    r.succeeded,
+                    r.succeeded + r.failed
+                )
+            })
             .collect();
         let _ = writeln!(s, "RECORD SO FAR: {}.", r.join(", "));
     }
@@ -225,14 +250,18 @@ fn parse(raw: &str) -> Result<Directive> {
     // `"main_effort": "12"` still lands.
     let mut v: serde_json::Value = serde_json::from_str(&raw[start..=end])?;
     if let Some(me) = v.get_mut("main_effort") {
-        if let Some(n) = me.as_str().and_then(|s| s.trim_start_matches('#').parse::<u64>().ok()) {
+        if let Some(n) =
+            me.as_str().and_then(|s| s.trim_start_matches('#').parse::<u64>().ok())
+        {
             *me = serde_json::json!(n);
         }
     }
     for key in ["defend", "supply_priority", "avoid"] {
         if let Some(serde_json::Value::Array(a)) = v.get_mut(key) {
             for x in a.iter_mut() {
-                if let Some(n) = x.as_str().and_then(|s| s.trim_start_matches('#').parse::<u64>().ok()) {
+                if let Some(n) =
+                    x.as_str().and_then(|s| s.trim_start_matches('#').parse::<u64>().ok())
+                {
                     *x = serde_json::json!(n);
                 }
             }
@@ -247,10 +276,16 @@ fn parse(raw: &str) -> Result<Directive> {
 }
 
 async fn query(inst: &EngineHost, side: &str) -> Result<Option<HqView>> {
-    let args = vec![("side", Value::from(side.to_string())), ("ucid", Value::from(String::new()))];
-    let reply = tokio::time::timeout(Duration::from_secs(15), inst.rpc_optional("query-hq", args))
-        .await
-        .map_err(|_| anyhow!("query-hq timed out"))??;
+    let args = vec![
+        ("side", Value::from(side.to_string())),
+        ("ucid", Value::from(String::new())),
+    ];
+    let reply = tokio::time::timeout(
+        Duration::from_secs(15),
+        inst.rpc_optional("query-hq", args),
+    )
+    .await
+    .map_err(|_| anyhow!("query-hq timed out"))??;
     match reply {
         Answer::Str(s) => Ok(Some(serde_json::from_str(&s)?)),
         Answer::Refused(e) => {
@@ -265,9 +300,12 @@ async fn send(inst: &EngineHost, side: &str, d: &Directive) -> Result<String> {
         ("side", Value::from(side.to_string())),
         ("directive", Value::from(serde_json::to_string(d)?)),
     ];
-    let reply = tokio::time::timeout(Duration::from_secs(15), inst.rpc_optional("hq-directive", args))
-        .await
-        .map_err(|_| anyhow!("hq-directive timed out"))??;
+    let reply = tokio::time::timeout(
+        Duration::from_secs(15),
+        inst.rpc_optional("hq-directive", args),
+    )
+    .await
+    .map_err(|_| anyhow!("hq-directive timed out"))??;
     match reply {
         Answer::Str(s) => Ok(s),
         Answer::Refused(e) => bail!("engine refused the directive: {e}"),
@@ -297,12 +335,17 @@ pub(crate) async fn run(inst: EngineHost, writer: news_llm::WriterCfg, every: Du
         }
         for (side, v) in views {
             if v.override_.is_some() {
-                log::debug!("[{}] hq strategist: {side} has human orders, standing by", inst.id);
+                log::debug!(
+                    "[{}] hq strategist: {side} has human orders, standing by",
+                    inst.id
+                );
                 continue;
             }
             let prompt = brief(&v);
             let w = writer.clone();
-            let res = tokio::task::block_in_place(|| news_llm::chat(&w, SYSTEM, &prompt, 900, 0.3));
+            let res = tokio::task::block_in_place(|| {
+                news_llm::chat(&w, SYSTEM, &prompt, 900, 0.3)
+            });
             let raw = match res {
                 Ok((raw, _)) => raw,
                 Err(e) => {
@@ -361,7 +404,12 @@ mod tests {
 
     #[test]
     fn the_brief_names_both_sides_of_the_line() {
-        let mut v = HqView { side: "Blue".into(), enabled: true, treasury: 900, ..Default::default() };
+        let mut v = HqView {
+            side: "Blue".into(),
+            enabled: true,
+            treasury: 900,
+            ..Default::default()
+        };
         v.picture.objectives.push(bfprotocols::hq::ObjInfo {
             id: 1,
             name: "Senaki".into(),
