@@ -84,11 +84,11 @@ fn deg(rad: f64) -> f64 {
 
 /// Map position to lat/lon. One DCS call per formation; its vehicles are a
 /// few hundred metres away and go through `Local` instead.
-struct Geo<'lua> {
-    coord: Option<Coord<'lua>>,
+struct Geo {
+    coord: Option<Coord>,
 }
 
-impl<'lua> Geo<'lua> {
+impl Geo {
     fn ll(&self, p: Vector2) -> LatLon {
         self.coord
             .as_ref()

@@ -214,7 +214,7 @@ fn fog_visibility_m(lua: MizLua) -> Option<f64> {
     let world: LuaTable = lua.inner().globals().raw_get("world").ok()?;
     let weather: LuaTable = world.raw_get("weather").ok()?;
     weather
-        .call_function::<_, f64>("getFogVisibilityDistance", ())
+        .call_function::<f64>("getFogVisibilityDistance", ())
         .ok()
 }
 
@@ -237,16 +237,16 @@ pub(crate) fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<Weath
     // dir + 180 -- exactly what DCS's briefing and the bot show. Dynamic
     // weather has no meaningful authored value, so sample DCS live.
     let static_atmo = wx
-        .get::<_, Option<f64>>("atmosphere_type")
+        .get::<Option<f64>>("atmosphere_type")
         .ok()
         .flatten()
         .unwrap_or(0.0)
         == 0.0;
     let authored_ground = if static_atmo {
-        wx.get::<_, LuaTable>("wind")
-            .and_then(|w| w.get::<_, LuaTable>("atGround"))
+        wx.get::<LuaTable>("wind")
+            .and_then(|w| w.get::<LuaTable>("atGround"))
             .ok()
-            .and_then(|g| Some((g.get::<_, f64>("dir").ok()?, g.get::<_, f64>("speed").ok()?)))
+            .and_then(|g| Some((g.get::<f64>("dir").ok()?, g.get::<f64>("speed").ok()?)))
     } else {
         None
     };
@@ -261,7 +261,7 @@ pub(crate) fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<Weath
     // Temperature and pressure at the field, from DCS's atmosphere.
     let qnh_mmhg_miz: f64 = wx.get("qnh").unwrap_or(760.0);
     let season_temp_c: f64 = wx
-        .get::<_, LuaTable>("season")
+        .get::<LuaTable>("season")
         .and_then(|s| s.get("temperature"))
         .unwrap_or(15.0);
     let (temp_c, qfe_hpa) = match temp_pressure_at(lua, pos_x, ground_elev_m, pos_z) {
@@ -278,7 +278,7 @@ pub(crate) fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<Weath
     let qnh_hpa = qfe_hpa + ground_elev_m * QFE_TO_QNH_HPA_PER_M;
     let qnh_inhg = qnh_hpa * HPA_TO_INHG;
 
-    let clouds: Option<LuaTable> = wx.raw_get::<_, Option<LuaTable>>("clouds").ok().flatten();
+    let clouds: Option<LuaTable> = wx.raw_get::<Option<LuaTable>>("clouds").ok().flatten();
     let has_cloud_table = clouds.is_some();
     let cloud_base_m: f64 = clouds
         .as_ref()
@@ -287,35 +287,35 @@ pub(crate) fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<Weath
     let cloud_thickness_m: Option<f64> = clouds.as_ref().and_then(|c| c.get("thickness").ok());
     let cloud_density: u8 = clouds
         .as_ref()
-        .and_then(|c| c.get::<_, f64>("density").ok())
+        .and_then(|c| c.get::<f64>("density").ok())
         .map(|d| d.round().clamp(0.0, 10.0) as u8)
         .unwrap_or(0);
     let cloud_preset: Option<compact_str::CompactString> = clouds
         .as_ref()
-        .and_then(|c| c.get::<_, std::string::String>("preset").ok())
+        .and_then(|c| c.get::<std::string::String>("preset").ok())
         .map(|s| compact_str::CompactString::from(s.as_str()))
         .filter(|s| !s.is_empty());
     let precip: bool = clouds
         .as_ref()
-        .and_then(|c| c.get::<_, f64>("iprecptns").ok())
+        .and_then(|c| c.get::<f64>("iprecptns").ok())
         .map(|p| p > 0.0)
         .unwrap_or(false)
         || cloud_preset.as_deref().is_some_and(|p| p.starts_with("Rainy"));
 
     // Visibility: the mission's, unless fog is up (the bot does the same).
     let mut visibility_m: f64 = wx
-        .get::<_, LuaTable>("visibility")
+        .get::<LuaTable>("visibility")
         .and_then(|v| v.get("distance"))
         .unwrap_or(80_000.0);
     match fog_visibility_m(lua) {
         Some(v) if v > 0.0 => visibility_m = v,
         Some(_) => (),
         None => {
-            if wx.get::<_, bool>("enable_fog").unwrap_or(false) {
+            if wx.get::<bool>("enable_fog").unwrap_or(false) {
                 if let Some(v) = wx
-                    .raw_get::<_, LuaTable>("fog")
+                    .raw_get::<LuaTable>("fog")
                     .ok()
-                    .and_then(|f| f.get::<_, f64>("visibility").ok())
+                    .and_then(|f| f.get::<f64>("visibility").ok())
                     .filter(|v| *v > 0.0)
                 {
                     visibility_m = visibility_m.min(v);
@@ -482,7 +482,7 @@ pub fn harvest_airdromes(lua: HooksLua) -> Result<()> {
     for r in tbl.sequence_values::<LuaTable>() {
         let Ok(r) = r else { continue };
         let seq_f64 = |k: &str| -> Vec<f64> {
-            r.get::<_, Option<LuaTable>>(k)
+            r.get::<Option<LuaTable>>(k)
                 .ok()
                 .flatten()
                 .map(|t| t.sequence_values::<f64>().filter_map(|v| v.ok()).collect())
@@ -490,7 +490,7 @@ pub fn harvest_airdromes(lua: HooksLua) -> Result<()> {
         };
         let freqs_hz = seq_f64("freqs");
         let runways: Vec<std::string::String> = r
-            .get::<_, Option<LuaTable>>("runways")
+            .get::<Option<LuaTable>>("runways")
             .ok()
             .flatten()
             .map(|t| {
@@ -499,39 +499,39 @@ pub fn harvest_airdromes(lua: HooksLua) -> Result<()> {
                     .collect()
             })
             .unwrap_or_default();
-        let (Ok(x), Ok(z)) = (r.get::<_, f64>("x"), r.get::<_, f64>("z")) else {
+        let (Ok(x), Ok(z)) = (r.get::<f64>("x"), r.get::<f64>("z")) else {
             continue;
         };
         out.push(Airdrome {
-            name: r.get::<_, Option<std::string::String>>("name").ok().flatten().unwrap_or_default(),
+            name: r.get::<Option<std::string::String>>("name").ok().flatten().unwrap_or_default(),
             code: r
-                .get::<_, Option<std::string::String>>("code")
+                .get::<Option<std::string::String>>("code")
                 .ok()
                 .flatten()
                 .filter(|c| !c.is_empty()),
             x,
             z,
-            alt_m: r.get::<_, f64>("alt").unwrap_or(0.0),
-            lat: r.get::<_, Option<f64>>("lat").ok().flatten(),
-            lon: r.get::<_, Option<f64>>("lon").ok().flatten(),
+            alt_m: r.get::<f64>("alt").unwrap_or(0.0),
+            lat: r.get::<Option<f64>>("lat").ok().flatten(),
+            lon: r.get::<Option<f64>>("lon").ok().flatten(),
             mgrs: r
-                .get::<_, Option<std::string::String>>("mgrs")
+                .get::<Option<std::string::String>>("mgrs")
                 .ok()
                 .flatten()
                 .filter(|m| !m.is_empty()),
             freqs_hz,
             runways,
             rwy_heading_deg: r
-                .get::<_, Option<f64>>("heading")
+                .get::<Option<f64>>("heading")
                 .ok()
                 .flatten()
                 .map(|h| h.rem_euclid(360.0)),
             me_wx: (|| {
                 Some((
-                    r.get::<_, Option<f64>>("me_temp").ok()??,
-                    r.get::<_, Option<f64>>("me_qfe").ok()??,
-                    r.get::<_, Option<f64>>("me_wind_from").ok()??,
-                    r.get::<_, Option<f64>>("me_wind_ms").ok()??,
+                    r.get::<Option<f64>>("me_temp").ok()??,
+                    r.get::<Option<f64>>("me_qfe").ok()??,
+                    r.get::<Option<f64>>("me_wind_from").ok()??,
+                    r.get::<Option<f64>>("me_wind_ms").ok()??,
                 ))
             })(),
         });

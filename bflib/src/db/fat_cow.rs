@@ -167,8 +167,8 @@ impl Ids {
 
 /// `country.<category>.group`, created if the mission has none of that
 /// category for this country yet.
-fn group_list<'lua>(lua: &'lua mlua::Lua, country: &Table<'lua>, category: &str) -> Result<Table<'lua>> {
-    let cat: Table = match country.raw_get::<_, Option<Table>>(category)? {
+fn group_list(lua: &mlua::Lua, country: &Table, category: &str) -> Result<Table> {
+    let cat: Table = match country.raw_get::<Option<Table>>(category)? {
         Some(t) => t,
         None => {
             let t = lua.create_table()?;
@@ -176,7 +176,7 @@ fn group_list<'lua>(lua: &'lua mlua::Lua, country: &Table<'lua>, category: &str)
             t
         }
     };
-    Ok(match cat.raw_get::<_, Option<Table>>("group")? {
+    Ok(match cat.raw_get::<Option<Table>>("group")? {
         Some(t) => t,
         None => {
             let t = lua.create_table()?;
@@ -190,15 +190,15 @@ fn push(list: &Table, t: Table) -> Result<()> {
     Ok(list.raw_set(list.raw_len() + 1, t)?)
 }
 
-fn static_group<'lua>(
-    lua: &'lua mlua::Lua,
+fn static_group(
+    lua: &mlua::Lua,
     ids: &mut Ids,
     name: &str,
     category: &str,
     typ: &str,
     shape: Option<&str>,
     pos: (f64, f64),
-) -> Result<Table<'lua>> {
+) -> Result<Table> {
     let unit = lua.create_table()?;
     unit.raw_set("name", name)?;
     unit.raw_set("unitId", ids.unit())?;
@@ -225,21 +225,21 @@ fn static_group<'lua>(
     Ok(group)
 }
 
-fn pad_group<'lua>(lua: &'lua mlua::Lua, ids: &mut Ids, name: &str) -> Result<Table<'lua>> {
+fn pad_group(lua: &mlua::Lua, ids: &mut Ids, name: &str) -> Result<Table> {
     let group = static_group(lua, ids, name, "Heliports", "Invisible FARP", Some("invisiblefarp"), (0., 0.))?;
-    let unit: Table = group.raw_get::<_, Table>("units")?.raw_get(1)?;
+    let unit: Table = group.raw_get::<Table>("units")?.raw_get(1)?;
     unit.raw_set("heliport_callsign_id", 1)?;
     unit.raw_set("heliport_frequency", "127.5")?;
     unit.raw_set("heliport_modulation", 0)?;
     Ok(group)
 }
 
-fn infantry_group<'lua>(
-    lua: &'lua mlua::Lua,
+fn infantry_group(
+    lua: &mlua::Lua,
     ids: &mut Ids,
     name: &str,
     members: &[(&str, f64, f64, f64)],
-) -> Result<Table<'lua>> {
+) -> Result<Table> {
     let units = lua.create_table()?;
     for (i, (typ, x, y, heading)) in members.iter().enumerate() {
         let unit = lua.create_table()?;

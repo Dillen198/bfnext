@@ -620,13 +620,13 @@ fn decimate(pts: &[Vector2], spacing: f64) -> Vec<Vector2> {
     out
 }
 
-pub(super) fn ground_point<'lua>(
-    land: &Land<'lua>,
+pub(super) fn ground_point(
+    land: &Land,
     pos: Vector2,
     formation: VehicleFormation,
     speed: f64,
-    task: Task<'lua>,
-) -> MissionPoint<'lua> {
+    task: Task,
+) -> MissionPoint {
     MissionPoint {
         action: Some(ActionTyp::Ground(formation)),
         airdrome_id: None,
@@ -648,14 +648,14 @@ pub(super) fn ground_point<'lua>(
 
 /// The DCS route for one of a formation's groups from `from` along `path`.
 /// An empty path is a halt where it stands.
-fn dcs_route<'lua>(
-    land: &Land<'lua>,
+fn dcs_route(
+    land: &Land,
     from: Vector2,
     path: &[Vector2],
     off_road: bool,
     deployed: bool,
     (speed, last_leg): (f64, f64),
-) -> Vec<MissionPoint<'lua>> {
+) -> Vec<MissionPoint> {
     // Deployed for a fight, it advances in line abreast across country; on
     // the march it keeps to the road.
     let along = if deployed {

@@ -742,7 +742,7 @@ impl Ewr {
                 SmallVec::new();
             for (uid, oid, side) in db.ai_aircraft_unit_ids() {
                 // Query DCS for live position and in_air state.
-                let unit_instance: Unit<'_> = match Unit::get_instance(lua, oid) {
+                let unit_instance: Unit = match Unit::get_instance(lua, oid) {
                     Ok(u) => u,
                     Err(_) => continue, // unit may have died but not yet been cleaned up
                 };

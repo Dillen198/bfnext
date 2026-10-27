@@ -133,32 +133,32 @@ pub fn loadout_by_class(typ: &str, class: &str, max: usize) -> std::collections:
 }
 
 fn num(t: &LuaTable, k: &str) -> Option<f64> {
-    t.raw_get::<_, Option<f64>>(k).ok().flatten()
+    t.raw_get::<Option<f64>>(k).ok().flatten()
 }
 
 fn bomb_entry(name: &str, t: &LuaTable) -> Option<WeaponBallistics> {
-    let fm: LuaTable = t.raw_get::<_, Option<LuaTable>>("fm").ok().flatten()?;
+    let fm: LuaTable = t.raw_get::<Option<LuaTable>>("fm").ok().flatten()?;
     let mass_kg = num(&fm, "mass")?;
     let caliber_m = num(&fm, "caliber").unwrap_or(0.);
     let length_m = num(&fm, "L").unwrap_or(0.);
     let cx_coeff = fm
-        .raw_get::<_, Option<LuaTable>>("cx_coeff")
+        .raw_get::<Option<LuaTable>>("cx_coeff")
         .ok()
         .flatten()
         .map(|c| c.sequence_values::<f64>().filter_map(|v| v.ok()).collect())
         .unwrap_or_default();
     let char_time_s = t
-        .raw_get::<_, Option<LuaTable>>("targeting_data")
+        .raw_get::<Option<LuaTable>>("targeting_data")
         .ok()
         .flatten()
         .and_then(|td| num(&td, "char_time"));
     let display_name = ["user_name", "display_name", "displayName"]
         .iter()
-        .find_map(|k| t.raw_get::<_, Option<String>>(*k).ok().flatten())
+        .find_map(|k| t.raw_get::<Option<String>>(*k).ok().flatten())
         .unwrap_or_default();
     let guided = ["laser", "seeker", "autopilot", "guidance", "control_block"]
         .iter()
-        .any(|k| !matches!(t.raw_get::<_, LuaValue>(*k), Ok(LuaValue::Nil) | Err(_)));
+        .any(|k| !matches!(t.raw_get::<LuaValue>(*k), Ok(LuaValue::Nil) | Err(_)));
     Some(WeaponBallistics {
         name: name.to_string(),
         display_name,
@@ -179,7 +179,7 @@ fn harvest_bombs(g: &LuaTable) -> Vec<WeaponBallistics> {
             let LuaValue::Table(t) = v else { continue };
             let name = match k {
                 LuaValue::String(s) => s.to_str().map(|s| s.to_string()).ok(),
-                _ => t.raw_get::<_, Option<String>>("name").ok().flatten(),
+                _ => t.raw_get::<Option<String>>("name").ok().flatten(),
             };
             if let Some(name) = name {
                 if let Some(b) = bomb_entry(&name, &t) {
@@ -190,12 +190,12 @@ fn harvest_bombs(g: &LuaTable) -> Vec<WeaponBallistics> {
             }
         }
     };
-    if let Ok(Some(b)) = g.raw_get::<_, Option<LuaTable>>("bombs") {
+    if let Ok(Some(b)) = g.raw_get::<Option<LuaTable>>("bombs") {
         scan(b)
     }
-    if let Ok(Some(wt)) = g.raw_get::<_, Option<LuaTable>>("weapons_table") {
-        if let Ok(Some(w)) = wt.raw_get::<_, Option<LuaTable>>("weapons") {
-            if let Ok(Some(b)) = w.raw_get::<_, Option<LuaTable>>("bombs") {
+    if let Ok(Some(wt)) = g.raw_get::<Option<LuaTable>>("weapons_table") {
+        if let Ok(Some(w)) = wt.raw_get::<Option<LuaTable>>("weapons") {
+            if let Ok(Some(b)) = w.raw_get::<Option<LuaTable>>("bombs") {
                 scan(b)
             }
         }
@@ -206,24 +206,24 @@ fn harvest_bombs(g: &LuaTable) -> Vec<WeaponBallistics> {
 
 fn harvest_pylons(g: &LuaTable) -> FxHashMap<String, Vec<(u8, Vec<String>)>> {
     let mut m = FxHashMap::default();
-    let Ok(Some(db)) = g.raw_get::<_, Option<LuaTable>>("db") else { return m };
-    let Ok(Some(units)) = db.raw_get::<_, Option<LuaTable>>("Units") else { return m };
+    let Ok(Some(db)) = g.raw_get::<Option<LuaTable>>("db") else { return m };
+    let Ok(Some(units)) = db.raw_get::<Option<LuaTable>>("Units") else { return m };
     for (cat, sub) in [("Planes", "Plane"), ("Helicopters", "Helicopter")] {
-        let Ok(Some(c)) = units.raw_get::<_, Option<LuaTable>>(cat) else { continue };
-        let Ok(Some(list)) = c.raw_get::<_, Option<LuaTable>>(sub) else { continue };
+        let Ok(Some(c)) = units.raw_get::<Option<LuaTable>>(cat) else { continue };
+        let Ok(Some(list)) = c.raw_get::<Option<LuaTable>>(sub) else { continue };
         for v in list.sequence_values::<LuaTable>() {
             let Ok(t) = v else { continue };
-            let Some(typ) = t.raw_get::<_, Option<String>>("type").ok().flatten() else { continue };
-            let Some(pyl) = t.raw_get::<_, Option<LuaTable>>("Pylons").ok().flatten() else { continue };
+            let Some(typ) = t.raw_get::<Option<String>>("type").ok().flatten() else { continue };
+            let Some(pyl) = t.raw_get::<Option<LuaTable>>("Pylons").ok().flatten() else { continue };
             let mut ps = vec![];
             for p in pyl.sequence_values::<LuaTable>() {
                 let Ok(p) = p else { continue };
-                let Some(n) = p.raw_get::<_, Option<i64>>("Number").ok().flatten() else { continue };
+                let Some(n) = p.raw_get::<Option<i64>>("Number").ok().flatten() else { continue };
                 let mut clsids = vec![];
-                if let Some(ls) = p.raw_get::<_, Option<LuaTable>>("Launchers").ok().flatten() {
+                if let Some(ls) = p.raw_get::<Option<LuaTable>>("Launchers").ok().flatten() {
                     for l in ls.sequence_values::<LuaTable>() {
                         if let Ok(l) = l {
-                            if let Some(c) = l.raw_get::<_, Option<String>>("CLSID").ok().flatten() {
+                            if let Some(c) = l.raw_get::<Option<String>>("CLSID").ok().flatten() {
                                 clsids.push(c);
                             }
                         }
@@ -239,25 +239,25 @@ fn harvest_pylons(g: &LuaTable) -> FxHashMap<String, Vec<(u8, Vec<String>)>> {
 
 fn harvest_clsid_names(g: &LuaTable) -> FxHashMap<String, String> {
     let mut m = FxHashMap::default();
-    let Ok(Some(db)) = g.raw_get::<_, Option<LuaTable>>("db") else { return m };
-    let Ok(Some(w)) = db.raw_get::<_, Option<LuaTable>>("Weapons") else { return m };
+    let Ok(Some(db)) = g.raw_get::<Option<LuaTable>>("db") else { return m };
+    let Ok(Some(w)) = db.raw_get::<Option<LuaTable>>("Weapons") else { return m };
     let name_of = |t: &LuaTable| -> Option<String> {
         ["displayName", "Name", "name"]
             .iter()
-            .find_map(|k| t.raw_get::<_, Option<String>>(*k).ok().flatten())
+            .find_map(|k| t.raw_get::<Option<String>>(*k).ok().flatten())
     };
-    if let Ok(Some(by)) = w.raw_get::<_, Option<LuaTable>>("ByCLSID") {
+    if let Ok(Some(by)) = w.raw_get::<Option<LuaTable>>("ByCLSID") {
         for (clsid, t) in by.pairs::<String, LuaTable>().flatten() {
             if let Some(n) = name_of(&t) {
                 m.insert(clsid, n);
             }
         }
     }
-    if let Ok(Some(cats)) = w.raw_get::<_, Option<LuaTable>>("Categories") {
+    if let Ok(Some(cats)) = w.raw_get::<Option<LuaTable>>("Categories") {
         for c in cats.sequence_values::<LuaTable>().flatten() {
-            let Some(ls) = c.raw_get::<_, Option<LuaTable>>("Launchers").ok().flatten() else { continue };
+            let Some(ls) = c.raw_get::<Option<LuaTable>>("Launchers").ok().flatten() else { continue };
             for l in ls.sequence_values::<LuaTable>().flatten() {
-                if let (Some(clsid), Some(n)) = (l.raw_get::<_, Option<String>>("CLSID").ok().flatten(), name_of(&l)) {
+                if let (Some(clsid), Some(n)) = (l.raw_get::<Option<String>>("CLSID").ok().flatten(), name_of(&l)) {
                     m.entry(clsid).or_insert(n);
                 }
             }
@@ -268,16 +268,16 @@ fn harvest_clsid_names(g: &LuaTable) -> FxHashMap<String, String> {
 
 fn harvest_shapes(g: &LuaTable) -> FxHashMap<String, String> {
     let mut m = FxHashMap::default();
-    let Ok(Some(db)) = g.raw_get::<_, Option<LuaTable>>("db") else { return m };
-    let Ok(Some(units)) = db.raw_get::<_, Option<LuaTable>>("Units") else { return m };
+    let Ok(Some(db)) = g.raw_get::<Option<LuaTable>>("db") else { return m };
+    let Ok(Some(units)) = db.raw_get::<Option<LuaTable>>("Units") else { return m };
     // db.Units.<Category>.<Subcategory> = { {type=..., ShapeName=...}, ... }
     for (_, cat) in units.pairs::<LuaValue, LuaTable>().flatten() {
         for (_, list) in cat.pairs::<LuaValue, LuaTable>().flatten() {
             for t in list.sequence_values::<LuaTable>().flatten() {
-                let Some(typ) = t.raw_get::<_, Option<String>>("type").ok().flatten() else { continue };
+                let Some(typ) = t.raw_get::<Option<String>>("type").ok().flatten() else { continue };
                 let shape = ["ShapeName", "shape_name"]
                     .iter()
-                    .find_map(|k| t.raw_get::<_, Option<String>>(*k).ok().flatten());
+                    .find_map(|k| t.raw_get::<Option<String>>(*k).ok().flatten());
                 if let Some(shape) = shape.filter(|s| !s.is_empty() && *s != typ) {
                     m.insert(typ, shape);
                 }
@@ -291,12 +291,12 @@ fn harvest_shapes(g: &LuaTable) -> FxHashMap<String, String> {
 /// none turned up.
 fn bomb_sources(g: &LuaTable) -> String {
     let count = |t: Option<LuaTable>| t.map(|t| t.pairs::<LuaValue, LuaValue>().count());
-    let bombs = count(g.raw_get::<_, Option<LuaTable>>("bombs").ok().flatten());
-    let wt = g.raw_get::<_, Option<LuaTable>>("weapons_table").ok().flatten();
+    let bombs = count(g.raw_get::<Option<LuaTable>>("bombs").ok().flatten());
+    let wt = g.raw_get::<Option<LuaTable>>("weapons_table").ok().flatten();
     let wt_bombs = count(
         wt.as_ref()
-            .and_then(|t| t.raw_get::<_, Option<LuaTable>>("weapons").ok().flatten())
-            .and_then(|w| w.raw_get::<_, Option<LuaTable>>("bombs").ok().flatten()),
+            .and_then(|t| t.raw_get::<Option<LuaTable>>("weapons").ok().flatten())
+            .and_then(|w| w.raw_get::<Option<LuaTable>>("bombs").ok().flatten()),
     );
     let show = |c: Option<usize>| c.map(|c| format!("{c} entries")).unwrap_or("absent".into());
     format!(
@@ -334,14 +334,14 @@ pub fn bombs_from_mission(lua: MizLua) {
 
 fn harvest_fuel(g: &LuaTable) -> FxHashMap<String, f64> {
     let mut m = FxHashMap::default();
-    let Ok(Some(db)) = g.raw_get::<_, Option<LuaTable>>("db") else { return m };
-    let Ok(Some(units)) = db.raw_get::<_, Option<LuaTable>>("Units") else { return m };
+    let Ok(Some(db)) = g.raw_get::<Option<LuaTable>>("db") else { return m };
+    let Ok(Some(units)) = db.raw_get::<Option<LuaTable>>("Units") else { return m };
     for (cat, sub) in [("Planes", "Plane"), ("Helicopters", "Helicopter")] {
-        let Ok(Some(c)) = units.raw_get::<_, Option<LuaTable>>(cat) else { continue };
-        let Ok(Some(list)) = c.raw_get::<_, Option<LuaTable>>(sub) else { continue };
+        let Ok(Some(c)) = units.raw_get::<Option<LuaTable>>(cat) else { continue };
+        let Ok(Some(list)) = c.raw_get::<Option<LuaTable>>(sub) else { continue };
         for v in list.sequence_values::<LuaTable>() {
             let Ok(t) = v else { continue };
-            let Some(typ) = t.raw_get::<_, Option<String>>("type").ok().flatten() else { continue };
+            let Some(typ) = t.raw_get::<Option<String>>("type").ok().flatten() else { continue };
             if let Some(f) = num(&t, "MaxFuelWeight") {
                 m.insert(typ, f);
             }

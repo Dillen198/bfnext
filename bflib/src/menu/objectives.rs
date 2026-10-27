@@ -1087,8 +1087,8 @@ fn short_name(name: &str) -> CompactString {
 /// menu level goes past the ~10 entries DCS radio menus handle. Splits again
 /// one level down when a map has more bases than a single split can hold, so
 /// nothing falls off the end of the list.
-fn add_base_tree<'lua, A>(
-    mc: &MissionCommands<'lua>,
+fn add_base_tree<A>(
+    mc: &MissionCommands,
     gid: GroupId,
     parent: &GroupSubMenu,
     bases: &[(ObjectiveId, CompactString)],
@@ -1096,7 +1096,7 @@ fn add_base_tree<'lua, A>(
     mk_arg: &impl Fn(ObjectiveId) -> A,
 ) -> Result<()>
 where
-    A: IntoLua<'lua> + FromLua<'lua> + 'static,
+    A: IntoLua + FromLua + 'static,
 {
     if bases.len() <= PAGE_SIZE {
         for (oid, name) in bases {
@@ -1132,8 +1132,8 @@ where
 
 /// `add_base_tree` under its own named submenu. Adds nothing at all when the
 /// list is empty, so an empty submenu never shows up in the menu.
-pub(super) fn add_base_list<'lua, A>(
-    mc: &MissionCommands<'lua>,
+pub(super) fn add_base_list<A>(
+    mc: &MissionCommands,
     gid: GroupId,
     parent: &GroupSubMenu,
     label: &str,
@@ -1142,7 +1142,7 @@ pub(super) fn add_base_list<'lua, A>(
     mk_arg: impl Fn(ObjectiveId) -> A,
 ) -> Result<()>
 where
-    A: IntoLua<'lua> + FromLua<'lua> + 'static,
+    A: IntoLua + FromLua + 'static,
 {
     if bases.is_empty() {
         return Ok(());

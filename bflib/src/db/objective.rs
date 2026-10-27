@@ -274,8 +274,8 @@ impl FromStr for ObjGroup {
     }
 }
 
-impl<'lua> FromLua<'lua> for ObjGroup {
-    fn from_lua(value: LuaValue<'lua>, _lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for ObjGroup {
+    fn from_lua(value: LuaValue, _lua: &Lua) -> LuaResult<Self> {
         match value {
             Value::String(s) => s.to_str()?.parse(),
             _ => Err(cvt_err("ObjGroup")),

@@ -337,7 +337,7 @@ fn spawn_detached(_: &Path, _: &Path) -> std::io::Result<()> {
 
 fn lua_str(v: &LuaValue) -> Option<String> {
     match v {
-        LuaValue::String(s) => s.to_str().ok().map(str::to_string),
+        LuaValue::String(s) => s.to_str().ok().map(|s| s.to_string()),
         _ => None,
     }
 }
@@ -431,9 +431,9 @@ fn send(work: Work) -> Result<u64, String> {
 /// process (0xC0000374, reproduced with bin-mt/luae.exe 2026-10-20). For the
 /// same reason the arguments are taken as raw values -- a typed signature
 /// would make mlua raise on a wrong type before this code ever ran.
-fn request<'lua>(
-    _: &'lua Lua,
-    (method, url, body, timeout, headers): (LuaValue<'lua>, LuaValue<'lua>, LuaValue<'lua>, LuaValue<'lua>, LuaValue<'lua>),
+fn request(
+    _: &Lua,
+    (method, url, body, timeout, headers): (LuaValue, LuaValue, LuaValue, LuaValue, LuaValue),
 ) -> LuaResult<(Option<u64>, Option<String>)> {
     Ok(match queue(&method, &url, &body, &timeout, &headers) {
         Ok(id) => (Some(id), None),
@@ -452,9 +452,9 @@ fn valid_version(v: &str) -> bool {
 ///
 /// The result arrives through `poll()`: status 200 with a short note in
 /// `body`, or status 0 with `error`. Never raises (see `request`).
-fn update<'lua>(
-    _: &'lua Lua,
-    (version, write_dir): (LuaValue<'lua>, LuaValue<'lua>),
+fn update(
+    _: &Lua,
+    (version, write_dir): (LuaValue, LuaValue),
 ) -> LuaResult<(Option<u64>, Option<String>)> {
     let queued = (|| {
         let version = lua_str(&version).ok_or("version must be a string")?;
@@ -524,7 +524,7 @@ fn new_key(len: usize) -> Result<String, String> {
 /// A key for the `-cockpitkey` handshake from the OS's CSPRNG, in the form
 /// bflib accepts (16..128 ASCII letters and digits); `len` defaults to 40, as
 /// the script's own key does. Never raises (see `request`).
-fn random_key<'lua>(_: &'lua Lua, len: LuaValue<'lua>) -> LuaResult<(Option<String>, Option<String>)> {
+fn random_key(_: &Lua, len: LuaValue) -> LuaResult<(Option<String>, Option<String>)> {
     let len = match len {
         LuaValue::Nil => Ok(40),
         LuaValue::Integer(n) if (16..=128).contains(&n) => Ok(n as usize),
@@ -539,7 +539,7 @@ fn random_key<'lua>(_: &'lua Lua, len: LuaValue<'lua>) -> LuaResult<(Option<Stri
 
 /// `poll() -> { {id=, status=, body=, error=}, ... }`, oldest first. Never
 /// blocks; an empty table when nothing has finished.
-fn poll(lua: &Lua, _: ()) -> LuaResult<LuaTable<'_>> {
+fn poll(lua: &Lua, _: ()) -> LuaResult<LuaTable> {
     let out = lua.create_table()?;
     let Some(pool) = POOL.get() else { return Ok(out) };
     let finished = match pool.done.lock() {
@@ -560,7 +560,7 @@ fn poll(lua: &Lua, _: ()) -> LuaResult<LuaTable<'_>> {
 }
 
 #[mlua::lua_module]
-fn bfcockpit_net(lua: &Lua) -> LuaResult<LuaTable<'_>> {
+fn bfcockpit_net(lua: &Lua) -> LuaResult<LuaTable> {
     let m = lua.create_table()?;
     m.set("request", lua.create_function(request)?)?;
     m.set("poll", lua.create_function(poll)?)?;

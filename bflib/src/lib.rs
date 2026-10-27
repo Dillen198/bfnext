@@ -1527,7 +1527,7 @@ fn handle_death(
 /// fired inside one of our own calls (a spawn's Birth, a `destroy()`'s Dead)
 /// -- it is queued for the holder to handle (`DeferredEvent`); otherwise it
 /// is handled here, and whatever the handler's own calls fire after it.
-fn on_event_raw<'lua>(lua: MizLua<'lua>, raw: mlua::Value<'lua>) -> Result<()> {
+fn on_event_raw(lua: MizLua, raw: mlua::Value) -> Result<()> {
     let ev = match Event::from_lua(raw.clone(), lua.inner()) {
         Ok(ev) => ev,
         Err(e) => {
@@ -1579,7 +1579,7 @@ fn add_event_handler(lua: MizLua) -> Result<mlua::RegistryKey> {
         })?,
     )?;
     let world: mlua::Table = l.globals().raw_get("world")?;
-    world.get::<_, mlua::Function>("addEventHandler")?.call::<_, ()>(tbl.clone())?;
+    world.get::<mlua::Function>("addEventHandler")?.call::<()>(tbl.clone())?;
     Ok(l.create_registry_value(tbl)?)
 }
 
@@ -1587,7 +1587,7 @@ fn remove_event_handler(lua: MizLua, key: mlua::RegistryKey) -> Result<()> {
     let l = lua.inner();
     let tbl: mlua::Table = l.registry_value(&key)?;
     let world: mlua::Table = l.globals().raw_get("world")?;
-    world.get::<_, mlua::Function>("removeEventHandler")?.call::<_, ()>(tbl)?;
+    world.get::<mlua::Function>("removeEventHandler")?.call::<()>(tbl)?;
     l.remove_registry_value(key)?;
     Ok(())
 }
@@ -3863,12 +3863,12 @@ fn warn_missing_template_once(template: &str) -> bool {
 /// logistics helos fell into -- and engages helicopters and ground units.
 /// Fixed-wing is deliberately absent from its target list: an attack helo told
 /// to chase a fast mover only flies itself somewhere it dies.
-fn air_station_task<'lua>(
+fn air_station_task(
     station: dcso3::Vector2,
     rotary: bool,
     cfg: &bfprotocols::cfg::CampaignEventsCfg,
     land: Option<&dcso3::land::Land>,
-) -> dcso3::controller::Task<'lua> {
+) -> dcso3::controller::Task {
     use dcso3::attribute::Attribute;
     use dcso3::controller::{OrbitPattern, Task};
     let (speed, altitude, engage, targets) = if rotary {
@@ -6554,7 +6554,7 @@ fn init_miz(lua: MizLua) -> Result<()> {
 }
 
 #[mlua::lua_module]
-fn bflib(lua: &Lua) -> LuaResult<LuaTable<'_>> {
+fn bflib(lua: &Lua) -> LuaResult<LuaTable> {
     // ensure we capture backtraces on panic
     let _ = unsafe {
         std::env::set_var("RUST_BACKTRACE", "1"); // bactrace for panics

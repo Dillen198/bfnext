@@ -199,12 +199,12 @@ pub(crate) fn dist(a: Vector2, b: Vector2) -> f64 {
     (a - b).norm()
 }
 
-pub(crate) fn air_point<'lua>(
+pub(crate) fn air_point(
     pos: Vector2,
     alt: f64,
     speed: f64,
-    task: Task<'lua>,
-) -> MissionPoint<'lua> {
+    task: Task,
+) -> MissionPoint {
     MissionPoint {
         typ: PointType::TurningPoint,
         airdrome_id: None,

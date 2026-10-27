@@ -818,7 +818,7 @@ fn pad_landing_quality(perfect_m: f64, d: f64, fpm: f64) -> bfprotocols::range::
     }
 }
 
-fn cargo<'lua>(lua: MizLua<'lua>, name: &str) -> Option<StaticObject<'lua>> {
+fn cargo(lua: MizLua, name: &str) -> Option<StaticObject> {
     match StaticObject::get_by_name(lua, name) {
         Ok(Static::Static(s)) => Some(s),
         _ => None,

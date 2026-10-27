@@ -104,7 +104,7 @@ impl Pager {
     /// The menu the next entry should go on, spilling to a new `More >>` page
     /// first if the current one is full. Reserves the slot, so callers that
     /// build their own submenu inside the page still keep the count honest.
-    pub(crate) fn page(&mut self, mc: &MissionCommands<'_>) -> Result<GroupSubMenu> {
+    pub(crate) fn page(&mut self, mc: &MissionCommands) -> Result<GroupSubMenu> {
         if self.used + 1 >= PAGE_ITEMS {
             self.cur = mc
                 .add_submenu_for_group(self.group, "More >>".into(), Some(self.cur.clone()))
@@ -116,16 +116,16 @@ impl Pager {
     }
 
     /// Add a command, paging as needed.
-    pub(crate) fn command<'lua, F, A>(
+    pub(crate) fn command<F, A>(
         &mut self,
-        mc: &MissionCommands<'lua>,
+        mc: &MissionCommands,
         name: String,
         f: F,
         arg: A,
     ) -> Result<GroupCommandItem>
     where
         F: Fn(MizLua, A) -> Result<()> + 'static,
-        A: IntoLua<'lua> + FromLua<'lua>,
+        A: IntoLua + FromLua,
     {
         let parent = self.page(mc)?;
         mc.add_command_for_group(self.group, name, Some(parent), f, arg)
@@ -135,7 +135,7 @@ impl Pager {
     /// concern -- give the returned menu its own `Pager` if it can also be long.
     pub(crate) fn submenu(
         &mut self,
-        mc: &MissionCommands<'_>,
+        mc: &MissionCommands,
         name: String,
     ) -> Result<GroupSubMenu> {
         let parent = self.page(mc)?;
@@ -149,12 +149,12 @@ pub struct ArgTuple<T, U> {
     pub snd: U,
 }
 
-impl<'lua, T, U> IntoLua<'lua> for ArgTuple<T, U>
+impl<T, U> IntoLua for ArgTuple<T, U>
 where
-    T: IntoLua<'lua>,
-    U: IntoLua<'lua>,
+    T: IntoLua,
+    U: IntoLua,
 {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<LuaValue<'lua>> {
+    fn into_lua(self, lua: &Lua) -> LuaResult<LuaValue> {
         let tbl = lua.create_table()?;
         tbl.raw_set(1, self.fst)?;
         tbl.raw_set(2, self.snd)?;
@@ -162,12 +162,12 @@ where
     }
 }
 
-impl<'lua, T, U> FromLua<'lua> for ArgTuple<T, U>
+impl<T, U> FromLua for ArgTuple<T, U>
 where
-    T: FromLua<'lua>,
-    U: FromLua<'lua>,
+    T: FromLua,
+    U: FromLua,
 {
-    fn from_lua(value: LuaValue<'lua>, _lua: &'lua Lua) -> LuaResult<Self> {
+    fn from_lua(value: LuaValue, _lua: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("ArgTuple", None, value).map_err(lua_err)?;
         Ok(Self {
             fst: tbl.raw_get(1)?,
@@ -183,13 +183,13 @@ pub struct ArgTriple<T, U, V> {
     pub trd: V,
 }
 
-impl<'lua, T, U, V> IntoLua<'lua> for ArgTriple<T, U, V>
+impl<T, U, V> IntoLua for ArgTriple<T, U, V>
 where
-    T: IntoLua<'lua>,
-    U: IntoLua<'lua>,
-    V: IntoLua<'lua>,
+    T: IntoLua,
+    U: IntoLua,
+    V: IntoLua,
 {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<LuaValue<'lua>> {
+    fn into_lua(self, lua: &Lua) -> LuaResult<LuaValue> {
         let tbl = lua.create_table()?;
         tbl.raw_set(1, self.fst)?;
         tbl.raw_set(2, self.snd)?;
@@ -198,13 +198,13 @@ where
     }
 }
 
-impl<'lua, T, U, V> FromLua<'lua> for ArgTriple<T, U, V>
+impl<T, U, V> FromLua for ArgTriple<T, U, V>
 where
-    T: FromLua<'lua>,
-    U: FromLua<'lua>,
-    V: FromLua<'lua>,
+    T: FromLua,
+    U: FromLua,
+    V: FromLua,
 {
-    fn from_lua(value: LuaValue<'lua>, _lua: &'lua Lua) -> LuaResult<Self> {
+    fn from_lua(value: LuaValue, _lua: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("ArgTriple", None, value).map_err(lua_err)?;
         Ok(Self {
             fst: tbl.raw_get(1)?,
@@ -222,14 +222,14 @@ pub struct ArgQuad<T, U, V, W> {
     pub fth: W,
 }
 
-impl<'lua, T, U, V, W> IntoLua<'lua> for ArgQuad<T, U, V, W>
+impl<T, U, V, W> IntoLua for ArgQuad<T, U, V, W>
 where
-    T: IntoLua<'lua>,
-    U: IntoLua<'lua>,
-    V: IntoLua<'lua>,
-    W: IntoLua<'lua>,
+    T: IntoLua,
+    U: IntoLua,
+    V: IntoLua,
+    W: IntoLua,
 {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<LuaValue<'lua>> {
+    fn into_lua(self, lua: &Lua) -> LuaResult<LuaValue> {
         let tbl = lua.create_table()?;
         tbl.raw_set(1, self.fst)?;
         tbl.raw_set(2, self.snd)?;
@@ -239,14 +239,14 @@ where
     }
 }
 
-impl<'lua, T, U, V, W> FromLua<'lua> for ArgQuad<T, U, V, W>
+impl<T, U, V, W> FromLua for ArgQuad<T, U, V, W>
 where
-    T: FromLua<'lua>,
-    U: FromLua<'lua>,
-    V: FromLua<'lua>,
-    W: FromLua<'lua>,
+    T: FromLua,
+    U: FromLua,
+    V: FromLua,
+    W: FromLua,
 {
-    fn from_lua(value: LuaValue<'lua>, _lua: &'lua Lua) -> LuaResult<Self> {
+    fn from_lua(value: LuaValue, _lua: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("ArgQuad", None, value).map_err(lua_err)?;
         Ok(Self {
             fst: tbl.raw_get(1)?,
@@ -266,15 +266,15 @@ struct ArgPent<T, U, V, W, X> {
     pnt: X,
 }
 
-impl<'lua, T, U, V, W, X> IntoLua<'lua> for ArgPent<T, U, V, W, X>
+impl<T, U, V, W, X> IntoLua for ArgPent<T, U, V, W, X>
 where
-    T: IntoLua<'lua>,
-    U: IntoLua<'lua>,
-    V: IntoLua<'lua>,
-    W: IntoLua<'lua>,
-    X: IntoLua<'lua>,
+    T: IntoLua,
+    U: IntoLua,
+    V: IntoLua,
+    W: IntoLua,
+    X: IntoLua,
 {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<LuaValue<'lua>> {
+    fn into_lua(self, lua: &Lua) -> LuaResult<LuaValue> {
         let tbl = lua.create_table()?;
         tbl.raw_set(1, self.fst)?;
         tbl.raw_set(2, self.snd)?;
@@ -285,15 +285,15 @@ where
     }
 }
 
-impl<'lua, T, U, V, W, X> FromLua<'lua> for ArgPent<T, U, V, W, X>
+impl<T, U, V, W, X> FromLua for ArgPent<T, U, V, W, X>
 where
-    T: FromLua<'lua>,
-    U: FromLua<'lua>,
-    V: FromLua<'lua>,
-    W: FromLua<'lua>,
-    X: FromLua<'lua>,
+    T: FromLua,
+    U: FromLua,
+    V: FromLua,
+    W: FromLua,
+    X: FromLua,
 {
-    fn from_lua(value: LuaValue<'lua>, _lua: &'lua Lua) -> LuaResult<Self> {
+    fn from_lua(value: LuaValue, _lua: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("ArgPnt", None, value).map_err(lua_err)?;
         Ok(Self {
             fst: tbl.raw_get(1)?,

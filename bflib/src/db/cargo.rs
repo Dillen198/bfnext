@@ -4196,12 +4196,12 @@ impl Db {
     /// stock. Refuses, with the reason for the player, a delivery back to the
     /// origin itself, or from an origin that has since fallen or has no
     /// warehouse to draw on.
-    fn supply_crate_source<'lua>(
+    fn supply_crate_source(
         &mut self,
-        lua: MizLua<'lua>,
+        lua: MizLua,
         crate_data: &C130Cargo,
         to: ObjectiveId,
-    ) -> std::result::Result<dcso3::warehouse::Warehouse<'lua>, std::string::String> {
+    ) -> std::result::Result<dcso3::warehouse::Warehouse, std::string::String> {
         let origin = crate_data.origin;
         let Some(src) = self.persisted.objectives.get(&origin) else {
             return Err("the base these supplies came from no longer exists".into());

@@ -383,12 +383,12 @@ fn apply_live_weather(mission: &Table, cfg: &LiveWeatherConfig) -> Result<()> {
         let w: Option<Table> = weather.raw_get("wind").ok();
         let layer = |name: &str| -> String {
             w.as_ref()
-                .and_then(|w| w.raw_get::<_, Table>(name).ok())
+                .and_then(|w| w.raw_get::<Table>(name).ok())
                 .map(|t| {
                     format!(
                         "{:.1}m/s@{:.0}",
-                        t.raw_get::<_, f64>("speed").unwrap_or(f64::NAN),
-                        t.raw_get::<_, f64>("dir").unwrap_or(f64::NAN)
+                        t.raw_get::<f64>("speed").unwrap_or(f64::NAN),
+                        t.raw_get::<f64>("dir").unwrap_or(f64::NAN)
                     )
                 })
                 .unwrap_or_else(|| "?".into())
@@ -849,7 +849,7 @@ mod tests {
         apply_live_time(&mission, Some(10.)).unwrap();
         let now = Utc::now().with_timezone(&FixedOffset::east_opt(10 * 3600).unwrap());
         let date: Table = mission.raw_get("date").unwrap();
-        assert_eq!(date.raw_get::<_, i64>("Year").unwrap(), now.year() as i64);
+        assert_eq!(date.raw_get::<i64>("Year").unwrap(), now.year() as i64);
         let start: i64 = mission.raw_get("start_time").unwrap();
         let expect = now.hour() as i64 * 3600 + now.minute() as i64 * 60 + now.second() as i64;
         // within a few seconds, allowing for midnight

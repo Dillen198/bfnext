@@ -81,24 +81,24 @@ pub(crate) fn assign(lua: &Lua, mission: &Table, carts: &[Cartridge]) -> Result<
         by_type.entry(c.typ.as_str()).or_default().push(c);
     }
     let mut counts = BTreeMap::new();
-    let Ok(coalitions) = mission.raw_get::<_, Table>("coalition") else { return Ok(counts) };
+    let Ok(coalitions) = mission.raw_get::<Table>("coalition") else { return Ok(counts) };
     for coa in coalitions.pairs::<Value, Table>() {
         let (_, coa) = coa?;
-        let Ok(countries) = coa.raw_get::<_, Table>("country") else { continue };
+        let Ok(countries) = coa.raw_get::<Table>("country") else { continue };
         for country in countries.pairs::<Value, Table>() {
             let (_, country) = country?;
             for category in ["plane", "helicopter"] {
-                let Ok(cat) = country.raw_get::<_, Table>(category) else { continue };
-                let Ok(groups) = cat.raw_get::<_, Table>("group") else { continue };
+                let Ok(cat) = country.raw_get::<Table>(category) else { continue };
+                let Ok(groups) = cat.raw_get::<Table>("group") else { continue };
                 for group in groups.pairs::<Value, Table>() {
                     let (_, group) = group?;
-                    let dynamic = group.raw_get::<_, Option<bool>>("dynSpawnTemplate")?.unwrap_or(false);
-                    let Ok(units) = group.raw_get::<_, Table>("units") else { continue };
+                    let dynamic = group.raw_get::<Option<bool>>("dynSpawnTemplate")?.unwrap_or(false);
+                    let Ok(units) = group.raw_get::<Table>("units") else { continue };
                     let mut any = false;
                     for unit in units.pairs::<Value, Table>() {
                         let (_, unit) = unit?;
-                        let typ: std::string::String = unit.raw_get::<_, Option<std::string::String>>("type")?.unwrap_or_default();
-                        let skill: std::string::String = unit.raw_get::<_, Option<std::string::String>>("skill")?.unwrap_or_default();
+                        let typ: std::string::String = unit.raw_get::<Option<std::string::String>>("type")?.unwrap_or_default();
+                        let skill: std::string::String = unit.raw_get::<Option<std::string::String>>("skill")?.unwrap_or_default();
                         let player = skill == "Client" || skill == "Player" || dynamic;
                         let Some(list) = by_type.get(typ.as_str()) else { continue };
                         if !player {
@@ -107,7 +107,7 @@ pub(crate) fn assign(lua: &Lua, mission: &Table, carts: &[Cartridge]) -> Result<
                         // Add to what the mission maker already assigned rather
                         // than replace it: keep their cartridges, their default
                         // and their AutoLoad choice.
-                        let dtc = match unit.raw_get::<_, Option<Table>>("DTC")? {
+                        let dtc = match unit.raw_get::<Option<Table>>("DTC")? {
                             Some(t) => t,
                             None => {
                                 let t = lua.create_table()?;
@@ -115,7 +115,7 @@ pub(crate) fn assign(lua: &Lua, mission: &Table, carts: &[Cartridge]) -> Result<
                                 t
                             }
                         };
-                        let cartridges = match dtc.raw_get::<_, Option<Table>>("Cartridges")? {
+                        let cartridges = match dtc.raw_get::<Option<Table>>("Cartridges")? {
                             Some(t) => t,
                             None => lua.create_table()?,
                         };
@@ -123,8 +123,8 @@ pub(crate) fn assign(lua: &Lua, mission: &Table, carts: &[Cartridge]) -> Result<
                         let mut has_default = false;
                         for e in cartridges.clone().sequence_values::<Table>() {
                             let e = e?;
-                            names.push(e.raw_get::<_, Option<std::string::String>>("name")?.unwrap_or_default());
-                            has_default |= e.raw_get::<_, Option<bool>>("default")?.unwrap_or(false);
+                            names.push(e.raw_get::<Option<std::string::String>>("name")?.unwrap_or_default());
+                            has_default |= e.raw_get::<Option<bool>>("default")?.unwrap_or(false);
                         }
                         for c in list {
                             if names.iter().any(|n| *n == c.name) {
@@ -137,7 +137,7 @@ pub(crate) fn assign(lua: &Lua, mission: &Table, carts: &[Cartridge]) -> Result<
                             cartridges.raw_set(cartridges.raw_len() + 1, e)?;
                             names.push(c.name.clone());
                         }
-                        if dtc.raw_get::<_, Option<bool>>("AutoLoad")?.is_none() {
+                        if dtc.raw_get::<Option<bool>>("AutoLoad")?.is_none() {
                             dtc.raw_set("AutoLoad", true)?;
                         }
                         dtc.raw_set("Cartridges", cartridges)?;
@@ -145,7 +145,7 @@ pub(crate) fn assign(lua: &Lua, mission: &Table, carts: &[Cartridge]) -> Result<
                         *counts.entry(typ.clone()).or_insert(0) += 1;
                         any = true;
                     }
-                    if any && group.raw_get::<_, Option<Table>>("DTC")?.is_none() {
+                    if any && group.raw_get::<Option<Table>>("DTC")?.is_none() {
                         group.raw_set("DTC", lua.create_table()?)?;
                     }
                 }
@@ -158,7 +158,7 @@ pub(crate) fn assign(lua: &Lua, mission: &Table, carts: &[Cartridge]) -> Result<
 /// Load `dir`, assign the cartridges in `mission`, and copy each into the
 /// unpacked miz at `root`. Returns the archive entries to add.
 pub(crate) fn embed(lua: &Lua, mission: &Table, root: &Path, dir: &Path) -> Result<Vec<(std::string::String, PathBuf)>> {
-    let theatre: std::string::String = mission.raw_get::<_, Option<std::string::String>>("theatre")?.unwrap_or_default();
+    let theatre: std::string::String = mission.raw_get::<Option<std::string::String>>("theatre")?.unwrap_or_default();
     let carts = load_dir(dir, &theatre)?;
     if carts.is_empty() {
         warn!("--dtc {dir:?}: no cartridge for the {theatre} map");
@@ -235,21 +235,21 @@ mod tests {
 
         let groups: Table = lua.load("return mission.coalition.blue.country[1].plane.group").eval().unwrap();
         let g1: Table = groups.get(1).unwrap();
-        let u1: Table = g1.get::<_, Table>("units").unwrap().get(1).unwrap();
+        let u1: Table = g1.get::<Table>("units").unwrap().get(1).unwrap();
         let dtc: Table = u1.get("DTC").unwrap();
-        assert!(dtc.get::<_, bool>("AutoLoad").unwrap());
-        let first: Table = dtc.get::<_, Table>("Cartridges").unwrap().get(1).unwrap();
-        assert_eq!(first.get::<_, std::string::String>("name").unwrap(), "Viper comms");
-        assert!(first.get::<_, bool>("default").unwrap());
+        assert!(dtc.get::<bool>("AutoLoad").unwrap());
+        let first: Table = dtc.get::<Table>("Cartridges").unwrap().get(1).unwrap();
+        assert_eq!(first.get::<std::string::String>("name").unwrap(), "Viper comms");
+        assert!(first.get::<bool>("default").unwrap());
         // An AI wingman gets nothing; its group still gets the empty group table.
-        let u2: Table = g1.get::<_, Table>("units").unwrap().get(2).unwrap();
-        assert!(u2.get::<_, Option<Table>>("DTC").unwrap().is_none());
-        assert!(g1.get::<_, Option<Table>>("DTC").unwrap().is_some());
+        let u2: Table = g1.get::<Table>("units").unwrap().get(2).unwrap();
+        assert!(u2.get::<Option<Table>>("DTC").unwrap().is_none());
+        assert!(g1.get::<Option<Table>>("DTC").unwrap().is_some());
         // A dynamic-slot template counts as a player slot.
         let dynu: Table = lua.load("return mission.coalition.blue.country[1].plane.group[2].units[1]").eval().unwrap();
-        assert!(dynu.get::<_, Option<Table>>("DTC").unwrap().is_some());
+        assert!(dynu.get::<Option<Table>>("DTC").unwrap().is_some());
         let heli: Table = lua.load("return mission.coalition.blue.country[1].helicopter.group[1].units[1]").eval().unwrap();
-        assert!(heli.get::<_, Option<Table>>("DTC").unwrap().is_some());
+        assert!(heli.get::<Option<Table>>("DTC").unwrap().is_some());
         let _ = fs::remove_dir_all(dir);
         let _ = fs::remove_dir_all(root);
     }
@@ -290,14 +290,14 @@ mod merge_tests {
         assign(&lua, &mission, &carts).unwrap();
         let dtc: Table = lua.load("return mission.coalition.blue.country[1].plane.group[1].units[1].DTC").eval().unwrap();
         // The mission maker's AutoLoad choice and default stay.
-        assert!(!dtc.get::<_, bool>("AutoLoad").unwrap());
+        assert!(!dtc.get::<bool>("AutoLoad").unwrap());
         let list: Table = dtc.get("Cartridges").unwrap();
         assert_eq!(list.raw_len(), 2);
         let first: Table = list.get(1).unwrap();
         let second: Table = list.get(2).unwrap();
-        assert_eq!(first.get::<_, std::string::String>("name").unwrap(), "Squadron");
-        assert!(first.get::<_, bool>("default").unwrap());
-        assert_eq!(second.get::<_, std::string::String>("name").unwrap(), "Campaign");
-        assert!(!second.get::<_, bool>("default").unwrap());
+        assert_eq!(first.get::<std::string::String>("name").unwrap(), "Squadron");
+        assert!(first.get::<bool>("default").unwrap());
+        assert_eq!(second.get::<std::string::String>("name").unwrap(), "Campaign");
+        assert!(!second.get::<bool>("default").unwrap());
     }
 }

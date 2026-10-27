@@ -100,8 +100,8 @@ impl Default for SpawnLoc {
 }
 
 pub struct SpawnCtx<'lua> {
-    coalition: Coalition<'lua>,
-    miz: Miz<'lua>,
+    coalition: Coalition,
+    miz: Miz,
     lua: MizLua<'lua>,
 }
 
@@ -118,8 +118,8 @@ pub enum Despawn {
 }
 
 #[derive(Debug, Clone)]
-pub enum Spawned<'lua> {
-    Group(Group<'lua>),
+pub enum Spawned {
+    Group(Group),
     Static(DcsOid<ClassObject>),
 }
 
@@ -142,7 +142,7 @@ impl<'lua> SpawnCtx<'lua> {
         kind: GroupKind,
         side: Side,
         template_name: &str,
-    ) -> Result<GroupInfo<'lua>> {
+    ) -> Result<GroupInfo> {
         let mut template = self
             .miz
             .get_group_by_name(idx, kind, side, template_name)?
@@ -158,13 +158,13 @@ impl<'lua> SpawnCtx<'lua> {
         kind: GroupKind,
         side: Side,
         template_name: &str,
-    ) -> Result<GroupInfo<'a>> {
+    ) -> Result<GroupInfo> {
         self.miz
             .get_group_by_name(idx, kind, side, template_name)?
             .ok_or_else(|| anyhow!("no such template {template_name}"))
     }
 
-    pub fn get_trigger_zone<'a>(&'a self, idx: &MizIndex, name: &str) -> Result<TriggerZone<'a>> {
+    pub fn get_trigger_zone<'a>(&'a self, idx: &MizIndex, name: &str) -> Result<TriggerZone> {
         Ok(self
             .miz
             .get_trigger_zone(idx, name)?
@@ -178,7 +178,7 @@ impl<'lua> SpawnCtx<'lua> {
         side: Side,
         pad_template: &str,
         pos: Vector2,
-    ) -> Result<Spawned<'lua>> {
+    ) -> Result<Spawned> {
         let pad = {
             let pad = self
                 .get_template(idx, GroupKind::Any, side, &pad_template)
@@ -198,14 +198,14 @@ impl<'lua> SpawnCtx<'lua> {
         self.spawn(pad).context("moving the pad")
     }
 
-    pub fn spawn(&self, template: GroupInfo<'lua>) -> Result<Spawned<'lua>> {
+    pub fn spawn(&self, template: GroupInfo) -> Result<Spawned> {
         self.spawn_with_link(template, None)
     }
 
     /// Spawn a group/static with optional linking to a ship unit.
     /// If link_unit_id is provided and the template is a static object,
     /// the static will be linked to that ship and move with it.
-    pub fn spawn_with_link(&self, template: GroupInfo<'lua>, link_unit_name: Option<String>) -> Result<Spawned<'lua>> {
+    pub fn spawn_with_link(&self, template: GroupInfo, link_unit_name: Option<String>) -> Result<Spawned> {
         match GroupCategory::from_kind(template.category) {
             Some(category) => Ok(Spawned::Group(
                 self.coalition
@@ -216,7 +216,7 @@ impl<'lua> SpawnCtx<'lua> {
             )),
             None => {
                 // static objects are not fed to addStaticObject as groups
-                let unit: miz::Unit<'lua> = template
+                let unit: miz::Unit = template
                     .group
                     .units()
                     .context("getting static group units")?

@@ -1551,7 +1551,7 @@ impl Db {
     }
 
     pub fn init_objective_slots(&mut self, side: Side, slot: Group) -> Result<()> {
-        if slot.raw_get::<_, bool>("dynSpawnTemplate").unwrap_or(false) {
+        if slot.raw_get::<bool>("dynSpawnTemplate").unwrap_or(false) {
             return Ok(());
         }
         let mut ground_start = false;

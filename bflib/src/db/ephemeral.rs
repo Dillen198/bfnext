@@ -169,7 +169,7 @@ pub(super) struct QueuedDrive {
 }
 
 impl QueuedDrive {
-    fn mission<'lua>(&self, lua: MizLua<'lua>) -> Vec<MissionPoint<'lua>> {
+    fn mission(&self, lua: MizLua) -> Vec<MissionPoint> {
         use dcso3::controller::{ActionTyp, AltType, Task, VehicleFormation};
         let land = dcso3::land::Land::singleton(lua).ok();
         self.points
@@ -551,8 +551,8 @@ fn stock_for_ground_start(
             None => airframes.push((typ, 1)),
         }
         // Kilograms, written as a number or a numeric string.
-        if let Ok(payload) = unit.raw_get::<_, LuaTable>("payload") {
-            fuel_kg += match payload.raw_get::<_, LuaValue>("fuel")? {
+        if let Ok(payload) = unit.raw_get::<LuaTable>("payload") {
+            fuel_kg += match payload.raw_get::<LuaValue>("fuel")? {
                 LuaValue::Integer(i) => i as f64,
                 LuaValue::Number(n) => n,
                 LuaValue::String(s) => {
@@ -758,7 +758,7 @@ fn keep_fixed_structures_out_of_lead(units: &LuaTable) -> Result<Lead> {
         .map(|i| units.raw_get(i))
         .collect::<LuaResult<_>>()?;
     let fixed = |t: &LuaTable| {
-        t.raw_get::<_, std::string::String>("type")
+        t.raw_get::<std::string::String>("type")
             .map(|typ| NO_LEAD_TYPES.contains(&typ.as_str()))
             .unwrap_or(false)
     };
@@ -841,12 +841,12 @@ impl Ephemeral {
     /// path that builds the start and the dispatch paths that pick a launch
     /// field -- so a field can't pass the dispatch check and then fail at
     /// spawn time, which just air-starts the flight.
-    pub fn resolve_airbase<'lua>(
+    pub fn resolve_airbase(
         &self,
-        lua: MizLua<'lua>,
+        lua: MizLua,
         persisted: &Persisted,
         oid: &ObjectiveId,
-    ) -> Option<Airbase<'lua>> {
+    ) -> Option<Airbase> {
         self.airbase_by_oid
             .get(oid)
             .and_then(|abid| Airbase::get_instance(lua, abid).ok())
@@ -1692,7 +1692,7 @@ impl Ephemeral {
         cur
     }
 
-    pub fn slot_instance_unit<'lua>(&self, lua: MizLua<'lua>, slot: &SlotId) -> Result<Unit<'lua>> {
+    pub fn slot_instance_unit(&self, lua: MizLua, slot: &SlotId) -> Result<Unit> {
         self.object_id_by_slot
             .get(slot)
             .ok_or_else(|| anyhow!("unit {:?} not currently in the mission", slot))
@@ -2035,12 +2035,12 @@ impl Ephemeral {
         template_name: &String,
         unit: &miz::Unit,
     ) -> Result<()> {
-        let Ok(payload) = unit.raw_get::<_, LuaTable>("payload") else {
+        let Ok(payload) = unit.raw_get::<LuaTable>("payload") else {
             return Ok(());
         };
         // The mission editor writes it as a number or a numeric string
         // depending on the airframe; both mean kilograms.
-        let fuel = match payload.raw_get::<_, LuaValue>("fuel")? {
+        let fuel = match payload.raw_get::<LuaValue>("fuel")? {
             LuaValue::Integer(i) => Some(i as f64),
             LuaValue::Number(n) => Some(n),
             LuaValue::String(s) => s.to_str().ok().and_then(|s| s.trim().parse::<f64>().ok()),
@@ -2060,7 +2060,7 @@ impl Ephemeral {
                 let class: LuaTable = lua.inner().globals().raw_get("Unit").ok()?;
                 let f: LuaFunction = class.get("getDescByName").ok()?;
                 let desc: LuaTable = f.call(typ.as_str()).ok()?;
-                desc.raw_get::<_, f64>("fuelMassMax").ok()
+                desc.raw_get::<f64>("fuelMassMax").ok()
             })
             .filter(|kg| *kg > 0.);
         let first = self.fuel_fixed_templates.insert(template_name.clone());
@@ -2091,15 +2091,15 @@ impl Ephemeral {
         Ok(())
     }
 
-    pub(super) fn spawn_group<'lua>(
+    pub(super) fn spawn_group(
         &mut self,
         perf: &mut PerfInner,
         persisted: &Persisted,
         idx: &MizIndex,
-        spctx: &SpawnCtx<'lua>,
+        spctx: &SpawnCtx,
         group: &SpawnedGroup,
-        mission: Vec<MissionPoint<'lua>>,
-    ) -> Result<Option<Spawned<'lua>>> {
+        mission: Vec<MissionPoint>,
+    ) -> Result<Option<Spawned>> {
         let ts = self.now();
 
         // Check if this is a carrier group defined in config, or falls back to prefix matching
@@ -2176,11 +2176,11 @@ impl Ephemeral {
 
                     // Override all route waypoints to the carrier's saved position so DCS
                     // doesn't send it circling to old ME waypoints before StopRoute takes effect.
-                    if let Ok(route) = miz_template.group.raw_get::<_, mlua::Table>("route") {
-                        if let Ok(points) = route.raw_get::<_, mlua::Table>("points") {
+                    if let Ok(route) = miz_template.group.raw_get::<mlua::Table>("route") {
+                        if let Ok(points) = route.raw_get::<mlua::Table>("points") {
                             let num_points = points.raw_len();
                             for i in 1..=(num_points as i64) {
-                                if let Ok(point) = points.raw_get::<_, mlua::Table>(i) {
+                                if let Ok(point) = points.raw_get::<mlua::Table>(i) {
                                     point.raw_set("x", cx)?;
                                     point.raw_set("y", cy)?;
                                 }
@@ -2420,7 +2420,7 @@ impl Ephemeral {
         // The warehouse of the field a parking start is built at, and its
         // name, so `stock_for_ground_start` can make sure it holds the
         // airframes and fuel the flight takes off with.
-        let mut start_warehouse: Option<(dcso3::warehouse::Warehouse<'lua>, std::string::String)> =
+        let mut start_warehouse: Option<(dcso3::warehouse::Warehouse, std::string::String)> =
             None;
         let (template, alive) = if let Some(spec) = self.synthetic_templates.get(group.template_name.as_str()).cloned() {
             if alive_units.is_empty() {
@@ -3007,8 +3007,8 @@ impl Ephemeral {
                 // it has no MissionPoint field, so stamp it on the raw table.
                 // An absent one is not fatal on its own, but a parking start is
                 // exactly where DCS is fussiest about a well-formed waypoint.
-                if let Ok(pts) = route.raw_get::<_, LuaTable>("points") {
-                    if let Ok(wp0) = pts.raw_get::<_, LuaTable>(1) {
+                if let Ok(pts) = route.raw_get::<LuaTable>("points") {
+                    if let Ok(wp0) = pts.raw_get::<LuaTable>(1) {
                         let _ = wp0.raw_set("formation_template", "");
                     }
                 }
@@ -3027,7 +3027,7 @@ impl Ephemeral {
                         Some(su) => {
                             if su.tags.contains(UnitTag::AWACS) {
                                 let stn = String::from(format_compact!("{:005o}", self.awacs_stn));
-                                if let Ok(props) = unit.raw_get::<_, LuaTable>("AddPropAircraft") {
+                                if let Ok(props) = unit.raw_get::<LuaTable>("AddPropAircraft") {
                                     self.awacs_stn -= 1;
                                     props.raw_set("STN_L16", stn)?;
                                 }

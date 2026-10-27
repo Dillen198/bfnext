@@ -207,9 +207,9 @@ impl Clouds {
             let wx = dcso3::env::miz::Miz::singleton(lua).and_then(|m| m.weather()).map_err(LuaError::external)?;
             let clouds: Option<LuaTable> = wx.raw_get("clouds").ok();
             let density: f64 = clouds.as_ref().and_then(|c| c.get("density").ok()).unwrap_or(0.);
-            let preset: Option<String> = clouds.as_ref().and_then(|c| c.get::<_, String>("preset").ok()).filter(|s| !s.is_empty());
+            let preset: Option<String> = clouds.as_ref().and_then(|c| c.get::<String>("preset").ok()).filter(|s| !s.is_empty());
             let base: Option<f64> = clouds.as_ref().and_then(|c| c.get("base").ok());
-            let precip = clouds.as_ref().and_then(|c| c.get::<_, f64>("iprecptns").ok()).map_or(false, |p| p > 0.)
+            let precip = clouds.as_ref().and_then(|c| c.get::<f64>("iprecptns").ok()).map_or(false, |p| p > 0.)
                 || preset.as_deref().map_or(false, |p| p.starts_with("Rainy"));
             let cover = if preset.is_some() {
                 Some("clouds".to_string())
@@ -222,7 +222,7 @@ impl Clouds {
                     _ => Some("overcast".into()),
                 }
             };
-            let mut vis: f64 = wx.get::<_, LuaTable>("visibility").and_then(|v| v.get("distance")).unwrap_or(80_000.);
+            let mut vis: f64 = wx.get::<LuaTable>("visibility").and_then(|v| v.get("distance")).unwrap_or(80_000.);
             let fog = (|| -> LuaResult<f64> {
                 let world: LuaTable = g.raw_get("world")?;
                 let weather: LuaTable = world.raw_get("weather")?;

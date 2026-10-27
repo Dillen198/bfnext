@@ -220,7 +220,7 @@ impl Db {
     }
 
     /// The DCS object of `uid`, to point a base's AI at.
-    fn unit_object<'lua>(&self, lua: MizLua<'lua>, uid: &UnitId) -> Option<Object<'lua>> {
+    fn unit_object(&self, lua: MizLua, uid: &UnitId) -> Option<Object> {
         let id = self.ephemeral.object_id_by_uid.get(uid)?;
         Unit::get_instance(lua, id).ok()?.as_object().ok()
     }

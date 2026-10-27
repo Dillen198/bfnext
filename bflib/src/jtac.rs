@@ -76,10 +76,10 @@ impl FromStr for JtId {
     }
 }
 
-impl<'lua> FromLua<'lua> for JtId {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for JtId {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl: Table = FromLua::from_lua(value, lua)?;
-        match tbl.raw_get::<_, i64>("kind")? {
+        match tbl.raw_get::<i64>("kind")? {
             0 => Ok(Self::Group(tbl.raw_get("id")?)),
             1 => Ok(Self::Slot(tbl.raw_get("id")?)),
             n => Err(err(&format_compact!("invalid jtid {n}"))),
@@ -87,8 +87,8 @@ impl<'lua> FromLua<'lua> for JtId {
     }
 }
 
-impl<'lua> IntoLua<'lua> for JtId {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for JtId {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         let tbl = lua.create_table()?;
         match self {
             Self::Group(id) => {
@@ -138,7 +138,7 @@ pub struct ArtilleryAdjustment {
     adjust: Vector2,
     target: Vector2,
     group: Vec<DcsOid<ClassUnit>>,
-    tracked: Option<(Weapon<'static>, Option<Vector3>)>,
+    tracked: Option<(Weapon, Option<Vector3>)>,
 }
 
 /// How far (m) a battery is nudged toward its target before firing so that
@@ -163,12 +163,12 @@ pub(crate) fn group_facing(db: &Db, gid: &GroupId) -> Option<f64> {
 /// toward the target so the AI reorients the hull, then fires; otherwise it
 /// fires from `center` without moving. `facing` is the battery's current heading
 /// in radians (see `group_facing`).
-pub(crate) fn aim_and_fire_route<'lua>(
+pub(crate) fn aim_and_fire_route(
     center: Vector2,
     target: Vector2,
     facing: Option<f64>,
-    fire_task: Task<'lua>,
-) -> Task<'lua> {
+    fire_task: Task,
+) -> Task {
     let delta = target - center;
     let bearing = dcso3::azumith2d(delta);
     let aligned = facing

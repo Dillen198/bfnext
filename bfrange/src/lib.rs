@@ -565,7 +565,7 @@ fn init_miz(lua: MizLua) -> Result<()> {
 }
 
 #[mlua::lua_module]
-fn bfrange(lua: &Lua) -> LuaResult<LuaTable<'_>> {
+fn bfrange(lua: &Lua) -> LuaResult<LuaTable> {
     unsafe {
         std::env::set_var("RUST_BACKTRACE", "1");
         std::env::set_var("RUST_LIB_BACKTRACE", "0");
@@ -636,10 +636,10 @@ fn gun_ammo(u: &Unit) -> u32 {
     if let Ok(seq) = u.get_ammo() {
         for a in seq.into_iter().flatten() {
             let cat = a
-                .raw_get::<_, Option<LuaTable>>("desc")
+                .raw_get::<Option<LuaTable>>("desc")
                 .ok()
                 .flatten()
-                .and_then(|d| d.raw_get::<_, Option<i64>>("category").ok().flatten());
+                .and_then(|d| d.raw_get::<Option<i64>>("category").ok().flatten());
             if cat == Some(0) {
                 n += a.count().unwrap_or(0);
             }

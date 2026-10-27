@@ -240,7 +240,7 @@ pub fn static_object(name: &str, typ: &str, p: V3, hdg: f64, cargo_mass: Option<
 }
 
 /// The mission-table JSON as one of dcso3's wrapped mission tables.
-fn miz_table<'lua, T: FromLua<'lua>>(lua: MizLua<'lua>, j: &J) -> Result<T> {
+fn miz_table<T: FromLua>(lua: MizLua, j: &J) -> Result<T> {
     let l = lua.inner();
     Ok(T::from_lua(json_to_lua(l, j)?, l)?)
 }

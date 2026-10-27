@@ -403,13 +403,13 @@ pub enum ConvoyCargoType {
 /// network when DCS can find a path (decimated to sparse "On Road" points),
 /// straight across country when it can't. `label` names the convoy in the
 /// log.
-pub(crate) fn road_route<'lua>(
-    land: &dcso3::land::Land<'lua>,
+pub(crate) fn road_route(
+    land: &dcso3::land::Land,
     from: Vector2,
     to: Vector2,
     speed_mps: f64,
     label: &str,
-) -> Result<Vec<dcso3::controller::MissionPoint<'lua>>> {
+) -> Result<Vec<dcso3::controller::MissionPoint>> {
     use dcso3::controller::{ActionTyp, AltType, MissionPoint, PointType, Task, VehicleFormation};
     use dcso3::LuaVec2;
     let origin_alt = land.get_height(LuaVec2(from))?;
@@ -1684,7 +1684,7 @@ fn log_resource_map(lua: MizLua) -> Result<()> {
     Ok(())
 }
 
-fn get_supplier<'lua>(lua: MizLua<'lua>, template: String) -> Result<warehouse::Warehouse<'lua>> {
+fn get_supplier(lua: MizLua, template: String) -> Result<warehouse::Warehouse> {
     Airbase::get_by_name(lua, template.clone())
         .with_context(|| format_compact!("getting airbase {}", template))?
         .get_warehouse()
@@ -7440,7 +7440,7 @@ impl Db {
     /// 4000 errors in three hours). Look the airbase up again by name -- the
     /// FARP's pad, else the objective's own name -- and keep the new handle.
     /// An objective that never had an airbase still has none.
-    fn live_airbase<'lua>(&mut self, lua: MizLua<'lua>, oid: ObjectiveId) -> Result<Airbase<'lua>> {
+    fn live_airbase(&mut self, lua: MizLua, oid: ObjectiveId) -> Result<Airbase> {
         let obj = objective!(self, oid)?;
         let stored = self
             .ephemeral
@@ -7484,11 +7484,11 @@ impl Db {
         Ok(ab)
     }
 
-    pub fn sync_warehouse_to_objective<'lua>(
+    pub fn sync_warehouse_to_objective(
         &mut self,
-        lua: MizLua<'lua>,
+        lua: MizLua,
         oid: ObjectiveId,
-    ) -> Result<(&mut Objective, warehouse::Warehouse<'lua>)> {
+    ) -> Result<(&mut Objective, warehouse::Warehouse)> {
         let warehouse = self
             .live_airbase(lua, oid)
             .context("getting airbase")?
@@ -7499,11 +7499,11 @@ impl Db {
         Ok((obj, warehouse))
     }
 
-    pub fn sync_objective_to_warehouse<'lua>(
+    pub fn sync_objective_to_warehouse(
         &mut self,
-        lua: MizLua<'lua>,
+        lua: MizLua,
         oid: ObjectiveId,
-    ) -> Result<(&mut Objective, warehouse::Warehouse<'lua>)> {
+    ) -> Result<(&mut Objective, warehouse::Warehouse)> {
         let warehouse = self
             .live_airbase(lua, oid)
             .context("getting airbase")?

@@ -1778,7 +1778,7 @@ impl Db {
                     let max_kg = unit
                         .get_desc()
                         .ok()
-                        .and_then(|d| d.raw_get::<_, f64>("fuelMassMax").ok())
+                        .and_then(|d| d.raw_get::<f64>("fuelMassMax").ok())
                         .unwrap_or(0.0);
                     let kg = (frac.clamp(0.0, 1.0) as f64 * max_kg).round() as u32;
                     if kg > 0 {
@@ -2015,7 +2015,7 @@ impl Db {
                                     let max_kg = unit
                                         .get_desc()
                                         .ok()
-                                        .and_then(|d| d.raw_get::<_, f64>("fuelMassMax").ok())
+                                        .and_then(|d| d.raw_get::<f64>("fuelMassMax").ok())
                                         .unwrap_or(0.0);
                                     let kg = (frac.clamp(0.0, 1.0) as f64 * max_kg).round() as u32;
                                     if kg > 0 {

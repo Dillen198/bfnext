@@ -44,15 +44,15 @@ use zip::{read::ZipArchive, write::FileOptions, ZipWriter};
 
 static mut LUA: *const Lua = ptr::null();
 
-pub trait DeepClone<'lua>: IntoLua<'lua> + FromLua<'lua> + Clone {
-    fn deep_clone(&self, lua: &'lua Lua) -> Result<Self>;
+pub trait DeepClone: IntoLua + FromLua + Clone {
+    fn deep_clone(&self, lua: &Lua) -> Result<Self>;
 }
 
-impl<'lua, T> DeepClone<'lua> for T
+impl<T> DeepClone for T
 where
-    T: IntoLua<'lua> + FromLua<'lua> + Clone,
+    T: IntoLua + FromLua + Clone,
 {
-    fn deep_clone(&self, lua: &'lua Lua) -> Result<Self> {
+    fn deep_clone(&self, lua: &Lua) -> Result<Self> {
         let v = match self.clone().into_lua(lua)? {
             Value::Boolean(b) => Value::Boolean(b),
             Value::Error(e) => Value::Error(e),
@@ -61,10 +61,10 @@ where
             Value::LightUserData(d) => Value::LightUserData(d),
             Value::Nil => Value::Nil,
             Value::Number(n) => Value::Number(n),
-            Value::String(s) => Value::String(lua.create_string(s)?),
+            Value::String(s) => Value::String(lua.create_string(s.as_bytes())?),
             Value::Table(t) => {
                 let new = lua.create_table()?;
-                new.set_metatable(t.get_metatable());
+                new.set_metatable(t.metatable());
                 for r in t.pairs::<Value, Value>() {
                     let (k, v) = r?;
                     new.set(k.deep_clone(lua)?, v.deep_clone(lua)?)?
@@ -73,19 +73,20 @@ where
             }
             Value::Thread(t) => Value::Thread(t),
             Value::UserData(d) => Value::UserData(d),
+            Value::Other(o) => Value::Other(o),
         };
         Ok(T::from_lua(v, lua)?)
     }
 }
 
 struct TriggerZone {
-    inner: miz::TriggerZone<'static>,
+    inner: miz::TriggerZone,
     objective_name: String,
     spawn_count: HashMap<String, isize>,
 }
 
 impl TriggerZone {
-    pub fn new(zone: &Table<'static>) -> Result<Option<Self>> {
+    pub fn new(zone: &Table) -> Result<Option<Self>> {
         let zone = zone.clone();
         let inner = miz::TriggerZone::from_lua(Value::Table(zone), unsafe { &*LUA })?;
         let name = inner.name()?;
@@ -286,11 +287,11 @@ fn lua_error_context(err: &str, src: &str) -> std::string::String {
 
 struct LoadedMiz {
     miz: UnpackedMiz,
-    mission: Miz<'static>,
+    mission: Miz,
     #[allow(dead_code)]
-    options: Table<'static>,
+    options: Table,
     #[allow(dead_code)]
-    warehouses: Table<'static>,
+    warehouses: Table,
 }
 
 impl LoadedMiz {
@@ -366,19 +367,17 @@ impl LoadedMiz {
 }
 
 fn vehicle(
-    country: &Table<'static>,
+    country: &Table,
     name: &str,
-) -> Result<Box<dyn Iterator<Item = Result<Table<'static>>>>> {
+) -> Result<Box<dyn Iterator<Item = Result<Table>>>> {
     if !country.contains_key(name)? {
         Ok(Box::new([].into_iter()))
     } else {
-        Ok(Box::new(
-            country
-                .raw_get::<_, Table>(name)?
-                .raw_get::<_, Table>("group")?
-                .pairs::<Value, Table>()
-                .map(|r| Ok(r?.1)),
-        ))
+        // collected: in mlua 0.10 `pairs` borrows the table
+        let groups = country.raw_get::<Table>(name)?.raw_get::<Table>("group")?;
+        let groups: Vec<Result<Table>> =
+            groups.pairs::<Value, Table>().map(|r| Ok(r?.1)).collect();
+        Ok(Box::new(groups.into_iter()))
     }
 }
 
@@ -394,19 +393,19 @@ const UNLOADABLE_PADS: &[(&str, &str, &str)] =
 /// keeping its name, unit id, position and radio. Returns how many changed.
 fn replace_unloadable_pads(mission: &Table) -> Result<usize> {
     let mut n = 0;
-    let Ok(coalitions) = mission.raw_get::<_, Table>("coalition") else {
+    let Ok(coalitions) = mission.raw_get::<Table>("coalition") else {
         return Ok(0);
     };
     for coa in coalitions.pairs::<Value, Table>() {
         let (_, coa) = coa?;
-        let Ok(countries) = coa.raw_get::<_, Table>("country") else { continue };
+        let Ok(countries) = coa.raw_get::<Table>("country") else { continue };
         for country in countries.pairs::<Value, Table>() {
             let (_, country) = country?;
-            let Ok(statics) = country.raw_get::<_, Table>("static") else { continue };
-            let Ok(groups) = statics.raw_get::<_, Table>("group") else { continue };
+            let Ok(statics) = country.raw_get::<Table>("static") else { continue };
+            let Ok(groups) = statics.raw_get::<Table>("group") else { continue };
             for group in groups.pairs::<Value, Table>() {
                 let (_, group) = group?;
-                let Ok(units) = group.raw_get::<_, Table>("units") else { continue };
+                let Ok(units) = group.raw_get::<Table>("units") else { continue };
                 for unit in units.pairs::<Value, Table>() {
                     let (_, unit) = unit?;
                     let typ: Option<std::string::String> = unit.raw_get("type")?;
@@ -475,25 +474,25 @@ fn compact_mission_arrays(mission: &Table) -> Result<()> {
         }
         Ok(())
     };
-    if let Some(coalitions) = mission.raw_get::<_, Option<Table>>("coalition")? {
+    if let Some(coalitions) = mission.raw_get::<Option<Table>>("coalition")? {
         for pair in coalitions.pairs::<Value, Table>() {
             let (coa_name, coa) = pair?;
             let coa_name = match &coa_name {
-                Value::String(s) => s.to_string_lossy().into_owned(),
+                Value::String(s) => s.to_string_lossy(),
                 _ => continue,
             };
-            let Some(countries) = coa.raw_get::<_, Option<Table>>("country")? else {
+            let Some(countries) = coa.raw_get::<Option<Table>>("country")? else {
                 continue;
             };
             compact(&countries, &|| format!("coalition.{coa_name}.country"))?;
             for country in countries.pairs::<Value, Table>() {
                 let (_, country) = country?;
-                let cid = country.raw_get::<_, i64>("id").unwrap_or(-1);
+                let cid = country.raw_get::<i64>("id").unwrap_or(-1);
                 for cat in ["plane", "helicopter", "vehicle", "ship", "static"] {
-                    let Some(holder) = country.raw_get::<_, Option<Table>>(cat)? else {
+                    let Some(holder) = country.raw_get::<Option<Table>>(cat)? else {
                         continue;
                     };
-                    let Some(groups) = holder.raw_get::<_, Option<Table>>("group")? else {
+                    let Some(groups) = holder.raw_get::<Option<Table>>("group")? else {
                         continue;
                     };
                     compact(&groups, &|| {
@@ -501,11 +500,11 @@ fn compact_mission_arrays(mission: &Table) -> Result<()> {
                     })?;
                     for group in groups.pairs::<Value, Table>() {
                         let (_, group) = group?;
-                        if let Some(units) = group.raw_get::<_, Option<Table>>("units")? {
+                        if let Some(units) = group.raw_get::<Option<Table>>("units")? {
                             compact(&units, &|| {
                                 let gname = group
-                                    .raw_get::<_, mlua::String>("name")
-                                    .map(|s| s.to_string_lossy().into_owned())
+                                    .raw_get::<mlua::String>("name")
+                                    .map(|s| s.to_string_lossy())
                                     .unwrap_or_default();
                                 format!("units of {cat} group {gname:?}")
                             })?;
@@ -515,8 +514,8 @@ fn compact_mission_arrays(mission: &Table) -> Result<()> {
             }
         }
     }
-    if let Some(triggers) = mission.raw_get::<_, Option<Table>>("triggers")? {
-        if let Some(zones) = triggers.raw_get::<_, Option<Table>>("zones")? {
+    if let Some(triggers) = mission.raw_get::<Option<Table>>("triggers")? {
+        if let Some(zones) = triggers.raw_get::<Option<Table>>("zones")? {
             compact(&zones, &|| "triggers.zones".to_string())?;
         }
     }
@@ -800,12 +799,12 @@ enum SlotType {
 }
 
 struct VehicleTemplates {
-    plane_slots: HashMap<Side, HashMap<String, Group<'static>>>,
-    helicopter_slots: HashMap<Side, HashMap<String, Group<'static>>>,
-    payload: HashMap<Side, HashMap<String, Table<'static>>>,
-    prop_aircraft: HashMap<Side, HashMap<String, Table<'static>>>,
-    radio: HashMap<Side, HashMap<String, Table<'static>>>,
-    frequency: HashMap<Side, HashMap<String, Value<'static>>>,
+    plane_slots: HashMap<Side, HashMap<String, Group>>,
+    helicopter_slots: HashMap<Side, HashMap<String, Group>>,
+    payload: HashMap<Side, HashMap<String, Table>>,
+    prop_aircraft: HashMap<Side, HashMap<String, Table>>,
+    radio: HashMap<Side, HashMap<String, Table>>,
+    frequency: HashMap<Side, HashMap<String, Value>>,
 }
 
 impl VehicleTemplates {
@@ -838,7 +837,7 @@ impl VehicleTemplates {
                 {
                     let group = group?;
                     for unit in group
-                        .raw_get::<_, Table>("units")
+                        .raw_get::<Table>("units")
                         .context("getting units")?
                         .pairs::<Value, Table>()
                     {
@@ -884,8 +883,8 @@ impl VehicleTemplates {
 
     fn generate_slots(&self, lua: &Lua, base: &mut LoadedMiz) -> Result<()> {
         fn set_dl_mizuid(unit: &Table) -> Result<()> {
-            if let Ok(Some(dl)) = unit.raw_get::<_, Option<Table>>("datalinks") {
-                let uid = unit.raw_get::<_, i64>("unitId")?;
+            if let Ok(Some(dl)) = unit.raw_get::<Option<Table>>("datalinks") {
+                let uid = unit.raw_get::<i64>("unitId")?;
                 let mut ok = false;
                 if let Ok(ownship) =
                     dl.raw_get_path::<Table>(&path!["Link16", "network", "teamMembers", 1])
@@ -947,7 +946,7 @@ impl VehicleTemplates {
                             _ => unreachable!(),
                         },
                     )?;
-                    coa.raw_get::<_, Table>("country")?.push(tbl)?;
+                    coa.raw_get::<Table>("country")?.push(tbl)?;
                     coa.country(cname)?.unwrap()
                 }
             };
@@ -1123,7 +1122,7 @@ impl VehicleTemplates {
             .map(|side| (side, base.mission.coalition(side)))
         {
             let coa = coa?;
-            for country in coa.raw_get::<_, Table>("country")?.pairs::<Value, Table>() {
+            for country in coa.raw_get::<Table>("country")?.pairs::<Value, Table>() {
                 let country = country?.1;
                 for group in vehicle(&country, "plane")
                     .context("getting planes")?
@@ -1131,13 +1130,13 @@ impl VehicleTemplates {
                 {
                     let group = group.context("getting group")?;
                     for unit in group
-                        .raw_get::<_, Table>("units")
+                        .raw_get::<Table>("units")
                         .context("getting units")?
                         .pairs::<Value, Table>()
                     {
                         let unit = unit.context("getting unit")?.1;
                         // skip ai aircraft
-                        if unit.raw_get::<_, String>("skill")?.as_str() != "Client" {
+                        if unit.raw_get::<String>("skill")?.as_str() != "Client" {
                             continue;
                         }
                         let unit_type: String = unit.raw_get("type")?;
@@ -1275,18 +1274,18 @@ impl VehicleTemplates {
 }
 
 struct WarehouseTemplate {
-    blue_inventory: Table<'static>,
-    red_inventory: Table<'static>,
-    default: Table<'static>,
+    blue_inventory: Table,
+    red_inventory: Table,
+    default: Table,
     /// Optional per-coalition NAVAL inventory templates (Invisible FARP
     /// statics named BINVENTORYNAVY / RINVENTORYNAVY in the --warehouse
     /// miz). When present, their `aircrafts` roster is copied onto every
     /// ship warehouse of that coalition, so carriers stock a
     /// carrier-appropriate airframe list instead of the land-base one.
-    blue_navy: Option<Table<'static>>,
-    red_navy: Option<Table<'static>>,
+    blue_navy: Option<Table>,
+    red_navy: Option<Table>,
     /// dynSpawnTemplate groups from the warehouse miz: (side, is_helicopter, original_group_id, group_table)
-    dyn_spawn_groups: Vec<(Side, bool, i64, Table<'static>)>,
+    dyn_spawn_groups: Vec<(Side, bool, i64, Table)>,
 }
 
 impl WarehouseTemplate {
@@ -1299,7 +1298,7 @@ impl WarehouseTemplate {
         let mut dyn_spawn_groups = vec![];
         for pair in wht
             .mission
-            .raw_get::<_, Table>("coalition")?
+            .raw_get::<Table>("coalition")?
             .pairs::<String, Table>()
         {
             let (coa_name, coa) = pair?;
@@ -1314,18 +1313,18 @@ impl WarehouseTemplate {
                 "neutrals" => None,
                 _ => continue,
             };
-            let Some(country_list) = coa.raw_get::<_, Option<Table>>("country")? else {
+            let Some(country_list) = coa.raw_get::<Option<Table>>("country")? else {
                 continue;
             };
             for country in country_list.pairs::<Value, Table>() {
                 let country = country?.1;
                 for group in vehicle(&country, "static")? {
                     let group = group?;
-                    for unit in group.raw_get::<_, Table>("units")?.pairs::<Value, Table>() {
+                    for unit in group.raw_get::<Table>("units")?.pairs::<Value, Table>() {
                         let unit = unit?.1;
-                        if *unit.raw_get::<_, String>("type")? == "Invisible FARP" {
-                            let name = unit.raw_get::<_, String>("name")?;
-                            let id = unit.raw_get::<_, i64>("unitId")?;
+                        if *unit.raw_get::<String>("type")? == "Invisible FARP" {
+                            let name = unit.raw_get::<String>("name")?;
+                            let id = unit.raw_get::<i64>("unitId")?;
                             if *name == "DEFAULT" {
                                 default_id = id;
                             } else if *name == cfg.blue_production_template {
@@ -1349,10 +1348,10 @@ impl WarehouseTemplate {
                 // warehouse UI in the ME) rather than an Invisible FARP.
                 for group in vehicle(&country, "ship")? {
                     let group = group?;
-                    for unit in group.raw_get::<_, Table>("units")?.pairs::<Value, Table>() {
+                    for unit in group.raw_get::<Table>("units")?.pairs::<Value, Table>() {
                         let unit = unit?.1;
-                        let name = unit.raw_get::<_, String>("name")?;
-                        let id = unit.raw_get::<_, i64>("unitId")?;
+                        let name = unit.raw_get::<String>("name")?;
+                        let id = unit.raw_get::<i64>("unitId")?;
                         if *name == cfg.blue_navy_production_template {
                             blue_navy_id = id;
                         } else if *name == cfg.red_navy_production_template {
@@ -1364,8 +1363,8 @@ impl WarehouseTemplate {
                     let is_heli = category == "helicopter";
                     for group in vehicle(&country, category)? {
                         let group = group?;
-                        if group.raw_get::<_, bool>("dynSpawnTemplate").unwrap_or(false) {
-                            let orig_id = group.raw_get::<_, i64>("groupId")?;
+                        if group.raw_get::<bool>("dynSpawnTemplate").unwrap_or(false) {
+                            let orig_id = group.raw_get::<i64>("groupId")?;
                             // A dynSpawnTemplate group is copied into the base
                             // mission under its own coalition's CJTF country,
                             // and neutrals have none to put it in.
@@ -1399,19 +1398,19 @@ impl WarehouseTemplate {
         }
         let warehouses = wht
             .warehouses
-            .raw_get::<_, Table>("warehouses")
+            .raw_get::<Table>("warehouses")
             .context("getting warehouses")?;
         // A carrier acts as an airbase, so the ME saves a carrier ship's
         // warehouse under `warehouses.airports[<unitId>]`, not `.warehouses`.
-        let wh_airports = wht.warehouses.raw_get::<_, Table>("airports").ok();
-        let navy_wh = |id: i64, side: &str| -> Result<Option<Table<'static>>> {
+        let wh_airports = wht.warehouses.raw_get::<Table>("airports").ok();
+        let navy_wh = |id: i64, side: &str| -> Result<Option<Table>> {
             if id == 0 {
                 return Ok(None);
             }
             let t = warehouses
-                .raw_get::<_, Table>(id)
+                .raw_get::<Table>(id)
                 .ok()
-                .or_else(|| wh_airports.as_ref().and_then(|a| a.raw_get::<_, Table>(id).ok()))
+                .or_else(|| wh_airports.as_ref().and_then(|a| a.raw_get::<Table>(id).ok()))
                 .with_context(|| {
                     format_compact!(
                         "{side} navy template {id} has no warehouse in the --warehouse miz \
@@ -1462,7 +1461,7 @@ impl WarehouseTemplate {
             group.raw_set("groupId", gid)?;
             id_map.insert(*orig_gid, new_gid);
             for unit_pair in group
-                .raw_get::<_, Table>("units")?
+                .raw_get::<Table>("units")?
                 .pairs::<Value, Table>()
             {
                 let (_k, unit) = unit_pair?;
@@ -1489,7 +1488,7 @@ impl WarehouseTemplate {
                             _ => unreachable!(),
                         },
                     )?;
-                    coa.raw_get::<_, Table>("country")?.push(tbl)?;
+                    coa.raw_get::<Table>("country")?.push(tbl)?;
                     coa.country(cname)?.unwrap()
                 }
             };
@@ -1562,7 +1561,7 @@ impl WarehouseTemplate {
         let mut carrier_coalition: HashMap<i64, std::string::String> = HashMap::new();
         for coa in base
             .mission
-            .raw_get::<_, Table>("coalition")?
+            .raw_get::<Table>("coalition")?
             .pairs::<Value, Table>()
         {
             let (coa_key, coa) = coa?;
@@ -1570,12 +1569,12 @@ impl WarehouseTemplate {
                 Value::String(s) => s.to_str().ok().map(|s| s.to_string()),
                 _ => None,
             };
-            for country in coa.raw_get::<_, Table>("country")?.pairs::<Value, Table>() {
+            for country in coa.raw_get::<Table>("country")?.pairs::<Value, Table>() {
                 let country = country?.1;
                 if let Ok(iter) = vehicle(&country, "static") {
                     for group in iter {
                         let group = group?;
-                        for unit in group.raw_get::<_, Table>("units")?.pairs::<Value, Table>() {
+                        for unit in group.raw_get::<Table>("units")?.pairs::<Value, Table>() {
                             let unit = unit?.1;
                             let typ: String = unit.raw_get("type")?;
                             let name: String = unit.raw_get("name")?;
@@ -1600,7 +1599,7 @@ impl WarehouseTemplate {
                     for group in iter {
                         let group = group?;
                         let gname = group
-                            .raw_get::<_, String>("name")
+                            .raw_get::<String>("name")
                             .map(|s| s.as_str().to_uppercase())
                             .unwrap_or_default();
                         if !gname.contains("CARRIER") {
@@ -1611,9 +1610,9 @@ impl WarehouseTemplate {
                         // hulls (super-carrier + Tarawa, etc.) a player can
                         // slot on, and giving them all one identical warehouse
                         // is simpler than guessing which are decks.
-                        for unit in group.raw_get::<_, Table>("units")?.pairs::<Value, Table>() {
+                        for unit in group.raw_get::<Table>("units")?.pairs::<Value, Table>() {
                             let unit = unit?.1;
-                            if let Ok(id) = unit.raw_get::<_, i64>("unitId") {
+                            if let Ok(id) = unit.raw_get::<i64>("unitId") {
                                 if let Some(c) = &coa_name {
                                     carrier_coalition.insert(id, c.clone());
                                 }
@@ -1625,11 +1624,11 @@ impl WarehouseTemplate {
         }
         let airports = base
             .warehouses
-            .raw_get::<_, Table>("airports")
+            .raw_get::<Table>("airports")
             .context("getting airports")?;
         let warehouses = base
             .warehouses
-            .raw_get::<_, Table>("warehouses")
+            .raw_get::<Table>("warehouses")
             .context("getting warehouses")?;
         let mut airport_ids = vec![];
         for wh in airports.clone().pairs::<i64, Table>() {
@@ -1700,22 +1699,22 @@ impl WarehouseTemplate {
         // preserve runs after it. It is deliberately no longer in this list.
         let preserve_from_orig = |orig: &Table, new_wh: &Table| -> Result<()> {
             for key in ["allowHotStart"] {
-                if let Ok(v) = orig.raw_get::<_, Value>(key) {
+                if let Ok(v) = orig.raw_get::<Value>(key) {
                     if !matches!(v, Value::Nil) {
                         new_wh.raw_set(key, v)?;
                     }
                 }
             }
-            if let Ok(orig_ac) = orig.raw_get::<_, Table>("aircrafts") {
+            if let Ok(orig_ac) = orig.raw_get::<Table>("aircrafts") {
                 new_wh.raw_set("aircrafts", orig_ac)?;
             }
             Ok(())
         };
         for id in airport_ids {
-            let orig = airports.raw_get::<_, Table>(id).ok();
+            let orig = airports.raw_get::<Table>(id).ok();
             let coa = orig
                 .as_ref()
-                .and_then(|o| o.raw_get::<_, String>("coalition").ok());
+                .and_then(|o| o.raw_get::<String>("coalition").ok());
             let new_wh = inv_for_coalition(coa.as_ref().map(|s| s.as_str())).deep_clone(lua)?;
             stop_dcs_production(&new_wh)?;
             // Preserve per-airbase fields + original aircrafts from the base
@@ -1731,10 +1730,10 @@ impl WarehouseTemplate {
                 .with_context(|| format_compact!("setting airport {id}"))?;
         }
         for id in &whids {
-            let orig = warehouses.raw_get::<_, Table>(*id).ok();
+            let orig = warehouses.raw_get::<Table>(*id).ok();
             let coa = orig
                 .as_ref()
-                .and_then(|o| o.raw_get::<_, String>("coalition").ok());
+                .and_then(|o| o.raw_get::<String>("coalition").ok());
             let new_wh = inv_for_coalition(coa.as_ref().map(|s| s.as_str())).deep_clone(lua)?;
             stop_dcs_production(&new_wh)?;
             if let Some(orig) = &orig {
@@ -1763,10 +1762,10 @@ impl WarehouseTemplate {
                     Err(_) => return Ok(()),
                 };
                 for cat in ["planes", "helicopters"] {
-                    if let Ok(cat_tbl) = aircrafts.raw_get::<_, Table>(cat) {
+                    if let Ok(cat_tbl) = aircrafts.raw_get::<Table>(cat) {
                         for ac_pair in cat_tbl.clone().pairs::<String, Table>() {
                             let (ac_type, ac) = ac_pair?;
-                            if let Ok(old_id) = ac.raw_get::<_, i64>("linkDynTempl") {
+                            if let Ok(old_id) = ac.raw_get::<i64>("linkDynTempl") {
                                 if let Some(&new_id) = id_map.get(&old_id) {
                                     ac.raw_set("linkDynTempl", new_id)?;
                                     info!(
@@ -1794,25 +1793,25 @@ impl WarehouseTemplate {
             (
                 "blue",
                 warehouses
-                    .raw_get::<_, Table>(blue_inventory)
+                    .raw_get::<Table>(blue_inventory)
                     .context("getting blue inventory for propagation")?,
             ),
             (
                 "red",
                 warehouses
-                    .raw_get::<_, Table>(red_inventory)
+                    .raw_get::<Table>(red_inventory)
                     .context("getting red inventory for propagation")?,
             ),
         ];
         let _ = writeln!(report, "\n=== Inventory template entries (--warehouse file blue/red inventory) ===");
         for (side_name, inv) in &both_invs {
-            if let Ok(inv_ac) = inv.raw_get::<_, Table>("aircrafts") {
+            if let Ok(inv_ac) = inv.raw_get::<Table>("aircrafts") {
                 for cat in ["planes", "helicopters"] {
-                    if let Ok(inv_cat) = inv_ac.raw_get::<_, Table>(cat) {
+                    if let Ok(inv_cat) = inv_ac.raw_get::<Table>(cat) {
                         for pair in inv_cat.pairs::<std::string::String, Table>() {
                             let (ac_type, inv_entry) = pair?;
-                            let amt = inv_entry.raw_get::<_, i64>("initialAmount").unwrap_or(0);
-                            let link = inv_entry.raw_get::<_, i64>("linkDynTempl").unwrap_or(0);
+                            let amt = inv_entry.raw_get::<i64>("initialAmount").unwrap_or(0);
+                            let link = inv_entry.raw_get::<i64>("linkDynTempl").unwrap_or(0);
                             if link != 0 {
                                 let _ = writeln!(report, "  [{side_name}/{cat}] {ac_type}: initialAmount={amt} linkDynTempl={link} (propagated to every airport/warehouse below)");
                             } else {
@@ -1837,8 +1836,8 @@ impl WarehouseTemplate {
                     Err(_) => continue,
                 };
                 for cat in ["planes", "helicopters"] {
-                    if let Ok(inv_cat) = inv_ac.raw_get::<_, Table>(cat) {
-                        let wh_cat: Table = match wh_ac.raw_get::<_, Table>(cat) {
+                    if let Ok(inv_cat) = inv_ac.raw_get::<Table>(cat) {
+                        let wh_cat: Table = match wh_ac.raw_get::<Table>(cat) {
                             Ok(t) => t,
                             Err(_) => {
                                 let t = lua.create_table()?;
@@ -1848,10 +1847,10 @@ impl WarehouseTemplate {
                         };
                         for pair in inv_cat.clone().pairs::<String, Table>() {
                             let (ac_type, inv_entry) = pair?;
-                            if let Ok(link) = inv_entry.raw_get::<_, i64>("linkDynTempl") {
+                            if let Ok(link) = inv_entry.raw_get::<i64>("linkDynTempl") {
                                 if link != 0 {
                                     let wh_entry: Table =
-                                        match wh_cat.raw_get::<_, Table>(ac_type.as_str()) {
+                                        match wh_cat.raw_get::<Table>(ac_type.as_str()) {
                                             Ok(t) => t,
                                             Err(_) => {
                                                 let t = inv_entry.deep_clone(lua)?;
@@ -1872,10 +1871,10 @@ impl WarehouseTemplate {
                                     // whatever the base file happened to have instead of
                                     // the amount configured in the inventory template.
                                     let inv_amt = inv_entry
-                                        .raw_get::<_, i64>("initialAmount")
+                                        .raw_get::<i64>("initialAmount")
                                         .unwrap_or(0);
                                     let old_amt = wh_entry
-                                        .raw_get::<_, i64>("initialAmount")
+                                        .raw_get::<i64>("initialAmount")
                                         .unwrap_or(0);
                                     let new_amt = if inv_amt > 0 { inv_amt } else { 1 };
                                     wh_entry.raw_set("initialAmount", new_amt)?;
@@ -1949,7 +1948,7 @@ impl WarehouseTemplate {
             let Some(navy) = navy_for(Some(coa)) else {
                 return Ok(false);
             };
-            let orig = tbl.raw_get::<_, Table>(id).ok();
+            let orig = tbl.raw_get::<Table>(id).ok();
             let wh = navy.deep_clone(lua)?;
             for flag in ["unlimitedMunitions", "unlimitedFuel", "unlimitedAircrafts"] {
                 wh.raw_set(flag, false)?;
@@ -1966,7 +1965,7 @@ impl WarehouseTemplate {
             wh.raw_set("coalition", coa.to_ascii_uppercase())?;
             if let Some(orig) = &orig {
                 for key in ["speed", "size", "periodicity"] {
-                    if let Ok(v) = orig.raw_get::<_, Value>(key) {
+                    if let Ok(v) = orig.raw_get::<Value>(key) {
                         if !matches!(v, Value::Nil) {
                             wh.raw_set(key, v)?;
                         }
@@ -1979,12 +1978,12 @@ impl WarehouseTemplate {
             // original ids, which don't exist in the output (dynamic slots
             // on the carrier deck would otherwise get the wrong loadout).
             if !id_map.is_empty() {
-                if let Ok(ac) = wh.raw_get::<_, Table>("aircrafts") {
+                if let Ok(ac) = wh.raw_get::<Table>("aircrafts") {
                     for cat in ["planes", "helicopters"] {
-                        if let Ok(cat_tbl) = ac.raw_get::<_, Table>(cat) {
+                        if let Ok(cat_tbl) = ac.raw_get::<Table>(cat) {
                             for p in cat_tbl.clone().pairs::<String, Table>() {
                                 let (_, e) = p?;
-                                if let Ok(old) = e.raw_get::<_, i64>("linkDynTempl") {
+                                if let Ok(old) = e.raw_get::<i64>("linkDynTempl") {
                                     if let Some(&new) = id_map.get(&old) {
                                         e.raw_set("linkDynTempl", new)?;
                                     }
@@ -2013,7 +2012,7 @@ impl WarehouseTemplate {
                     }
                     match carrier_coalition.get(&id).cloned() {
                         None => {
-                            if let Ok(wh) = tbl.raw_get::<_, Table>(id) {
+                            if let Ok(wh) = tbl.raw_get::<Table>(id) {
                                 for flag in ["unlimitedMunitions", "unlimitedFuel"] {
                                     wh.raw_set(flag, false)?;
                                 }
@@ -2077,9 +2076,9 @@ fn compile_objectives(base: &LoadedMiz) -> Result<Vec<TriggerZone>> {
     let mut objectives = Vec::new();
     for zone in base
         .mission
-        .raw_get::<_, Table>("triggers")
+        .raw_get::<Table>("triggers")
         .context("getting triggers")?
-        .raw_get::<_, Table>("zones")
+        .raw_get::<Table>("zones")
         .context("getting zones")?
         .pairs::<Value, Table>()
     {
@@ -2360,9 +2359,9 @@ fn apply_options_overrides(lua: &'static Lua, options_path: &Path, overrides_pat
     Ok(())
 }
 
-fn merge_json_into_lua_table<'lua>(
-    lua: &'lua Lua,
-    target: &Table<'lua>,
+fn merge_json_into_lua_table(
+    lua: &Lua,
+    target: &Table,
     json: &serde_json::Value,
 ) -> Result<()> {
     let map = match json {
@@ -2388,7 +2387,7 @@ fn merge_json_into_lua_table<'lua>(
     Ok(())
 }
 
-fn json_value_to_lua<'lua>(lua: &'lua Lua, v: &serde_json::Value) -> Result<Value<'lua>> {
+fn json_value_to_lua(lua: &Lua, v: &serde_json::Value) -> Result<Value> {
     Ok(match v {
         serde_json::Value::Null => Value::Nil,
         serde_json::Value::Bool(b) => Value::Boolean(*b),
@@ -2396,7 +2395,7 @@ fn json_value_to_lua<'lua>(lua: &'lua Lua, v: &serde_json::Value) -> Result<Valu
             Some(i) => Value::Integer(i),
             None => Value::Number(n.as_f64().context("invalid number in options overrides")?),
         },
-        serde_json::Value::String(s) => Value::String(lua.create_string(s)?),
+        serde_json::Value::String(s) => Value::String(lua.create_string(s.as_bytes())?),
         serde_json::Value::Array(items) => {
             let t = lua.create_table()?;
             for (i, item) in items.iter().enumerate() {
@@ -2454,7 +2453,7 @@ fn parse_map_view(v: &str) -> Result<&'static str> {
     })
 }
 
-fn unit_layer_mask(lua: &'static Lua, visible: bool) -> Result<Table<'static>> {
+fn unit_layer_mask(lua: &'static Lua, visible: bool) -> Result<Table> {
     let t = lua.create_table()?;
     for i in 0..UNIT_LAYER_BITS {
         t.raw_set(i, visible)?;
@@ -2471,7 +2470,7 @@ fn unit_layer_mask(lua: &'static Lua, visible: bool) -> Result<Table<'static>> {
 /// aircraft under you.
 fn enforce_map_view(
     lua: &'static Lua,
-    mission: &Miz<'static>,
+    mission: &Miz,
     player_view: Option<&str>,
     spectator_view: &str,
 ) -> Result<()> {
@@ -2485,9 +2484,9 @@ fn enforce_map_view(
     // If the template already uses the extended table, inherit the pilot
     // entry rather than the marker value "optview_extended".
     let inherited = match current.as_deref() {
-        Some("optview_extended") => match forced.raw_get::<_, Value>("optionsViewExtended")? {
-            Value::Table(t) => match t.raw_get::<_, Value>(ROLE_PILOT)? {
-                Value::Table(role) => match role.raw_get::<_, Value>("f10ViewOption")? {
+        Some("optview_extended") => match forced.raw_get::<Value>("optionsViewExtended")? {
+            Value::Table(t) => match t.raw_get::<Value>(ROLE_PILOT)? {
+                Value::Table(role) => match role.raw_get::<Value>("f10ViewOption")? {
                     Value::String(s) => Some(s.to_str()?.to_string()),
                     _ => None,
                 },
@@ -2756,7 +2755,7 @@ fn parse_special_sam_group_name(name: &str) -> Option<(std::string::String, std:
 /// bucket them into per-(side, location, label) sites based on the
 /// location/label parsed from each group's own name; `side` is the physical
 /// DCS coalition the group is placed under.
-fn collect_special_sam_sites(mission: &Miz<'static>) -> Result<Vec<FoundSite>> {
+fn collect_special_sam_sites(mission: &Miz) -> Result<Vec<FoundSite>> {
     let mut sites: HashMap<(Side, std::string::String, std::string::String), FoundSite> =
         HashMap::default();
     let mut skipped = 0usize;
@@ -2922,14 +2921,14 @@ pub fn run_fix_logi_coverage(cfg: &crate::FixLogiCoverageCmd) -> Result<()> {
     let mut glogi_positions: Vec<na::base::Vector2<f64>> = vec![];
     let mut max_zone_id: i64 = 0;
     let mut max_glogia_n: i64 = 0;
-    let mut template_zone: Option<Table<'static>> = None;
+    let mut template_zone: Option<Table> = None;
 
     for tz in loaded.mission.triggers()? {
         let tz = tz?;
         let name = tz.name()?;
         let name = name.as_str();
 
-        if let Ok(id) = tz.raw_get::<_, i64>("zoneId") {
+        if let Ok(id) = tz.raw_get::<i64>("zoneId") {
             max_zone_id = max_zone_id.max(id);
         }
 
@@ -2981,7 +2980,7 @@ pub fn run_fix_logi_coverage(cfg: &crate::FixLogiCoverageCmd) -> Result<()> {
 
     let zones: Table = loaded
         .mission
-        .raw_get::<_, Table>("triggers")?
+        .raw_get::<Table>("triggers")?
         .raw_get("zones")?;
     let mut next_index = zones.raw_len() as i64;
     let mut added = 0usize;

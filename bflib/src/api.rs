@@ -192,13 +192,13 @@ pub(crate) fn flush_events(lua: MizLua) {
         return;
     }
     let globals = lua.inner().globals();
-    let Ok(api) = globals.get::<_, mlua::Table>("vector_strike") else { return };
-    let Ok(func) = api.get::<_, mlua::Function>("on_event") else { return };
+    let Ok(api) = globals.get::<mlua::Table>("vector_strike") else { return };
+    let Ok(func) = api.get::<mlua::Function>("on_event") else { return };
     for (event_type, message) in pending {
         if let Ok(tbl) = lua.inner().create_table() {
             let _ = tbl.set("type", event_type);
             let _ = tbl.set("message", message);
-            if let Err(e) = func.call::<_, ()>(tbl) {
+            if let Err(e) = func.call::<()>(tbl) {
                 log_hook_error(event_type, &e);
             }
         }

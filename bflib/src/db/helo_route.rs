@@ -555,7 +555,7 @@ pub(super) struct SmartRoute {
 // ─── DCS side ────────────────────────────────────────────────────────────────
 
 /// The options every helo mission flies with.
-fn defensive_options<'lua>() -> [AiOption<'lua>; 6] {
+fn defensive_options() -> [AiOption; 6] {
     [
         // Never stop to fight: a transport that turns to engage something is
         // a transport that doesn't land.
@@ -575,7 +575,7 @@ fn defensive_options<'lua>() -> [AiOption<'lua>; 6] {
 
 /// The defensive options as waypoint-0 tasks for a spawning helo mission,
 /// or nothing when threat avoidance is off.
-pub(super) fn defensive_task<'lua>(cfg: &HeloInsertionCfg) -> Task<'lua> {
+pub(super) fn defensive_task(cfg: &HeloInsertionCfg) -> Task {
     if cfg.threat_avoidance.enabled {
         Task::ComboTask(defensive_options().into_iter().map(Task::WrappedOption).collect())
     } else {
@@ -585,7 +585,7 @@ pub(super) fn defensive_task<'lua>(cfg: &HeloInsertionCfg) -> Task<'lua> {
 
 /// The `Land` waypoint, in the shape the Mission Editor writes (see the
 /// same point in `Db::spawn_helo_mission`).
-fn land_point<'lua>(pos: Vector2, alt: f64, speed: f64) -> MissionPoint<'lua> {
+fn land_point(pos: Vector2, alt: f64, speed: f64) -> MissionPoint {
     MissionPoint {
         action: Some(ActionTyp::Air(TurnMethod::Landing)),
         airdrome_id: None,

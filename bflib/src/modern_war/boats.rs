@@ -76,7 +76,7 @@ pub(crate) struct Boats {
     seq: u32,
 }
 
-fn point<'lua>(p: Vector2, speed: f64) -> MissionPoint<'lua> {
+fn point(p: Vector2, speed: f64) -> MissionPoint {
     MissionPoint {
         typ: PointType::TurningPoint,
         airdrome_id: None,

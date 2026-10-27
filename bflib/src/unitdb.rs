@@ -161,7 +161,7 @@ const UNIT_SCAN_DEPTH: usize = 4;
 const SENSOR_SCAN_DEPTH: usize = 6;
 
 fn opt_f64(t: &LuaTable, key: &str) -> Option<f64> {
-    match t.raw_get::<_, LuaValue>(key) {
+    match t.raw_get::<LuaValue>(key) {
         Ok(LuaValue::Number(n)) => Some(n),
         Ok(LuaValue::Integer(i)) => Some(i as f64),
         _ => None,
@@ -169,7 +169,7 @@ fn opt_f64(t: &LuaTable, key: &str) -> Option<f64> {
 }
 
 fn opt_string(t: &LuaTable, key: &str) -> Option<String> {
-    match t.raw_get::<_, LuaValue>(key) {
+    match t.raw_get::<LuaValue>(key) {
         Ok(LuaValue::String(s)) => s.to_str().ok().map(|s| s.to_string()),
         _ => None,
     }
@@ -180,7 +180,7 @@ fn opt_string(t: &LuaTable, key: &str) -> Option<String> {
 /// dropped.
 fn attributes(t: &LuaTable) -> Vec<String> {
     let mut out = vec![];
-    if let Ok(attrs) = t.raw_get::<_, LuaTable>("attribute") {
+    if let Ok(attrs) = t.raw_get::<LuaTable>("attribute") {
         for v in attrs.sequence_values::<LuaValue>().flatten() {
             if let LuaValue::String(s) = v {
                 if let Ok(s) = s.to_str() {
@@ -230,7 +230,7 @@ fn parse_unit(t: &LuaTable, category: &str) -> Option<UnitInfo> {
     // models, visuals and armour schemes we'd otherwise walk for nothing --
     // once per unit type, several hundred times, at startup.
     let mut seen = Vec::with_capacity(32);
-    let ws = t.raw_get::<_, LuaTable>("WS").ok();
+    let ws = t.raw_get::<LuaTable>("WS").ok();
     Some(UnitInfo {
         typ,
         display_name: opt_string(t, "DisplayName").or_else(|| opt_string(t, "Name")),
@@ -272,7 +272,7 @@ fn walk(
         let (k, v) = pair;
         let LuaValue::Table(child) = v else { continue };
         let name = match &k {
-            LuaValue::String(s) => s.to_str().unwrap_or("?").to_string(),
+            LuaValue::String(s) => s.to_str().map(|s| s.to_string()).unwrap_or_else(|_| "?".into()),
             LuaValue::Integer(i) => i.to_string(),
             LuaValue::Number(n) => n.to_string(),
             _ => continue,

@@ -63,11 +63,11 @@ use std::{cmp::max, vec};
 /// `tacan_callsign` isn't set. `frequency` is a placeholder within the
 /// TACAN L-band -- DCS derives the actual beacon frequency from `channel`
 /// and `mode_channel` when both are present.
-fn tacan_beacon_task<'lua>(
+fn tacan_beacon_task(
     pl: &AiPlaneCfg,
     name: &str,
     system: BeaconSystem,
-) -> Option<Task<'lua>> {
+) -> Option<Task> {
     let channel = pl.tacan_channel?;
     let band = pl.tacan_band.clone().unwrap_or(TacanBand::Y);
     let callsign = pl.tacan_callsign.clone().unwrap_or_else(|| {
@@ -97,7 +97,7 @@ fn tacan_beacon_task<'lua>(
 /// that aircraft category) -- we don't map friendly names to ids ourselves
 /// since the valid set differs by aircraft category and has changed across
 /// DCS versions.
-fn callsign_command_task<'lua>(pl: &AiPlaneCfg) -> Option<Task<'lua>> {
+fn callsign_command_task(pl: &AiPlaneCfg) -> Option<Task> {
     let callname = pl.callsign_id?;
     let number = pl.callsign_number.unwrap_or(1);
     Some(Task::WrappedCommand(Command::SetCallsign { callname, number }))
@@ -1313,13 +1313,13 @@ impl Db {
         Ok(())
     }
 
-    fn drone_mission<'lua>(
+    fn drone_mission(
         &mut self,
         side: Side,
         ucid: Option<Ucid>,
         spawn_point: Vector2,
         args: WithPosAndGroup<()>,
-    ) -> Result<Vec<MissionPoint<'lua>>> {
+    ) -> Result<Vec<MissionPoint>> {
         self.ai_loiter_point_mission(
             side,
             ucid,
@@ -1460,13 +1460,13 @@ impl Db {
     /// builder because `drone_mission` only accepts Drone groups -- borrowing
     /// it made every recon spawn fail "not compatible with the selected
     /// group".
-    fn recon_mission<'lua>(
+    fn recon_mission(
         &mut self,
         side: Side,
         ucid: Option<Ucid>,
         spawn_point: Vector2,
         args: WithPosAndGroup<()>,
-    ) -> Result<Vec<MissionPoint<'lua>>> {
+    ) -> Result<Vec<MissionPoint>> {
         self.ai_loiter_point_mission(
             side,
             ucid,
@@ -1479,13 +1479,13 @@ impl Db {
         )
     }
 
-    fn ai_fighters_mission<'lua>(
+    fn ai_fighters_mission(
         &mut self,
         side: Side,
         ucid: Option<Ucid>,
         spawn_pos: Vector2,
         args: WithPosAndGroup<()>,
-    ) -> Result<Vec<MissionPoint<'lua>>> {
+    ) -> Result<Vec<MissionPoint>> {
         let (freq, tacan, callsign) = match &group!(self, args.group)?.origin {
             DeployKind::Action { spec, name, .. } => match &spec.kind {
                 ActionKind::Fighters(pl) => (
@@ -1599,13 +1599,13 @@ impl Db {
         )?))
     }
 
-    fn ai_attackers_mission<'lua>(
+    fn ai_attackers_mission(
         &mut self,
         side: Side,
         ucid: Option<Ucid>,
         spawn_pos: Vector2,
         args: WithPosAndGroup<()>,
-    ) -> Result<Vec<MissionPoint<'lua>>> {
+    ) -> Result<Vec<MissionPoint>> {
         let (freq, tacan, callsign) = match &group!(self, args.group)?.origin {
             DeployKind::Action { spec, name, .. } => match &spec.kind {
                 ActionKind::Attackers(pl) => (
@@ -1665,13 +1665,13 @@ impl Db {
         )
     }
 
-    fn ai_sead_mission<'lua>(
+    fn ai_sead_mission(
         &mut self,
         side: Side,
         ucid: Option<Ucid>,
         spawn_pos: Vector2,
         args: WithPosAndGroup<()>,
-    ) -> Result<Vec<MissionPoint<'lua>>> {
+    ) -> Result<Vec<MissionPoint>> {
         let (freq, tacan, callsign) = match &group!(self, args.group)?.origin {
             DeployKind::Action { spec, name, .. } => match &spec.kind {
                 ActionKind::Sead(pl) => (
@@ -2502,13 +2502,13 @@ impl Db {
         )
     }
 
-    fn tanker_mission<'lua>(
+    fn tanker_mission(
         &mut self,
         side: Side,
         ucid: Option<Ucid>,
         spawn_pos: Vector2,
         args: WithPosAndGroup<()>,
-    ) -> Result<Vec<MissionPoint<'lua>>> {
+    ) -> Result<Vec<MissionPoint>> {
         let (freq, tacan, callsign) = match &group!(self, args.group)?.origin {
             DeployKind::Action { spec, name, .. } => match &spec.kind {
                 ActionKind::Tanker(pl) => (
@@ -2608,9 +2608,9 @@ impl Db {
         )?))
     }
 
-    fn move_cruise_missile<'lua>(
+    fn move_cruise_missile(
         &mut self,
-        spctx: &SpawnCtx<'lua>,
+        spctx: &SpawnCtx,
         side: Side,
         ucid: Option<Ucid>,
         args: WithPosAndGroup<()>,
@@ -2835,12 +2835,12 @@ impl Db {
     /// Out to the destination and back home. `launch` is the spot on the
     /// field the flight starts at: waypoint 0 sits there so `spawn_group`
     /// can turn it into the takeoff without losing the leg to the target.
-    fn ai_point_to_point_mission<'lua>(
+    fn ai_point_to_point_mission(
         &mut self,
         gid: GroupId,
         launch: Vector2,
-        task: impl Fn() -> Task<'lua> + 'static,
-    ) -> Result<Vec<MissionPoint<'lua>>> {
+        task: impl Fn() -> Task + 'static,
+    ) -> Result<Vec<MissionPoint>> {
         let group = group!(self, gid)?;
         let (src, tgt, alt, alt_typ, speed) = match &group.origin {
             DeployKind::Action {
@@ -2894,12 +2894,12 @@ impl Db {
         Ok(vec![wpt!("takeoff", launch), wpt!("tgt", tgt), wpt!("rtb", src)])
     }
 
-    fn ai_rtb_mission<'lua>(
+    fn ai_rtb_mission(
         &mut self,
         side: Side,
         args: &mut WithPosAndGroup<()>,
-        task: impl Fn() -> Task<'lua> + 'static,
-    ) -> Result<Vec<MissionPoint<'lua>>> {
+        task: impl Fn() -> Task + 'static,
+    ) -> Result<Vec<MissionPoint>> {
         let gid = args.group;
         let group = group!(self, gid)?;
         let mut min_dist = f64::MAX;
@@ -3227,14 +3227,14 @@ impl Db {
     /// Takeoff, an initial point 20 km short of the target where the attack
     /// task starts (weapons held until then, so a stealth jet stays quiet),
     /// the target, and home.
-    fn strike_mission<'lua>(
+    fn strike_mission(
         &mut self,
         gid: GroupId,
         launch: Vector2,
         target: Vector2,
         cfg: &bfprotocols::cfg::StrikeCfg,
         aims: Vec<StrikeAim>,
-    ) -> Result<Vec<MissionPoint<'lua>>> {
+    ) -> Result<Vec<MissionPoint>> {
         use bfprotocols::cfg::StrikeMission as M;
         use dcso3::controller::{AirOption, AirReactionToThreat, AirRoe, AttackParams, WeaponExpend};
         let group = group!(self, gid)?;
@@ -3274,7 +3274,7 @@ impl Db {
             y: None,
         };
         let carpet = cfg.carpet_length_m.max(200.);
-        let attack_tasks = move || -> Vec<Task<'lua>> {
+        let attack_tasks = move || -> Vec<Task> {
             let mut v = vec![Task::WrappedOption(AiOption::Air(AirOption::Roe(AirRoe::WeaponFree)))];
             for a in &aims {
                 v.push(match a {
@@ -3291,7 +3291,7 @@ impl Db {
             }
             v
         };
-        let wpt = |name: &str, pos: Vector2, task: Task<'lua>| MissionPoint {
+        let wpt = |name: &str, pos: Vector2, task: Task| MissionPoint {
             action: Some(ActionTyp::Air(TurnMethod::FlyOverPoint)),
             typ: PointType::TurningPoint,
             airdrome_id: None,
@@ -3320,10 +3320,10 @@ impl Db {
         ])
     }
 
-    fn add_and_spawn_ai_air<'lua>(
+    fn add_and_spawn_ai_air(
         &mut self,
         perf: &mut PerfInner,
-        spctx: &SpawnCtx<'lua>,
+        spctx: &SpawnCtx,
         idx: &MizIndex,
         side: Side,
         ucid: &Option<Ucid>,
@@ -3333,7 +3333,7 @@ impl Db {
         args: &WithPos<AiPlaneCfg>,
         destination: Option<Vector2>,
         tags: BitFlags<UnitTag>,
-        gen_mission: impl FnOnce(&mut Db, GroupId, Vector2) -> Result<Vec<MissionPoint<'lua>>> + 'static,
+        gen_mission: impl FnOnce(&mut Db, GroupId, Vector2) -> Result<Vec<MissionPoint>> + 'static,
     ) -> Result<GroupId> {
         self.add_and_spawn_ai_air_from(
             perf,
@@ -3366,10 +3366,10 @@ impl Db {
     /// field without it is passed over for the next one out. With nowhere to
     /// take off from the action is refused -- it is never air-started -- and
     /// `start_action` charges nothing for a refused action.
-    fn add_and_spawn_ai_air_from<'lua>(
+    fn add_and_spawn_ai_air_from(
         &mut self,
         perf: &mut PerfInner,
-        spctx: &SpawnCtx<'lua>,
+        spctx: &SpawnCtx,
         idx: &MizIndex,
         side: Side,
         ucid: &Option<Ucid>,
@@ -3380,7 +3380,7 @@ impl Db {
         destination: Option<Vector2>,
         tags: BitFlags<UnitTag>,
         depart: Option<ObjectiveId>,
-        gen_mission: impl FnOnce(&mut Db, GroupId, Vector2) -> Result<Vec<MissionPoint<'lua>>> + 'static,
+        gen_mission: impl FnOnce(&mut Db, GroupId, Vector2) -> Result<Vec<MissionPoint>> + 'static,
     ) -> Result<GroupId> {
         let rotary = matches!(args.cfg.kind, AiPlaneKind::Helicopter);
         // Bombers, tankers, AWACS and transports need a large stand to start
@@ -3526,13 +3526,13 @@ impl Db {
         Ok(gid)
     }
 
-    fn awacs_mission<'lua>(
+    fn awacs_mission(
         &mut self,
         side: Side,
         ucid: Option<Ucid>,
         spawn_pos: Vector2,
         args: WithPosAndGroup<()>,
-    ) -> Result<Vec<MissionPoint<'lua>>> {
+    ) -> Result<Vec<MissionPoint>> {
         let group = group!(self, args.group)?;
         let (freq, tacan, callsign) = match &group.origin {
             DeployKind::Action { spec, name, .. } => match &spec.kind {
@@ -3600,9 +3600,9 @@ impl Db {
         )
     }
 
-    fn move_awacs<'lua>(
+    fn move_awacs(
         &mut self,
-        spctx: &SpawnCtx<'lua>,
+        spctx: &SpawnCtx,
         side: Side,
         ucid: Option<Ucid>,
         args: WithPosAndGroup<()>,
@@ -3660,7 +3660,7 @@ impl Db {
         )?))
     }
 
-    fn ai_loiter_point_mission<'lua>(
+    fn ai_loiter_point_mission(
         &mut self,
         side: Side,
         ucid: Option<Ucid>,
@@ -3668,9 +3668,9 @@ impl Db {
         pattern: OrbitPattern,
         spawn_point: Vector2,
         validator: impl Fn(&ActionKind) -> bool,
-        init_task: impl Fn() -> Task<'lua> + 'static,
-        main_task: impl Fn() -> Vec<Task<'lua>> + 'static,
-    ) -> Result<Vec<MissionPoint<'lua>>> {
+        init_task: impl Fn() -> Task + 'static,
+        main_task: impl Fn() -> Vec<Task> + 'static,
+    ) -> Result<Vec<MissionPoint>> {
         let enemy = side.opposite();
         let heading = match pattern {
             OrbitPattern::Circle => 0.,
@@ -3882,13 +3882,13 @@ impl Db {
         }
     }
 
-    fn cruise_missile_mission<'lua>(
+    fn cruise_missile_mission(
         &mut self,
         side: Side,
         ucid: Option<Ucid>,
         spawn_pos: Vector2,
         args: WithPosAndGroup<()>,
-    ) -> Result<Vec<MissionPoint<'lua>>> {
+    ) -> Result<Vec<MissionPoint>> {
         let group = group!(self, args.group)?;
         let (freq, tacan, callsign) = match &group.origin {
             DeployKind::Action { spec, name, .. } => match &spec.kind {
@@ -3942,13 +3942,13 @@ impl Db {
     /// ground. A `set_task` on the ramp replaces the takeoff waypoint with a
     /// turning point on its own stand, and the flight never taxis -- which is
     /// what a commander's Station order on a freshly bought AWACS did.
-    fn set_station_mission<'lua>(
+    fn set_station_mission(
         &mut self,
-        spctx: &SpawnCtx<'lua>,
+        spctx: &SpawnCtx,
         gid: GroupId,
         station: Vector2,
         ucid: Option<Ucid>,
-        mission: Vec<MissionPoint<'lua>>,
+        mission: Vec<MissionPoint>,
     ) -> Result<()> {
         let name = group!(self, gid)?.name.clone();
         if group_airborne(spctx.lua(), &name) {
@@ -3964,9 +3964,9 @@ impl Db {
     /// a new orbit at `station`, as a Station order would: now if it is in
     /// the air, once it is airborne if it is still starting up. It stays
     /// whoever's it was.
-    pub(crate) fn restation_air<'lua>(
+    pub(crate) fn restation_air(
         &mut self,
-        spctx: &SpawnCtx<'lua>,
+        spctx: &SpawnCtx,
         gid: GroupId,
         station: Vector2,
     ) -> Result<()> {
@@ -3983,13 +3983,13 @@ impl Db {
     }
 
     /// The station mission for whichever kind of AI flight `args.group` is.
-    fn station_mission<'lua>(
+    fn station_mission(
         &mut self,
         side: Side,
         ucid: Option<Ucid>,
         spawn_pos: Vector2,
         args: WithPosAndGroup<()>,
-    ) -> Result<Vec<MissionPoint<'lua>>> {
+    ) -> Result<Vec<MissionPoint>> {
         let kind = match &group!(self, args.group)?.origin {
             DeployKind::Action { spec, .. } => spec.kind.clone(),
             _ => bail!("not an AI flight"),
@@ -4048,11 +4048,11 @@ impl Db {
         }
     }
 
-    fn set_ai_mission<'lua>(
+    fn set_ai_mission(
         &mut self,
-        spctx: &SpawnCtx<'lua>,
+        spctx: &SpawnCtx,
         gid: GroupId,
-        mission: Vec<MissionPoint<'lua>>,
+        mission: Vec<MissionPoint>,
     ) -> Result<()> {
         let group = group!(self, gid)?;
         let group = Group::get_by_name(spctx.lua(), &group.name)?;

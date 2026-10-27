@@ -834,7 +834,7 @@ pub(crate) fn jtac_set_code_in(lua: MizLua, ctx: &mut Context, arg: ArgTriple<Jt
 
 /// The contents of one gun's submenu: relay, ammo, and its fire missions.
 fn add_menu_for_gun(
-    mc: &MissionCommands<'_>,
+    mc: &MissionCommands,
     mizgid: GroupId,
     ucid: Ucid,
     root: GroupSubMenu,

@@ -205,7 +205,7 @@ pub fn nearest_land(lua: MizLua, p: V3, max_m: f64) -> Option<V3> {
 /// become 1-based sequences and object keys that are integers ("3") become
 /// integer keys -- pylon tables and callsign tables are keyed by number.
 /// JSON null becomes nil (never mlua's null userdata, which DCS chokes on).
-pub fn json_to_lua<'l>(lua: &'l Lua, v: &serde_json::Value) -> LuaResult<Value<'l>> {
+pub fn json_to_lua(lua: &Lua, v: &serde_json::Value) -> LuaResult<Value> {
     use serde_json::Value as J;
     Ok(match v {
         J::Null => Value::Nil,
@@ -236,7 +236,7 @@ pub fn json_to_lua<'l>(lua: &'l Lua, v: &serde_json::Value) -> LuaResult<Value<'
     })
 }
 
-fn group_controller<'lua>(lua: MizLua<'lua>, group: &str) -> Result<dcso3::controller::Controller<'lua>> {
+fn group_controller(lua: MizLua, group: &str) -> Result<dcso3::controller::Controller> {
     let g = dcso3::group::Group::get_by_name(lua, group).map_err(|e| anyhow!("group {group} does not exist: {e}"))?;
     g.get_controller()
 }
@@ -247,21 +247,21 @@ fn group_controller<'lua>(lua: MizLua<'lua>, group: &str) -> Result<dcso3::contr
 /// ActivateBeacon, EPLRS ...), so the call itself stays raw.
 pub fn group_controller_call(lua: MizLua, group: &str, method: &str, arg: serde_json::Value) -> Result<()> {
     let ctl = group_controller(lua, group)?;
-    ctl.call_method::<_, ()>(method, json_to_lua(lua.inner(), &arg)?)?;
+    ctl.call_method::<()>(method, json_to_lua(lua.inner(), &arg)?)?;
     Ok(())
 }
 
 /// Controller:setOption(id, value) on a group.
 pub fn group_set_option(lua: MizLua, group: &str, id: i64, value: serde_json::Value) -> Result<()> {
     let ctl = group_controller(lua, group)?;
-    ctl.call_method::<_, ()>("setOption", (id, json_to_lua(lua.inner(), &value)?))?;
+    ctl.call_method::<()>("setOption", (id, json_to_lua(lua.inner(), &value)?))?;
     Ok(())
 }
 
 /// Controller:setCommand on one UNIT (TACAN/ICLS/Link-4 are per unit).
 pub fn unit_controller_call(lua: MizLua, unit: &str, method: &str, arg: serde_json::Value) -> Result<()> {
     let u = dcso3::unit::Unit::get_by_name(lua, unit).map_err(|e| anyhow!("unit {unit} does not exist: {e}"))?;
-    u.get_controller()?.call_method::<_, ()>(method, json_to_lua(lua.inner(), &arg)?)?;
+    u.get_controller()?.call_method::<()>(method, json_to_lua(lua.inner(), &arg)?)?;
     Ok(())
 }
 
@@ -277,9 +277,9 @@ impl MissionClock {
         let r = (|| -> Result<Self> {
             // dcso3 has no accessors for env.mission's theatre and date
             let m = dcso3::env::miz::Miz::singleton(lua)?;
-            let theatre: String = m.raw_get::<_, Option<String>>("theatre")?.unwrap_or_default();
+            let theatre: String = m.raw_get::<Option<String>>("theatre")?.unwrap_or_default();
             let date = m
-                .raw_get::<_, Option<LuaTable>>("date")?
+                .raw_get::<Option<LuaTable>>("date")?
                 .and_then(|d| {
                     let y: i32 = d.raw_get("Year").ok()?;
                     let mo: u32 = d.raw_get("Month").ok()?;

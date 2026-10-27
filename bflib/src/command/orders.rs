@@ -744,7 +744,7 @@ pub(crate) struct Hunters {
     last_tick: Option<DateTime<Utc>>,
 }
 
-fn sea_point<'lua>(p: Vector2, speed: f64) -> MissionPoint<'lua> {
+fn sea_point(p: Vector2, speed: f64) -> MissionPoint {
     MissionPoint {
         typ: PointType::TurningPoint,
         airdrome_id: None,

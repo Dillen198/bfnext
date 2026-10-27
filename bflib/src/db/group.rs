@@ -818,9 +818,9 @@ impl Db {
     }
 
     /// add the units to the db, but don't actually spawn them
-    pub(super) fn add_group<'lua>(
+    pub(super) fn add_group(
         &mut self,
-        spctx: &'lua SpawnCtx<'lua>,
+        spctx: &SpawnCtx,
         idx: &MizIndex,
         side: Side,
         location: SpawnLoc,
@@ -1307,7 +1307,7 @@ impl Db {
         Ok(gid)
     }
 
-    pub fn add_and_queue_group<'lua>(
+    pub fn add_and_queue_group(
         &mut self,
         spctx: &SpawnCtx,
         idx: &MizIndex,
@@ -1407,10 +1407,10 @@ impl Db {
     /// drops it instead of respawning it with nothing left to manage it. On a
     /// failed spawn the group is removed from the db again, so the caller
     /// never has to clean up a phantom.
-    pub fn spawn_air_flight<'lua>(
+    pub fn spawn_air_flight(
         &mut self,
         perf: &mut bfprotocols::perf::PerfInner,
-        spctx: &SpawnCtx<'lua>,
+        spctx: &SpawnCtx,
         idx: &MizIndex,
         side: Side,
         template: &str,
@@ -1418,7 +1418,7 @@ impl Db {
         pos: Vector2,
         heading: f64,
         open_ground: bool,
-        mission: Vec<dcso3::controller::MissionPoint<'lua>>,
+        mission: Vec<dcso3::controller::MissionPoint>,
     ) -> Result<GroupId> {
         let gid = self.add_group(
             spctx,
