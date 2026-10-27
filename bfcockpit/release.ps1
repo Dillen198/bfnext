@@ -113,10 +113,13 @@ if (-not $NoBuild) {
         # the DLL first: the installer embeds it (installer/build.rs)
         Run "cargo build --release --locked -p bfcockpit-net" { cargo build --release --locked -p bfcockpit-net }
         $env:BFCOCKPIT_NET_DLL = $dll
+        # a DLL from another commit or script version fails the build instead
+        # of riding along with a warning (installer/build.rs, check_dll)
+        $env:BFCOCKPIT_REQUIRE_MATCH = "1"
         Run "cargo build --release --locked -p bfcockpit-installer" { cargo build --release --locked -p bfcockpit-installer }
     } finally {
         Pop-Location
-        Remove-Item Env:\BFCOCKPIT_NET_DLL -ErrorAction SilentlyContinue
+        Remove-Item Env:\BFCOCKPIT_NET_DLL, Env:\BFCOCKPIT_REQUIRE_MATCH -ErrorAction SilentlyContinue
     }
 
     if (Test-Path $OutDir) { Remove-Item -Recurse -Force $OutDir }
