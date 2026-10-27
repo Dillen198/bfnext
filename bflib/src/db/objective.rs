@@ -1483,10 +1483,9 @@ impl Db {
         }
         if let Some(groups) = obj.groups.get(&obj.owner) {
             let mut damaged_by_class: FxHashMap<ObjGroupClass, Vec<(GroupId, usize)>> =
-                groups.into_iter().fold(
-                    Ok(FxHashMap::default()),
-                    |m: Result<FxHashMap<ObjGroupClass, Vec<(GroupId, usize)>>>, id| {
-                        let mut m = m?;
+                groups.into_iter().try_fold(
+                    FxHashMap::default(),
+                    |mut m, id| -> Result<FxHashMap<ObjGroupClass, Vec<(GroupId, usize)>>> {
                         let group = group!(self, id)?;
                         let mut damaged = 0;
                         for uid in &group.units {

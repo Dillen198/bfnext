@@ -659,7 +659,7 @@ fn finish(
 fn group_gone_or_dead(ctx: &Context, gid: &GroupId) -> Option<bool> {
     match ctx.db.group_health(gid) {
         Err(_) => Some(false),
-        Ok((alive, _)) if alive == 0 => Some(true),
+        Ok((0, _)) => Some(true),
         Ok(_) => None,
     }
 }

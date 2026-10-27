@@ -511,13 +511,17 @@ pub fn auto_update(profile: &Path, max_wait: std::time::Duration) -> Result<Stri
                     use std::os::windows::fs::OpenOptionsExt;
                     fs::OpenOptions::new()
                         .create(true)
+                        .truncate(false)
                         .write(true)
                         .share_mode(0)
                         .open(&lock_path)
                 };
                 #[cfg(not(windows))]
-                let lock =
-                    fs::OpenOptions::new().create(true).write(true).open(&lock_path);
+                let lock = fs::OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .write(true)
+                    .open(&lock_path);
                 if let Ok(_lock) = lock {
                     let installed = installed_version(profile).unwrap_or_default();
                     if !is_newer(plugin_version(), &installed) {

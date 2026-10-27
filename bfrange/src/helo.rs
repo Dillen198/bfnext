@@ -490,7 +490,7 @@ impl Helo {
                 done.push((i, None));
             }
         }
-        done.sort_by(|a, b| b.0.cmp(&a.0));
+        done.sort_by_key(|a| std::cmp::Reverse(a.0));
         for (i, p) in done {
             let r = self.runs.remove(i);
             if let Some(p) = p {

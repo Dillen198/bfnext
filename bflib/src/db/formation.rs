@@ -837,7 +837,7 @@ impl Db {
 
     pub fn formation_strength_pct(&self, f: &Formation) -> u32 {
         let (alive, total) = self.formation_strength(f);
-        if total == 0 { 0 } else { alive * 100 / total }
+        (alive * 100).checked_div(total).unwrap_or(0)
     }
 
     /// What a unit is, from its DCS type's tags; a type the config doesn't

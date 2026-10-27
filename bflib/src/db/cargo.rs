@@ -1483,13 +1483,15 @@ impl Db {
                         oids.dedup();
                         oids
                     };
-                    let can_deploy =
-                        origins.iter().fold(Err(anyhow!("")), |res, oid| match res {
-                            Ok(oid) => Ok(oid),
-                            Err(_) => self.enforce_deploy_limits(
-                                st.side, &spec, &dep, *oid, &st.ucid,
-                            ),
-                        });
+                    // the first origin that may deploy it, else the last refusal
+                    let mut can_deploy = Err(anyhow!(""));
+                    for oid in &origins {
+                        can_deploy = self
+                            .enforce_deploy_limits(st.side, &spec, &dep, *oid, &st.ucid);
+                        if can_deploy.is_ok() {
+                            break;
+                        }
+                    }
                     match can_deploy {
                         Err(e) => reasons.push(format_compact!("{e}")),
                         Ok(from_obj) => match &spec.kind {
@@ -4921,17 +4923,20 @@ impl Db {
                         ),
                     ));
                 }
-                let from_obj =
-                    origins.iter().fold(Err(anyhow!("")), |res, oid| match res {
-                        Ok(oid) => Ok(oid),
-                        Err(_) => self.enforce_deploy_limits(
-                            crate_data.side,
-                            &deployable,
-                            &deployable_name,
-                            *oid,
-                            &crate_data.player,
-                        ),
-                    });
+                // the first origin that may deploy it, else the last refusal
+                let mut from_obj = Err(anyhow!(""));
+                for oid in &origins {
+                    from_obj = self.enforce_deploy_limits(
+                        crate_data.side,
+                        &deployable,
+                        &deployable_name,
+                        *oid,
+                        &crate_data.player,
+                    );
+                    if from_obj.is_ok() {
+                        break;
+                    }
+                }
                 let from_obj = match from_obj {
                     Ok(oid) => oid,
                     Err(e) => {

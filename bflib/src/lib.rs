@@ -102,7 +102,7 @@ use spawnctx::SpawnCtx;
 use std::{
     backtrace::Backtrace,
     panic::{AssertUnwindSafe, catch_unwind},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
@@ -849,7 +849,6 @@ fn process_slot_rejection(ctx: &mut Context, id: PlayerId, ucid: Ucid, rej: Slot
 
 fn try_occupy_slot(
     ctx: &mut Context,
-    lua: HooksLua,
     id: PlayerId,
     ifo: PlayerInfo,
     side: Side,
@@ -862,7 +861,7 @@ fn try_occupy_slot(
             match ctx.db.register_player(ifo.ucid, name.clone(), side) {
                 Ok(()) => {
                     chatcmd::register_success(ctx, id, name, side);
-                    try_occupy_slot(ctx, lua, id, ifo, side, slot)
+                    try_occupy_slot(ctx, id, ifo, side, slot)
                 }
                 Err(RegErr::AlreadyRegistered(switches, on)) => {
                     warn!(
@@ -923,7 +922,7 @@ fn on_player_try_change_slot(
         }
         Ok(ifo) => {
             let ifo = ifo.clone();
-            match try_occupy_slot(ctx, lua, id, ifo, side, slot) {
+            match try_occupy_slot(ctx, id, ifo, side, slot) {
                 Err(e) => {
                     error!("error checking slot {:?}", e);
                     Ok(Some(false))
@@ -5118,7 +5117,7 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
         }
 
         // Sort clusters largest → smallest so the most dangerous incursion gets covered first.
-        clusters.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+        clusters.sort_unstable_by_key(|a| std::cmp::Reverse(a.1));
 
         // ── Step 4b: this side's sortie budget for the last hour ────────────
         // The between-waves cooldown is per field now, so nothing side-wide
@@ -5511,7 +5510,7 @@ const SLOW_PHASES: [fn(
     MizLua,
     &mut Context,
     &mut PerfInner,
-    &PathBuf,
+    &Path,
     DateTime<Utc>,
     DateTime<Utc>,
 ) -> Result<AdminResult>; 5] =
@@ -5554,7 +5553,7 @@ fn run_slow_timed_events(
     lua: MizLua,
     ctx: &mut Context,
     perf: &mut PerfInner,
-    path: &PathBuf,
+    path: &Path,
     ts: DateTime<Utc>,
 ) -> Result<AdminResult> {
     let (bucket, buckets, start_ts) = match ctx.slow_pass {
@@ -5590,7 +5589,7 @@ fn slow_phase_0(
     lua: MizLua,
     ctx: &mut Context,
     perf: &mut PerfInner,
-    path: &PathBuf,
+    path: &Path,
     ts: DateTime<Utc>,
     start_ts: DateTime<Utc>,
 ) -> Result<AdminResult> {
@@ -5601,7 +5600,7 @@ fn slow_phase_0(
     step(lua, ctx, "snapshot", |ctx| {
         let now = Utc::now();
         if let Some(snap) = ctx.db.maybe_snapshot() {
-            ctx.do_bg_task(bg::Task::SaveState(path.clone(), snap));
+            ctx.do_bg_task(bg::Task::SaveState(path.to_path_buf(), snap));
         }
         record_perf(&mut perf.snapshot, now);
     });
@@ -5754,7 +5753,7 @@ fn slow_phase_1(
     lua: MizLua,
     ctx: &mut Context,
     perf: &mut PerfInner,
-    path: &PathBuf,
+    path: &Path,
     ts: DateTime<Utc>,
     start_ts: DateTime<Utc>,
 ) -> Result<AdminResult> {
@@ -5882,7 +5881,7 @@ fn slow_phase_2(
     lua: MizLua,
     ctx: &mut Context,
     perf: &mut PerfInner,
-    path: &PathBuf,
+    path: &Path,
     ts: DateTime<Utc>,
     start_ts: DateTime<Utc>,
 ) -> Result<AdminResult> {
@@ -5983,7 +5982,7 @@ fn slow_phase_3(
     lua: MizLua,
     ctx: &mut Context,
     perf: &mut PerfInner,
-    path: &PathBuf,
+    path: &Path,
     ts: DateTime<Utc>,
     start_ts: DateTime<Utc>,
 ) -> Result<AdminResult> {
@@ -6061,7 +6060,7 @@ fn slow_phase_4(
     lua: MizLua,
     ctx: &mut Context,
     perf: &mut PerfInner,
-    path: &PathBuf,
+    path: &Path,
     ts: DateTime<Utc>,
     start_ts: DateTime<Utc>,
 ) -> Result<AdminResult> {
@@ -6091,11 +6090,7 @@ fn slow_phase_4(
     Ok(AdminResult::Continue)
 }
 
-fn run_timed_events(
-    ctx: &mut Context,
-    lua: MizLua,
-    path: &PathBuf,
-) -> Result<AdminResult> {
+fn run_timed_events(ctx: &mut Context, lua: MizLua, path: &Path) -> Result<AdminResult> {
     // campaign time for the campaign, the wall clock for the perf records
     let ts = ctx.now();
     let perf_ts = Utc::now();
@@ -6946,6 +6941,9 @@ fn init_miz(lua: MizLua) -> Result<()> {
 #[mlua::lua_module]
 fn bflib(lua: &Lua) -> LuaResult<LuaTable> {
     // ensure we capture backtraces on panic
+    // SAFETY: module load, before bflib has started any thread of its own
+    // (`init_async_bg` is below), and on Windows, where DCS runs, the OS
+    // serialises access to the process environment.
     unsafe {
         std::env::set_var("RUST_BACKTRACE", "1"); // bactrace for panics
         std::env::set_var("RUST_LIB_BACKTRACE", "0"); // no backtrace for Error
@@ -6980,11 +6978,13 @@ mod ctx_guard_tests {
     #[test]
     fn a_second_borrow_is_a_bug() {
         let _outer = Context::borrow("outer").unwrap();
-        match catch_unwind(AssertUnwindSafe(|| Context::borrow("inner").is_err())) {
+        let r = catch_unwind(AssertUnwindSafe(|| Context::borrow("inner").is_err()));
+        if cfg!(debug_assertions) {
             // debug builds and tests panic ...
-            Err(_) => assert!(cfg!(debug_assertions)),
+            assert!(r.is_err());
+        } else {
             // ... release refuses
-            Ok(refused) => assert!(refused && !cfg!(debug_assertions)),
+            assert!(matches!(r, Ok(true)));
         }
         assert!(Context::try_borrow().is_none(), "the outer borrow is still held");
     }

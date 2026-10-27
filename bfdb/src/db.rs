@@ -882,6 +882,7 @@ pub(crate) struct InstanceState {
     ///   * `current_sortie` is the name the *round* was opened under, which is
     ///     frozen at campaign start -- rename the .miz mid-campaign and the
     ///     engine moves to the new path while the round keeps the old name.
+    ///
     /// Either being wrong pointed every live subscription at a path nothing
     /// publishes, so every RPC timed out and the dashboard fell back to what
     /// the DB already had: a live server showing hours-old data.
@@ -1683,6 +1684,8 @@ fn copy_locked_file(src: &Path, dst: &Path) -> std::io::Result<()> {
 
         let wide_path: Vec<u16> =
             src.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        // SAFETY: `wide_path` is NUL-terminated and outlives the call; the
+        // optional pointer arguments are null, which CreateFileW allows.
         let handle = unsafe {
             CreateFileW(
                 wide_path.as_ptr(),
@@ -1697,6 +1700,8 @@ fn copy_locked_file(src: &Path, dst: &Path) -> std::io::Result<()> {
         if handle == INVALID_HANDLE_VALUE {
             return Err(std::io::Error::last_os_error());
         }
+        // SAFETY: `handle` is a valid file handle that nothing else owns, so
+        // the `File` may take it over and close it.
         let mut src_file =
             unsafe { std::fs::File::from_raw_handle(handle as *mut std::ffi::c_void) };
         let mut buf = Vec::new();
@@ -3418,7 +3423,7 @@ impl StatsDb {
             let side = format!("{:?}", ri.side.1);
             result.push((name, ri.points, side));
         }
-        result.sort_by(|a, b| b.1.cmp(&a.1));
+        result.sort_by_key(|a| std::cmp::Reverse(a.1));
         Ok(result)
     }
 
@@ -3439,7 +3444,7 @@ impl StatsDb {
                 .unwrap_or_else(|| format!("{:?}", oid));
             result.push((name, count));
         }
-        result.sort_by(|a, b| b.1.cmp(&a.1));
+        result.sort_by_key(|a| std::cmp::Reverse(a.1));
         Ok(result)
     }
 
@@ -3593,7 +3598,7 @@ impl StatsDb {
             let ((_, vehicle), (count, hours)) = r?;
             result.push((vehicle, count, hours));
         }
-        result.sort_by(|a, b| b.1.cmp(&a.1));
+        result.sort_by_key(|a| std::cmp::Reverse(a.1));
         Ok(result)
     }
 
@@ -5174,7 +5179,7 @@ impl StatsDb {
             let ((scenario, rid), round) = r?;
             rounds.push((scenario, rid, round));
         }
-        rounds.sort_by(|a, b| b.2.start.cmp(&a.2.start));
+        rounds.sort_by_key(|a| std::cmp::Reverse(a.2.start));
         Ok(rounds)
     }
 
@@ -5427,7 +5432,7 @@ impl StatsDb {
             result.push((round_id, dead));
         }
         // Sort newest first
-        result.sort_by(|a, b| b.1.time.cmp(&a.1.time));
+        result.sort_by_key(|a| std::cmp::Reverse(a.1.time));
         Ok(result)
     }
 
@@ -5441,7 +5446,7 @@ impl StatsDb {
             let ((_, round_id, _), rec) = r?;
             result.push((round_id, rec));
         }
-        result.sort_by(|a, b| b.1.time.cmp(&a.1.time));
+        result.sort_by_key(|a| std::cmp::Reverse(a.1.time));
         Ok(result)
     }
 
@@ -5680,7 +5685,7 @@ impl StatsDb {
                 kills.push(dead);
             }
         }
-        kills.sort_by(|a, b| b.time.cmp(&a.time));
+        kills.sort_by_key(|a| std::cmp::Reverse(a.time));
         kills.truncate(limit);
         Ok(kills)
     }
@@ -6501,9 +6506,6 @@ impl StatsDb {
         Ok(dead.len())
     }
 
-    /// How many OAuth login states are outstanding -- the per-IP limit on
-    /// `/api/auth/login` keeps one client from filling the tree, this keeps
-    /// all of them together from doing so.
     // ── Admin audit log ──────────────────────────────────────────────
 
     pub(crate) fn audit_put(&self, e: &AuditEntry) -> Result<()> {
@@ -6550,6 +6552,9 @@ impl StatsDb {
         Ok(old.len())
     }
 
+    /// How many OAuth login states are outstanding -- the per-IP limit on
+    /// `/api/auth/login` keeps one client from filling the tree, this keeps
+    /// all of them together from doing so.
     pub(crate) fn oauth_state_count(&self) -> usize {
         self.auth_states.len()
     }
@@ -6577,7 +6582,7 @@ impl StatsDb {
     pub(crate) fn append_trail_point(
         &self,
         round_id: RoundId,
-        unit_id: &std::string::String,
+        unit_id: &str,
         ts: i64,
         lat: f64,
         lon: f64,
@@ -6585,7 +6590,7 @@ impl StatsDb {
         hdg: f64,
     ) -> Result<()> {
         self.trail_points
-            .insert(&(round_id, unit_id.clone(), ts), &(lat, lon, alt, hdg))?;
+            .insert(&(round_id, unit_id.to_owned(), ts), &(lat, lon, alt, hdg))?;
         Ok(())
     }
 

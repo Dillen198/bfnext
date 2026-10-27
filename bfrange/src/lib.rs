@@ -170,6 +170,8 @@ impl Ctx {
     unsafe fn get() -> &'static mut Ctx {
         static mut CTX: Option<Ctx> = None;
         #[allow(static_mut_refs)]
+        // SAFETY: the caller upholds the contract above: one thread, and no
+        // other reference to `CTX` is live while the returned one is used.
         unsafe {
             if CTX.is_none() {
                 CTX = Some(Ctx::default());
@@ -370,12 +372,18 @@ fn on_player_try_connect(
     ucid: Ucid,
     id: PlayerId,
 ) -> Result<Option<String>> {
+    // SAFETY: a hooks-state callback, which DCS never runs inside a
+    // mission-side call, so no other reference to the context is live (see
+    // `Ctx::get`).
     let ctx = unsafe { Ctx::get() };
     ctx.players.connected(id, ucid, name.to_string(), addr.to_string());
     Ok(None)
 }
 
 fn on_player_disconnect(_: HooksLua, id: PlayerId) -> Result<()> {
+    // SAFETY: a hooks-state callback, which DCS never runs inside a
+    // mission-side call, so no other reference to the context is live (see
+    // `Ctx::get`).
     let ctx = unsafe { Ctx::get() };
     if let Some(ucid) = ctx.players.disconnected(id) {
         ctx.aa.cancel_duels(&ucid);
@@ -400,6 +408,9 @@ fn on_player_try_send_chat(
     if !m.starts_with("-range") {
         return Ok(None);
     }
+    // SAFETY: a hooks-state callback, which DCS never runs inside a
+    // mission-side call, so no other reference to the context is live (see
+    // `Ctx::get`).
     let ctx = unsafe { Ctx::get() };
     let reply = match m.split_whitespace().nth(1).unwrap_or("help") {
         "trainer" => {
@@ -432,6 +443,9 @@ fn on_mission_load_end(lua: HooksLua) -> Result<()> {
 /// The mission is stopping: a restart inside this DCS loads the file again,
 /// so give it the real weather first.
 fn on_simulation_stop(_lua: HooksLua) -> Result<()> {
+    // SAFETY: a hooks-state callback, which DCS never runs inside a
+    // mission-side call, so no other reference to the context is live (see
+    // `Ctx::get`).
     let ctx = unsafe { Ctx::get() };
     live_weather::apply_noted(&ctx.write_dir, "mission stop");
     Ok(())
@@ -451,6 +465,8 @@ fn init_hooks(lua: HooksLua) -> Result<()> {
         .register()?;
     // DCS is starting and has not loaded the server's mission yet: the last
     // chance to give it the real weather and time (see live_weather.rs)
+    // SAFETY: hooks-state init, not inside any mission-side call, and the
+    // reference is dropped at the end of the statement (see `Ctx::get`).
     live_weather::apply_noted(&unsafe { Ctx::get() }.write_dir, "DCS start");
     Ok(())
 }
@@ -593,6 +609,8 @@ fn init_miz(lua: MizLua) -> Result<()> {
     // tanker, carrier and deck was listed twice, the old copy frozen in the
     // last mission's state and resolving by name to the new mission's unit.
     // Only the write folder and who is connected carry over.
+    // SAFETY: DCS calls this once per mission load, from no other entry
+    // point, so no other reference to the context is live (see `Ctx::get`).
     let ctx = unsafe { Ctx::get() };
     if ctx.started {
         info!(
@@ -624,10 +642,15 @@ fn init_miz(lua: MizLua) -> Result<()> {
 
 #[mlua::lua_module]
 fn bfrange(lua: &Lua) -> LuaResult<LuaTable> {
+    // SAFETY: module load, before bfrange has started any thread of its own
+    // (`bg::init` is below), and on Windows, where DCS runs, the OS
+    // serialises access to the process environment.
     unsafe {
         std::env::set_var("RUST_BACKTRACE", "1");
         std::env::set_var("RUST_LIB_BACKTRACE", "0");
     }
+    // SAFETY: module load: no callback is registered yet, so nothing else
+    // can hold the context (see `Ctx::get`).
     let ctx = unsafe { Ctx::get() };
     if ctx.write_dir.as_os_str().is_empty() {
         let wd =

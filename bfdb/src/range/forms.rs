@@ -704,13 +704,7 @@ pub(crate) fn trap_form(rec: &RangeRecord, t: &TrapResult) -> String {
         ),
     ];
     for (i, (k, v)) in row_a.iter().enumerate() {
-        let w = if i == 1 {
-            fw * 1.25
-        } else if i == 0 {
-            fw * 1.25
-        } else {
-            fw * 0.875
-        };
+        let w = if i <= 1 { fw * 1.25 } else { fw * 0.875 };
         let x = 24.
             + row_a[..i]
                 .iter()

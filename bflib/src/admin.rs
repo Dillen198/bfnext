@@ -64,7 +64,7 @@ use tokio::sync::oneshot;
 #[derive(Debug, Clone, Copy)]
 pub enum WarehouseKind {
     Objective,
-    DCS,
+    Dcs,
 }
 
 impl FromStr for WarehouseKind {
@@ -73,7 +73,7 @@ impl FromStr for WarehouseKind {
     fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
         match s.to_ascii_lowercase().as_str() {
             "objective" => Ok(Self::Objective),
-            "dcs" => Ok(Self::DCS),
+            "dcs" => Ok(Self::Dcs),
             x => bail!("unknown warehouse kind {x}"),
         }
     }

@@ -389,7 +389,7 @@ impl Progression {
             let (u, p) = r?;
             v.push((u, p.xp, level_of(p.xp)));
         }
-        v.sort_by(|a, b| b.1.cmp(&a.1));
+        v.sort_by_key(|a| std::cmp::Reverse(a.1));
         v.truncate(n);
         Ok(v)
     }

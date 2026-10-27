@@ -202,7 +202,7 @@ impl ReplayCtx {
                 }
             }
         }
-        out.sort_by(|a, b| b.start_ms.cmp(&a.start_ms));
+        out.sort_by_key(|a| std::cmp::Reverse(a.start_ms));
         out.truncate(limit);
         Ok(out)
     }

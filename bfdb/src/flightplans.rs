@@ -345,7 +345,7 @@ impl FlightPlans {
                 out.push(p);
             }
         }
-        out.sort_by(|a, b| b.updated.cmp(&a.updated));
+        out.sort_by_key(|a| std::cmp::Reverse(a.updated));
         Ok(out)
     }
 

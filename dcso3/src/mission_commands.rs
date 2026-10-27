@@ -69,9 +69,9 @@ macro_rules! item {
             }
         }
 
-        impl Into<Vec<String>> for $name {
-            fn into(self) -> Vec<String> {
-                (self.0).0
+        impl From<$name> for Vec<String> {
+            fn from(v: $name) -> Self {
+                (v.0).0
             }
         }
     };

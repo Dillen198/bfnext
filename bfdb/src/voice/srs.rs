@@ -121,6 +121,10 @@ struct StreamDecoder {
 impl StreamDecoder {
     fn decode(&mut self, frame: &[u8]) -> Vec<i16> {
         let mut out = [0i16; FRAME_SAMPLES * 6];
+        // SAFETY: `dec` is a live mono decoder that only this value owns
+        // (checked non-null in `Opus::stream`); `frame` is read for exactly
+        // its length and `out` is written for at most its length, which is
+        // the per-channel frame size for one channel.
         let n = unsafe {
             (self.opus.decode)(
                 self.dec,
@@ -141,6 +145,8 @@ impl StreamDecoder {
 
 impl Drop for StreamDecoder {
     fn drop(&mut self) {
+        // SAFETY: `dec` came from `opus_decoder_create`, is owned by this
+        // value alone and is destroyed only here.
         unsafe { (self.opus.dec_destroy)(self.dec) };
     }
 }
@@ -172,14 +178,19 @@ pub(crate) struct Opus {
     dec_destroy: Symbol<'static, OpusDecDestroy>,
 }
 
-// The symbols are plain C function pointers into a process-lifetime library.
+// SAFETY: the symbols are plain C function pointers into a library that is
+// never unloaded, and libopus keeps no global state: each call works only on
+// the encoder or decoder passed to it.
 unsafe impl Send for Opus {}
+// SAFETY: as for `Send`; `Opus` has no interior mutability.
 unsafe impl Sync for Opus {}
 
 impl Opus {
     /// Load `opus.dll` (or an explicit path). The library is leaked so the
     /// symbols stay valid for the life of the process.
     pub(crate) fn load(explicit: Option<&Path>) -> Result<Self> {
+        // SAFETY: loading runs the library's initialisers; this is libopus
+        // (the copy DCS-SRS ships), whose initialisers have no preconditions.
         let lib: &'static Library = Box::leak(Box::new(unsafe {
             match explicit {
                 Some(p) => {
@@ -195,6 +206,8 @@ impl Opus {
                 }
             }
         }));
+        // SAFETY: each symbol's type above matches its prototype in opus.h,
+        // and `lib` is leaked, so the symbols can never outlive it.
         unsafe {
             Ok(Self {
                 create: lib
@@ -219,6 +232,7 @@ impl Opus {
     /// `i16` PCM.
     pub(crate) fn decode_transmission(&self, frames: &[Vec<u8>]) -> Result<Vec<i16>> {
         let mut err = 0i32;
+        // SAFETY: valid rate and channel count, and `err` is a live `i32`.
         let dec = unsafe { (self.dec_create)(16_000, 1, &mut err) };
         if dec.is_null() || err != 0 {
             anyhow::bail!("opus_decoder_create failed ({err})");
@@ -227,6 +241,9 @@ impl Opus {
             let mut pcm: Vec<i16> = Vec::with_capacity(frames.len() * FRAME_SAMPLES);
             let mut out = [0i16; FRAME_SAMPLES * 6]; // room for up to 240 ms
             for f in frames {
+                // SAFETY: `dec` is the non-null mono decoder made above; `f`
+                // is read for exactly its length and `out` is written for at
+                // most its length.
                 let n = unsafe {
                     (self.decode)(
                         dec,
@@ -243,6 +260,7 @@ impl Opus {
             }
             Ok(pcm)
         };
+        // SAFETY: `dec` came from `opus_decoder_create` and is not used again.
         unsafe { (self.dec_destroy)(dec) };
         result
     }
@@ -250,6 +268,7 @@ impl Opus {
     /// A decoder for one stream of frames, decoded as they arrive.
     fn stream(self: &Arc<Self>) -> Option<StreamDecoder> {
         let mut err = 0i32;
+        // SAFETY: valid rate and channel count, and `err` is a live `i32`.
         let dec = unsafe { (self.dec_create)(16_000, 1, &mut err) };
         (!dec.is_null() && err == 0)
             .then(|| StreamDecoder { dec, opus: Arc::clone(self) })
@@ -259,6 +278,8 @@ impl Opus {
     /// Opus frame byte-buffers (one per 40 ms).
     fn encode_transmission(&self, pcm: &[i16]) -> Result<Vec<Vec<u8>>> {
         let mut err = 0i32;
+        // SAFETY: valid rate, channel count and application, and `err` is a
+        // live `i32`.
         let enc = unsafe {
             (self.create)(16_000, 1, 2048 /* OPUS_APPLICATION_VOIP */, &mut err)
         };
@@ -274,6 +295,9 @@ impl Opus {
                 let n = (pcm.len() - i).min(FRAME_SAMPLES);
                 frame[..n].copy_from_slice(&pcm[i..i + n]);
                 frame[n..].fill(0);
+                // SAFETY: `enc` is the non-null mono encoder made above;
+                // `frame` holds exactly `FRAME_SAMPLES` samples (a valid 40 ms
+                // frame) and `buf` is written for at most its length.
                 let len = unsafe {
                     (self.encode)(
                         enc,
@@ -291,6 +315,7 @@ impl Opus {
             }
             Ok(frames)
         })();
+        // SAFETY: `enc` came from `opus_encoder_create` and is not used again.
         unsafe { (self.destroy)(enc) };
         result
     }

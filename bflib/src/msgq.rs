@@ -695,7 +695,7 @@ impl MsgQ {
                 }
             }
         }
-        counts.sort_by(|a, b| b.1.cmp(&a.1));
+        counts.sort_by_key(|a| std::cmp::Reverse(a.1));
         let mut by_kind = std::string::String::new();
         for (kind, n) in counts.iter().take(6) {
             if !by_kind.is_empty() {

@@ -26,13 +26,7 @@ wrapped_table!(Weather, None);
 
 pub use dcso3_core::env::miz::UnitId;
 
-wrapped_prim!(GroupId, i64, Hash, Copy);
-
-impl Default for GroupId {
-    fn default() -> Self {
-        GroupId(0)
-    }
-}
+wrapped_prim!(GroupId, i64, Hash, Copy, Default);
 
 impl GroupId {
     pub fn next(&mut self) {

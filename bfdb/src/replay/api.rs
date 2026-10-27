@@ -266,7 +266,7 @@ async fn h_object(
         ((t.max(0) / super::ingest::CHUNK_MS) as u32).min(sum.chunks - 1)
     };
     let (first, last) = (chunk_of("t0"), chunk_of("t1"));
-    if q.get("t1").is_none() || first > last {
+    if !q.contains_key("t1") || first > last {
         return err(
             StatusCode::BAD_REQUEST,
             "t0 and t1 (the object's lifetime, ms) are required",

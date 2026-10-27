@@ -171,16 +171,8 @@ fn drive(db: &StatsDb) {
     )
     .unwrap();
     let rid = db.all_rounds().unwrap()[0].1;
-    db.append_trail_point(
-        rid,
-        &"unit-1".to_string(),
-        1_760_000_050,
-        41.0,
-        42.0,
-        1000.0,
-        90.0,
-    )
-    .unwrap();
+    db.append_trail_point(rid, "unit-1", 1_760_000_050, 41.0, 42.0, 1000.0, 90.0)
+        .unwrap();
     db.news_image_data
         .insert(&("default".into(), rid, "2026-10-27".into()), &(0..=255u8).collect())
         .unwrap();

@@ -159,7 +159,7 @@ pub(crate) async fn api_round_summary(
                 + a.captures as u64 * 30
                 + (a.supply_transfers + a.repairs + a.troops + a.farps + a.deploys) as u64 * 5
         };
-        pilots.sort_by(|x, y| score(&y.2).cmp(&score(&x.2)));
+        pilots.sort_by_key(|x| std::cmp::Reverse(score(&x.2)));
         let top: Vec<_> = pilots
             .iter()
             .take(5)
@@ -358,49 +358,43 @@ pub(crate) async fn api_objectives(
     let mut live_ok = false;
     if is_active {
         let live = engine_objectives(&db, &inst).await;
-        match &*live {
-            Ok(json) => {
-                if let Ok(live) =
-                    serde_json::from_str::<Vec<bfprotocols::api::ObjectiveInfo>>(json)
-                {
-                    // The persisted health/logi/supply/fuel can lag the engine
-                    // (e.g. after a mission reload re-emits Stat::Objective at
-                    // 100, or if the archive replay missed a batch), which made
-                    // the tactical map disagree with the in-game markup. For the
-                    // active round, take these straight from the engine.
-                    let by_name: std::collections::HashMap<
-                        &str,
-                        &bfprotocols::api::ObjectiveInfo,
-                    > = live.iter().map(|o| (o.name.as_str(), o)).collect();
-                    for entry in entries.iter_mut() {
-                        if let Some(name) = entry.get("name").and_then(|n| n.as_str()) {
-                            if let Some(&o) = by_name.get(name) {
-                                entry["priority"] = serde_json::Value::Bool(o.priority);
-                                entry["health"] = serde_json::json!(o.health);
-                                entry["logi"] = serde_json::json!(o.logi);
-                                entry["supply"] = serde_json::json!(o.supply);
-                                entry["fuel"] = serde_json::json!(o.fuel);
-                                entry["owner"] =
-                                    serde_json::json!(format!("{:?}", o.owner));
-                                entry["threatened"] =
-                                    serde_json::Value::Bool(o.threatened);
-                                entry["captureable"] =
-                                    serde_json::Value::Bool(o.captureable);
-                                entry["live"] = serde_json::Value::Bool(true);
-                            }
+        // An error was already logged when the (cached) call was made.
+        if let Ok(json) = &*live {
+            if let Ok(live) =
+                serde_json::from_str::<Vec<bfprotocols::api::ObjectiveInfo>>(json)
+            {
+                // The persisted health/logi/supply/fuel can lag the engine
+                // (e.g. after a mission reload re-emits Stat::Objective at
+                // 100, or if the archive replay missed a batch), which made
+                // the tactical map disagree with the in-game markup. For the
+                // active round, take these straight from the engine.
+                let by_name: std::collections::HashMap<
+                    &str,
+                    &bfprotocols::api::ObjectiveInfo,
+                > = live.iter().map(|o| (o.name.as_str(), o)).collect();
+                for entry in entries.iter_mut() {
+                    if let Some(name) = entry.get("name").and_then(|n| n.as_str()) {
+                        if let Some(&o) = by_name.get(name) {
+                            entry["priority"] = serde_json::Value::Bool(o.priority);
+                            entry["health"] = serde_json::json!(o.health);
+                            entry["logi"] = serde_json::json!(o.logi);
+                            entry["supply"] = serde_json::json!(o.supply);
+                            entry["fuel"] = serde_json::json!(o.fuel);
+                            entry["owner"] = serde_json::json!(format!("{:?}", o.owner));
+                            entry["threatened"] = serde_json::Value::Bool(o.threatened);
+                            entry["captureable"] = serde_json::Value::Bool(o.captureable);
+                            entry["live"] = serde_json::Value::Bool(true);
                         }
                     }
-                    live_ok = true;
-                    // What the engine doesn't have is not in this campaign.
-                    // A round store can hold another scenario's objectives --
-                    // vs2's 2008 round kept 16 Syria ones from an ODF run --
-                    // and every map drew them: the Discord snapshot of the
-                    // Caucasus war zoomed out to take in Lebanon.
-                    entries.retain(|e| e["live"] == serde_json::Value::Bool(true));
                 }
+                live_ok = true;
+                // What the engine doesn't have is not in this campaign.
+                // A round store can hold another scenario's objectives --
+                // vs2's 2008 round kept 16 Syria ones from an ODF run --
+                // and every map drew them: the Discord snapshot of the
+                // Caucasus war zoomed out to take in Lebanon.
+                entries.retain(|e| e["live"] == serde_json::Value::Bool(true));
             }
-            // Already logged when the (cached) call was made.
-            Err(()) => (),
         }
     }
 
@@ -669,7 +663,7 @@ pub(crate) async fn api_situation(
         // Keep the engine's damage/neutral lines too -- they aren't captures and
         // nothing else records them. Newest first.
         recent.extend(rep.recent);
-        recent.sort_by(|a, b| b.at.cmp(&a.at));
+        recent.sort_by_key(|a| std::cmp::Reverse(a.at));
         recent.truncate(20);
         rep.recent = recent;
     }

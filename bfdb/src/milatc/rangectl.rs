@@ -159,7 +159,7 @@ pub(crate) struct RangeControl {
 
 /// The way a controller says a station: "R-7201 FDM bomb circle".
 fn spoken_station(s: &LiveStation) -> String {
-    s.name.replace(" - ", " ").replace('-', "-")
+    s.name.replace(" - ", " ")
 }
 
 fn kind_words(k: StationKind) -> &'static [&'static str] {

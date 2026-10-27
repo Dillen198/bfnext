@@ -107,11 +107,7 @@ impl ObjectiveKind {
     }
 
     pub fn is_mobile(&self) -> bool {
-        match self {
-            Self::Farp { mobile: true, .. } => true,
-            Self::CarrierGroup { .. } => true,
-            _ => false,
-        }
+        matches!(self, Self::Farp { mobile: true, .. } | Self::CarrierGroup { .. })
     }
 
     pub fn name(&self) -> &'static str {

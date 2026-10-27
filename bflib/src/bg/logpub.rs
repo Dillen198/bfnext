@@ -132,11 +132,11 @@ pub struct LogPublisher(UnboundedSender<ToLogger>);
 impl LogPublisher {
     pub fn new(
         publisher: Publisher,
-        file_path: &PathBuf,
+        file_path: &std::path::Path,
         netidx_path: Path,
     ) -> Result<Self> {
         let (tx, mut rx) = mpsc::unbounded();
-        let file_path = file_path.clone();
+        let file_path = file_path.to_path_buf();
         task::spawn(async move {
             // Any I/O error in here used to end the logger permanently: every
             // log line after it failed to send and the engine log just

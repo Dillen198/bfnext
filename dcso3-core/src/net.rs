@@ -129,45 +129,27 @@ impl SlotId {
     }
 
     pub fn is_artillery_commander(&self) -> bool {
-        match self {
-            Self::ArtilleryCommander(_, _) => true,
-            _ => false,
-        }
+        matches!(self, Self::ArtilleryCommander(_, _))
     }
 
     pub fn is_observer(&self) -> bool {
-        match self {
-            Self::Observer(_, _) => true,
-            _ => false,
-        }
+        matches!(self, Self::Observer(_, _))
     }
 
     pub fn is_forward_observer(&self) -> bool {
-        match self {
-            Self::ForwardObserver(_, _) => true,
-            _ => false,
-        }
+        matches!(self, Self::ForwardObserver(_, _))
     }
 
     pub fn is_instructor(&self) -> bool {
-        match self {
-            Self::Instructor(_, _) => true,
-            _ => false,
-        }
+        matches!(self, Self::Instructor(_, _))
     }
 
     pub fn is_spectator(&self) -> bool {
-        match self {
-            Self::Spectator => true,
-            _ => false,
-        }
+        matches!(self, Self::Spectator)
     }
 
     pub fn is_multicrew(&self) -> bool {
-        match self {
-            Self::MultiCrew(_, _) => true,
-            _ => false,
-        }
+        matches!(self, Self::MultiCrew(_, _))
     }
 
     pub fn as_unit_id(&self) -> Option<UnitId> {

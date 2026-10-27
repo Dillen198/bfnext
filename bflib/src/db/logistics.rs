@@ -744,7 +744,7 @@ impl SupplyConvoy {
             Ok(group) => {
                 match group.get_units() {
                     Ok(units) => {
-                        if units.len() == 0 {
+                        if units.is_empty() {
                             // No units left - destroyed
                             self.state = ConvoyState::Destroyed;
                             ConvoyState::Destroyed
@@ -822,7 +822,7 @@ impl AirLogisticsRoute {
         match Group::get_by_name(lua, group_name) {
             Ok(group) => match group.get_units() {
                 Ok(units) => {
-                    if units.len() == 0 {
+                    if units.is_empty() {
                         self.state = LogiRouteState::Destroyed;
                         LogiRouteState::Destroyed
                     } else {
@@ -883,7 +883,7 @@ impl SeaLogisticsRoute {
         match Group::get_by_name(lua, group_name) {
             Ok(group) => match group.get_units() {
                 Ok(units) => {
-                    if units.len() == 0 {
+                    if units.is_empty() {
                         self.state = LogiRouteState::Destroyed;
                         LogiRouteState::Destroyed
                     } else {
@@ -1049,7 +1049,7 @@ impl HeloMission {
         use dcso3::group::Group;
         match Group::get_by_name(lua, group_name) {
             Ok(group) => match group.get_units() {
-                Ok(units) if units.len() > 0 => {
+                Ok(units) if !units.is_empty() => {
                     if let Ok(unit) = units.get(1) {
                         if let Ok(pos) = unit.get_point() {
                             self.last_pos = Vector2::new(pos.x, pos.z);
@@ -4661,7 +4661,7 @@ impl Db {
                         whcfg.capacity_for(&obj.name, obj.unlimited_supply, hub, *qty);
                 }
                 None => {
-                    if other_production.liquids.get(&name).is_some() {
+                    if other_production.liquids.contains_key(&name) {
                         let inv = obj.warehouse.liquids.get_or_default_cow(name);
                         // liquids are side-neutral (fuel/ammo) so always preserve
                         // capacity on carriers; zero out on regular objectives
@@ -8404,7 +8404,7 @@ impl Db {
     ) -> Result<()> {
         use std::fmt::Write;
         match kind {
-            WarehouseKind::DCS => {
+            WarehouseKind::Dcs => {
                 let abid = self
                     .ephemeral
                     .airbase_by_oid

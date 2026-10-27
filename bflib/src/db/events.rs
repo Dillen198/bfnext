@@ -478,8 +478,8 @@ pub struct EventScheduler {
     /// needs a different orbit block and target list than a CAP.
     #[serde(skip)]
     pub pending_cap_tasks: FxHashMap<GroupId, (Vector2, bool)>,
-    /// CAP group → air-start watch state. A CAP is meant to ground-start (taxi
-    /// + takeoff take a minute+). `enforce_cap_ground_start` polls the lead
+    /// CAP group → air-start watch state. A CAP is meant to ground-start
+    /// (taxi + takeoff take a minute+). `enforce_cap_ground_start` polls the lead
     /// unit: the instant it is seen ON THE GROUND the watch is dropped (a real
     /// ground start); if it is only ever seen AIRBORNE it air-started (bad
     /// template / DCS ignored the parking start) and the whole event is

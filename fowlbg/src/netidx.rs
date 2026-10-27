@@ -199,7 +199,6 @@ mod publisher {
     ) -> Result<Publisher> {
         retry("starting the netidx publisher", backoff, || {
             let cfg = cfg.clone();
-            let bind = bind;
             async move { PublisherBuilder::new(cfg).bind_cfg(bind).build().await }
         })
         .await

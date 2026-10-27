@@ -663,7 +663,7 @@ impl Aar {
     pub fn live(&self, lua: MizLua) -> Vec<LiveTanker> {
         self.tankers
             .iter()
-            .filter_map(|t| {
+            .map(|t| {
                 let u = Unit::get_by_name(lua, &t.unit_name()).ok();
                 let pv = u.and_then(|u| {
                     Some((u.get_point().ok()?.0, u.get_velocity().ok()?.0))
@@ -677,7 +677,7 @@ impl Aar {
                     .filter(|s| s.tanker == t.cfg.id)
                     .map(|s| s.pilot.name.clone())
                     .collect();
-                Some(LiveTanker {
+                LiveTanker {
                     id: t.cfg.id.clone(),
                     callsign: format!("{}{}", t.cfg.callsign, t.cfg.callsign_number),
                     unit_type: t.cfg.typ.clone(),
@@ -696,7 +696,7 @@ impl Aar {
                     receivers,
                     owner: t.owner.as_ref().map(|o| o.1.clone()),
                     recovery_for: t.recovery_for.clone(),
-                })
+                }
             })
             .collect()
     }

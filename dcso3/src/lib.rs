@@ -1042,6 +1042,10 @@ impl<T: FromLua> Sequence<T> {
         self.t.raw_len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn into_inner(self) -> mlua::Table {
         self.t
     }

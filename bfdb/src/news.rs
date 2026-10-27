@@ -1594,7 +1594,7 @@ pub fn build(
     }
 
     // --- select, suppress repeats, render --------------------------------
-    angles.sort_by(|a, b| b.weight.cmp(&a.weight));
+    angles.sort_by_key(|a| std::cmp::Reverse(a.weight));
     let mut items = Vec::new();
     let mut used: HashSet<(String, String)> = HashSet::new();
     for a in &angles {
@@ -1624,7 +1624,7 @@ pub fn build(
             break;
         }
     }
-    items.sort_by(|a, b| b.weight.cmp(&a.weight));
+    items.sort_by_key(|a| std::cmp::Reverse(a.weight));
 
     let facts_hash = {
         // Only the analysis, not the prose or the timestamp: this is what

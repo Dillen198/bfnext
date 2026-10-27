@@ -665,7 +665,7 @@ fn under_attack(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
             ),
         ));
     }
-    lines.sort_by(|a, b| b.0.cmp(&a.0));
+    lines.sort_by_key(|a| std::cmp::Reverse(a.0));
     let mut report = CompactString::from("=== Friendly Bases Under Threat ===\n");
     for (_, l) in &lines {
         report.push_str(l);

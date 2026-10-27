@@ -17,6 +17,8 @@ use std::{fmt, str::FromStr};
 
 simple_enum!(Side, u8, [Neutral => 0, Red => 1, Blue => 2]);
 
+// `simple_enum!` writes the enum, so there is no variant to put `#[default]` on.
+#[allow(clippy::derivable_impls)]
 impl Default for Side {
     fn default() -> Self {
         Side::Red

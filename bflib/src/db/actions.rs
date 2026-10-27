@@ -1358,10 +1358,7 @@ impl Db {
             args,
             OrbitPattern::Circle,
             spawn_point,
-            |k| match k {
-                ActionKind::Drone(_) => true,
-                _ => false,
-            },
+            |k| matches!(k, ActionKind::Drone(_)),
             || Task::ComboTask(vec![]),
             std::vec::Vec::new,
         )
@@ -1551,10 +1548,7 @@ impl Db {
             args,
             OrbitPattern::Circle,
             spawn_pos,
-            |k| match k {
-                ActionKind::Fighters(_) => true,
-                _ => false,
-            },
+            |k| matches!(k, ActionKind::Fighters(_)),
             move || init_task.clone(),
             move || vec![main_task.clone()],
         )
@@ -1670,10 +1664,7 @@ impl Db {
             args,
             OrbitPattern::Circle,
             spawn_pos,
-            |k| match k {
-                ActionKind::Attackers(_) => true,
-                _ => false,
-            },
+            |k| matches!(k, ActionKind::Attackers(_)),
             move || init_task.clone(),
             move || vec![main_task.clone()],
         )
@@ -1746,10 +1737,7 @@ impl Db {
             args,
             OrbitPattern::Circle,
             spawn_pos,
-            |k| match k {
-                ActionKind::Sead(_) => true,
-                _ => false,
-            },
+            |k| matches!(k, ActionKind::Sead(_)),
             move || init_task.clone(),
             move || vec![main_task.clone()],
         )
@@ -2604,10 +2592,7 @@ impl Db {
             args,
             OrbitPattern::RaceTrack,
             spawn_pos,
-            |k| match k {
-                ActionKind::Tanker(_) => true,
-                _ => false,
-            },
+            |k| matches!(k, ActionKind::Tanker(_)),
             move || {
                 let mut tasks = vec![
                     Task::Tanker,
@@ -3697,10 +3682,7 @@ impl Db {
             args,
             OrbitPattern::RaceTrack,
             spawn_pos,
-            |k| match k {
-                ActionKind::Awacs(_) => true,
-                _ => false,
-            },
+            |k| matches!(k, ActionKind::Awacs(_)),
             move || init_task.clone(),
             move || main_task.clone(),
         )
@@ -4024,10 +4006,7 @@ impl Db {
             args,
             OrbitPattern::Circle,
             spawn_pos,
-            |k| match k {
-                ActionKind::CruiseMissileSpawn(_) => true,
-                _ => false,
-            },
+            |k| matches!(k, ActionKind::CruiseMissileSpawn(_)),
             move || init_task.clone(),
             std::vec::Vec::new,
         )

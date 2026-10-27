@@ -309,11 +309,9 @@ fn package_flights(
             .get(&kind)
             .and_then(|a| super::planner::pick_air(&a.options, &sit))
             .map(|o| o.action.clone());
-        let Some(action) = chosen
-            .or_else(|| avail.get(&kind).and_then(|a| a.action.clone()).map(|(_, a)| a))
-        else {
-            return None;
-        };
+        let action = chosen.or_else(|| {
+            avail.get(&kind).and_then(|a| a.action.clone()).map(|(_, a)| a)
+        })?;
         let id = ctx.hq.next_id();
         let name = format_compact!("HQ {role} {id}");
         match ctx.db.spawn_auto_package(

@@ -1423,7 +1423,7 @@ impl Db {
                         match objective.warehouse.equipment.get(typ) {
                             Some(inv) if inv.stored > 0 => (),
                             Some(_) | None => {
-                                break SlotAuth::VehicleNotAvailable(sifo.typ.clone());
+                                return SlotAuth::VehicleNotAvailable(sifo.typ.clone());
                             }
                         }
                     }
@@ -1452,14 +1452,14 @@ impl Db {
                         };
                         if let Some(min) = min_health {
                             if objective.health < min {
-                                break SlotAuth::CapturedNotReady(sifo.typ.clone());
+                                return SlotAuth::CapturedNotReady(sifo.typ.clone());
                             }
                         }
                     }
                 }
                 player.changing_slots = false;
                 player.jtac_or_spectators = false;
-                break SlotAuth::Yes(Some(stats::Unit {
+                return SlotAuth::Yes(Some(stats::Unit {
                     typ: sifo.typ.clone(),
                     tags: self
                         .ephemeral
@@ -1502,25 +1502,23 @@ impl Db {
                 };
             }
         }
-        loop {
-            match player.lives.get(&life_type).copied() {
-                None => {
-                    yes!();
+        match player.lives.get(&life_type).copied() {
+            None => {
+                yes!();
+            }
+            Some((reset, n)) => {
+                let reset_after = Duration::seconds(
+                    self.ephemeral.cfg.default_lives[&life_type].1 as i64,
+                );
+                if time - reset >= reset_after {
+                    player.lives.remove_cow(&life_type);
+                    self.ephemeral
+                        .stat(Stat::Life { id: *ucid, lives: player.lives.clone() });
+                    self.ephemeral.dirty = true;
+                } else if n == 0 {
+                    return SlotAuth::NoLives(life_type);
                 }
-                Some((reset, n)) => {
-                    let reset_after = Duration::seconds(
-                        self.ephemeral.cfg.default_lives[&life_type].1 as i64,
-                    );
-                    if time - reset >= reset_after {
-                        player.lives.remove_cow(&life_type);
-                        self.ephemeral
-                            .stat(Stat::Life { id: *ucid, lives: player.lives.clone() });
-                        self.ephemeral.dirty = true;
-                    } else if n == 0 {
-                        break SlotAuth::NoLives(life_type);
-                    }
-                    yes!();
-                }
+                yes!();
             }
         }
     }

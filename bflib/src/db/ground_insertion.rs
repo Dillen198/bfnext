@@ -286,7 +286,7 @@ fn vehicle_pos(lua: MizLua, group_name: &str) -> Option<Vector2> {
     use dcso3::group::Group;
     let group = Group::get_by_name(lua, group_name).ok()?;
     let units = group.get_units().ok()?;
-    if units.len() == 0 {
+    if units.is_empty() {
         return None;
     }
     let pos = units.get(1).ok()?.get_point().ok()?;

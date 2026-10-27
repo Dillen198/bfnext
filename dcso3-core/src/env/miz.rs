@@ -13,13 +13,7 @@ FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::wrapped_prim;
 
-wrapped_prim!(UnitId, i64, Hash, Copy);
-
-impl Default for UnitId {
-    fn default() -> Self {
-        UnitId(0)
-    }
-}
+wrapped_prim!(UnitId, i64, Hash, Copy, Default);
 
 impl UnitId {
     pub fn next(&mut self) {

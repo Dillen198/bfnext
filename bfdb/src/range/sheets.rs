@@ -2213,13 +2213,7 @@ fn cas(rec: &RangeRecord, r: &CasResult) -> String {
 // SEAD
 
 fn sead(rec: &RangeRecord, r: &SeadResult) -> String {
-    let col = if r.site_destroyed {
-        GREEN
-    } else if r.site_was_emitting {
-        GREEN
-    } else {
-        YELLOW
-    };
+    let col = if r.site_destroyed || r.site_was_emitting { GREEN } else { YELLOW };
     let [p, a] = pilot_row(rec);
     let mut remarks = vec![sentence(&format!(
         "{} on the {} of {} ({})",

@@ -407,7 +407,7 @@ impl AtcTrafficSim {
     /// Put a flight on a stand at home, uncontrolled until Ground releases
     /// it, with the route it flies after takeoff.
     #[allow(clippy::too_many_arguments)]
-    fn from_the_ramp(
+    fn spawn_on_the_ramp(
         &mut self,
         lua: MizLua,
         cfg: &AtcTrafficCfg,
@@ -522,7 +522,7 @@ impl AtcTrafficSim {
             spawn::waypoint(t.pos, 2740., 190., vec![spawn::task_entry(1, passes)]),
         ];
         after.extend(Self::home_legs(home, t.pos));
-        self.from_the_ramp(
+        self.spawn_on_the_ramp(
             lua,
             cfg,
             home,
@@ -554,7 +554,7 @@ impl AtcTrafficSim {
             vec![refuel],
         )];
         after.extend(Self::home_legs(home, tk.pos));
-        self.from_the_ramp(
+        self.spawn_on_the_ramp(
             lua,
             cfg,
             home,

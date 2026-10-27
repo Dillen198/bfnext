@@ -462,7 +462,7 @@ impl Csar {
                 ended.push((mi, None));
             }
         }
-        ended.sort_by(|a, b| b.0.cmp(&a.0));
+        ended.sort_by_key(|a| std::cmp::Reverse(a.0));
         ended.dedup_by_key(|e| e.0);
         for (mi, place) in ended {
             self.finish(lua, cfg, rec, players, mi, place, now);

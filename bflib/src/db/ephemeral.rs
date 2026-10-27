@@ -3368,7 +3368,7 @@ impl Ephemeral {
                         group.name
                     ),
                 }
-                units.len() > 0 && !matches!(lead, Lead::OnlyFixed)
+                !units.is_empty() && !matches!(lead, Lead::OnlyFixed)
             };
             (template, alive)
         };

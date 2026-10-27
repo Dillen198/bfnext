@@ -102,7 +102,7 @@ impl Frame {
     }
 
     /// World point -> (fwd, up, right) in this frame, metres.
-    pub fn to_local(&self, w: V3) -> (f64, f64, f64) {
+    pub fn to_local(self, w: V3) -> (f64, f64, f64) {
         let d = w - self.p;
         (d.dot(&self.x), d.dot(&self.y), d.dot(&self.z))
     }

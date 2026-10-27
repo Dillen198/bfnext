@@ -397,7 +397,7 @@ impl Rpcs {
                 let (tx, rx) = oneshot::channel();
                 let kind = match kind.as_ref() {
                     "Objective" => WarehouseKind::Objective,
-                    "DCS" => WarehouseKind::DCS,
+                    "DCS" => WarehouseKind::Dcs,
                     s => {
                         c.reply.send(Value::Error(format!("invalid objective kind {s}").into()));
                         return None

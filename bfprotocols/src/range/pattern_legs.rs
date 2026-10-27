@@ -4,9 +4,9 @@
 //! site has a port in `bfrange-web/src/lib/patternLegs.ts`.
 //!
 //! Pure functions over samples already in the runway frame (`along` metres
-//! from the landing threshold, + in the landing direction; `across` metres,
-//! + right of the centreline; `rel` = track minus runway heading, degrees),
-//! so they are tested without DCS (see the tests at the bottom).
+//! from the landing threshold, + in the landing direction; `across`
+//! metres, + right of the centreline; `rel` = track minus runway heading,
+//! degrees), so they are tested without DCS (see the tests at the bottom).
 //!
 //! Walking back from the touchdown:
 //! - **final**: track within 25° of the runway, near the extended centreline,

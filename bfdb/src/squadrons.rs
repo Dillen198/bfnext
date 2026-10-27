@@ -76,7 +76,7 @@ impl Squadrons {
         for r in self.by_tag.iter() {
             v.push(r?.1);
         }
-        v.sort_by(|a, b| b.xp.cmp(&a.xp));
+        v.sort_by_key(|a| std::cmp::Reverse(a.xp));
         Ok(v)
     }
 
