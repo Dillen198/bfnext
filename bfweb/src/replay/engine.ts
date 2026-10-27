@@ -599,7 +599,7 @@ export class ReplayEngine {
     if (d.focus) return { len: this.t - o.t0, step: step(this.t - o.t0), color: SIDE_COLOR.focus, alpha: 0.95, width: 2.2 }
     if (isAir(d.kind) && this.opts.trail > 0) return { len: this.opts.trail, step: step(this.opts.trail), color: SIDE_COLOR[d.side], alpha: 0.6, width: 1.4 }
     if (isWeapon(d.kind)) return { len: 20_000, step: 0, color: '#eae6d6', alpha: 0.75, width: 1.2 }
-    if (d.kind === 'flare' && this.opts.effects) return { len: 2_500, step: 0, color: '#fff3d0', alpha: 0.55, width: 1 }
+    if (d.kind === 'flare' && this.opts.effects) return { len: 2_500, step: 0, color: '#fff3d0', alpha: 0.6, width: 1.6 }
     return null
   }
 

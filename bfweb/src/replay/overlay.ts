@@ -179,6 +179,47 @@ function sprite(shape: Shape, color: string, dpr: number, white = false): HTMLCa
   return cv
 }
 
+/** CSS px across a flare's glow and a chaff cloud. */
+export const GLOW_PX = { flare: 22, chaff: 16 }
+
+/**
+ * Countermeasures as Tacview draws them: a flare is a hot white core in an
+ * orange glow, chaff a pale cloud flecked with bright bits. Also the 3D
+ * view's point texture, so both views look alike.
+ */
+export function glowSprite(kind: 'flare' | 'chaff', px: number): HTMLCanvasElement {
+  const key = `glow|${kind}|${px}`
+  let cv = sprites.get(key)
+  if (cv) return cv
+  cv = document.createElement('canvas')
+  cv.width = cv.height = px
+  const ctx = cv.getContext('2d')!
+  const c = px / 2
+  const g = ctx.createRadialGradient(c, c, 0, c, c, c)
+  if (kind === 'flare') {
+    g.addColorStop(0, 'rgba(255,255,250,1)')
+    g.addColorStop(0.14, 'rgba(255,248,220,1)')
+    g.addColorStop(0.32, 'rgba(255,214,130,0.6)')
+    g.addColorStop(0.62, 'rgba(255,160,60,0.16)')
+    g.addColorStop(1, 'rgba(255,140,40,0)')
+  } else {
+    g.addColorStop(0, 'rgba(242,245,250,0.9)')
+    g.addColorStop(0.4, 'rgba(214,220,230,0.55)')
+    g.addColorStop(1, 'rgba(200,206,218,0)')
+  }
+  ctx.fillStyle = g
+  ctx.fillRect(0, 0, px, px)
+  if (kind === 'chaff') {
+    ctx.fillStyle = '#ffffff'
+    const r = Math.max(1, px / 16)
+    for (const [dx, dy] of [[-0.22, -0.1], [0.16, -0.2], [0.05, 0.18], [-0.12, 0.24], [0.26, 0.08], [-0.02, -0.02]]) {
+      ctx.fillRect(c + dx * px - r / 2, c + dy * px - r / 2, r, r)
+    }
+  }
+  sprites.set(key, cv)
+  return cv
+}
+
 // ── the overlay ────────────────────────────────────────────────────────
 
 const LABEL_FONT = '600 10.5px "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace'
@@ -306,23 +347,28 @@ export class Overlay {
     if (x < -40 || y < -40 || x > this.w + 40 || y > this.h + 40) return
     const color = it.focus ? SIDE_COLOR.focus : SIDE_COLOR[it.side]
     switch (it.kind) {
-      case 'flare':
-        ctx.fillStyle = 'rgba(255,240,200,0.35)'
-        ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill()
-        ctx.fillStyle = '#fffbe8'
-        ctx.beginPath(); ctx.arc(x, y, 1.6, 0, Math.PI * 2); ctx.fill()
+      case 'flare': case 'chaff': case 'decoy': {
+        const k = it.kind === 'flare' ? 'flare' : 'chaff'
+        const img = glowSprite(k, Math.ceil(GLOW_PX[k] * this.dpr * this.scale))
+        const s = img.width / this.dpr
+        ctx.drawImage(img, x - s / 2, y - s / 2, s, s)
         return
-      case 'chaff': case 'decoy':
-        ctx.fillStyle = 'rgba(200,205,215,0.8)'
-        ctx.fillRect(x - 1.2, y - 1.2, 2.4, 2.4)
-        return
+      }
       case 'shell': {
-        const a = (it.st.hdg - 90) * (Math.PI / 180)
-        ctx.strokeStyle = '#ffd36b'
-        ctx.lineWidth = 1.4
+        // a tracer: a streak along its track, bright at the head
+        const a = ((it.st.path?.trk ?? it.st.hdg) - 90) * (Math.PI / 180)
+        // shorter the steeper it flies, as seen from above
+        const len = 16 * this.scale * Math.max(0.3, Math.cos(((it.st.path?.pitch ?? 0) * Math.PI) / 180))
+        const tx = x - Math.cos(a) * len, ty = y - Math.sin(a) * len
+        const g = ctx.createLinearGradient(tx, ty, x, y)
+        g.addColorStop(0, 'rgba(255,150,40,0)')
+        g.addColorStop(0.6, 'rgba(255,200,90,0.85)')
+        g.addColorStop(1, '#fff6d0')
+        ctx.strokeStyle = g
+        ctx.lineWidth = 2.2 * this.scale
         ctx.beginPath()
-        ctx.moveTo(x - Math.cos(a) * 5, y - Math.sin(a) * 5)
-        ctx.lineTo(x + Math.cos(a) * 2, y + Math.sin(a) * 2)
+        ctx.moveTo(tx, ty)
+        ctx.lineTo(x, y)
         ctx.stroke()
         return
       }

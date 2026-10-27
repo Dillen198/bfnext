@@ -15,6 +15,7 @@ import { isWeapon, type Kind, type State } from './data'
 import { familyOf, modelOf, realOf, realModel, realLength, LENGTH, MIN_PX, type Family, type Real } from './models'
 import { SHIP_FIT, waterlineZ } from '../../../shared/models/catalog'
 import { drawHud, type HudData, type Vec3 } from './hud'
+import { glowSprite, GLOW_PX } from './overlay'
 
 export type Cam3D = 'free' | 'follow' | 'chase' | 'cockpit' | 'padlock' | 'satellite'
 
@@ -178,7 +179,8 @@ export class Theater {
   private cones: THREE.Mesh[] = []
   private lockLines: THREE.LineSegments
   private sky: THREE.Mesh
-  private fx: Record<'flare' | 'chaff' | 'shell', THREE.Points>
+  private fx: Record<'flare' | 'chaff', THREE.Points>
+  private tracers: THREE.Mesh
   private booms: THREE.InstancedMesh
   private satDist = 4000
   private sun: THREE.DirectionalLight
@@ -247,19 +249,27 @@ export class Theater {
     this.sky.frustumCulled = false
     this.scene.add(this.sky)
 
-    // Effects: flares and chaff as points of light, tracers, explosions.
-    const points = (color: string, size: number, additive: boolean) => {
+    // Effects: flares and chaff as glowing sprites, tracers, explosions.
+    const points = (kind: 'flare' | 'chaff') => {
       const g = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(3 * 256), 3))
+      const map = new THREE.CanvasTexture(glowSprite(kind, 64))
+      map.colorSpace = THREE.SRGBColorSpace
       const p = new THREE.Points(g, new THREE.PointsMaterial({
-        color, size, sizeAttenuation: false, transparent: true, depthWrite: false,
-        blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+        map, size: GLOW_PX[kind], sizeAttenuation: false, transparent: true, depthWrite: false,
+        blending: kind === 'flare' ? THREE.AdditiveBlending : THREE.NormalBlending,
       }))
       p.frustumCulled = false
       p.renderOrder = 5
       this.scene.add(p)
       return p
     }
-    this.fx = { flare: points('#fff1c8', 6, true), chaff: points('#c9ced6', 3, false), shell: points('#ffcf5a', 3, true) }
+    this.fx = { flare: points('flare'), chaff: points('chaff') }
+    this.tracers = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
+    }))
+    this.tracers.frustumCulled = false
+    this.tracers.renderOrder = 5
+    this.scene.add(this.tracers)
     this.booms = new THREE.InstancedMesh(
       new THREE.SphereGeometry(1, 14, 10),
       new THREE.MeshBasicMaterial({ color: '#ff9a3c', transparent: true, opacity: 0.45, depthWrite: false }),
@@ -717,7 +727,7 @@ export class Theater {
     }
     this.projected = projected
 
-    this.drawEffects(effects, pxPerRad)
+    this.drawEffects(effects, pxPerRad, frame.scale)
 
     // Trails: one line each, buffers reused frame to frame.
     while (this.lines.length < frame.trails.length) {
@@ -793,30 +803,76 @@ export class Theater {
     return a
   }
 
-  private drawEffects(effects: { o: TheaterObject; p: THREE.Vector3 }[], pxPerRad: number) {
-    const groups: Record<'flare' | 'chaff' | 'shell', THREE.Vector3[]> = { flare: [], chaff: [], shell: [] }
+  private drawEffects(effects: { o: TheaterObject; p: THREE.Vector3 }[], pxPerRad: number, scale: number) {
+    const groups: Record<'flare' | 'chaff', THREE.Vector3[]> = { flare: [], chaff: [] }
+    const shells: { o: TheaterObject; p: THREE.Vector3 }[] = []
     let nb = 0
-    for (const { o, p } of effects) {
+    for (const e of effects) {
+      const { o, p } = e
       if (o.kind === 'explosion') {
         if (nb >= this.booms.instanceMatrix.count) continue
         const d = this.camera.position.distanceTo(p)
         const r = Math.max(o.st.ch?.Radius ?? 12, (4 * d) / pxPerRad)
         this.tmpM.makeScale(r, r, r).setPosition(p)
         this.booms.setMatrixAt(nb++, this.tmpM)
+      } else if (o.kind === 'shell') {
+        shells.push(e)
       } else {
-        groups[o.kind === 'flare' ? 'flare' : o.kind === 'shell' ? 'shell' : 'chaff'].push(p)
+        groups[o.kind === 'flare' ? 'flare' : 'chaff'].push(p)
       }
     }
     this.booms.count = nb
     this.booms.instanceMatrix.needsUpdate = true
-    for (const k of ['flare', 'chaff', 'shell'] as const) {
+    // point sizes are in drawing-buffer pixels
+    const dpr = this.renderer.getPixelRatio()
+    for (const k of ['flare', 'chaff'] as const) {
       const pts = groups[k]
       const g = this.fx[k].geometry
       const pos = this.buffer(g, 'position', pts.length, 3)
       pts.forEach((q, i) => pos.setXYZ(i, q.x, q.y, q.z))
       pos.needsUpdate = true
       g.setDrawRange(0, pts.length)
+      ;(this.fx[k].material as THREE.PointsMaterial).size = GLOW_PX[k] * dpr * scale
     }
+    this.drawTracers(shells, pxPerRad, scale)
+  }
+
+  /**
+   * Tracers: a streak behind each round along its flight path, white-hot at
+   * the head and fading to orange, kept a few pixels long and wide at any
+   * distance so a gun burst reads as a line of dashes.
+   */
+  private drawTracers(shells: { o: TheaterObject; p: THREE.Vector3 }[], pxPerRad: number, scale: number) {
+    const g = this.tracers.geometry
+    const pos = this.buffer(g, 'position', shells.length * 6, 3)
+    const clr = this.buffer(g, 'color', shells.length * 6, 4)
+    const dir = new THREE.Vector3(), side = new THREE.Vector3(), tail = new THREE.Vector3()
+    const head = [1, 0.97, 0.85, 1], end = [1, 0.55, 0.15, 0]
+    let n = 0
+    for (const { o, p } of shells) {
+      const pitch = (o.st.path?.pitch ?? o.st.pitch) * DEG, trk = (o.st.path?.trk ?? o.st.hdg) * DEG
+      dir.set(Math.sin(trk) * Math.cos(pitch), Math.cos(trk) * Math.cos(pitch), Math.sin(pitch))
+      const d = this.camera.position.distanceTo(p)
+      const m = d / pxPerRad
+      const len = Math.max(30, 18 * scale * m), half = Math.max(0.4, 1.2 * scale * m)
+      tail.copy(p).addScaledVector(dir, -len)
+      side.subVectors(p, this.camera.position).cross(dir)
+      if (side.lengthSq() < 1e-9) continue
+      side.normalize().multiplyScalar(half)
+      // two triangles: tail-left, tail-right, head-right / tail-left, head-right, head-left
+      const v = [
+        [tail, -1, end], [tail, 1, end], [p, 1, head],
+        [tail, -1, end], [p, 1, head], [p, -1, head],
+      ] as const
+      for (const [q, sgn, c] of v) {
+        pos.setXYZ(n, q.x + side.x * sgn, q.y + side.y * sgn, q.z + side.z * sgn)
+        clr.setXYZW(n, c[0], c[1], c[2], c[3])
+        n++
+      }
+    }
+    pos.needsUpdate = true
+    clr.needsUpdate = true
+    g.setDrawRange(0, n)
   }
 
   /**
