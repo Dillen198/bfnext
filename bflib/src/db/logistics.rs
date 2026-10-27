@@ -3309,10 +3309,16 @@ impl Db {
                         // gone (owner change, pad respawn, objective destroyed) --
                         // that's an expected race against the slow drain, not a real
                         // failure, so skip quietly instead of erroring every time.
-                        if self.ephemeral.airbase_by_oid.contains_key(&oid) {
+                        if self.ephemeral.airbase_by_oid.contains_key(&oid)
+                            && !self.ephemeral.airbase_gone_recently(&oid, ts)
+                        {
                             let start_ts = Utc::now();
                             if let Err(e) = self.sync_warehouse_to_objective(lua, oid) {
-                                error!("failed to sync objective {oid} from warehouse {:?}", e)
+                                if self.ephemeral.airbase_gone.contains_key(&oid) {
+                                    debug!("failed to sync objective {oid} from warehouse {:?}", e)
+                                } else {
+                                    error!("failed to sync objective {oid} from warehouse {:?}", e)
+                                }
                             }
                             record_perf(&mut perf.logistics_sync_from, start_ts);
                         }
@@ -3430,10 +3436,16 @@ impl Db {
                         // See the matching comment in SyncFromWarehouses above: this
                         // queue drains slowly and an entry's airbase registration can
                         // legitimately disappear before it's reached.
-                        if self.ephemeral.airbase_by_oid.contains_key(&oid) {
+                        if self.ephemeral.airbase_by_oid.contains_key(&oid)
+                            && !self.ephemeral.airbase_gone_recently(&oid, ts)
+                        {
                             let start_ts = Utc::now();
                             if let Err(e) = self.sync_objective_to_warehouse(lua, oid) {
-                                error!("failed to sync objective {oid} to warehouse {:?}", e)
+                                if self.ephemeral.airbase_gone.contains_key(&oid) {
+                                    debug!("failed to sync objective {oid} to warehouse {:?}", e)
+                                } else {
+                                    error!("failed to sync objective {oid} to warehouse {:?}", e)
+                                }
                             }
                             record_perf(&mut perf.logistics_sync_to, start_ts);
                         }
@@ -6325,6 +6337,12 @@ impl Db {
         for lid in hub_ids {
             let logi = objective!(self, &lid)?;
             let hub_side = logi.owner;
+            // A hub nobody owns supplies nobody: there are no Neutral
+            // transports, and every pass it tried an airlift that warned "No
+            // aircraft template configured for side Neutral".
+            if hub_side == Side::Neutral {
+                continue;
+            }
 
             // Split destinations into instant transfer, convoy, or air route
             let mut instant_needed: SmallVec<[Needed; 64]> = SmallVec::new();
@@ -7440,15 +7458,29 @@ impl Db {
             _ => obj.name.clone(),
         };
         let obj_name = obj.name.clone();
-        let ab = Airbase::get_by_name(lua, name.clone())
+        let ab = match Airbase::get_by_name(lua, name.clone())
             .ok()
             .filter(|ab| ab.is_exist().unwrap_or(false))
-            .ok_or_else(|| {
-                anyhow!("the airbase behind {obj_name} ({name}) no longer exists in DCS")
-            })?;
+        {
+            Some(ab) => ab,
+            None => {
+                // A sunk carrier, most often. Say so once; the warehouse syncs
+                // then leave it alone for a while (see `airbase_gone`) instead
+                // of failing on every logistics pass.
+                if self.ephemeral.airbase_gone.insert(oid, Utc::now()).is_none() {
+                    warn!(
+                        "{obj_name}: its airbase ({name}) no longer exists in DCS,                          warehouse sync paused until it is back"
+                    );
+                }
+                bail!("the airbase behind {obj_name} ({name}) no longer exists in DCS")
+            }
+        };
         let id = ab.object_id().context("getting airbase object id")?;
         info!("{obj_name}: its airbase handle went stale, re-resolved {name}");
         self.ephemeral.airbase_by_oid.insert(oid, id);
+        if self.ephemeral.airbase_gone.remove(&oid).is_some() {
+            info!("{obj_name}: its airbase is back, warehouse sync resumed");
+        }
         Ok(ab)
     }
 

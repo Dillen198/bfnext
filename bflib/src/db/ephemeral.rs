@@ -329,6 +329,10 @@ pub struct Ephemeral {
     pub(super) scenery_total_by_objective: FxHashMap<ObjectiveId, u32>,
     pub(super) slot_by_miz_gid: FxHashMap<miz::GroupId, SlotId>,
     pub(super) airbase_by_oid: FxHashMap<ObjectiveId, DcsOid<ClassAirbase>>,
+    /// Objectives whose DCS airbase was found gone (a sunk carrier), and when.
+    /// Their warehouse syncs are skipped for `AIRBASE_GONE_RETRY` at a time
+    /// rather than failing every logistics pass.
+    pub(super) airbase_gone: FxHashMap<ObjectiveId, DateTime<Utc>>,
     pub(super) slot_info: FxHashMap<SlotId, SlotInfo>,
     used_pad_templates: FxHashSet<String>,
     pub(super) global_pad_templates: FxHashSet<String>,
@@ -623,6 +627,7 @@ impl Default for Ephemeral {
             scenery_destroyed_by_objective: FxHashMap::default(),
             scenery_total_by_objective: FxHashMap::default(),
             airbase_by_oid: FxHashMap::default(),
+            airbase_gone: FxHashMap::default(),
             slot_info: FxHashMap::default(),
             used_pad_templates: FxHashSet::default(),
             global_pad_templates: FxHashSet::default(),
@@ -703,6 +708,9 @@ const ETA_BUCKET_SECS: i64 = 15;
 
 /// How long a field stays closed to fixed-wing ground starts after the ramp
 /// watch removed a stuck flight from it (`Ephemeral::ramp_blocked`).
+/// How long a gone airbase's warehouse syncs are skipped before one retry.
+const AIRBASE_GONE_RETRY_MIN: i64 = 10;
+
 pub(super) const RAMP_BLOCK_SECS: i64 = 30 * 60;
 
 fn bucket_eta(secs: i64) -> i64 {
@@ -1478,6 +1486,14 @@ impl Ephemeral {
 
     pub fn get_slot_by_object_id(&self, id: &DcsOid<ClassUnit>) -> Option<&SlotId> {
         self.slot_by_object_id.get(id)
+    }
+
+    /// True while `oid`'s airbase was found gone less than
+    /// `AIRBASE_GONE_RETRY` ago; after that one sync tries it again.
+    pub(super) fn airbase_gone_recently(&self, oid: &ObjectiveId, now: DateTime<Utc>) -> bool {
+        self.airbase_gone
+            .get(oid)
+            .is_some_and(|t| now - *t < chrono::Duration::minutes(AIRBASE_GONE_RETRY_MIN))
     }
 
     /// The Combined Arms player driving `id`, and their commander slot.
@@ -2553,6 +2569,12 @@ impl Ephemeral {
                 }
                 let helicopter = template.category == GroupKind::Helicopter;
                 let heavy = alive_units.iter().any(|u| super::Db::needs_big_spot(u.typ.as_str()));
+                // Too big for any stand DCS offers on these maps: no taxi
+                // route exists, and DCS's own ATC crashed the server printing
+                // its "No path found for 'B-1B'" warning (twice on 27 Oct,
+                // Ramat David and Haifa). They air-start over the field.
+                let no_taxi = !helicopter
+                    && alive_units.iter().any(|u| super::Db::too_big_to_taxi(u.typ.as_str()));
                 // Whether this airframe may lift off from open ground when the
                 // field gives it no spot to park on.
                 let open_ground =
@@ -2599,7 +2621,12 @@ impl Ephemeral {
                 // open big, helicopters want pads / open ramp, and the runway
                 // "spots" are not parking. Nearest-to-runway first so a flight
                 // isn't strung across the whole field.
-                if let (Some(ab), Some((_, p, ab_cat))) = (airbase.as_ref(), ab_start.as_ref()) {
+                if no_taxi {
+                    info!(
+                        "[GROUND_START] {} is too big to taxi at this field's stands -- air-starting over it",
+                        group.name
+                    );
+                } else if let (Some(ab), Some((_, p, ab_cat))) = (airbase.as_ref(), ab_start.as_ref()) {
                     let want = alive_units.len().max(1);
                     match ab.get_parking_spots(true) {
                         Ok(spots) => {
@@ -2853,7 +2880,7 @@ impl Ephemeral {
                         // meant to come off a friendly field, so refuse the
                         // spawn rather than let DCS put it in the air over
                         // the field -- the caller refunds or picks another.
-                        _ if launch_req.is_some() => bail!(
+                        _ if launch_req.is_some() && !no_taxi => bail!(
                             "{} cannot start on the ground at {:?}: no DCS airbase with \
                              parking resolves there",
                             group.name,

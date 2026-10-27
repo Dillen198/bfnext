@@ -1469,6 +1469,14 @@ impl Db {
         HEAVY.contains(&typ)
     }
 
+    /// Strategic bombers no DCS stand on these maps fits. Taxiing one asks
+    /// DCS's ATC for a route that doesn't exist, and its "No path found"
+    /// warning has crashed the server; they air-start over their field.
+    pub(crate) fn too_big_to_taxi(typ: &str) -> bool {
+        const TOO_BIG: &[&str] = &["B-1B", "B-52H", "Tu-95MS", "Tu-142", "Tu-160"];
+        TOO_BIG.contains(&typ)
+    }
+
     pub(crate) fn launch_spot(&self, lua: MizLua, oid: &ObjectiveId, rotary: bool, heavy: bool) -> Option<Vector2> {
         let obj = self.persisted.objectives.get(oid)?;
         if rotary {
