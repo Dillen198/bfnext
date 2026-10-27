@@ -17,6 +17,9 @@ compact_str = { workspace = true }
 # side of dcso3 depends on dcso3 itself.
 dcso3 = { package = "dcso3-core", version = "0.1", path = "../dcso3-core" }
 enumflags2 = { workspace = true }
+# Only the netidx TLS config type (`netidx_tls` in both engine configs);
+# no runtime.
+fowlbg = { version = "0.1", path = "../fowlbg", default-features = false, features = ["schemars"] }
 fxhash = { workspace = true }
 immutable-chunkmap = { workspace = true }
 indexmap = { workspace = true }

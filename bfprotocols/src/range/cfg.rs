@@ -1606,6 +1606,11 @@ pub struct RangeCfg {
     /// same PC can reach).
     #[serde(default)]
     pub netidx_bind: Option<String>,
+    /// Mutual TLS for the publisher (deploy/netidx-tls.md): this engine's
+    /// certificate and the resolver's name, applied over the client config.
+    /// Unset, the client config is used as written (normally Anonymous).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub netidx_tls: Option<fowlbg::netidx::Tls>,
     #[serde(default = "default_range_name")]
     pub name: String,
     /// The theatre divided up by job, as drawn on the F10 map.
@@ -1883,6 +1888,9 @@ impl RangeCfg {
                 bail!("netidx_bind {b:?} is not a netidx bind address: {e}")
             }
         }
+        if let Some(t) = &self.netidx_tls {
+            t.validate()?;
+        }
         Ok(())
     }
 }
@@ -1983,6 +1991,25 @@ mod tests {
         c.netidx_bind = Some("192.168.1.0/24".into());
         assert!(c.validate().is_ok());
         c.netidx_bind = Some("192.168.1/24".into());
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn netidx_tls_is_optional_and_checked() {
+        // absent: off, and not written back
+        let c: RangeCfg = serde_json::from_str(r#"{"name": "R"}"#).unwrap();
+        assert!(c.netidx_tls.is_none());
+        assert!(!serde_json::to_string(&c).unwrap().contains("netidx_tls"));
+        let c: RangeCfg = serde_json::from_str(
+            r#"{"name": "R", "netidx_tls": {"trusted": "C:/fowl/tls/ca.pem",
+                "certificate": "C:/fowl/tls/engine.range.fowl.crt",
+                "private_key": "C:/fowl/tls/engine.range.fowl.key",
+                "resolver_name": "resolver.range.fowl"}}"#,
+        )
+        .unwrap();
+        assert!(c.validate().is_ok());
+        let mut c = c;
+        c.netidx_tls.as_mut().unwrap().domain = Some("example.com".into());
         assert!(c.validate().is_err());
     }
 

@@ -2369,6 +2369,7 @@ impl Default for Cfg {
         Self {
             version: Some(CFG_VERSION),
             netidx_base: Some(NetIdxPath::from("/fowl-engine")),
+            netidx_tls: None,
             auto_reset: Some(AutoResetOnVictory {
                 condition: VictoryCondition::MapOwned { fraction: 1. },
                 delay: 60,

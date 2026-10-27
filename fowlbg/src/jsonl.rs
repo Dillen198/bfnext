@@ -75,14 +75,15 @@ impl JsonlSink {
 
     /// Rotate the feed (see [`rotate::rotate`]) once it is over `max` bytes.
     /// The handle is closed first, since Windows won't rename a file this
-    /// process holds open, and the feed is reopened either way.
-    pub fn rotate_if_over(&mut self, max: u64) {
+    /// process holds open, and the feed is reopened either way. `Err` is the
+    /// reopen failing: the feed is closed until the next rotation.
+    pub fn rotate_if_over(&mut self, max: u64) -> io::Result<()> {
         let len = match fs::metadata(&self.path) {
             Ok(m) => m.len(),
-            Err(_) => return,
+            Err(_) => return Ok(()),
         };
         if len <= max {
-            return;
+            return Ok(());
         }
         self.file = None;
         match rotate::rotate(&self.path) {
@@ -90,13 +91,8 @@ impl JsonlSink {
             Ok(None) => (),
             Err(e) => error!("could not rotate {:?}: {e:?}", self.path),
         }
-        self.file = match open_append(&self.path) {
-            Ok(f) => Some(f),
-            Err(e) => {
-                error!("could not reopen {:?}: {e:?}", self.path);
-                None
-            }
-        };
+        self.file = Some(open_append(&self.path)?);
+        Ok(())
     }
 }
 
@@ -144,9 +140,9 @@ mod tests {
         let p = dir.join("range.jsonl");
         let mut s = JsonlSink::new(p.clone(), Some(open_append(&p).unwrap()));
         s.append_line(b"0123456789".to_vec()).unwrap();
-        s.rotate_if_over(11);
+        s.rotate_if_over(11).unwrap();
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 1, "11 bytes is not over 11");
-        s.rotate_if_over(10);
+        s.rotate_if_over(10).unwrap();
         let names: Vec<_> = fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert_eq!(names.len(), 2, "{names:?}");
         assert_eq!(fs::metadata(&p).unwrap().len(), 0, "a fresh feed");

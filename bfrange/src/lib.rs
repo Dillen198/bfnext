@@ -493,6 +493,7 @@ fn delayed_init_inner(lua: MizLua, ctx: &mut Ctx) -> Result<()> {
         base: cfg.netidx_base.clone(),
         config: cfg.netidx_config.clone(),
         bind: cfg.netidx_bind.clone(),
+        tls: cfg.netidx_tls.clone(),
     };
     bg::send(bg::Task::Start { sortie: sortie.clone(), net, q: ctx.cmds.clone() });
     let now = now_of(lua);
