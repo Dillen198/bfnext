@@ -12,6 +12,7 @@
 // * point lists are JSON arrays, never objects with "1" keys.
 
 import { applyOverrides, clone, getAt, fromPointer, pruneOverrides, setAt, type Json, type JsonObject, type Overrides } from './model'
+import { F16_THREATS, HORNET_THREATS } from './dtc/threatDefs'
 import { fromDcsXY, hornetSequences, offsetOnGrid, terrainAt, toDcsXY, type DcsTerrain } from './nav'
 import { aircraftDef, type NativeType, type Plan } from './types'
 import { ExportError, safeName } from './exports'
@@ -486,6 +487,37 @@ export function nativeReady(t: NativeType): boolean {
  * The full cartridge for `plan`: every section, the pilot's changes, the
  * route on the right map, and every tab with content switched on.
  */
+/** A threat of a known type carries that type's own ring, as the jets' DTC
+ *  editors set it when the type is picked: the F-16 needs the table's exact
+ *  radius and altitude for any type but Custom, the Hornet its range. */
+function typedThreats(data: JsonObject, type: NativeType, warnings: string[]) {
+  let set = 0
+  if (type === 'F-16C_50') {
+    const list = (getAt(data, ['MPD', 'THREAT_PTS']) as JsonObject[] | undefined) ?? []
+    for (const t of list) {
+      const def = F16_THREATS.find(d => d.def_num === t.def_num)
+      if (!def || def.def_num === 1) continue
+      if (t.radius !== def.range_m || t.alt !== def.alt_m || t.threatName !== def.name) set++
+      t.threatName = def.name
+      t.radius = def.range_m
+      t.alt = def.alt_m
+      if (typeof t.text !== 'string' || !t.text.trim()) t.text = def.text
+    }
+  }
+  if (type === 'FA-18C_hornet') {
+    const list = (getAt(data, ['SA', 'MEZ_THRTS']) as JsonObject[] | undefined) ?? []
+    for (const t of list) {
+      const def = HORNET_THREATS.find(d => d.name === t.threat_type)
+      if (!def) continue
+      const ring = def.range_m / 1852
+      if (t.threat_ring_radius !== ring) set++
+      t.threat_ring_radius = ring
+      if (typeof t.text !== 'string' || !t.text.trim()) t.text = def.text
+    }
+  }
+  if (set) warnings.push(`${set} pre-planned threat${set > 1 ? 's' : ''} of a set type took that type's own ring size, as the jet requires; pick Custom to size a ring yourself.`)
+}
+
 export function buildNative(plan: Plan, type: NativeType, defaults: Json, ov: Overrides, tos: (i: number) => number | null): NativeExport {
   const def = aircraftDef(plan.aircraft)
   const fill = ROUTE[type]
@@ -514,6 +546,7 @@ export function buildNative(plan: Plan, type: NativeType, defaults: Json, ov: Ov
   const targets = w.filter(p => p.target && p.elev_ft === 0).length
   if (targets) r.warnings.push(`${targets} target point${targets > 1 ? 's have' : ' has'} elevation 0 ft; set the ground elevation for accurate targeting.`)
   fill(r)
+  typedThreats(data, type, r.warnings)
 
   // Switch on every tab the route filled or the pilot changed, unless the
   // pilot set that tab's flag themselves.

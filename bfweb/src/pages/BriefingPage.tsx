@@ -184,7 +184,7 @@ export default function BriefingPage() {
           </>
         )}
 
-        {tab === 'planner' && <PlannerTab side={side} adminSide={canSwitch} report={situation} />}
+        {tab === 'planner' && <PlannerTab side={side} adminSide={canSwitch} report={situation} briefing={briefing} />}
       </div>
     </div>
   )

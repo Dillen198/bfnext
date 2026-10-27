@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Download, Pencil, Search, X } from '@icons'
-import { AnnotationIndex, applyOverrides, withOverride, type Json, type Overrides, type Seg } from '../model'
+import { AnnotationIndex, applyOverrides, toPointer, withOverride, type Json, type Overrides, type Seg } from '../model'
 import { DCS_MAPS, offsetOnGrid, terrainAt, terrainNamed, toDcsXY, type DcsTerrain } from '../nav'
 import { shareString } from '../dcsdtc'
 import { download, ExportError, safeName } from '../exports'
@@ -15,6 +15,8 @@ import { flagPointers, isOn, switchesFor, type LoadSwitch } from './switches'
 import { DcsDtcGuide, NativeGuide } from './guides'
 import DtcMap from './DtcMap'
 import OffsetsEditor from './OffsetsEditor'
+import MissionPanel from './MissionPanel'
+import { missionFills, type MissionData, type MissionFill } from './mission'
 import './dtc.css'
 
 /** A page path nothing lies under: search results and settings-only pages
@@ -35,18 +37,23 @@ interface Props {
   onWaypoints: (w: PlanWaypoint[]) => void
   /** The campaign's DCS map, for a plan with no route yet. */
   homeMap?: string | null
+  /** Set the plan's radio presets (from the comms card). */
+  onComms: (comm1: Plan['comm1'], comm2: Plan['comm2']) => void
+  /** What the campaign knows that this cartridge can take. */
+  mission: MissionData | null
   tosSeconds: (i: number) => number | null
   tosText: (i: number) => string | null
   onClose: () => void
 }
 
-export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly, onSystems, onWaypoints, homeMap, tosSeconds, tosText, onClose }: Props) {
+export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly, onSystems, onWaypoints, homeMap, onComms, mission, tosSeconds, tosText, onClose }: Props) {
   const def = aircraftDef(plan.aircraft)
   const { data: model, error } = useQuery({ queryKey: ['planner-model', target.key], queryFn: () => loadModel(target), staleTime: Infinity })
   const ov = (plan.systems?.[target.key] ?? {}) as Overrides
   const [pageKey, setPageKey] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [changedOnly, setChangedOnly] = useState(false)
+  const [missionOpen, setMissionOpen] = useState(false)
   const [msg, setMsg] = useState<Msg | null>(null)
   // The download and steps stay folded away until asked for.
   const [loadOpen, setLoadOpen] = useState(false)
@@ -148,6 +155,31 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
       setMsg({ kind: 'err', text: e instanceof ExportError ? e.message : String(e) })
     }
   }
+  const fills = mission ? missionFills(ctx, target, plan, map, mission) : []
+  const fillOne = (f: MissionFill) => {
+    if (f.comms) onComms(f.comms.comm1, f.comms.comm2)
+    if (f.writes?.length) ctx.setMany?.(f.writes)
+  }
+  const doFill = (f: MissionFill) => {
+    if (!f.done && f.replaces && !confirm(`${f.title}: replace the ${f.replaces} entr${f.replaces > 1 ? 'ies' : 'y'} there now?`)) return
+    fillOne(f)
+    setMsg({ kind: 'ok', text: `${f.title}: ${f.count} filled.` })
+    // Show where it went.
+    const p = f.pageSegs && toPointer(f.pageSegs)
+    const to = p == null ? undefined : pages.find(x => x.key === p) ?? pages.find(x => x.key && p.startsWith(x.key + '/'))
+    if (to) { setPageKey(to.key); setMissionOpen(false) }
+  }
+  const fillAll = () => {
+    const todo = fills.filter(f => !f.done)
+    const lost = todo.reduce((n, f) => n + f.replaces, 0)
+    if (lost && !confirm(`This replaces ${lost} entr${lost > 1 ? 'ies' : 'y'} you have now. Fill all ${todo.length}?`)) return
+    // The cartridge writes go in one change, the comms to the plan.
+    const writes = todo.flatMap(f => f.writes ?? [])
+    if (writes.length) ctx.setMany?.(writes)
+    const comms = todo.find(f => f.comms)?.comms
+    if (comms) onComms(comms.comm1, comms.comm2)
+    setMsg({ kind: 'ok', text: `Filled from the mission: ${todo.map(f => f.title.toLowerCase()).join(', ')}.` })
+  }
   const noRoute = plan.waypoints.length === 0 ? 'Draw your route on the map first.' : undefined
   const nativeName = `${safeName(plan.name || 'Flight plan')}.dtc`
 
@@ -190,6 +222,13 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
               <input className="vs-input" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search settings (e.g. chaff, bingo, preset)"
                 aria-label="Search settings" style={{ width: '100%', padding: '5px 8px 5px 26px', fontSize: '0.72rem' }} />
             </label>
+            {mission && (
+              <button type="button" className={missionOpen ? 'vs-btn' : 'vs-btn-outline'} aria-pressed={missionOpen}
+                onClick={() => { setMissionOpen(v => !v); setQuery(''); setChangedOnly(false) }}
+                style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'center', padding: '5px 8px', fontSize: '0.7rem' }}>
+                <Download size={12} /> From the mission{fills.filter(f => !f.done).length ? ` (${fills.filter(f => !f.done).length})` : ''}
+              </button>
+            )}
             <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: '0.68rem', color: 'var(--text-dim)' }}>
               <input type="checkbox" checked={changedOnly} onChange={e => setChangedOnly(e.target.checked)} />
               Show only what I changed ({totalChanges})
@@ -214,7 +253,7 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
                   const st = p.sw ? switchState(p.sw) : null
                   return (
                     <button key={p.key} type="button" className="dtc-page-btn" aria-current={!hits && !changedHits && p.key === page?.key ? 'page' : undefined}
-                      onClick={() => { setPageKey(p.key); setQuery(''); setChangedOnly(false) }}>
+                      onClick={() => { setPageKey(p.key); setQuery(''); setChangedOnly(false); setMissionOpen(false) }}>
                       <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.label}</span>
                       {route && <Chip tone="info">route</Chip>}
                       {n > 0 && <Chip tone="accent">{n}</Chip>}
@@ -231,7 +270,9 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
         </aside>
 
         <main className="dtc-main">
-          {hits ? (
+          {missionOpen && !hits && !changedHits ? (
+            <MissionPanel fills={fills} loaded={!!mission} readOnly={readOnly} onFill={doFill} onFillAll={fillAll} />
+          ) : hits ? (
             <>
               <h3 style={h3}>Search: “{query}”</h3>
               {hits.length === 0 && <div style={dim}>Nothing matches. Try another word.</div>}

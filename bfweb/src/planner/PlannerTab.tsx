@@ -1,13 +1,14 @@
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowDown, ArrowUp, Download, Plus, Save, Trash2 as Trash, X } from '@icons'
-import { api, type SituationReport } from '../api'
+import { api, type Briefing, type SituationReport } from '../api'
 import Panel from '../components/Panel'
 import PlannerMap from './PlannerMap'
 import { fmtClock, fmtDuration, legs, parseClock, terrainAt } from './nav'
 import { combatFliteXml, download, safeName } from './exports'
 import { routeCardPng } from './card'
 import DtcCard from './dtc/DtcCard'
+import { commsFromCard, type MissionData } from './dtc/mission'
 import { targetsFor } from './targets'
 import {
   AIRCRAFT, aircraftDef, MAX_CHANNELS, MAX_WAYPOINTS, newPlan,
@@ -36,6 +37,8 @@ interface Props {
   /** For the map context and the comms card. Optional: the planner works
    *  without the engine. */
   report?: SituationReport
+  /** Navaids for the cartridges' "from the mission" fills. */
+  briefing?: Briefing
 }
 
 interface Editing {
@@ -74,7 +77,7 @@ function Field({ name, children, grow = 1 }: { name: string; children: ReactNode
  * its aircraft), a native DCS cartridge for the F-16C and F/A-18C, and a
  * kneeboard route card.
  */
-export default function PlannerTab({ side, adminSide, report }: Props) {
+export default function PlannerTab({ side, adminSide, report, briefing }: Props) {
   const qc = useQueryClient()
   const apiSide = adminSide ? side : undefined
   const [ed, setEd] = useState<Editing>(fresh)
@@ -209,25 +212,22 @@ export default function PlannerTab({ side, adminSide, report }: Props) {
   /** UHF presets from the comms card on COMM1, VHF on COMM2 -- the F-16's
    *  split, and harmless on the Hornet's two ARC-210s. */
   const fillFromComms = () => {
-    const c1: PlanChannel[] = []
-    const c2: PlanChannel[] = []
-    for (const c of report?.comms ?? []) {
-      if (!c.preset || c.preset < 1 || c.preset > MAX_CHANNELS) continue
-      const list = c.freq_mhz >= 225 ? c1 : c2
-      if (list.some(x => x.preset === c.preset)) continue
-      list.push({
-        preset: c.preset,
-        freq_mhz: c.freq_mhz,
-        label: c.label.slice(0, 24),
-        modulation: c.modulation.toUpperCase().startsWith('FM') ? 'FM' : 'AM',
-      })
-    }
-    if (!c1.length && !c2.length) {
+    const { comm1, comm2 } = commsFromCard(report?.comms ?? [])
+    if (!comm1.length && !comm2.length) {
       setMsg({ kind: 'warn', text: 'The comms card has no numbered presets to copy.' })
       return
     }
-    edit(p => ({ ...p, comm1: c1.sort((a, b) => a.preset - b.preset), comm2: c2.sort((a, b) => a.preset - b.preset), include_comms: true }))
+    edit(p => ({ ...p, comm1, comm2, include_comms: true }))
   }
+
+  // What the campaign knows that a cartridge can take.
+  const mission: MissionData | null = useMemo(() => (report || briefing ? {
+    side,
+    comms: report?.comms ?? [],
+    threats: report?.threats ?? [],
+    objectives: report?.map ?? [],
+    navaids: briefing?.navaids ?? [],
+  } : null), [report, briefing, side])
 
   const radioEditor = (radio: 'comm1' | 'comm2', title: string) => {
     const list = plan[radio]
@@ -474,7 +474,9 @@ export default function PlannerTab({ side, adminSide, report }: Props) {
           tosText={tosText}
           side={side}
           onWaypoints={w => edit(p => ({ ...p, waypoints: w }))}
+          onComms={(comm1, comm2) => edit(p => ({ ...p, comm1, comm2, include_comms: true }))}
           homeMap={homeMap}
+          mission={mission}
         />
 
         <Panel title="Route & kneeboard" size="sm">

@@ -6,6 +6,7 @@ import { targetsFor, type Target } from '../targets'
 import type { Overrides } from '../model'
 import { aircraftDef, type Plan } from '../types'
 import DtcWorkspace from './DtcWorkspace'
+import type { MissionData } from './mission'
 import { METHOD, type Msg } from './build'
 import { CopyPath, DownloadButton, Step, Steps } from './guides'
 
@@ -19,6 +20,8 @@ interface Props {
   side: 'Blue' | 'Red'
   /** The campaign's DCS map, for a plan with no route yet. */
   homeMap?: string | null
+  onComms: (comm1: Plan['comm1'], comm2: Plan['comm2']) => void
+  mission: MissionData | null
 }
 
 /**
@@ -26,7 +29,7 @@ interface Props {
  * editor, download. Aircraft with their own cartridge files (Mirage, Viggen,
  * JF-17) get their steps right here.
  */
-export default function DtcCard({ plan, readOnly, onSystems, onWaypoints, tosSeconds, tosText, side, homeMap }: Props) {
+export default function DtcCard({ plan, readOnly, onSystems, onWaypoints, tosSeconds, tosText, side, homeMap, onComms, mission }: Props) {
   const def = aircraftDef(plan.aircraft)
   const targets = targetsFor(def)
   const [pick, setPick] = useState<string | null>(null)
@@ -80,7 +83,7 @@ export default function DtcCard({ plan, readOnly, onSystems, onWaypoints, tosSec
             </div>
             {open && (
               <DtcWorkspace plan={plan} targets={targets} target={target} onTarget={t => setPick(t.key)} readOnly={readOnly}
-                onSystems={onSystems} onWaypoints={onWaypoints} homeMap={homeMap} tosSeconds={tosSeconds} tosText={tosText} onClose={() => setOpen(false)} />
+                onSystems={onSystems} onWaypoints={onWaypoints} homeMap={homeMap} onComms={onComms} mission={mission} tosSeconds={tosSeconds} tosText={tosText} onClose={() => setOpen(false)} />
             )}
           </>
         ) : def.other === 'M-2000C' ? (
