@@ -2357,3 +2357,50 @@ def test_backup_bridge_to_the_manager(world):
     assert r.status_code == 409 and "is it running" in r.json()["error"]
     (remote / "backup-status.json").write_text(json.dumps({**status, "enabled": False}))
     assert "turned off" in c.post(f"{BASE}/backup/start", headers=H, json={}).json()["error"]
+
+
+def test_backup_bridge_refuses_while_the_box_is_busy(world):
+    """The Manager runs one job per box (bfmanager backup.rs, "one job per box"):
+    a remote backup or check asked for while one runs is refused with who has
+    the box, instead of being queued to fail in the service."""
+    mdir = world.tmp / "FowlEngine"
+    world.cfg["ops_api"] = {"manager_dir": str(mdir)}
+    api, c = _ops_client(world)
+    remote = mdir / "remote"
+    remote.mkdir(parents=True)
+    zip_path = "D:\\FowlEngineBackups\\FowlEngine-backup-x.zip"
+    status = {"enabled": True, "updated_unix": time.time(), "job": None,
+              "backups": [{"path": zip_path, "bytes": 5}]}
+
+    def requests():
+        d = remote / "requests"
+        return list(d.glob("*.json")) if d.is_dir() else []
+
+    # the service's own job (an earlier remote request)
+    running = {"kind": "backup", "running": True, "started_by": "a remote request over the OPS API",
+               "started_at": "2026-10-27T14:02:11+00:00"}
+    (remote / "backup-status.json").write_text(json.dumps({**status, "job": running}))
+    r = c.post(f"{BASE}/backup/start", headers=H, json={})
+    assert r.status_code == 409, r.text
+    e = r.json()["error"]
+    assert e.startswith("a backup is already running on this box (started by a remote request over the OPS API at ")
+    assert c.post(f"{BASE}/backup/verify", headers=H, json={"zip": zip_path}).status_code == 409
+    # cancel is what you do about it
+    assert c.post(f"{BASE}/backup/cancel", headers=H).status_code == 200
+    for f in requests():
+        f.unlink()
+
+    # one started in the Manager window on the box: only its owner file says so
+    (remote / "backup-status.json").write_text(json.dumps(status))
+    owner = {"kind": "restore", "started_by": "Fowl Engine Manager on this box (BACKUP tab)",
+             "started_at": "2026-10-27T14:05:00+00:00", "pid": os.getpid()}
+    (remote / "job-owner.json").write_text(json.dumps(owner))
+    r = c.post(f"{BASE}/backup/start", headers=H, json={})
+    assert r.status_code == 409 and "a restore is already running" in r.json()["error"]
+    assert "(BACKUP tab)" in r.json()["error"] and not requests()
+
+    # left behind by a Manager that died mid-job: not busy
+    (remote / "job-owner.json").write_text(json.dumps({**owner, "pid": 2 ** 22 + 12345}))
+    assert c.post(f"{BASE}/backup/start", headers=H, json={}).status_code == 200
+    (remote / "job-owner.json").unlink()
+    assert c.post(f"{BASE}/backup/verify", headers=H, json={"zip": zip_path}).status_code == 200

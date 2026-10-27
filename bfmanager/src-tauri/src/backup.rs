@@ -160,6 +160,10 @@ pub struct Job {
     pub id: u64,
     /// backup | restore | verify | newbox
     pub kind: String,
+    /// Who started it: this box's Manager window, or a remote request through
+    /// the service (`set_origin`).
+    #[serde(default)]
+    pub started_by: String,
     pub running: bool,
     pub phase: String,
     pub done_bytes: u64,
@@ -185,6 +189,134 @@ pub struct Job {
 static JOB: Mutex<Option<Job>> = Mutex::new(None);
 static DONE: AtomicU64 = AtomicU64::new(0);
 static CANCEL: AtomicBool = AtomicBool::new(false);
+
+// ---- one job per box --------------------------------------------------------------------
+//
+// JOB above is per process, and two processes run jobs: the Manager window
+// (its BACKUP tab) and the service, which runs remote backups (remote.rs).
+// Without more, a remote backup and a local one could run at once and write
+// over each other's shadow copies, database dump and zip. So every job also
+// holds the data folder's job.lock: open with no sharing, which Windows
+// refuses a second time -- from any process -- and lets go of when the
+// holder exits however it ends. Who holds it is in job-owner.json beside it
+// (and in remote\, where the OPS API's bridge can read it).
+
+const LOCK_FILE: &str = "job.lock";
+const OWNER_FILE: &str = "job-owner.json";
+
+/// What this process says it is in a job's `started_by`.
+static ORIGIN: Mutex<Option<String>> = Mutex::new(None);
+const WINDOW_ORIGIN: &str = "Fowl Engine Manager on this box (BACKUP tab)";
+
+/// Name what starts jobs in this process; the window's name when never set.
+pub fn set_origin(who: &str) {
+    if let Ok(mut g) = ORIGIN.lock() {
+        *g = Some(who.to_string());
+    }
+}
+
+fn origin() -> String {
+    ORIGIN.lock().ok().and_then(|g| g.clone()).unwrap_or_else(|| WINDOW_ORIGIN.to_string())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct JobOwner {
+    pub kind: String,
+    pub started_by: String,
+    pub started_at: String,
+    pub pid: u32,
+}
+
+/// "a backup is already running (started by ... at 14:02:11)".
+pub fn busy_message(owner: Option<&JobOwner>) -> String {
+    let Some(o) = owner else {
+        return "a backup, restore or check is already running on this box (in the other Fowl Engine \
+                Manager process -- the service or the window)"
+            .into();
+    };
+    let at = chrono::DateTime::parse_from_rfc3339(&o.started_at)
+        .map(|t| t.with_timezone(&chrono::Local).format("%H:%M:%S").to_string())
+        .unwrap_or_else(|_| o.started_at.clone());
+    format!("a {} is already running (started by {} at {at})", o.kind, o.started_by)
+}
+
+/// The data folder's job lock while a job runs; dropping it lets go.
+#[derive(Debug)]
+pub struct JobLock {
+    _file: File,
+    owner_files: Vec<PathBuf>,
+}
+
+impl Drop for JobLock {
+    fn drop(&mut self) {
+        for f in &self.owner_files {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+}
+
+fn read_owner(dir: &Path) -> Option<JobOwner> {
+    serde_json::from_slice(&std::fs::read(dir.join(OWNER_FILE)).ok()?).ok()
+}
+
+#[cfg(windows)]
+fn open_exclusive(path: &Path) -> std::io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).share_mode(0).open(path)
+}
+
+#[cfg(not(windows))]
+fn open_exclusive(path: &Path) -> std::io::Result<File> {
+    // no share modes here: this process's JOB is all that keeps jobs apart
+    std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path)
+}
+
+/// Take `dir`'s job lock for `owner`, writing who holds it into `dir` and
+/// each of `mirrors` that exists. Fails with `busy_message` while another
+/// handle (this process's or another's) holds it.
+pub fn take_job_lock(dir: &Path, owner: &JobOwner, mirrors: &[PathBuf]) -> Result<JobLock> {
+    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", disp(dir)))?;
+    let file = match open_exclusive(&dir.join(LOCK_FILE)) {
+        Ok(f) => f,
+        // ERROR_SHARING_VIOLATION / ERROR_LOCK_VIOLATION: somebody has it
+        Err(e) if matches!(e.raw_os_error(), Some(32) | Some(33)) => {
+            bail!("{}", busy_message(read_owner(dir).as_ref()))
+        }
+        Err(e) => return Err(e).with_context(|| format!("opening {}", disp(&dir.join(LOCK_FILE)))),
+    };
+    let json = serde_json::to_vec_pretty(owner)?;
+    let mut owner_files = Vec::new();
+    for d in std::iter::once(dir).chain(mirrors.iter().map(PathBuf::as_path)) {
+        if d != dir && !d.is_dir() {
+            continue;
+        }
+        let f = d.join(OWNER_FILE);
+        if std::fs::write(&f, &json).is_ok() {
+            owner_files.push(f);
+        }
+    }
+    Ok(JobLock { _file: file, owner_files })
+}
+
+/// The box-wide lock for a job of `kind` started now from this process. A
+/// data folder that can't be written (it always can, by the service and the
+/// elevated window) is logged and the job runs on this process's own guard.
+fn box_lock(kind: &str, started_by: &str, started_at: &str) -> Result<Option<JobLock>> {
+    let owner = JobOwner {
+        kind: kind.into(),
+        started_by: started_by.into(),
+        started_at: started_at.into(),
+        pid: std::process::id(),
+    };
+    match take_job_lock(&config::data_dir(), &owner, &[crate::remote::remote_dir()]) {
+        Ok(l) => Ok(Some(l)),
+        Err(e) if e.to_string().contains("already running") => Err(e),
+        Err(e) => {
+            log::warn!("no box-wide job lock ({e:#}): only this process's own check keeps jobs apart");
+            Ok(None)
+        }
+    }
+}
 
 pub(crate) fn with_job(f: impl FnOnce(&mut Job)) {
     if let Ok(mut g) = JOB.lock() {
@@ -251,15 +383,25 @@ pub(crate) fn is_cancelled() -> bool {
 
 pub(crate) fn spawn(kind: &str, f: impl FnOnce() -> Result<String> + Send + 'static) -> Result<()> {
     let mut g = JOB.lock().map_err(|_| anyhow!("job lock poisoned"))?;
-    if g.as_ref().map(|j| j.running).unwrap_or(false) {
-        bail!("a {} is already running", g.as_ref().map(|j| j.kind.clone()).unwrap_or_default());
+    if let Some(j) = g.as_ref().filter(|j| j.running) {
+        let owner = JobOwner {
+            kind: j.kind.clone(),
+            started_by: j.started_by.clone(),
+            started_at: j.started_at.clone(),
+            pid: std::process::id(),
+        };
+        bail!("{}", busy_message(Some(&owner)));
     }
+    let (started_by, started_at) = (origin(), now());
+    let lock = box_lock(kind, &started_by, &started_at)?;
     let id = g.as_ref().map(|j| j.id + 1).unwrap_or(1);
-    *g = Some(Job { id, kind: kind.into(), running: true, started_at: now(), ..Default::default() });
+    *g = Some(Job { id, kind: kind.into(), started_by, running: true, started_at, ..Default::default() });
     drop(g);
     DONE.store(0, Ordering::Relaxed);
     CANCEL.store(false, Ordering::Relaxed);
     std::thread::spawn(move || {
+        // held until the job is over, however it ends
+        let _lock = lock;
         let r = f();
         with_job(|j| {
             j.current = None;
@@ -3466,5 +3608,62 @@ mod tests {
         assert!(python_ok("Python 3.11.0"));
         assert!(!python_ok("Python 3.10.9"));
         assert!(!python_ok("junk"));
+    }
+
+    fn owner(kind: &str, by: &str) -> JobOwner {
+        JobOwner { kind: kind.into(), started_by: by.into(), started_at: "2026-10-27T14:02:11+00:00".into(), pid: 1 }
+    }
+
+    /// A remote backup (the service) and a local one (the window) can't run at
+    /// once: the second is refused saying who has the box.
+    #[test]
+    fn one_job_per_box_whoever_starts_it() {
+        let dir = std::env::temp_dir().join(format!("fowl-joblock-{}", std::process::id()));
+        let remote = dir.join("remote");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&remote).unwrap();
+        let remote_owner = owner("backup", "a remote request over the OPS API");
+        let held = take_job_lock(&dir, &remote_owner, &[remote.clone(), dir.join("not-there")]).unwrap();
+        // who holds it is readable where the OPS bridge looks, and only where asked
+        assert_eq!(read_owner(&dir).as_ref(), Some(&remote_owner));
+        assert_eq!(read_owner(&remote).as_ref(), Some(&remote_owner));
+        assert!(!dir.join("not-there").exists());
+
+        // a second handle -- on Windows, another process's too -- is turned away
+        #[cfg(windows)]
+        {
+            let e = take_job_lock(&dir, &owner("backup", WINDOW_ORIGIN), &[]).unwrap_err().to_string();
+            assert!(e.starts_with("a backup is already running (started by a remote request over the OPS API at "), "{e}");
+            // and the refused one did not overwrite who holds it
+            assert_eq!(read_owner(&dir).as_ref(), Some(&remote_owner));
+        }
+
+        drop(held);
+        assert!(read_owner(&dir).is_none() && read_owner(&remote).is_none(), "owner files go with the lock");
+        let again = take_job_lock(&dir, &owner("restore", WINDOW_ORIGIN), &[]).expect("free once let go");
+        assert_eq!(read_owner(&dir).unwrap().kind, "restore");
+        drop(again);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn busy_messages() {
+        let m = busy_message(Some(&owner("verify", WINDOW_ORIGIN)));
+        assert!(m.starts_with("a verify is already running (started by Fowl Engine Manager on this box (BACKUP tab) at "), "{m}");
+        assert!(m.ends_with(')') && m.matches(':').count() == 2, "a local HH:MM:SS time: {m}");
+        let m = busy_message(Some(&JobOwner { started_at: "junk".into(), ..owner("backup", "x") }));
+        assert!(m.ends_with("(started by x at junk)"), "{m}");
+        assert!(busy_message(None).contains("already running"));
+    }
+
+    #[test]
+    fn origin_defaults_to_the_window() {
+        // the service names itself (agent.rs); nothing else does
+        if ORIGIN.lock().unwrap().is_none() {
+            assert_eq!(origin(), WINDOW_ORIGIN);
+        }
+        let job = Job { kind: "backup".into(), started_by: origin(), ..Default::default() };
+        let v = serde_json::to_value(&job).unwrap();
+        assert!(v["started_by"].is_string(), "the BACKUP tab and the remote status see who started it");
     }
 }
