@@ -37,6 +37,8 @@ pub mod atmosphere;
 pub mod attribute;
 pub mod coalition;
 pub mod controller;
+#[cfg(test)]
+mod conversion_tests;
 pub mod coord;
 pub mod country;
 pub mod dcs;
