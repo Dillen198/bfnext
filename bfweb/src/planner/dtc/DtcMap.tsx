@@ -3,8 +3,9 @@ import Map, { Layer, Marker, Source, type MapLayerMouseEvent } from 'react-map-g
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useTheme } from '@shared/web/theme'
 import { mapStyleFor } from '../../lib/mapStyle'
-import { getAt, type Json, type JsonObject, type Seg } from '../model'
-import { addableList, numbered, positions, slotsOn } from './places'
+import { getAt, toPointer, type Json, type JsonObject, type Seg } from '../model'
+import { addableLists, numbered, positions, slotsOn, type AddableList } from './places'
+import { addPoint, addRect, removePoint, shapeLists, shapesOf, type ShapeList } from './shapes'
 import { fromDcsXY, toDcsXY, type DcsTerrain } from '../nav'
 import { lar, larCentre, larPolygon } from '../f14lar'
 import type { Plan } from '../types'
@@ -31,9 +32,30 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [], route = 
   const { theme } = useTheme()
   const mapStyle = useMemo(() => mapStyleFor(theme), [theme])
   const pts = useMemo(() => positions(ctx, map, pageSegs), [ctx, map, pageSegs])
-  // While the route is drawn, the map's clicks are the route's.
-  const add = route ? null : addableList(ctx, pageSegs)
-  const slots = add || route ? [] : slotsOn(ctx, pageSegs)
+  const lists = useMemo(() => shapeLists(ctx, pageSegs), [ctx, pageSegs])
+  const shapes = useMemo(() => lists.flatMap(l => shapesOf(ctx, map, l)), [lists, ctx, map])
+
+  // What a click on the map adds. While the route is drawn, clicks are the route's.
+  const tools: Tool[] = route ? [] : [
+    ...lists.filter(l => l.editable).map(l => ({ kind: 'shape' as const, list: l })),
+    ...addableLists(ctx, pageSegs).map(l => ({ kind: 'point' as const, list: l })),
+  ]
+  const [toolKey, setToolKey] = useState<string | null>(null)
+  const tool = tools.find(t => toPointer(t.list.segs) === toolKey) ?? tools[0] ?? null
+  // The line being drawn (null: the next click starts a new one), the F-16
+  // geo line a click goes on, and the first corner of an area.
+  const [shapeSel, setShapeSel] = useState<number | null>(null)
+  const [flag, setFlag] = useState(0)
+  const [corner, setCorner] = useState<{ lat: number; lon: number } | null>(null)
+  const [full, setFull] = useState<string | null>(null)
+  const pickTool = (k: string) => { setToolKey(k); setShapeSel(null); setCorner(null); setFull(null) }
+  const add = tool?.kind === 'point' ? tool.list : null
+  const drawing = tool?.kind === 'shape' ? tool.list : null
+  const drawn = drawing ? shapes.filter(sh => sh.list.segs.join('/') === drawing.segs.join('/')) : []
+  const sel = shapeSel != null && drawn.some(sh => sh.index === shapeSel) ? shapeSel : null
+  const isDrawing = (l: ShapeList) => !!drawing && l.segs.join('/') === drawing.segs.join('/')
+
+  const slots = tool || route ? [] : slotsOn(ctx, pageSegs)
   const [slotKey, setSlotKey] = useState<string | null>(null)
   const slot = slots.find(x => x.segs.join('/') === slotKey) ?? slots.find(x => !x.placed) ?? slots[0]
 
@@ -55,6 +77,18 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [], route = 
     }
     return { geo: { type: 'FeatureCollection' as const, features: feats }, launches }
   }, [pts, ctx.value, map])
+
+  const shapeGeo = useMemo(() => ({
+    type: 'FeatureCollection' as const,
+    features: shapes.filter(sh => sh.pts.length >= 2).map(sh => {
+      const ring = sh.pts.map(p => [p.lon, p.lat])
+      return {
+        type: 'Feature' as const,
+        properties: { color: sh.list.here ? lineColour(sh) : '#9aa3ad', width: sh.list.here ? 2.5 : 1.2, opacity: sh.list.here ? 0.95 : 0.5 },
+        geometry: { type: 'LineString' as const, coordinates: sh.closed ? [...ring, ring[0]] : ring },
+      }
+    }),
+  }), [shapes])
 
   const routeGeo = useMemo(() => ({
     type: 'FeatureCollection' as const,
@@ -88,7 +122,25 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [], route = 
   }
 
   const click = (e: MapLayerMouseEvent) => {
-    if (route) { route.add(e.lngLat.lat, e.lngLat.lng); return }
+    const ll = { lat: e.lngLat.lat, lon: e.lngLat.lng }
+    if (route) { route.add(ll.lat, ll.lon); return }
+    if (drawing) {
+      if (drawing.rect) {
+        if (!corner) { setCorner(ll); return }
+        const v = addRect(ctx, drawing, corner, ll, map)
+        setCorner(null)
+        if (v) ctx.set(drawing.segs, v)
+        else setFull(`${drawing.label} is full.`)
+        return
+      }
+      const v = addPoint(ctx, drawing, { shape: sel, flag }, ll.lat, ll.lon, map)
+      if (!v) { setFull(sel == null ? `${drawing.label} is full.` : 'This line is full: start a new one.'); return }
+      setFull(null)
+      ctx.set(drawing.segs, v)
+      // A new line keeps taking the clicks that follow.
+      if (sel == null && drawing.mode === 'shapes') setShapeSel(((getAt(ctx.value, drawing.segs) as Json[] | undefined) ?? []).length)
+      return
+    }
     if (!add && slot && !ctx.readOnly) {
       // Put the chosen slot here and switch it on, then move to the next empty one.
       const cur = getAt(ctx.value, slot.segs) as JsonObject
@@ -112,7 +164,7 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [], route = 
   return (
     <div style={{ position: 'relative', height: '100%', minHeight: 220, borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
       <Map key={theme} mapStyle={mapStyle} style={{ width: '100%', height: '100%' }} initialViewState={view}
-        dragRotate={false} attributionControl={false} cursor={add || slot || route ? 'crosshair' : 'grab'} onClick={click}>
+        dragRotate={false} attributionControl={false} cursor={tool || slot || route ? 'crosshair' : 'grab'} onClick={click}>
         <Source id="dtc-lar" type="geojson" data={lars.geo}>
           <Layer id="dtc-lar-fill" type="fill" paint={{ 'fill-color': '#40a6ff', 'fill-opacity': 0.12 }} />
           <Layer id="dtc-lar-line" type="line" paint={{ 'line-color': '#40a6ff', 'line-width': 1.2, 'line-dasharray': [3, 2] }} />
@@ -133,6 +185,32 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [], route = 
             <div title={e.label} style={{ padding: '0 4px', borderRadius: 3, background: '#f0a030', color: '#1a1004', fontSize: 9, fontWeight: 800, border: '1px solid #1a1004', whiteSpace: 'nowrap' }}>{e.label}</div>
           </Marker>
         ))}
+        <Source id="dtc-shapes" type="geojson" data={shapeGeo}>
+          <Layer id="dtc-shapes-line" type="line" layout={{ 'line-join': 'round', 'line-cap': 'round' }}
+            paint={{ 'line-color': ['get', 'color'], 'line-width': ['get', 'width'], 'line-opacity': ['get', 'opacity'] }} />
+        </Source>
+        {shapes.filter(sh => sh.list.here).flatMap(sh => sh.pts.map((p, j) => (
+          <Marker key={`v-${toPointer(p.segs)}`} latitude={p.lat} longitude={p.lon} draggable={sh.list.editable}
+            onDragEnd={e => place(p.segs, e.lngLat.lat, e.lngLat.lng, getAt(ctx.value, p.segs) as JsonObject)}
+            onClick={e => { e.originalEvent.stopPropagation(); if (isDrawing(sh.list) && sh.list.mode === 'shapes') setShapeSel(sh.index) }}>
+            <div title={`${sh.name}, point ${j + 1}${sh.list.editable ? ' (drag to move, right-click to delete)' : ''}`}
+              onContextMenu={e => { if (sh.list.editable) { e.preventDefault(); ctx.set(sh.list.segs, removePoint(ctx, sh.list, p.segs)) } }}
+              style={{
+                width: 10, height: 10, borderRadius: 5, background: lineColour(sh), border: '1.5px solid #0b0f08', cursor: sh.list.editable ? 'move' : 'default',
+                boxShadow: isDrawing(sh.list) && (sh.list.mode === 'flags' ? sh.index === flag : sh.index === sel) ? '0 0 0 3px rgba(255,255,255,0.5)' : undefined,
+              }} />
+          </Marker>
+        )))}
+        {shapes.filter(sh => sh.list.here && sh.pts.length).map(sh => (
+          <Marker key={`n-${toPointer(sh.list.segs)}-${sh.index}`} latitude={sh.pts[0].lat} longitude={sh.pts[0].lon} anchor="bottom-left" offset={[6, -4]}>
+            <div style={{ fontSize: 10, fontWeight: 800, color: lineColour(sh), textShadow: '0 0 3px #000, 0 0 3px #000', whiteSpace: 'nowrap', pointerEvents: 'none' }}>{sh.name}</div>
+          </Marker>
+        ))}
+        {corner && (
+          <Marker latitude={corner.lat} longitude={corner.lon}>
+            <div title="First corner: click the opposite one" style={{ width: 10, height: 10, border: '2px solid #fff', background: 'transparent' }} />
+          </Marker>
+        )}
         <Source id="dtc-route" type="geojson" data={routeGeo}>
           <Layer id="dtc-route-line" type="line" paint={{ 'line-color': '#facc15', 'line-width': 2, 'line-opacity': 0.7, 'line-dasharray': [2, 1] }} />
         </Source>
@@ -164,6 +242,35 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [], route = 
           </Marker>
         ))}
       </Map>
+      {tool && (
+        <div style={{ position: 'absolute', left: 8, top: 8, right: 8, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', pointerEvents: 'none' }}>
+          <label style={{ ...panel, pointerEvents: 'auto' }}>
+            Click adds
+            <select className="vs-input" value={toPointer(tool.list.segs)} onChange={e => pickTool(e.target.value)} style={{ fontSize: '0.66rem', padding: '2px 4px', maxWidth: 220 }}>
+              {tools.map(t => <option key={toPointer(t.list.segs)} value={toPointer(t.list.segs)}>{t.kind === 'shape' ? t.list.label : `${t.list.label} (point)`}</option>)}
+            </select>
+          </label>
+          {drawing?.mode === 'flags' && (
+            <span style={{ ...panel, pointerEvents: 'auto' }}>
+              {drawing.flags.map((f, i) => (
+                <button key={f} type="button" aria-pressed={flag === i} onClick={() => setFlag(i)}
+                  style={{ padding: '2px 8px', fontSize: '0.64rem', fontWeight: 700, borderRadius: 4, cursor: 'pointer', color: '#0b0f08', background: PALETTE[i % PALETTE.length], border: flag === i ? '2px solid #fff' : '2px solid transparent' }}>
+                  Line {i + 1}
+                </button>
+              ))}
+            </span>
+          )}
+          {drawing?.mode === 'shapes' && !drawing.rect && (
+            <span style={{ ...panel, pointerEvents: 'auto' }}>
+              <select className="vs-input" value={sel ?? 'new'} onChange={e => setShapeSel(e.target.value === 'new' ? null : Number(e.target.value))} aria-label="Line to add to" style={{ fontSize: '0.66rem', padding: '2px 4px' }}>
+                <option value="new">Start a new one</option>
+                {drawn.map(sh => <option key={sh.index} value={sh.index}>Add to {sh.name} ({sh.pts.length}{drawing.maxPts ? `/${drawing.maxPts}` : ''})</option>)}
+              </select>
+              {sel != null && <button type="button" className="vs-btn-ghost" style={{ padding: '2px 6px', fontSize: '0.64rem' }} onClick={() => setShapeSel(null)}>Finish</button>}
+            </span>
+          )}
+        </div>
+      )}
       {slots.length > 0 && !add && !ctx.readOnly && (
         <label style={{ position: 'absolute', left: 8, top: 8, display: 'flex', gap: 6, alignItems: 'center', padding: '4px 8px', borderRadius: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', fontSize: '0.66rem' }}>
           Place
@@ -173,8 +280,34 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [], route = 
         </label>
       )}
       <div style={{ position: 'absolute', left: 8, bottom: 8, padding: '4px 8px', borderRadius: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', fontSize: '0.62rem', color: 'var(--text-dim)', pointerEvents: 'none' }}>
-        {route ? <>Click the map to add waypoint <b style={{ color: 'var(--text)' }}>{plan.waypoints.length + 1}</b>. Drag a waypoint to move it, right-click to delete it.</> : slot && !add ? <>Click the map to place <b style={{ color: 'var(--text)' }}>{slot.label}</b>. Shaded: release zone, ◆ launch point.</> : add ? <>Click the map to add a point to <b style={{ color: 'var(--text)' }}>{add.label}</b>. Drag a blue marker to move it.</> : <><span style={{ color: '#facc15' }}>●</span> your route · <span style={{ color: '#40a6ff' }}>■</span> this page · <span style={{ color: '#9aa3ad' }}>●</span> other cartridge points</>}
+        {full ? <span style={{ color: '#f0a030' }}>{full}</span> : drawing ? hint(drawing, sel, flag, !!corner, drawn) : route ? <>Click the map to add waypoint <b style={{ color: 'var(--text)' }}>{plan.waypoints.length + 1}</b>. Drag a waypoint to move it, right-click to delete it.</> : slot && !add ? <>Click the map to place <b style={{ color: 'var(--text)' }}>{slot.label}</b>. Shaded: release zone, ◆ launch point.</> : add ? <>Click the map to add a point to <b style={{ color: 'var(--text)' }}>{add.label}</b>. Drag a blue marker to move it.</> : <><span style={{ color: '#facc15' }}>●</span> your route · <span style={{ color: '#40a6ff' }}>■</span> this page · <span style={{ color: '#9aa3ad' }}>●</span> other cartridge points and lines</>}
       </div>
     </div>
   )
+}
+
+type Tool = { kind: 'shape'; list: ShapeList } | { kind: 'point'; list: AddableList }
+
+const panel = {
+  display: 'flex', gap: 6, alignItems: 'center', padding: '4px 8px', borderRadius: 4,
+  background: 'var(--bg-card)', border: '1px solid var(--border)', fontSize: '0.66rem',
+} as const
+
+/** One colour per line, the same in the toolbar and on the map. */
+const PALETTE = ['#f472b6', '#34d399', '#fbbf24', '#a78bfa', '#f87171', '#60a5fa', '#fb923c', '#2dd4bf']
+const lineColour = (sh: { index: number }) => PALETTE[sh.index % PALETTE.length]
+
+function hint(list: ShapeList, sel: number | null, flag: number, cornerSet: boolean, drawn: { index: number; name: string; pts: unknown[] }[]) {
+  const b = (t: string) => <b style={{ color: 'var(--text)' }}>{t}</b>
+  if (list.rect) {
+    return cornerSet
+      ? <>Click the opposite corner.</>
+      : <>Click one corner of a new {b(list.label)} area, then the opposite one. Drag a corner to move it; right-click one to delete the area.</>
+  }
+  if (list.mode === 'flags') return <>Click to add a point to {b(`line ${flag + 1}`)}. Drag to move, right-click to delete.</>
+  const cur = drawn.find(d => d.index === sel)
+  const few = cur && cur.pts.length < list.minPts ? ` It needs at least ${list.minPts} points.` : ''
+  return cur
+    ? <>Click to add to {b(cur.name)}.{few} Right-click a point to delete it.</>
+    : <>Click to start a new line in {b(list.label)}; keep clicking to add its points.</>
 }

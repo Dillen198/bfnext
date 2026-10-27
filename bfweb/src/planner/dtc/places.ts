@@ -1,9 +1,10 @@
 // Where cartridge items sit on the map, and how the map edits them: pure
 // logic shared by the cartridge map and its tests.
 
-import { clone, getAt, patternSegs, type Json, type JsonObject, type Seg } from '../model'
+import { clone, getAt, patternSegs, toPointer, type Json, type JsonObject, type Seg } from '../model'
 import { fromDcsXY, type DcsTerrain } from '../nav'
 import { isObj, rowLabel, type Ctx } from './core'
+import { shapeLists } from './shapes'
 
 /** A cartridge item with a map position. */
 export interface Pos {
@@ -21,8 +22,10 @@ const under = (segs: Seg[], root: Seg[]) => root.every((s, i) => String(segs[i])
 /** Every object with a DCS map position (x north, y east) in the cartridge. */
 export function positions(ctx: Ctx, map: DcsTerrain, pageSegs: Seg[]): Pos[] {
   const out: Pos[] = []
+  // Points of lines and areas are drawn as lines, not each in a box.
+  const lines = new Set(shapeLists(ctx, pageSegs).map(l => toPointer(l.segs)))
   const walk = (v: Json | undefined, segs: Seg[], managed: boolean, depth: number) => {
-    if (out.length > 600 || depth > 9 || v === null || typeof v !== 'object') return
+    if (out.length > 600 || depth > 9 || v === null || typeof v !== 'object' || lines.has(toPointer(segs))) return
     const a = segs.length ? ctx.idx.get(segs) : undefined
     const m = managed || !!a?.managed
     if (isObj(v) && typeof v.x === 'number' && typeof v.y === 'number' && (v.x !== 0 || v.y !== 0) && v.active !== false) {
@@ -41,25 +44,39 @@ export function positions(ctx: Ctx, map: DcsTerrain, pageSegs: Seg[]): Pos[] {
   return out
 }
 
-/** The first editable list of positioned items on the page: where a map click adds one. */
-export function addableList(ctx: Ctx, pageSegs: Seg[]): { segs: Seg[]; template: JsonObject; label: string } | null {
-  const queue: Seg[][] = [pageSegs]
+export interface AddableList { segs: Seg[]; template: JsonObject; label: string }
+
+/** Every editable list of positioned items on the page, where a map click
+ *  adds one ("Plan 3 › Additional points"). Line points are not here: the
+ *  map draws those with shapes.ts. */
+export function addableLists(ctx: Ctx, pageSegs: Seg[]): AddableList[] {
+  if (ctx.readOnly) return []
+  const lines = new Set(shapeLists(ctx, pageSegs).map(l => toPointer(l.segs)))
+  const out: AddableList[] = []
+  const queue: [Seg[], string[]][] = [[pageSegs, []]]
   while (queue.length) {
-    const segs = queue.shift()!
+    const [segs, names] = queue.shift()!
     const v = getAt(ctx.value, segs)
     const a = ctx.idx.get(segs)
-    if (a?.managed || a?.hidden) continue
+    if (a?.managed || a?.hidden || lines.has(toPointer(segs))) continue
     if (Array.isArray(v)) {
       const tmpl = (a?.item ?? v[v.length - 1] ?? null) as Json
       const full = a?.maxItems != null && v.length >= a.maxItems
-      if (isObj(tmpl) && typeof tmpl.x === 'number' && typeof tmpl.y === 'number' && !full && a?.fixedLength == null && !ctx.readOnly) {
-        return { segs, template: tmpl, label: a?.label ?? 'point' }
+      if (isObj(tmpl) && typeof tmpl.x === 'number' && typeof tmpl.y === 'number') {
+        if (!full && a?.fixedLength == null) out.push({ segs, template: tmpl, label: [...names, a?.label ?? 'point'].join(' › ') })
+        continue
       }
+      v.forEach((x, i) => { if (isObj(x)) queue.push([[...segs, i], [...names, rowLabel(ctx, segs, i, x)]]) })
       continue
     }
-    if (isObj(v)) for (const k of Object.keys(v)) if (v[k] !== null && typeof v[k] === 'object') queue.push([...segs, k])
+    if (isObj(v)) for (const k of Object.keys(v)) if (v[k] !== null && typeof v[k] === 'object') queue.push([[...segs, k], names])
   }
-  return null
+  return out
+}
+
+/** The first of them: where a plain map click adds a point. */
+export function addableList(ctx: Ctx, pageSegs: Seg[]): AddableList | null {
+  return addableLists(ctx, pageSegs)[0] ?? null
 }
 
 /** A fixed slot that holds a position once switched on (F-14 JDAM targets). */
@@ -93,7 +110,7 @@ export function slotsOn(ctx: Ctx, pageSegs: Seg[]): Slot[] {
  *  of points to add to, or items that carry a map position. Countermeasures,
  *  radios, RWR tables and the like do not. */
 export function pageHasMap(ctx: Ctx, segs: Seg[], routeFilled: boolean): boolean {
-  if (routeFilled || addableList(ctx, segs) || slotsOn(ctx, segs).length) return true
+  if (routeFilled || addableList(ctx, segs) || slotsOn(ctx, segs).length || shapeLists(ctx, segs).some(l => l.here)) return true
   // The route fills something deeper in the page (the F-14's flight plan 2).
   const page = segs.map(s => (typeof s === 'number' ? '[]' : String(s)))
   if (ctx.idx.ann.fields.some(f => f.managed === 'route' && patternSegs(f.path).length > page.length && page.every((p, i) => {

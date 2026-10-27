@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Download, Pencil, Search, X } from '@icons'
-import { AnnotationIndex, applyOverrides, withOverride, type Json, type Overrides } from '../model'
+import { AnnotationIndex, applyOverrides, withOverride, type Json, type Overrides, type Seg } from '../model'
 import { DCS_MAPS, offsetOnGrid, terrainAt, terrainNamed, toDcsXY, type DcsTerrain } from '../nav'
 import { shareString } from '../dcsdtc'
 import { download, ExportError, safeName } from '../exports'
@@ -16,6 +16,10 @@ import { DcsDtcGuide, NativeGuide } from './guides'
 import DtcMap from './DtcMap'
 import OffsetsEditor from './OffsetsEditor'
 import './dtc.css'
+
+/** A page path nothing lies under: search results and settings-only pages
+ *  show the whole cartridge faintly, with nothing to draw. */
+const NOWHERE: Seg[] = ['(none)']
 
 /** Pages that are the route's steerpoints: where offsets are edited. */
 const STEERPOINT_PAGES = new Set(['/MPD/NAV_PTS', '/MPD/VIPVRP', '/WYPT/NAV_PTS', '/Waypoints'])
@@ -297,7 +301,7 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
           </div>
           {map && (
             <div style={{ flex: 1, minHeight: 0 }}>
-              <DtcMap key={map.terrain.name} ctx={ctx} plan={plan} map={map} pageSegs={page && !hits && !changedHits ? page.segs : []}
+              <DtcMap key={map.terrain.name} ctx={ctx} plan={plan} map={map} pageSegs={page && !hits && !changedHits && !page.scalarsOnly ? page.segs : NOWHERE}
                 extras={offsetMarks(plan.waypoints, map)} route={route} />
             </div>
           )}
