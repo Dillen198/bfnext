@@ -204,7 +204,7 @@ async fn h_acmi(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, id: String) -> Response 
         }
     });
     let name = sum.file.replace('"', "");
-    let mut r = Response::new(warp::hyper::Body::wrap_stream(stream));
+    let mut r = warp::reply::stream(stream).into_response();
     let h = r.headers_mut();
     h.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
     if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{name}\"")) {

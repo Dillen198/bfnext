@@ -321,7 +321,7 @@ pub(crate) fn client_ip_via(
 /// A filter extracting [`client_ip_via`] with the configured proxies.
 pub(crate) fn with_client_ip(
 ) -> impl Filter<Extract = (IpAddr,), Error = warp::Rejection> + Clone {
-    warp::addr::remote()
+    crate::serve::peer_addr()
         .and(warp::header::optional::<std::string::String>("x-forwarded-for"))
         .and(warp::header::optional::<std::string::String>("cf-connecting-ip"))
         .map(|peer: Option<SocketAddr>, xff: Option<std::string::String>, cf: Option<std::string::String>| {
@@ -333,7 +333,7 @@ pub(crate) fn with_client_ip(
 /// proxy -- the only callers allowed at the shutdown endpoint.
 pub(crate) fn with_direct_loopback(
 ) -> impl Filter<Extract = (bool,), Error = warp::Rejection> + Clone {
-    warp::addr::remote()
+    crate::serve::peer_addr()
         .and(warp::header::optional::<std::string::String>("x-forwarded-for"))
         .map(|peer: Option<SocketAddr>, xff: Option<std::string::String>| {
             peer.map_or(false, |p| is_loopback(p.ip())) && xff.is_none()

@@ -134,6 +134,12 @@ pub(crate) fn play(inst: &str, station: &str, who: &str, text: &str, pcm16k: &[i
     });
 }
 
+/// A frame from the worker's feed (`worker::hub`), onto this process's,
+/// where /api/range/atc/live listeners pick it up.
+pub(crate) fn inject(inst: &str, f: Frame) {
+    let _ = hub(inst).send(Arc::new(f));
+}
+
 /// A player's voice, streamed as it arrives from SRS (see
 /// [`crate::voice::srs::LiveVoice`]): no pacing needed, it comes in real time.
 pub(crate) fn stream(inst: &str, v: crate::voice::srs::LiveVoice) {

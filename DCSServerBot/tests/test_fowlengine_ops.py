@@ -2357,3 +2357,111 @@ def test_backup_bridge_to_the_manager(world):
     assert r.status_code == 409 and "is it running" in r.json()["error"]
     (remote / "backup-status.json").write_text(json.dumps({**status, "enabled": False}))
     assert "turned off" in c.post(f"{BASE}/backup/start", headers=H, json={}).json()["error"]
+
+
+# ---- procman: the opt-in bfdb --worker process ------------------------------------
+
+
+class _FakeProc:
+    def __init__(self, code=None, pid=4242):
+        self.returncode = code
+        self.pid = pid
+
+    def poll(self):
+        return self.returncode
+
+
+def test_worker_is_off_by_default(tmp_path):
+    pm, _ = _bare_pm(tmp_path, news_llm_key="sk-env", news_image_key="sk-img")
+    assert not pm.worker_enabled
+    args = pm._build_args("pw", False)
+    assert "--worker-mode" not in args and "--worker" not in args
+    env = pm._bfdb_env()
+    assert (env["BFDB_NEWS_LLM_KEY"], env["BFDB_NEWS_IMAGE_KEY"]) == ("sk-env", "sk-img")
+
+
+def test_worker_args_and_keys_when_on(tmp_path):
+    pm, _ = _bare_pm(tmp_path, worker=True, news_llm_url="http://127.0.0.1:11434/v1/chat/completions",
+                     news_llm_key="sk-env", atc_tts_key="sk-tts", news_image_provider="pollinations",
+                     netidx_base="/local/bflib", log_file=str(tmp_path / "Logs" / "bfdb.log"),
+                     admin_username="admin", discord_client_id="1", discord_client_secret="dsecret",
+                     dcsserverbot_url="http://127.0.0.1:9876/stats", dcsserverbot_api_key="botkey")
+    flag = lambda args, f: args[args.index(f) + 1]  # noqa: E731
+    bfdb = pm._build_args("pw", False)
+    assert (flag(bfdb, "--worker-mode"), flag(bfdb, "--worker-listen")) == ("external", "127.0.0.1:8890")
+    # bfdb still knows the pictures' settings (it keeps their caps and store)
+    assert flag(bfdb, "--news-image-provider") == "pollinations"
+    env = pm._bfdb_env()
+    assert "BFDB_NEWS_LLM_KEY" not in env and "BFDB_ATC_TTS_KEY" not in env
+
+    w = pm._build_worker_args(True)
+    assert w[0] == "--worker"
+    assert flag(w, "--db") == os.path.join(str(tmp_path), "bfdb")
+    assert flag(w, "--worker-url") == "ws://127.0.0.1:8890/internal/worker"
+    assert flag(w, "--news-llm-url").startswith("http://127.0.0.1:11434")
+    assert flag(w, "--base") == "/local/bflib"
+    assert flag(w, "--gci-config") == pm.gci_json_path
+    assert flag(w, "--log-file") == str(tmp_path / "Logs" / "bfdb-worker.log")
+    line = " ".join(w)
+    for secret in ("pw", "dsecret", "botkey", "sk-env", "sk-tts"):
+        assert secret not in w and secret not in line.split(), line
+    assert "--admin-password" not in w and "--dcsserverbot-api-key" not in w
+    wenv = pm._worker_env()
+    assert (wenv["BFDB_NEWS_LLM_KEY"], wenv["BFDB_ATC_TTS_KEY"]) == ("sk-env", "sk-tts")
+    # multi-instance: the instances file, and no single-server flags
+    wi = pm._build_worker_args(False, instances_file=str(tmp_path / "instances.json"))
+    assert flag(wi, "--instances") == str(tmp_path / "instances.json")
+    assert "--base" not in wi and "--gci-config" not in wi
+    # a custom listen address reaches both ends
+    pm.cfg["worker_listen"] = "127.0.0.1:9911"
+    assert flag(pm._build_args("pw", False), "--worker-listen") == "127.0.0.1:9911"
+    assert flag(pm._build_worker_args(False), "--worker-url") == "ws://127.0.0.1:9911/internal/worker"
+
+
+def test_older_bfdb_without_the_worker_keeps_voice_in_process():
+    args = ["--db", "x", "--worker-mode", "external", "--worker-listen", "127.0.0.1:8890"]
+    kept, dropped = pmmod.drop_unsupported_flags(args, {"--db"})
+    assert kept == ["--db", "x"] and dropped == ["--worker-mode", "--worker-listen"]
+
+
+def test_dead_worker_is_relaunched_alone(tmp_path, monkeypatch):
+    pm, notes = _bare_pm(tmp_path, worker=True)
+    pm._bfdb = _FakeProc()                     # bfdb up
+    pm._worker = _FakeProc(code=101)           # the worker crashed
+    pm._worker_launch = (False, None)
+    pm._worker_last_start = 0.0
+    launched = []
+    monkeypatch.setattr(pm, "_start_worker", lambda: launched.append(1))
+    asyncio.run(pm._supervise_worker())
+    assert launched == [1] and pm.worker_relaunches == 1 and pm.worker_last_exit_code == 101
+    assert len(notes) == 1 and "worker exited" in notes[0]
+    # inside the cooldown it waits
+    pm._worker_last_start = time.time()
+    asyncio.run(pm._supervise_worker())
+    assert launched == [1]
+    # exit 3 (lost bfdb on purpose) relaunches without a notice
+    pm._worker_last_start = 0.0
+    pm._worker = _FakeProc(code=3)
+    asyncio.run(pm._supervise_worker())
+    assert launched == [1, 1] and len(notes) == 1
+    # with bfdb down, bfdb's own supervision restarts both
+    pm._bfdb = _FakeProc(code=1)
+    pm._worker = _FakeProc(code=101)
+    asyncio.run(pm._supervise_worker())
+    assert launched == [1, 1]
+
+
+def test_worker_stops_before_bfdb(tmp_path):
+    pm, _ = _bare_pm(tmp_path, worker=True)
+    order = []
+    pm._worker = _FakeProc()
+
+    async def fake_term(proc, label):
+        order.append(label)
+
+    async def fake_stop_bfdb():
+        order.append("bfdb")
+    pm._terminate = fake_term
+    pm._stop_bfdb = fake_stop_bfdb
+    asyncio.run(pm._stop_unlocked())
+    assert order == ["bfdb worker", "bfdb"] and pm._worker is None

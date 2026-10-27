@@ -18,7 +18,10 @@
 //! It never calls while a human commander's orders stand (they outrank it),
 //! nor while nobody is on the server.
 
-use crate::{db::StatsDb, news_llm, Inst};
+use crate::{
+    news_llm,
+    worker::host::{Answer, EngineHost},
+};
 use anyhow::{anyhow, bail, Result};
 use bfprotocols::hq::{Directive, HqView, Line};
 use netidx::publisher::Value;
@@ -243,38 +246,36 @@ fn parse(raw: &str) -> Result<Directive> {
     Ok(d)
 }
 
-async fn query(db: &StatsDb, inst: &Inst, side: &str) -> Result<Option<HqView>> {
+async fn query(inst: &EngineHost, side: &str) -> Result<Option<HqView>> {
     let args = vec![("side", Value::from(side.to_string())), ("ucid", Value::from(String::new()))];
-    let reply = tokio::time::timeout(Duration::from_secs(15), db.call_engine_rpc_optional(inst, "query-hq", args))
+    let reply = tokio::time::timeout(Duration::from_secs(15), inst.rpc_optional("query-hq", args))
         .await
         .map_err(|_| anyhow!("query-hq timed out"))??;
     match reply {
-        Value::String(s) => Ok(Some(serde_json::from_str(&s)?)),
-        Value::Error(e) => {
+        Answer::Str(s) => Ok(Some(serde_json::from_str(&s)?)),
+        Answer::Refused(e) => {
             log::debug!("[{}] hq strategist: query-hq refused: {e}", inst.id);
             Ok(None)
         }
-        other => bail!("unexpected query-hq reply {other:?}"),
     }
 }
 
-async fn send(db: &StatsDb, inst: &Inst, side: &str, d: &Directive) -> Result<String> {
+async fn send(inst: &EngineHost, side: &str, d: &Directive) -> Result<String> {
     let args = vec![
         ("side", Value::from(side.to_string())),
         ("directive", Value::from(serde_json::to_string(d)?)),
     ];
-    let reply = tokio::time::timeout(Duration::from_secs(15), db.call_engine_rpc_optional(inst, "hq-directive", args))
+    let reply = tokio::time::timeout(Duration::from_secs(15), inst.rpc_optional("hq-directive", args))
         .await
         .map_err(|_| anyhow!("hq-directive timed out"))??;
     match reply {
-        Value::String(s) => Ok(s.to_string()),
-        Value::Error(e) => bail!("engine refused the directive: {e}"),
-        other => bail!("unexpected hq-directive reply {other:?}"),
+        Answer::Str(s) => Ok(s),
+        Answer::Refused(e) => bail!("engine refused the directive: {e}"),
     }
 }
 
 /// The per-instance loop. `writer` is the model; `every` the cycle.
-pub(crate) async fn run(db: StatsDb, inst: Inst, writer: news_llm::WriterCfg, every: Duration) {
+pub(crate) async fn run(inst: EngineHost, writer: news_llm::WriterCfg, every: Duration) {
     // Let the engine come up and the HQ form its own first plan.
     tokio::time::sleep(Duration::from_secs(180)).await;
     let mut tick = tokio::time::interval(every);
@@ -284,7 +285,7 @@ pub(crate) async fn run(db: StatsDb, inst: Inst, writer: news_llm::WriterCfg, ev
         tick.tick().await;
         let mut views = vec![];
         for side in ["blue", "red"] {
-            match query(&db, &inst, side).await {
+            match query(&inst, side).await {
                 Ok(Some(v)) if v.enabled => views.push((side, v)),
                 Ok(_) => (),
                 Err(e) => log::debug!("[{}] hq strategist: {side}: {e}", inst.id),
@@ -330,7 +331,7 @@ pub(crate) async fn run(db: StatsDb, inst: Inst, writer: news_llm::WriterCfg, ev
                 "posture {:?}, main effort {:?}, defend {:?}",
                 d.posture, d.main_effort, d.defend
             );
-            match send(&db, &inst, side, &d).await {
+            match send(&inst, side, &d).await {
                 Ok(_) => log::info!("[{}] hq strategist: {side}: {summary}", inst.id),
                 Err(e) => log::warn!("[{}] hq strategist: {side}: {e}", inst.id),
             }

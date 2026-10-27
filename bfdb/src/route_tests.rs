@@ -567,3 +567,100 @@ async fn security_headers_on_api_and_page() {
     let r = h.get("/", None).await;
     assert!(r.headers().contains_key("content-security-policy-report-only"));
 }
+
+// ── HTTP stack (warp 0.4 / hyper 1): CORS, WebSockets, body limits ──────
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cors_preflight_and_simple_requests() {
+    let h = harness();
+    let preflight = |origin: &'static str| {
+        warp::test::request()
+            .method("OPTIONS")
+            .path("/api/intel/upload")
+            .remote_addr(peer())
+            .header("origin", origin)
+            .header("access-control-request-method", "POST")
+            .header("access-control-request-headers", "content-type, x-intel-filename")
+    };
+    let r = preflight(DASH).reply(&h.routes).await;
+    assert_eq!(r.status(), 200);
+    let hd = r.headers();
+    assert_eq!(hd["access-control-allow-origin"], DASH);
+    assert_eq!(hd["access-control-allow-credentials"], "true");
+    let methods = hd["access-control-allow-methods"].to_str().unwrap().to_ascii_uppercase();
+    assert!(methods.contains("POST") && methods.contains("GET"), "{methods}");
+    let allowed = hd["access-control-allow-headers"].to_str().unwrap().to_ascii_lowercase();
+    assert!(allowed.contains("x-intel-filename") && allowed.contains("content-type"), "{allowed}");
+
+    // an origin that is not ours gets no CORS grant
+    let r = preflight("https://evil.example").reply(&h.routes).await;
+    assert_eq!(r.status(), 403);
+    assert!(!r.headers().contains_key("access-control-allow-origin"));
+
+    // a cross-origin GET: granted, and the paging header is readable
+    let r = warp::test::request()
+        .method("GET")
+        .path("/api/pilots")
+        .remote_addr(peer())
+        .header("origin", DASH)
+        .reply(&h.routes)
+        .await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["access-control-allow-origin"], DASH);
+    let exposed = r.headers()["access-control-expose-headers"].to_str().unwrap().to_ascii_lowercase();
+    assert!(exposed.contains("x-total-count"), "{exposed}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn log_websocket_is_admin_only_and_replays_history() {
+    let h = harness_with(serde_json::json!({ "instances": [{ "id": "default" }] }), |rc| {
+        rc.log_history.lock().unwrap().push_back(r#"{"msg":"hello"}"#.to_string());
+    });
+    let admin = h.session(true);
+    let mut ws = warp::test::ws()
+        .path("/ws/logs")
+        .header("cookie", admin.as_str())
+        .handshake(h.routes.clone())
+        .await
+        .expect("an admin opens the log stream");
+    let m = ws.recv().await.unwrap();
+    assert_eq!(m.to_str().unwrap(), r#"{"msg":"hello"}"#);
+
+    let player = h.session(false);
+    let refused = warp::test::ws().path("/ws/logs").header("cookie", player.as_str()).handshake(h.routes.clone()).await;
+    assert!(refused.is_err(), "a player must not get the log stream");
+    let anon = warp::test::ws().path("/ws/logs").handshake(h.routes.clone()).await;
+    assert!(anon.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn json_bodies_over_the_limit_are_refused() {
+    let h = harness();
+    let admin = h.session(true);
+    let big = format!(r#"{{"ucid":"{}"}}"#, "x".repeat(JSON_BODY_LIMIT as usize + 1));
+    let r = h.post_json("/api/admin/ban", Some(&admin), Some(DASH), &big).await;
+    assert_eq!(r.status(), 413);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cached_public_scans_keep_their_answers() {
+    // f44: these now go through the stale-while-revalidate cache on the
+    // blocking pool; statuses, bodies and paging must be what they were.
+    let h = harness();
+    for path in ["/api/rounds", "/api/captures", "/api/capture-events", "/api/aircraft-usage", "/api/online"] {
+        let r = h.get(path, None).await;
+        assert_eq!(r.status(), 200, "{path}");
+        assert_eq!(body_json(r), serde_json::json!([]), "{path}");
+    }
+    for path in ["/api/pilot/not-a-ucid", "/api/pilot/not-a-ucid/kills", "/api/pilot/not-a-ucid/sorties"] {
+        assert_eq!(h.get(path, None).await.status(), 400, "{path}");
+    }
+    let ucid = "0123456789abcdef0123456789abcdef";
+    let r = h.get(&format!("/api/pilot/{ucid}/sorties?limit=5"), None).await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["x-total-count"], "0");
+    assert_eq!(body_json(r), serde_json::json!([]));
+    let admin = h.session(true);
+    assert_eq!(h.get("/api/trails", Some(&admin)).await.status(), 200);
+    assert_eq!(h.get("/api/trails", None).await.status(), 401);
+}

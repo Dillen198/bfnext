@@ -51,6 +51,14 @@ DEFAULT_SITE_ADDRESS = "127.0.0.1:8766"
 # were ignored -- a hard kill. A hard kill mid-write is what tears sled pages.
 BFDB_STOP_TIMEOUT_SECS = 15.0
 BFDB_SHUTDOWN_PATH = "/api/admin/shutdown"
+# `bfdb.worker: true`: GCI/ATC/range ATC, the HQ strategist and the war
+# diary's model calls run in a second process, `bfdb.exe --worker`, that
+# connects to bfdb's loopback worker link here (bfdb/src/worker).
+DEFAULT_WORKER_LISTEN = "127.0.0.1:8890"
+# A worker that died is relaunched at most this often.
+WORKER_RESTART_COOLDOWN_SECS = 30.0
+# The secrets only the worker needs once it runs the model and voice calls.
+_WORKER_ONLY_ENV = ("BFDB_NEWS_LLM_KEY", "BFDB_ATC_LLM_KEY", "BFDB_ATC_TTS_KEY", "BFDB_NEWS_IMAGE_KEY")
 
 # Any `--something-key/-secret/-password/-token` flag's value is a secret and
 # never goes into a log line (the bot log is archived and shown on the OPS page).
@@ -417,6 +425,13 @@ class Procman:
 
         self._bfdb: Optional[subprocess.Popen] = None
         self._resolver: Optional[subprocess.Popen] = None
+        # The `bfdb --worker` child (bfdb.worker: true), and what it was
+        # started with, for a relaunch on its own.
+        self._worker: Optional[subprocess.Popen] = None
+        self._worker_launch: Optional[tuple] = None
+        self._worker_last_start = 0.0
+        self.worker_relaunches = 0
+        self.worker_last_exit_code: Optional[int] = None
         # One lock around every stop -> swap -> start sequence (restart, bfdb
         # rollback, stats rebuild, fresh DB). Taken separately by stop() and
         # start(), two triggers (an OPS restart, a BFBinaries nudge per DCS
@@ -490,6 +505,16 @@ class Procman:
         return os.path.expandvars(
             self.cfg.get("staging_dir") or os.path.join(self.home, "_staging")
         )
+
+    @property
+    def worker_enabled(self) -> bool:
+        """`bfdb.worker: true`: run the voice/model services in their own
+        `bfdb --worker` process. Off by default -- bfdb runs them itself."""
+        return bool(self.cfg.get("worker"))
+
+    @property
+    def worker_listen(self) -> str:
+        return str(self.cfg.get("worker_listen") or DEFAULT_WORKER_LISTEN)
 
     @property
     def gci_json_path(self) -> str:
@@ -1183,29 +1208,7 @@ class Procman:
             "--config": self._resolved("config"),
             "--intel-dir": self._resolved("intel_dir"),
             "--log-file": self._resolved("log_file"),
-            # The war diary's writer. Omit all three and bfdb still files a
-            # dispatch every day, from its own template bank. The key goes in
-            # through the environment (_bfdb_env), not the command line, where
-            # any local process could read it.
-            "--news-llm-url": (c.get("news_llm_url") or None),
-            "--news-llm-model": (c.get("news_llm_model") or None),
-            # One picture per filed dispatch (bfdb/src/news_image.rs):
-            # provider pollinations | cloudflare | openai. Off unless a
-            # provider (or a cloudflare account id / openai url or key) is set.
-            # The key / token goes in through the environment like the
-            # writer's, never on the command line.
-            "--news-image-provider": (c.get("news_image_provider") or None),
-            "--news-image-cf-account-id": (c.get("news_image_cf_account_id") or None),
-            "--news-image-steps": _opt_int(c.get("news_image_steps")),
-            "--news-image-fallback": (c.get("news_image_fallback") or None),
-            "--news-image-min-interval": _opt_int(c.get("news_image_min_interval")),
-            "--news-image-url": (c.get("news_image_url") or None),
-            "--news-image-model": (c.get("news_image_model") or None),
-            "--news-image-size": (c.get("news_image_size") or None),
-            "--news-image-quality": (c.get("news_image_quality") or None),
-            "--news-image-style": (c.get("news_image_style") or None),
-            "--news-image-daily-per-instance": _opt_int(c.get("news_image_daily_per_instance")),
-            "--news-image-daily-global": _opt_int(c.get("news_image_daily_global")),
+            **self._model_flags(),
             # The public origin of THIS bfdb, for absolute card-image URLs in
             # the range's Discord embeds. bfdb defaults to the campaign box's
             # api.vectorstrike.org, which is wrong on a range box of its own.
@@ -1259,9 +1262,76 @@ class Procman:
                 "--discord-guild-id", str(c.get("discord_guild_id", "")),
                 "--discord-admin-role-id", str(c.get("discord_admin_role_id", "")),
             ]
+        if self.worker_enabled:
+            # The voice and model services move to `bfdb --worker`; an exe
+            # that predates the flag drops it and keeps them (_start_unlocked).
+            args += ["--worker-mode", "external", "--worker-listen", self.worker_listen]
         # Every value as text: an id YAML read as a number (`discord_client_id:
         # 1561...` unquoted) is an int, which neither the command line nor the
         # log redaction can take -- bfdb then never starts.
+        return [str(a) for a in args]
+
+    def _model_flags(self) -> dict:
+        """The war diary's writer and pictures. bfdb takes them in either
+        mode (it keeps the pictures' caps and store); the worker takes them
+        to make the calls."""
+        c = self.cfg
+        return {
+            # The war diary's writer. Omit all three and bfdb still files a
+            # dispatch every day, from its own template bank. The key goes in
+            # through the environment (_bfdb_env), not the command line, where
+            # any local process could read it.
+            "--news-llm-url": (c.get("news_llm_url") or None),
+            "--news-llm-model": (c.get("news_llm_model") or None),
+            # One picture per filed dispatch (bfdb/src/news_image.rs):
+            # provider pollinations | cloudflare | openai. Off unless a
+            # provider (or a cloudflare account id / openai url or key) is set.
+            # The key / token goes in through the environment like the
+            # writer's, never on the command line.
+            "--news-image-provider": (c.get("news_image_provider") or None),
+            "--news-image-cf-account-id": (c.get("news_image_cf_account_id") or None),
+            "--news-image-steps": _opt_int(c.get("news_image_steps")),
+            "--news-image-fallback": (c.get("news_image_fallback") or None),
+            "--news-image-min-interval": _opt_int(c.get("news_image_min_interval")),
+            "--news-image-url": (c.get("news_image_url") or None),
+            "--news-image-model": (c.get("news_image_model") or None),
+            "--news-image-size": (c.get("news_image_size") or None),
+            "--news-image-quality": (c.get("news_image_quality") or None),
+            "--news-image-style": (c.get("news_image_style") or None),
+            "--news-image-daily-per-instance": _opt_int(c.get("news_image_daily_per_instance")),
+            "--news-image-daily-global": _opt_int(c.get("news_image_daily_global")),
+        }
+
+    def _worker_log_file(self) -> Optional[str]:
+        """The worker logs beside bfdb: Logs/bfdb.log -> Logs/bfdb-worker.log."""
+        lf = self._resolved("log_file")
+        if not lf:
+            return None
+        root, ext = os.path.splitext(lf)
+        return f"{root}-worker{ext or '.log'}"
+
+    def _build_worker_args(self, gci_file_exists: bool, instances_file: Optional[str] = None) -> list[str]:
+        """`bfdb.exe --worker`: the same instances, GCI configs and model
+        settings bfdb would have used, and none of bfdb's own secrets (admin
+        password, Discord, DCSServerBot keys). `--db` is only where the link's
+        shared secret file lives (<db>.worker-secret); the worker never opens
+        the database."""
+        c = self.cfg
+        args: list = [
+            "--worker",
+            "--db", os.path.join(self.home, "bfdb"),
+            "--worker-url", f"ws://{self.worker_listen}/internal/worker",
+        ]
+        pairs = {"--config": self._resolved("config"), "--log-file": self._worker_log_file(), **self._model_flags()}
+        if instances_file:
+            pairs["--instances"] = instances_file
+        else:
+            pairs.update({"--base": (c.get("netidx_base") or None), "--sortie": (c.get("sortie") or None)})
+        for flag, val in pairs.items():
+            if val:
+                args += [flag, val]
+        if gci_file_exists and not instances_file:
+            args += ["--gci-config", self.gci_json_path]
         return [str(a) for a in args]
 
     def _supported_flags(self, exe: str) -> Optional[set]:
@@ -1320,6 +1390,22 @@ class Procman:
         # separate ops_api.api_key doesn't lock the dashboard's OPS page out.
         if self.ops_key:
             env["BFDB_OPS_API_KEY"] = str(self.ops_key)
+        if self.worker_enabled:
+            # The model and voice calls are the worker's: their keys go to it
+            # alone (_worker_env), not to the process holding the sessions.
+            for var in _WORKER_ONLY_ENV:
+                env.pop(var, None)
+        return env
+
+    def _worker_env(self) -> dict:
+        """The worker's environment: the bot's, plus the model, picture and
+        voice keys, and nothing of bfdb's own (snapshot bucket, OPS key)."""
+        env = dict(os.environ)
+        for yaml_key, var in (("news_llm_key", "BFDB_NEWS_LLM_KEY"), ("atc_llm_key", "BFDB_ATC_LLM_KEY"),
+                              ("atc_tts_key", "BFDB_ATC_TTS_KEY"), ("news_image_key", "BFDB_NEWS_IMAGE_KEY")):
+            val = self.cfg.get(yaml_key)
+            if val:
+                env[var] = str(val)
         return env
 
     # ---- lifecycle -----------------------------------------------------
@@ -1332,6 +1418,9 @@ class Procman:
         """A deliberate stop/swap/start (restart, rollback, rebuild) is under
         way, so bfdb being unreachable right now is expected."""
         return self._op_lock.locked()
+
+    def worker_running(self) -> bool:
+        return self._worker is not None and self._worker.poll() is None
 
     async def process_info(self) -> dict:
         """bfdb + resolver state for the Ops page."""
@@ -1358,6 +1447,13 @@ class Procman:
             "probation": self.probation,
             "exe_sha256": exe_sha,
             "pending": pending,
+            "worker": {
+                "enabled": self.worker_enabled,
+                "running": self.worker_running(),
+                "pid": self._worker.pid if self.worker_running() else None,
+                "relaunches": self.worker_relaunches,
+                "last_exit_code": self.worker_last_exit_code,
+            },
         }
 
     def _redact(self, args: list[str]) -> str:
@@ -1564,7 +1660,7 @@ class Procman:
         tracking (left by a bot process that was force-killed). Matched by
         exe path, never by name: another bfdb (a test copy, a second stack, a
         range PC's tools) is none of our business."""
-        our_pid = self._bfdb.pid if (self._bfdb and self._bfdb.poll() is None) else None
+        ours = {p.pid for p in (self._bfdb, self._worker) if p is not None and p.poll() is None}
         want = os.path.normcase(os.path.realpath(self.exe)) if self.exe else None
         if not want:
             return []
@@ -1577,7 +1673,7 @@ class Procman:
         out = []
         for p in psutil.process_iter(["name", "pid", "exe"]):
             try:
-                if (p.info.get("name") or "").lower() not in ("bfdb.exe", "bfdb") or p.pid == our_pid:
+                if (p.info.get("name") or "").lower() not in ("bfdb.exe", "bfdb") or p.pid in ours:
                     continue
                 exe = p.info.get("exe")
                 if exe and os.path.normcase(os.path.realpath(exe)) == want:
@@ -1758,6 +1854,13 @@ class Procman:
 
         # give it a beat; if it died instantly, surface why now
         await asyncio.sleep(2.0)
+        self._worker_launch = None
+        if self._bfdb.poll() is None and "--worker-mode" in args:
+            self._worker_launch = (gci_ok, instances_file)
+            self._start_worker()
+        elif self.worker_enabled and "--worker-mode" not in args:
+            self.log.warning("FowlEngine/procman: bfdb.worker is on but this bfdb.exe has no --worker-mode: "
+                             "voice and model calls stay in bfdb")
         if self._bfdb.poll() is not None:
             self.last_exit_code = self._bfdb.returncode
             tail = ""
@@ -1773,6 +1876,51 @@ class Procman:
                 f"Also check {os.path.join(self.home, 'Logs', 'bfdb.log')}"
             )
 
+    def _start_worker(self) -> None:
+        """Launch `bfdb.exe --worker` beside a bfdb started in external mode.
+        It waits for bfdb's welcome before it starts any voice, so starting it
+        right behind bfdb is fine."""
+        if not self._worker_launch:
+            return
+        gci_ok, instances_file = self._worker_launch
+        args = self._build_worker_args(gci_ok, instances_file)
+        self.log.info(f"FowlEngine/procman: launching the bfdb worker: {self._redact(args)}")
+        boot_log = os.path.join(self.home, "procman-worker-boot.log") if self.home else None
+        flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0
+        try:
+            out = open(boot_log, "wb", buffering=0) if boot_log else subprocess.DEVNULL
+            self._worker = subprocess.Popen([self.exe, *args], cwd=self.home or None, stdout=out, stderr=out,
+                                            creationflags=flags, env=self._worker_env())
+        except OSError as ex:
+            self.log.error(f"FowlEngine/procman: failed to launch the bfdb worker: {ex}")
+            self._worker = None
+        self._worker_last_start = time.time()
+
+    async def _stop_worker(self) -> None:
+        """The worker keeps no state: terminate, then kill."""
+        proc, self._worker = self._worker, None
+        if proc is not None:
+            await self._terminate(proc, "bfdb worker")
+
+    async def _supervise_worker(self) -> None:
+        """Relaunch a worker that died while bfdb is up. Exit code 3 is the
+        worker giving up on an unreachable bfdb on purpose."""
+        if not self._worker_launch or self._worker is None or self._worker.poll() is None:
+            return
+        if not self.is_running():
+            return  # bfdb's own supervision restarts both
+        code = self._worker.returncode
+        if time.time() - self._worker_last_start < WORKER_RESTART_COOLDOWN_SECS:
+            return
+        self.worker_last_exit_code = code
+        self.worker_relaunches += 1
+        self.log.warning(f"FowlEngine/procman: the bfdb worker exited (code {code}) -- relaunching it")
+        self._start_worker()
+        if code != 3:
+            await self._safe_notify(
+                f"{icon('warning')} **the bfdb worker exited** (code {code}) -- the bot relaunched it. "
+                f"GCI/ATC and the diary's model calls were down meanwhile; the API was not.")
+
     async def stop(self, *, stop_resolver: Optional[bool] = None) -> None:
         """Stop bfdb for good (bot shutdown). `own_resolver: true` takes the
         resolver down with it."""
@@ -1784,7 +1932,10 @@ class Procman:
     async def _stop_unlocked(self, *, stop_resolver: bool = False) -> None:
         # A bfdb restart leaves the resolver alone even when we own it: the
         # engine in DCS publishes through it, and loses everything it
-        # published when it goes.
+        # published when it goes. The worker goes first: it has nothing to
+        # flush, and without bfdb it would only wait.
+        if self._worker is not None:
+            await self._stop_worker()
         await self._stop_bfdb()
         if stop_resolver:
             await self._terminate(self._resolver, "netidx resolver")
@@ -1949,6 +2100,7 @@ class Procman:
             return
         if self._bfdb is not None and self._bfdb.poll() is not None:
             self.last_exit_code = self._bfdb.returncode
+        await self._supervise_worker()
         healthy = await self.health_ok()
         if self._op_lock.locked():
             # a restart began while the health check was in flight: whatever

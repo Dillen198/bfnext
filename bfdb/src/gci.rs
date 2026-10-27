@@ -31,7 +31,7 @@
 //! intercept vectoring after a commit, coalition-wide group naming, and ID
 //! ripening (bogey → bandit → hostile).
 
-use crate::db::StatsDb;
+use crate::worker::host::EngineHost;
 use crate::voice::{radios_from, srs, stt, tts, FreqSpec, Radio};
 use bfprotocols::gci::{
     reporting_name, tidy_type, GciAspect, GciBuddySpike, GciContact, GciControlPicture, GciFlight,
@@ -49,7 +49,7 @@ use tokio::sync::{broadcast, mpsc};
 
 /// Rolling transcript for the dashboard (`/api/gci/transcript`, `/ws/gci`).
 pub(crate) type Transcript = Arc<Mutex<VecDeque<String>>>;
-const TRANSCRIPT_CAP: usize = 200;
+pub(crate) const TRANSCRIPT_CAP: usize = 200;
 
 /// Latest `query-gci` picture per side, shared with the speech-recognition
 /// worker so it can answer requests against the same data the broadcast uses.
@@ -361,8 +361,7 @@ pub(crate) fn from_file(path: &std::path::Path) -> Option<GciConfig> {
 /// Spawned from `main` only for an instance that has a netidx base (there is a
 /// live engine to query) and a `gci` config of its own.
 pub(crate) async fn run(
-    db: StatsDb,
-    inst: crate::Inst,
+    inst: EngineHost,
     cfg: GciConfig,
     transcript_tx: broadcast::Sender<String>,
     transcript: Transcript,
@@ -379,7 +378,7 @@ pub(crate) async fn run(
         cfg.poll_secs,
     );
 
-    let discord = DiscordRoute::build(&cfg, &inst, db.instances().all().len() > 1);
+    let discord = DiscordRoute::build(&cfg, &inst, inst.multi_instance);
     discord.log();
 
     let (tx, rx) = mpsc::channel::<QueuedCall>(64);
@@ -468,7 +467,7 @@ pub(crate) async fn run(
         let mut flights_in_combat = 0usize;
 
         for (side, side_str) in [(Side::Blue, "blue"), (Side::Red, "red")] {
-            let picture = match fetch_picture(&db, &inst, side_str).await {
+            let picture = match fetch_picture(&inst, side_str).await {
                 Ok(p) => {
                     any_ok = true;
                     p
@@ -619,8 +618,7 @@ pub(crate) async fn run(
 }
 
 async fn fetch_picture(
-    db: &StatsDb,
-    inst: &crate::db::InstanceState,
+    inst: &EngineHost,
     side: &'static str,
 ) -> Result<GciControlPicture, String> {
     // Be generous: on a loaded engine the RPC handler runs on the DCS
@@ -628,12 +626,7 @@ async fn fetch_picture(
     // cheaper than a spurious "unreachable".
     let res = tokio::time::timeout(
         Duration::from_secs(GCI_RPC_TIMEOUT_SECS),
-        crate::call_engine_rpc_str(
-            db,
-            inst,
-            "query-gci",
-            vec![("side", netidx::publisher::Value::from(side))],
-        ),
+        inst.rpc_str("query-gci", vec![("side", netidx::publisher::Value::from(side))]),
     )
     .await;
     match res {
@@ -1946,7 +1939,7 @@ struct DiscordRoute {
 }
 
 impl DiscordRoute {
-    fn build(cfg: &GciConfig, inst: &crate::Inst, multi_instance: bool) -> Self {
+    fn build(cfg: &GciConfig, inst: &EngineHost, multi_instance: bool) -> Self {
         let ok = |u: &Option<String>| u.clone().filter(|s| s.starts_with("https://"));
         let shared = ok(&cfg.discord_webhook_url);
         // Tag by default only when this bfdb fronts several servers — a

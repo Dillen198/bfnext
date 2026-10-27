@@ -26,7 +26,7 @@
 
 use crate::news::NewsDigest;
 use anyhow::{anyhow, bail, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     sync::Mutex,
     time::{Duration, Instant},
@@ -76,7 +76,7 @@ pub fn acquire(who: &str) -> bool {
 
 /// Record a 429: push the next call out by the server's retry-after or an
 /// exponential backoff, whichever is longer. Returns the delay applied.
-fn note_rate_limited(retry_after: Option<Duration>) -> Duration {
+pub(crate) fn note_rate_limited(retry_after: Option<Duration>) -> Duration {
     let mut g = GATE.lock().unwrap_or_else(|e| e.into_inner());
     g.rate_limited = g.rate_limited.saturating_add(1);
     let exp = MIN_SPACING
@@ -361,7 +361,7 @@ fn extract_json(raw: &str) -> Result<Written> {
     Ok(serde_json::from_str(&raw[start..=end])?)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Written {
     pub headline: String,
     pub body: Vec<String>,
