@@ -32,7 +32,7 @@ pub(crate) async fn api_pilot(
     ucid: String,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = cached_json(format!("pilot:{ucid}"), move || -> Result<String> {
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
         match db.pilot_detail(&ucid)? {
             None => Ok(serde_json::json!({ "error": "not found" }).to_string()),
@@ -53,7 +53,8 @@ pub(crate) async fn api_pilot(
                 "donated_points": agg.donated_points,
             }))?),
         }
-    })?;
+    })
+    .await?;
     Ok(json_response(data))
 }
 
@@ -73,7 +74,7 @@ pub(crate) async fn api_pilot_sorties(
     db: StatsDb,
     q: Q,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<(String, usize)> {
+    let rows = cached_rows(format!("pilot_sorties:{ucid}"), move || -> Result<Vec<serde_json::Value>> {
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
         // Summary rows, newest first. The per-sortie event lists are left to
         // /api/pilot/:ucid/sortie/:id so a long career stays a small payload.
@@ -99,8 +100,10 @@ pub(crate) async fn api_pilot_sorties(
                 "killed_by": s.death.as_ref().and_then(|d| d.killer_name.clone().or_else(|| d.killer_type.clone())),
             })
         }).collect();
-        page_json(entries, &q, PILOT_LIST_CAP)
-    })?;
+        Ok(entries)
+    })
+    .await?;
+    let data = page_slice(&rows, &q, PILOT_LIST_CAP)?;
     Ok(paged_response(data))
 }
 
@@ -111,7 +114,7 @@ pub(crate) async fn api_pilot_sortie(
     sortie_id: u64,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = cached_json(format!("pilot_sortie:{ucid}:{sortie_id}"), move || -> Result<String> {
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
         let shown = shown_round(&db)?;
         let sortie = db
@@ -120,7 +123,8 @@ pub(crate) async fn api_pilot_sortie(
             .find(|s| s.sortie_id.0 == sortie_id && shown(s.round_id))
             .ok_or_else(|| websec::not_found("no such sortie"))?;
         Ok(serde_json::to_string(&sortie)?)
-    })?;
+    })
+    .await?;
     Ok(json_response(data))
 }
 
@@ -129,7 +133,7 @@ pub(crate) async fn api_pilot_breakdown(
     ucid: String,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = cached_json(format!("pilot_breakdown:{ucid}"), move || -> Result<String> {
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
         let shown = shown_round(&db)?;
         let rounds = db.pilot_round_breakdown(&ucid)?;
@@ -149,7 +153,8 @@ pub(crate) async fn api_pilot_breakdown(
             "hours": agg.hours,
         })).collect();
         Ok(serde_json::to_string(&entries)?)
-    })?;
+    })
+    .await?;
     Ok(json_response(data))
 }
 
@@ -159,10 +164,11 @@ pub(crate) async fn api_pilot_progression(
     ucid: String,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = cached_json(format!("pilot_progression:{ucid}"), move || -> Result<String> {
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
         Ok(serde_json::to_string(&db.pilot_progression(&ucid)?)?)
-    })?;
+    })
+    .await?;
     Ok(json_response(data))
 }
 
@@ -195,23 +201,25 @@ pub(crate) fn squadron_json(db: &StatsDb, s: &squadrons::Squadron, members: bool
 
 /// GET /api/squadrons -- every squadron, by XP served.
 pub(crate) async fn api_squadrons(db: StatsDb, q: Q) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<(String, usize)> {
+    let data = blocking(move || -> Result<(String, usize)> {
         let v: Vec<_> = db.squadrons().all()?.iter().map(|s| squadron_json(&db, s, false)).collect();
         page_json(v, &q, SQUADRON_LIST_CAP)
-    })?;
+    })
+    .await?;
     Ok(paged_response(data))
 }
 
 /// GET /api/squadrons/{tag} -- one squadron with its members.
 pub(crate) async fn api_squadron(tag: String, db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = blocking(move || -> Result<String> {
         let s = db
             .squadrons()
             .get(&tag)
             .map_err(|e| websec::bad_request(e.to_string()))?
             .ok_or_else(|| websec::not_found(format!("no squadron {tag}")))?;
         Ok(serde_json::to_string(&squadron_json(&db, &s, true))?)
-    })?;
+    })
+    .await?;
     Ok(json_response(data))
 }
 
@@ -315,7 +323,7 @@ pub(crate) async fn api_pilot_kills(
     db: StatsDb,
     q: Q,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<(String, usize)> {
+    let rows = cached_rows(format!("pilot_kills:{ucid}"), move || -> Result<Vec<serde_json::Value>> {
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
         let shown = shown_round(&db)?;
         let kills = db.pilot_kills_for(&ucid)?;
@@ -345,8 +353,10 @@ pub(crate) async fn api_pilot_kills(
                 "killer_airframe": airframe,
             })
         }).collect();
-        page_json(entries, &q, PILOT_LIST_CAP)
-    })?;
+        Ok(entries)
+    })
+    .await?;
+    let data = page_slice(&rows, &q, PILOT_LIST_CAP)?;
     Ok(paged_response(data))
 }
 
@@ -356,7 +366,7 @@ pub(crate) async fn api_pilot_deploys(
     db: StatsDb,
     q: Q,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<(String, usize)> {
+    let rows = cached_rows(format!("pilot_deploys:{ucid}"), move || -> Result<Vec<serde_json::Value>> {
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
         let shown = shown_round(&db)?;
         let deploys = db.pilot_deploys_for(&ucid)?;
@@ -369,7 +379,9 @@ pub(crate) async fn api_pilot_deploys(
                 "method": rec.method,
             })
         }).collect();
-        page_json(entries, &q, PILOT_LIST_CAP)
-    })?;
+        Ok(entries)
+    })
+    .await?;
+    let data = page_slice(&rows, &q, PILOT_LIST_CAP)?;
     Ok(paged_response(data))
 }

@@ -641,3 +641,26 @@ async fn json_bodies_over_the_limit_are_refused() {
     let r = h.post_json("/api/admin/ban", Some(&admin), Some(DASH), &big).await;
     assert_eq!(r.status(), 413);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cached_public_scans_keep_their_answers() {
+    // f44: these now go through the stale-while-revalidate cache on the
+    // blocking pool; statuses, bodies and paging must be what they were.
+    let h = harness();
+    for path in ["/api/rounds", "/api/captures", "/api/capture-events", "/api/aircraft-usage", "/api/online"] {
+        let r = h.get(path, None).await;
+        assert_eq!(r.status(), 200, "{path}");
+        assert_eq!(body_json(r), serde_json::json!([]), "{path}");
+    }
+    for path in ["/api/pilot/not-a-ucid", "/api/pilot/not-a-ucid/kills", "/api/pilot/not-a-ucid/sorties"] {
+        assert_eq!(h.get(path, None).await.status(), 400, "{path}");
+    }
+    let ucid = "0123456789abcdef0123456789abcdef";
+    let r = h.get(&format!("/api/pilot/{ucid}/sorties?limit=5"), None).await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["x-total-count"], "0");
+    assert_eq!(body_json(r), serde_json::json!([]));
+    let admin = h.session(true);
+    assert_eq!(h.get("/api/trails", Some(&admin)).await.status(), 200);
+    assert_eq!(h.get("/api/trails", None).await.status(), 401);
+}

@@ -52,7 +52,7 @@ pub(crate) async fn api_rounds(
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let all = q.get("instance").map(|s| s == "all").unwrap_or(false);
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = cached_json(format!("rounds:{}:{all}", inst.id), move || -> Result<String> {
         let rounds = db.all_rounds()?;
         let numbers = db.round_numbers()?;
         let entries: Vec<_> = rounds
@@ -76,7 +76,8 @@ pub(crate) async fn api_rounds(
             })
             .collect();
         Ok(serde_json::to_string(&entries)?)
-    })?;
+    })
+    .await?;
     Ok(json_response(data))
 }
 
@@ -994,7 +995,7 @@ pub(crate) async fn api_points(db: StatsDb, inst: Inst) -> std::result::Result<i
 }
 
 pub(crate) async fn api_captures(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = cached_json(format!("captures:{}", inst.id), move || -> Result<String> {
         let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
             Some((_, rid, _)) => *rid,
@@ -1005,7 +1006,8 @@ pub(crate) async fn api_captures(db: StatsDb, inst: Inst) -> std::result::Result
             "name": name, "count": count,
         })).collect();
         Ok(serde_json::to_string(&json)?)
-    })?;
+    })
+    .await?;
     Ok(json_response(data))
 }
 
@@ -1019,7 +1021,7 @@ pub(crate) async fn api_capture_events(
     offset: usize,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = cached_json(format!("capture_events:{}:{round_id:?}:{limit:?}:{offset}", inst.id), move || -> Result<String> {
         let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match round_id {
             // Another instance's round is not this instance's to show.
@@ -1054,12 +1056,13 @@ pub(crate) async fn api_capture_events(
             })
             .collect();
         Ok(serde_json::to_string(&json)?)
-    })?;
+    })
+    .await?;
     Ok(json_response(data))
 }
 
 pub(crate) async fn api_aircraft_usage(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = cached_json(format!("aircraft_usage:{}", inst.id), move || -> Result<String> {
         let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
             Some((_, rid, _)) => *rid,
@@ -1070,12 +1073,13 @@ pub(crate) async fn api_aircraft_usage(db: StatsDb, inst: Inst) -> std::result::
             "vehicle": vehicle, "sorties": count, "hours": (hours * 10.0).round() / 10.0,
         })).collect();
         Ok(serde_json::to_string(&json)?)
-    })?;
+    })
+    .await?;
     Ok(json_response(data))
 }
 
 pub(crate) async fn api_online(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = cached_json(format!("online:{}", inst.id), move || -> Result<String> {
         let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
             Some((_, rid, _)) => *rid,
@@ -1091,7 +1095,8 @@ pub(crate) async fn api_online(db: StatsDb, inst: Inst) -> std::result::Result<i
             })
         }).collect();
         Ok(serde_json::to_string(&entries)?)
-    })?;
+    })
+    .await?;
     Ok(json_response(data))
 }
 
@@ -1104,7 +1109,7 @@ pub(crate) async fn api_units(
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_admin(session_id, db.clone()).await?;
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = blocking(move || -> Result<String> {
         let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
             Some((_, rid, _)) => *rid,
@@ -1140,7 +1145,8 @@ pub(crate) async fn api_units(
             })
             .collect();
         Ok(serde_json::to_string(&entries)?)
-    })?;
+    })
+    .await?;
     Ok(json_response(data))
 }
 
@@ -1152,7 +1158,7 @@ pub(crate) async fn api_trails(
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_admin(session_id, db.clone()).await?;
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = blocking(move || -> Result<String> {
         let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
             Some((_, rid, _)) => *rid,
@@ -1171,7 +1177,8 @@ pub(crate) async fn api_trails(
             "ts":  p.ts,
         })).collect();
         Ok(serde_json::to_string(&entries)?)
-    })?;
+    })
+    .await?;
     Ok(json_response(data))
 }
 

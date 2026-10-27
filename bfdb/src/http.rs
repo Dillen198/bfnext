@@ -96,6 +96,44 @@ pub(crate) async fn cached_json(
         .map_err(Error)
 }
 
+/// Row lists behind the paged public routes (a pilot's sorties, kills,
+/// deploys), cached like [`cached_json`] and paged per request.
+static ROWS_CACHE: std::sync::LazyLock<websec::CacheMap<std::string::String, Arc<Vec<serde_json::Value>>>> =
+    std::sync::LazyLock::new(websec::CacheMap::new);
+
+/// [`cached_json`] for a list that each request pages through.
+pub(crate) async fn cached_rows(
+    key: std::string::String,
+    f: impl FnOnce() -> Result<Vec<serde_json::Value>> + Send + 'static,
+) -> std::result::Result<Arc<Vec<serde_json::Value>>, Error> {
+    ROWS_CACHE
+        .entry(&key)
+        .get_swr(PUBLIC_CACHE_TTL, PUBLIC_CACHE_MAX_STALE, move || f().map(Arc::new))
+        .await
+        .map_err(Error)
+}
+
+/// One page of a cached list, as [`page_json`] would cut it.
+pub(crate) fn page_slice(rows: &[serde_json::Value], q: &Q, cap: usize) -> Result<(String, usize)> {
+    let total = rows.len();
+    let num = |k: &str| q.get(k).and_then(|s| s.trim().parse::<usize>().ok());
+    let offset = num("offset").unwrap_or(0).min(total);
+    let limit = num("limit").unwrap_or(cap).min(cap);
+    Ok((serde_json::to_string(&rows[offset..(offset + limit).min(total)])?, total))
+}
+
+/// A blocking DB read (a scan) on the blocking pool rather than the
+/// request's executor thread, for routes that must answer fresh (admin
+/// views, lists a POST just changed) and so are not cached.
+pub(crate) async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T> + Send + 'static,
+) -> std::result::Result<T, Error> {
+    task::spawn_blocking(f)
+        .await
+        .map_err(|e| Error(anyhow::anyhow!("blocking task died: {e}")))?
+        .map_err(Error)
+}
+
 /// The linked player behind a browser session, for the squadron routes.
 pub(crate) async fn session_player(
     session_id: Option<Uuid>,
