@@ -50,6 +50,9 @@ DEFAULT_SITE_ADDRESS = "127.0.0.1:8766"
 # exits), then the loopback-only admin shutdown endpoint, then -- only if both
 # were ignored -- a hard kill. A hard kill mid-write is what tears sled pages.
 BFDB_STOP_TIMEOUT_SECS = 15.0
+# How long a killed bfdb.exe gets to actually exit (and drop its DB lock)
+# before procman gives up on launching the next one this round.
+BFDB_KILL_WAIT_SECS = 30.0
 BFDB_SHUTDOWN_PATH = "/api/admin/shutdown"
 # `bfdb.worker: true`: GCI/ATC/range ATC, the HQ strategist and the war
 # diary's model calls run in a second process, `bfdb.exe --worker`, that
@@ -457,6 +460,8 @@ class Procman:
         self._last_restart = 0.0
         # "bfdb is not installed" was said; quiet until an exe appears
         self._missing_exe_noted = False
+        # "bfdb is stuck" (a killed one won't exit) was said; quiet until it clears
+        self._stuck_noted = False
         # The port the resolver listens on, from its config (see
         # _resolver_config); what the "is it up" checks probe.
         self._resolver_port = NETIDX_RESOLVER_PORT
@@ -1854,32 +1859,53 @@ class Procman:
                 continue
         return out
 
-    def _kill_orphan_bfdb(self) -> None:
+    def _kill_orphan_bfdb(self) -> list:
         """Last resort: hard-kill any orphan of our bfdb.exe (see
-        _orphan_bfdb_procs) so the new one can bind its port."""
-        for p in self._orphan_bfdb_procs():
+        _orphan_bfdb_procs) and wait for it to go, so the new one can take
+        the DB lock and bind its port. Returns the ones still running.
+
+        Windows kills asynchronously: a bfdb stuck in disk I/O keeps its
+        sled lock for a while after TerminateProcess. Launching straight
+        after the kill made every relaunch fail on that lock (Oct 27)."""
+        procs = self._orphan_bfdb_procs()
+        for p in procs:
             try:
                 self.log.warning(f"FowlEngine/procman: killing orphan bfdb.exe (pid {p.pid})")
                 p.kill()
             except Exception as ex:  # noqa: BLE001
                 self.log.warning(f"FowlEngine/procman: could not kill orphan bfdb.exe (pid {p.pid}): {ex}")
+        if not procs:
+            return []
+        try:
+            import psutil
+            _, alive = psutil.wait_procs(procs, timeout=BFDB_KILL_WAIT_SECS)
+            return list(alive)
+        except Exception:  # noqa: BLE001 - psutil gone mid-way: assume they went
+            return []
 
-    async def _stop_orphans(self, admin_password: Optional[str]) -> None:
+    async def _stop_orphans(self, admin_password: Optional[str]) -> bool:
         """An orphan still owns the DB: ask it to shut down cleanly over the
         loopback endpoint (it isn't in our console group, so no Ctrl-Break)
-        before killing it."""
+        before killing it. False if one is still running after the kill."""
         orphans = await asyncio.get_running_loop().run_in_executor(None, self._orphan_bfdb_procs)
         if not orphans:
-            return
+            return True
         self.log.warning(f"FowlEngine/procman: {len(orphans)} orphan bfdb.exe running "
                          f"({', '.join(str(p.pid) for p in orphans)}) -- asking it to shut down")
         if await self._request_shutdown(admin_password):
             deadline = time.monotonic() + self._stop_timeout
             while time.monotonic() < deadline:
                 if not any(p.is_running() for p in orphans):
-                    return
+                    return True
                 await asyncio.sleep(0.5)
-        self._kill_orphan_bfdb()
+        alive = await asyncio.get_running_loop().run_in_executor(None, self._kill_orphan_bfdb) or []
+        if alive:
+            self.log.error(
+                f"FowlEngine/procman: bfdb.exe ({', '.join(str(p.pid) for p in alive)}) is still running "
+                f"{BFDB_KILL_WAIT_SECS:.0f}s after being killed and holds the DB lock -- not starting "
+                f"another; the next health check tries again")
+            return False
+        return True
 
     @property
     def _stop_timeout(self) -> float:
@@ -1989,8 +2015,17 @@ class Procman:
         await self._start_resolver()
 
         # stop any orphan bfdb.exe (e.g. left by a previous bot process that
-        # was killed without cleanup) so the new one can bind its port
-        await self._stop_orphans(admin_password)
+        # was killed without cleanup, or a hung one our kill has not finished
+        # off yet) so the new one can take the DB lock and bind its port
+        if not await self._stop_orphans(admin_password):
+            if not self._stuck_noted:
+                self._stuck_noted = True
+                await self._safe_notify(
+                    f"{icon('bad')} **bfdb is stuck**: the old bfdb.exe would not exit after being killed and "
+                    f"still holds the database. The bot keeps trying; if it is still stuck in a few minutes, "
+                    f"end bfdb.exe in Task Manager or reboot the box.")
+            return
+        self._stuck_noted = False
 
         args = self._build_args(admin_password, gci_ok, instances_file)
         supported = await loop.run_in_executor(None, self._supported_flags, self.exe)

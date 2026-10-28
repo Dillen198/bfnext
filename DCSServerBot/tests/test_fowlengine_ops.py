@@ -962,6 +962,37 @@ def test_fresh_box_applies_staged_bfdb(world):
     assert pm.probation and pm.probation["tag"] == "engine-1" and pm.probation["backup"] is None
 
 
+def test_start_waits_out_a_bfdb_that_will_not_die(world):
+    """A hung bfdb.exe that survives its kill still holds the sled lock:
+    launching another only fails on that lock (Oct 27), so don't, and say so
+    once."""
+    pm = world.cog.procman
+    notes = []
+
+    async def note(msg):
+        notes.append(msg)
+
+    class _Stuck:
+        pid = 6988
+
+        def is_running(self):
+            return True
+    pm._safe_notify = note
+    pm._start_resolver = lambda: asyncio.sleep(0)
+    pm._request_shutdown = lambda pw: asyncio.sleep(0, result=False)
+    pm._orphan_bfdb_procs = lambda: [_Stuck()]
+    pm._kill_orphan_bfdb = lambda: [_Stuck()]
+    asyncio.run(pm.start("pw"))
+    asyncio.run(pm.start("pw"))
+    assert pm._bfdb is None
+    assert len([n for n in notes if "bfdb is stuck" in n]) == 1
+
+    # once it is gone, the next start launches again and re-arms the notice
+    pm._orphan_bfdb_procs = lambda: []
+    asyncio.run(pm.start("pw"))
+    assert pm._stuck_noted is False
+
+
 def test_dcs_texture_lines_are_not_crashes():
     """DCS logs 'No suitable driver found to mount ...crash...texture' on every
     start; only the dump header / exception mean DCS actually crashed."""

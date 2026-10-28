@@ -463,11 +463,29 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
+/// sled's "could not acquire lock" (Windows error 33): another process
+/// has the database open.
+fn is_lock_error(e: &anyhow::Error) -> bool {
+    format!("{e:#}").contains("could not acquire lock")
+}
+
 /// Explain a failed open instead of just propagating sled's error.
 pub(crate) fn explain_open_failure(db_path: &Path, dir: &Path, e: &anyhow::Error) {
-    let backups = list_backups(dir);
     log::error!("could not open the stats database at {}: {e:#}", db_path.display());
     eprintln!("could not open the stats database at {}: {e:#}", db_path.display());
+    if is_lock_error(e) {
+        // Another bfdb.exe (often a hung one that was just killed and has
+        // not exited yet) still has the database open. Nothing is damaged:
+        // telling the operator to restore a backup here was wrong (Oct 27).
+        let hint = "Another bfdb.exe still has this database open -- usually one that hung and \
+                    has not finished exiting yet. The database is not damaged: do NOT restore a \
+                    backup. Wait for the old bfdb.exe to exit (or end it in Task Manager), then \
+                    start bfdb again.";
+        log::error!("{hint}");
+        eprintln!("{hint}");
+        return;
+    }
+    let backups = list_backups(dir);
     let hint = match backups.last() {
         Some(b) => format!(
             "The newest backup is {}. Restart bfdb with --restore-latest-backup to move the \
@@ -585,6 +603,18 @@ fn disk_free_uncached(path: &Path) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_second_open_is_a_lock_error_not_damage() {
+        let base =
+            std::env::temp_dir().join(format!("bfdb-lock-{}", uuid::Uuid::new_v4()));
+        let _held = yats::Db::open_sled(base.join("db")).unwrap();
+        let e = yats::Db::open_sled(base.join("db"))
+            .map(|_| ())
+            .expect_err("a second open must fail on the lock");
+        assert!(is_lock_error(&e), "{e:#}");
+        assert!(!is_lock_error(&anyhow::anyhow!("corrupted page 12")));
+    }
 
     #[test]
     fn backup_copies_files_and_links_unchanged_ones() {
