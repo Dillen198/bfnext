@@ -26,6 +26,7 @@ use dcso3::{
     net::Ucid,
     object::{DcsObject, DcsOid},
     unit::{ClassUnit, Unit, UnitCategory},
+    weapon::MissileCategory,
 };
 use fxhash::FxHashMap;
 use std::collections::hash_map::Entry;
@@ -114,17 +115,6 @@ fn shooter(db: &Db, id: DcsOid<ClassUnit>) -> Option<Who> {
         return Some(Who::Player { side: p.side, slot: *slot, ucid: *ucid, unit: id });
     }
     who(db, id)
-}
-
-/// Land-attack cruise missiles: aimed at a map point, never at a unit, so
-/// `weapon.get_target()` on one crashes DCS (see `ShotDb::shot`).
-fn is_cruise_missile(name: &str) -> bool {
-    const NAMES: [&str; 14] = [
-        "tomahawk", "bgm-109", "bgm_109", "agm-86", "agm_86", "kh-55", "x_555", "x-555",
-        "kh-101", "x_101", "kh-65", "x_65", "3m-14", "kalibr",
-    ];
-    let n = name.to_ascii_lowercase();
-    NAMES.iter().any(|k| n.contains(k))
 }
 
 impl ShotDb {
@@ -266,10 +256,15 @@ impl ShotDb {
         if !(itags.contains(UnitTag::Aircraft) || itags.contains(UnitTag::Helicopter)) {
             return Ok(());
         }
-        // Cruise missiles fly at a map point even off an aircraft (B-52 /
-        // Tu-95 ALCMs); asking DCS for their target is the same crash.
-        if e.weapon_name.as_ref().is_some_and(|n| is_cruise_missile(n.as_str())) {
-            return Ok(());
+        // Last line, from the weapon itself: air-to-air missiles only. They are
+        // guided on a unit or on nothing, never on a map point. An aircraft's
+        // bombs, ALCMs and ground-attack missiles can all fly at a point (Oct
+        // 27, vs1: an AI F-117A's GBU-27 on a Bombing point -> get_target()
+        // -> access violation). Their kills are credited from the hit and
+        // kill events instead, which name the shooter.
+        match e.weapon.get_weapon_desc() {
+            Ok(d) if d.missile_category == Some(MissileCategory::Aam) => (),
+            _ => return Ok(()),
         }
         let target = ok!(some!(e.weapon.get_target()?).as_unit());
         let target_oid = target.object_id()?;
@@ -354,19 +349,5 @@ impl ShotDb {
             });
         }
         dead
-    }
-}
-
-#[cfg(test)]
-mod cruise_tests {
-    use super::is_cruise_missile;
-
-    #[test]
-    fn cruise_missiles_are_recognised() {
-        assert!(is_cruise_missile("BGM-109C Tomahawk"));
-        assert!(is_cruise_missile("AGM_86C"));
-        assert!(is_cruise_missile("X_555"));
-        assert!(!is_cruise_missile("AIM_120C"));
-        assert!(!is_cruise_missile("GBU_31"));
     }
 }
