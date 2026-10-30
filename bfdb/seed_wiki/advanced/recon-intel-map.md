@@ -1,14 +1,17 @@
 # Recon Intel Map (TARPS)
 
-The **Recon Intel** page on the [Ops Dashboard](../reference/changelog.md) is a shared,
-coalition-only reconnaissance picture built from **F-14 TARPS** photography. Fly a
-TARPS sortie, upload the photos, and they drop onto a map — geo-referenced,
-perspective-corrected, and visible only to your own side.
+The **Recon Intel** page on the campaign dashboard is a shared, coalition-only
+reconnaissance picture built from **F-14 TARPS** photography. Fly a TARPS sortie,
+upload the photos, and they drop onto a map: geo-referenced,
+perspective-corrected, and visible only to your own side. Your side can also draw
+on that map, and the drawings appear on your coalition's in-game F10 map.
 
-It is entirely a web feature: nothing to install, no F10 menu. It complements the
-in-game [Recon Pass](../f10-menu/recon.md) and JTAC intel rather than replacing
-them — TARPS gives you an actual photograph of what's on the ground, at the cost
-of having to fly the recon run and process the imagery yourself.
+It is a web feature: nothing to install, no F10 menu. It complements the in-game
+[Recon Pass](../f10-menu/recon.md) and JTAC intel rather than replacing them.
+TARPS gives you an actual photograph of what is on the ground, at the cost of
+flying the run and placing the imagery yourself. The photos do not feed the
+in-game intel markers or the **Ground Intel** report; only recon passes and
+JTACs do.
 
 ## Who can see it
 
@@ -46,8 +49,11 @@ PNGs. The position and camera attitude are read straight from each filename:
 - Photos whose filename can't be parsed land in a **Needs Placement** list — click
   **Drop** and then click the map to place one by hand.
 
-There is a per-side cap on how many captures a coalition can hold in a round, so
-prune stale imagery you no longer need.
+There are caps per round: **400 captures per coalition** and **120 per pilot**
+(admins are exempt from the per-pilot cap). Uploading past them is refused with
+`recon intel limit reached for this coalition this round (400)`, or a note to
+delete some of your own first, so prune stale imagery you no longer need. Each
+photo can be up to 6 MB.
 
 ## Reading the map
 
@@ -58,9 +64,41 @@ prune stale imagery you no longer need.
   flat, oblique shots are stretched into perspective.
 - **Click** any marker, footprint, or photo to open the full-resolution image in a
   viewer (mouse wheel to zoom, drag to pan, `Esc` to close).
-- The **PHOTOS** toggle (top-right) hides or shows the image overlays while
-  keeping the markers.
 - Objectives and the frontline are drawn underneath for reference.
+- The capture list groups photos by the pilot who uploaded them, with an eye
+  icon to hide that pilot's photos and a colour swatch for their markers.
+
+The buttons along the top right of the map:
+
+| Button | Does |
+|---|---|
+| **PHOTOS** | Show or hide the image overlays (markers stay). |
+| **BLEND** | Feather and lighten-blend overlapping frames into one mosaic, dropping the black edges. |
+| **PATH** | Show or hide the flight-path markers. |
+| **GRID** | Show or hide a coordinate grid. |
+| **MARKUP** | Show or hide your side's drawings and the drawing tools (below). |
+| Basemap buttons | Switch the background map, including **GRID MAP**. |
+| Export | Save the current view as a PNG. |
+
+## Drawing on the map (markup)
+
+With **MARKUP** on, a toolbar appears in the side panel: **select**, **pencil**
+(freehand), **line**, **rectangle**, **circle**, **x** (a single point), and
+**eraser**, plus seven ink colours and a line width slider. Drawings are shared
+with your coalition only. You can delete your own (select it, then the bin
+button); admins can delete any.
+
+**Your drawings appear in game.** About every 15 seconds the server draws your
+side's markup onto your coalition's F10 map, in the colour you picked:
+
+- Circles, rectangles and lines are drawn as shapes; long freehand strokes are
+  thinned to at most 200 points.
+- An **x** becomes a map pin reading `✕ recon`.
+- Each drawing carries a small label `recon · <your name>` at its first point.
+- Deleting a drawing on the dashboard removes it from the F10 map.
+
+So a flight lead can sketch a route or ring a SAM site on the dashboard and every
+pilot on the side sees it on their F10 map without anyone typing a map mark.
 
 ## Aligning a photo
 
