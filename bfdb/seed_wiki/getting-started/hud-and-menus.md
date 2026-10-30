@@ -1,181 +1,223 @@
 # Understanding the Menus
 
-Fowl Engine provides several ways to interact with the campaign system. This page covers the essential interface elements you'll use constantly.
+You talk to Fowl Engine in three places: **chat** commands, the **F10 map**
+and the **F10 radio menu**. The server talks back in the DCS message box. This
+page covers each one; the [F10 Menu Overview](../f10-menu/overview.md) has the
+full menu tree.
 
-![Cockpit kneeboard page showing campaign status and objective information](/api/wiki/images/ed912e81-5a74-493c-a691-2bfff1541054)
+![Illustration of a gloved hand resting on a kneeboard map in the cockpit](/api/wiki/images/ed912e81-5a74-493c-a691-2bfff1541054)
 
-## Chat System
+## Chat commands
 
-### In-Game Chat
-The chat system is your primary way to issue commands and communicate.
+Open the DCS multiplayer chat, type a command and press Enter.
 
-**Opening Chat**:
-- Press `Shift+Tab` to open chat
-- Type your command
-- Press Enter to send
+- Every command starts with a dash: `-help`, `-lives`, `-balance`.
+- Type them in **lower case**. A few (`-lives`, `-time`, `-weather`,
+  `-switch`, a bare `-gci` or `-hq`) work in any case; the rest only match
+  lower case.
+- The **answer comes back to you only**. The line you typed still shows in
+  the chat channel you sent it to, like any other message, so use team chat
+  if you don't want the other side reading it.
+- A mistyped command gets the help list back, starting with:
 
-**Chat Visibility**:
-- Commands starting with `-` are processed by the system
-- Most commands are only visible to you
-- Regular chat messages are visible to your team
-
-### Command Prefix
-Almost all system commands start with a dash `-`:
-```
--help
--lives
--time
--balance
+```dcsmessage
+-hepl is not a valid command. Valid commands follow.
 ```
 
-See the [Chat Commands](../gameplay/chat-commands.md) section for a complete list.
+The ones you will use most:
 
-## F10 Map Menu
+| Command | What it does |
+| --- | --- |
+| `-help` | the list of player commands |
+| `-brief` | the short situation briefing |
+| `-status` | campaign status: points, kill streak, objectives held, your convoys |
+| `-balance` | your points |
+| `-lives` | your lives left this round, per role |
+| `-weather` | the full weather report for your slot, including winds aloft |
+| `-time` | time until the server restarts |
+| `-gci` | your GCI voice settings |
 
-The F10 map is your tactical hub in DCS, and Fowl Engine extends it with powerful new features.
+All of them, with what the server answers, are on
+[Chat Commands](../gameplay/chat-commands.md). The same list is in game under
+**F10 → Info → Help → Chat Commands**.
 
-### Accessing the F10 Map
-1. Press `F10` to open the map
-2. You'll see standard DCS map features plus Fowl Engine additions
-3. Right-click to access context menus
+## The F10 map
 
-### Map Markers
-Fowl Engine adds several types of markers:
+Press `F10` for the map. Fowl Engine draws the campaign on it for your
+coalition:
 
-**Objective Markers**:
-- Show ownership (Blue/Red)
-- Display health and logistics status
-- Indicate supply levels
+- **Objectives**: a ring for the zone, a type icon, four status hexes (Health,
+  Logistics, Supply, Fuel) and a label with the name and anything happening
+  there: capturable, being captured, consolidating, repairing.
+- **Warnings**: a thick yellow ring on a threatened base, and markings for
+  captures and alerts.
+- **Pins** you click for detail: convoys, JTACs (with the full 9-line and laser
+  code), tasks on the board, deployed groups, crates, logistics buildings.
+- **Intel**: enemy units your side has found by recon, ELINT or JTACs.
 
-**JTAC Markers**:
-- Show active JTAC targets
-- Include laser codes for precision strikes
-- Updated in real-time
+The map is your coalition's picture, not the truth: enemy positions appear
+only once your side has found them. How to read all of it is on
+[Reading the F10 Map](../gameplay/reading-the-map.md).
 
-**Player Markers**:
-- Your F10 marks become menu targets
-- Used for spawning units and waypoints
-- Limited to 24 characters for menu display
+### Your map marks
 
-## F10 Radio Menu
+The marks **you** place on the map are how you give the engine a position:
+where to send an AWACS, a drone, a flight, a ground group or a task.
 
-The F10 radio menu (not to be confused with the map) provides access to coalition commands while in your aircraft.
+- Place them **while you are in your aircraft**. Marks made from the spectator
+  screen are not yours as far as the engine is concerned.
+- Name them short (24 characters at most) and unique, or leave them blank;
+  blank marks are listed as `Mark 1`, `Mark 2`, ... nearest first.
+- In the menu each mark shows its bearing and range from you, e.g.
+  `CAS1 045/12km`.
 
-### Main Menu Categories
+The full rules are under
+[Map marks are your targeting system](../f10-menu/overview.md#map-marks-are-your-targeting-system).
 
-Fowl Engine adds up to nine top-level menus:
+## The F10 radio menu
 
-1. **GCI/EWR** – radar picture, ground intel, GCI voice settings *(always)*
-2. **Recon** – fly a recon pass *(recon-tagged airframes)*
-3. **Cargo** / **C-130 Cargo** – crates and base supply *(cargo-capable airframes)*
-4. **CSAR** – downed pilots *(server-enabled)*
-5. **Troops** – load/unload infantry *(troop-capable airframes)*
-6. **JTAC>>** – targeting, laser codes, fire missions
-7. **Actions>>** – support aircraft, tasking board, AI helo missions
-8. **Objectives** – base reports and the Capture Advisor *(always)*
-9. **Info** – your status, the situation briefing, navaids, weather, help *(always)*
+Open the DCS radio (communications) menu and pick **F10. Other**. That is
+where the engine's menus live. **F1** to **F10** pick an entry, **F11** goes
+back a level, **F12** closes the menu.
 
-Each is context-sensitive and only appears if your aircraft has the capability
-and the server has the feature enabled.
+The menus are built for your aircraft when it **spawns**, and what you get
+depends on the airframe and the server:
 
-**`JTAC>>` and `Actions>>` are buttons, not folders.** They start as a single
-command; select it once and it builds itself into the full menu from the world
-as it is right now. That is also how you refresh a stale list — re-open
-`Actions>>` after placing a new map mark.
+| Menu | Who gets it |
+| --- | --- |
+| **GCI/EWR** | everyone: radar picture, ground intel, GCI voice settings |
+| **Recon** / **Wingman** | recon-capable airframes / servers with AI wingmen; inside one **Flight** menu when you get both |
+| **Cargo** or **C-130 Cargo** | cargo-capable airframes: crates and base supply |
+| **CSAR** | servers with CSAR on; inside the cargo menu when you have one |
+| **Troops** | troop-capable airframes: load and unload infantry |
+| **JTAC>>** | JTAC targeting, laser codes, fire missions |
+| **Actions>>** | AWACS, tankers, drones and other paid actions, the tasking board, AI helo missions |
+| **Ground Forces>>** | servers running the ground war, for those allowed to command it |
+| **Objectives** | everyone: base reports and the Capture Advisor |
+| **Info** | everyone: your status, the situation briefing, radios, navaids, weather, help |
 
-The full tree is documented in
-[F10 Menu Overview](../f10-menu/overview.md).
+The full tree, with which slot sees what, is in the
+[F10 Menu Overview](../f10-menu/overview.md#the-root-menu).
 
-## F10 Map vs F10 Radio Menu
+### `>>` at the end means "select me first"
 
-It's important to understand the difference:
+`JTAC>>`, `Actions>>` and `Ground Forces>>` are **commands**, not folders.
+Select one: the menu closes and the engine builds the real submenu from the
+world as it is right now. Open F10 again and go in.
 
-| F10 Map | F10 Radio Menu |
-|---------|----------------|
-| Shows battlefield overview | In-aircraft commands |
-| Always accessible | Only in slotted aircraft |
-| Place markers | Execute actions |
-| Strategic planning | Tactical execution |
+This is also how you refresh them. `Actions` folds back to `Actions>>` by
+itself when you place a new map mark or after an action has started; select
+it again for fresh lists.
 
-**Common workflow**:
-1. Open **F10 Map** to plan
-2. Place markers at target locations
-3. Slot into aircraft
-4. Open **F10 Radio Menu** → Actions
-5. Select action linked to your map marker
+### `More >>`: the thing that trips people up
 
-## Menu Navigation Tips
-
-### Using Number Keys
-- Each menu item has a number (1-9)
-- Press the number to select instantly
-- Faster than mouse navigation in combat
-
-### Menu Structure
-Menus are hierarchical:
-```
-F10
-├── Actions>>              (select once to build it)
-│   └── Actions
-│       ├── E-3A AWACS(100 pts)
-│       │   └── [your map marks]
-│       ├── Add Task
-│       └── More >>
-├── JTAC>>
-└── GCI/EWR
-    ├── Report
-    └── Toggle
-```
-
-### `More >>` — the thing that trips people up
 **DCS silently drops anything past the tenth entry in a menu.** No error, no
-warning. Fowl Engine works around it by spending the last slot on **`More >>`**,
+warning. Fowl Engine spends the last slot of a full page on **`More >>`**,
 which opens the next page of the same list.
 
-So if something you expect is not in a list, **look for `More >>` at the bottom
-before assuming it isn't there.**
+So if something you expect is not in a list, **look for `More >>` at the
+bottom before assuming it isn't there.** Long base lists split into numbered
+ranges such as `1. Abu al-Duh - Hama` instead; pick the range your base falls
+in.
 
-Long base lists are chunked differently — into alphabetical submenus like
-`1. Abu Su - Damascu`. Pick the range your base falls in.
+### A typical tree
 
-## On-Screen Messages
+```f10menu
+{"root":"F10 Other","items":[
+ {"label":"GCI/EWR","items":[
+  {"label":"Report","note":"Enemy air contacts, BRAA from you."},
+  {"label":"Toggle","says":"ewr reports are disabled"},
+  {"label":"Units to Imperial","says":"EWR units are now Imperial"},
+  {"label":"Units to Metric","says":"EWR units are now Metric"},
+  {"label":"GCI Voice","items":[
+   {"label":"Units: Imperial","says":"GCI calls will use imperial units"},
+   {"label":"Units: Metric","says":"GCI calls will use metric units"},
+   {"label":"Units: Server Default","says":"GCI calls will use the server default units"}]}]},
+ {"label":"Actions>>","note":"Select once; the menu closes. Open F10 again and Actions is a submenu."},
+ {"label":"Actions","note":"What Actions>> turns into. Names and prices are the server's own.","items":[
+  {"label":"AWACS(100 pts)","items":[
+   {"label":"CAS1 045/12km","says":"action AWACS started"},
+   {"label":"Mark 1 310/38km","says":"action AWACS started"}]},
+  {"label":"Add Task"},
+  {"label":"More >>","items":[{"label":"AI Helo Missions"}]}]},
+ {"label":"Objectives","items":[
+  {"label":"Capture Advisor: Nearest","note":"Why that base won't flip yet."}]},
+ {"label":"Info","items":[
+  {"label":"My Status","says":"=== Viper ===\nSide: Blue\nPoints: 1250\nKill streak: 3\nCareer kills: 87\nSide switches allowed: 1/round"},
+  {"label":"Situation","items":[{"label":"1. Overview"},{"label":"2. Tasking"}]},
+  {"label":"Time & Server","says":"Server restarts in 02:14:37"}]}
+]}
+```
 
-Fowl Engine sends you messages through the DCS message system:
+### Map or radio menu?
 
-**Message Types**:
-- **White text**: Information and confirmations
-- **Command responses**: Results of your actions
-- **System announcements**: Team-wide notifications
+| F10 map | F10 radio menu |
+| --- | --- |
+| The campaign picture: bases, front, pins, intel | Commands and reports |
+| Open it any time | Only once your aircraft has spawned |
+| Place marks | Use your marks |
 
-**Message Duration**:
-- Most messages display for 5-10 seconds
-- Critical messages may persist longer
-- Check chat log to review missed messages
+**Common workflow**:
 
-## Accessibility Options
+1. Spawn, then open the **F10 map** and look at the picture.
+2. Place a mark where you want something to happen.
+3. Radio menu → **F10. Other** → `Actions>>`.
+4. Open it again → **Actions** → the action → your mark.
 
-### Units System
-Toggle between Imperial and Metric units:
-- F10 → GCI/EWR → "Units to Imperial" / "Units to Metric"
-- F10 → GCI/EWR → GCI Voice → "Units: Imperial / Metric / Server Default"
-  (for the spoken calls), or `-gci imperial` / `-gci metric` in chat
+### The cockpit panel
 
-## Quick Reference
+The optional [Vector Strike cockpit](./cockpit-overlay.md) shows the whole F10
+menu on a panel you can read and click, alongside your cargo, status, the EWR
+picture, a log of every server message and this wiki. It also adds a radial
+wheel for one-glance commands. The radio menu keeps working either way.
+
+## Server messages
+
+The server answers in the DCS message box (top right) and, for chat commands
+and slot notices, in chat:
+
+- **Replies to you**: the result of a menu command or chat command, e.g.
+  `action AWACS started` or `could not start AWACS, ...` with the reason.
+  Menu replies stay up about 10 seconds; long reports such as the Situation
+  pages stay longer.
+- **Side-wide notices**: captures, threats to your bases, crates unpacked,
+  troops landed, task updates.
+- **Slot-entry panels**: the airfield ATIS and the situation briefing a few
+  seconds after you spawn, where the server has them on; see
+  [Welcome](./welcome.md#first-steps).
+
+Missed one? Run the command again,
+open **Info → My Status**, or use the cockpit panel's **LOG** tab.
+
+## Units
+
+- **EWR text reports**: **F10 → GCI/EWR → Units to Imperial / Units to
+  Metric**. They start in your airframe's own units (metric for the Russian
+  types) until you pick.
+- **GCI voice calls**: **F10 → GCI/EWR → GCI Voice → Units: Imperial / Metric
+  / Server Default**, or `-gci imperial` / `-gci metric` in chat. See
+  [GCI](../gameplay/gci.md).
+
+## Quick reference
 
 **Must-know commands**:
-- `-help` — command list
-- `-status` — campaign status: points, objectives held, your convoys
-- `-brief` — the short situational briefing
-- `-balance` — check points
-- `-weather` — weather at your position
+
+- `-help`: the command list
+- `-brief`: the short situation briefing
+- `-status`: campaign status, your points, objectives held, your convoys
+- `-balance` and `-lives`: points and lives
+- `-weather`: weather at your slot
 
 **Must-know menus**:
-- `F10 → Info → Situation` — the full six-page briefing
-- `F10 → Objectives → Capture Advisor: Nearest` — why that base won't flip
-- `F10 → Info → Support & Radios` — is there a tanker up, and on what frequency
+
+- `F10 → Info → Situation`: the full six-page briefing
+- `F10 → Objectives → Capture Advisor: Nearest`: why that base won't flip
+- `F10 → Info → Support & Radios`: is there a tanker up, and on what frequency
+- `F10 → Info → Help`: short guides to cargo, capturing, carriers and JTACs
 
 ## See Also
 
-- [F10 Menu Overview](../f10-menu/overview.md) — every menu, in detail
-- [Core Gameplay](../gameplay/objectives.md) — campaign mechanics
+- [F10 Menu Overview](../f10-menu/overview.md): every menu, in detail
+- [Reading the F10 Map](../gameplay/reading-the-map.md)
 - [Chat Commands](../gameplay/chat-commands.md)
+- [Your First Sortie](../playbooks/first-sortie.md)
