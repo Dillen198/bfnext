@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from './context/AuthContext'
@@ -8,6 +9,10 @@ import LoginPage from './pages/LoginPage'
 import HomePage from './pages/HomePage'
 import WikiPage from './pages/WikiPage'
 import EditPage from './pages/EditPage'
+
+// Every mockup block on one page, for looking at them without a bfdb. Only
+// under `vite dev`: the import is dropped from production builds.
+const BlocksFixturePage = import.meta.env.DEV ? lazy(() => import('./pages/BlocksFixturePage')) : null
 
 const THEME: ThemeOptions = { storageKey: 'bfwiki-theme' }
 
@@ -24,6 +29,9 @@ export default function App() {
             <BrowserRouter>
               <Routes>
                 <Route path="/login" element={<LoginPage />} />
+                {BlocksFixturePage && (
+                  <Route path="/__blocks" element={<Suspense fallback={null}><BlocksFixturePage /></Suspense>} />
+                )}
                 <Route path="/" element={<Layout />}>
                   <Route index element={<HomePage />} />
                   <Route path="new" element={<EditPage isNew />} />
