@@ -101,7 +101,7 @@ opens, but can only tell you the DLL is missing.
 | `Ctrl+Alt+C` (change it in Options → Special) | show / hide, from anywhere |
 | `Ctrl+Alt+W` (change it in Options → Special) | the wheel (below) |
 
-The panel has six tabs (the sixth, WHEEL, edits the wheel -- see below):
+The panel has seven tabs (the last, WHEEL, edits the wheel -- see below):
 
 - **MENU** — your whole F10 menu, live from the engine. Click a submenu to go
   in, **< Back** to come out, click a command to run it. Whatever F10 answers
@@ -120,6 +120,13 @@ The panel has six tabs (the sixth, WHEEL, edits the wheel -- see below):
   imperial/metric.
 - **LOG** — every message the server has sent you, newest first, tagged YOU /
   SIDE / ALL. The tab counts what arrived while you were looking elsewhere.
+- **WIKI** — the player wiki, the same pages as wiki.vectorstrike.org. Pick a
+  section, then a page; **< Back** and the crumb work as in MENU. A link to
+  another page is a button under its paragraph. Numbers on a page (points,
+  timings, costs) are the ones this server runs. Pictures load after a moment
+  and are kept on disk, so they show at once next time. The box at the top
+  finds pages: titles as you type, then pages that mention the words. Works
+  in single player too.
 
 **-** and **+** in the corner change opacity; **X** hides the panel. Drag it
 by its title bar and resize it from its edges. Position, size and opacity are
@@ -260,7 +267,10 @@ to the Discord.
 ## What it touches
 
 `<DCS profile>\Scripts\Hooks\bfcockpit.lua`, `<DCS profile>\Mods\Services\BFCockpit\`
-and, if you don't already have one, `<DCS profile>\Config\BFCockpit.lua`.
+and, if you don't already have one, `<DCS profile>\Config\BFCockpit.lua`. The
+WIKI tab keeps the pages and pictures it has shown in
+`Mods\Services\BFCockpit\cache\wiki\` (a few MB at most; safe to delete;
+**Uninstall** removes it with the rest).
 DCS itself stores the Special-page choices in its own `Config\options.lua`. No
 DCS install files are modified, nothing is written to the registry, and
 nothing is added to startup.
@@ -372,7 +382,19 @@ receiving its hotkeys. So the window is made once and never hidden for real:
 hidden is DCS's own near-invisible chat-minimised skin, no cursor, no
 children, and a 1x1 size so it can't catch a click meant for a cockpit switch.
 
+**The WIKI tab.** Pages come from bfwiki's own routes (`/api/wiki/pages/<slug>`,
+`/api/wiki/facts` for the `{{cfg:...}}` numbers); the index with each page's
+`updated_at`, the full-text search and the pictures from
+`/api/cockpit/wiki/*` (`bfdb/src/cockpit_wiki.rs`). dxgui shows a picture only
+from a local file, so `/api/cockpit/wiki/image/<id>/info?w=` says what the file
+will be and `bfcockpit_net.dll`'s `download` (1.1) writes it into the cache:
+PNGs scaled to the panel's width, SVG diagrams rasterised to PNG by resvg on
+the server, JPEGs as they are (dxgui scales them). A 1.0 DLL has no
+`download`: the tab still works, with the pictures' alt text in their place.
+
 **Testing outside DCS.** `D:\DCS World\bin-mt\luae.exe` is a plain interpreter
 on DCS's `lua.dll`, so the DLL can be exercised for real with it. The script
-can be run under it too, with stand-ins for the dxgui modules and `net`; the
-pixels still need a look in DCS.
+runs under it too: `luae.exe bfcockpit\tools\luatest.lua` loads the real
+`bfcockpit.lua` with stand-ins for the dxgui modules, `net` and the DLL, puts
+every `bfdb/seed_wiki` page through the WIKI tab and checks the tab bar fits.
+The pixels still need a look in DCS.
