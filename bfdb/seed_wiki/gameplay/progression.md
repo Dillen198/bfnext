@@ -30,9 +30,20 @@ level 2 is at 500 XP, level 3 at 1,500 and level 10 at 22,500.
 ## Challenges
 
 Three **daily** and three **weekly** challenges are active at a time, the same
-for everyone. Typical ones are shooting down 2 aircraft, flying 3 logistics
-jobs, or capturing 5 objectives in a week. Each pays its XP once. Dailies
-reset at 00:00 UTC, and weeklies reset on Monday.
+for everyone. Each pays its XP once. Dailies reset at 00:00 UTC, and weeklies
+reset on Monday. Each period the window of three moves one step along this
+pool:
+
+| Daily | XP | Weekly | XP |
+| --- | --- | --- | --- |
+| Shoot down 2 aircraft | 500 | Shoot down 15 aircraft | 2,500 |
+| Destroy 5 ground targets | 400 | Destroy 40 ground targets | 2,000 |
+| Capture an objective | 600 | Capture 5 objectives | 3,000 |
+| Fly 3 logistics jobs | 500 | Fly 20 logistics jobs | 2,500 |
+| Down an enemy pilot | 600 | Down 8 enemy pilots | 3,000 |
+
+An enemy pilot shot down also counts toward "shoot down aircraft". Logistics
+jobs are repairs, supply runs, troop insertions, deployments and FARPs.
 
 ## Achievements
 
@@ -71,13 +82,30 @@ your achievements, and a pilot card image with your squadron tag and headline
 stats.
 In Discord, `/fe_card` posts it, and `/fe_card @someone` posts another
 pilot's. Link your Discord and game accounts first: `/linkme` in Discord, then
-`-linkme <token>` in DCS chat.
+`-linkme <token>` in DCS chat (that one is DCSServerBot's command, not the
+engine's).
 
 ## After you land
 
-The landing debrief has a **Contributed:** line listing what you did on that
-sortie (captures, repairs, supply runs, troops inserted, units deployed,
-FARPs built) alongside the points. It lists up to six, then "and N more".
+Every landing gets a debrief in the cockpit. It says whether the landing
+counted, what the sortie did, and what it settled:
+
+```dcsmessage
+LANDED at Kutaisi -- landing registered, safe to leave the slot
+Sortie: 42 min from Senaki-Kolkhi
+Weapons fired: 4
+Contributed: supplied Kutaisi, inserted Infantry Squad
+Kills: 2 (+9 pts): 1x T-72B, 1x BMP-2
+Airframe/stores: 160 charged at takeoff, 100 refunded for what's still aboard
+Balance: 1840 pts
+Lives: standard 3/3 (life returned)
+```
+
+The **Contributed:** line lists what you did on that sortie (captured,
+repaired, supplied, inserted troops, deployed units, built FARPs). It lists up
+to six, then "and N more". A landing away from a friendly objective starts
+`LANDED outside a friendly objective -- no landing credit here` instead; see
+[Points and Lives](./points-and-lives.md).
 
 ## See Also
 
