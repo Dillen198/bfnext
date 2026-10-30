@@ -1,6 +1,10 @@
 # Changelog
 
-Current version: **v3.1**. Each update gets the next number; the newest is at the top.
+What changed for players, newest first. Current version: **v3.1**. Each update
+gets the next number. Below v2.0 is the list of what this engine does
+differently from stock Fowl Engine. Where an entry gives a campaign number, it
+is read from the server selected at the top of the page; where a later entry or
+a linked page says otherwise, the later one is right.
 
 ## v3.1 — October 22, 2026
 
@@ -176,8 +180,9 @@ Russia.
 
 **Server rules** (each only where the server turns it on) — see
 [Rear Bases, Era Weapons & Round Length](../gameplay/round-rules.md)
-- **Protected rear bases**: enemy aircraft get 60 s in total near one, then
-  are removed.
+- **Protected rear bases**: enemy aircraft get
+  {{cfg:rear_base_protection.grace_secs|60}} s in total near one, then are
+  removed.
 - **Era weapons**: weapons the round's era bans must not be carried or fired.
 - **Round length**: a round that runs past the server's limit ends in a draw.
 
@@ -267,8 +272,8 @@ Russia.
   DCS groups; nothing advances or fights off the map.
 - **The combat log is kept for the whole round**: every contact, battle, loss,
   capture, order, garrison reaction and hunter group report is saved and
-  survives server restarts; only a campaign reset clears it. **ALL** on the
-  COMBAT LOG shows the whole round.
+  survives server restarts; only a campaign reset clears it. **LOAD OLDER** on
+  the COMBAT LOG pulls in the rest of the round.
 
 **A harder, less predictable enemy**
 - **Bases defend themselves**: garrisons drive out to meet enemy vehicles, call
@@ -379,7 +384,14 @@ Russia.
   camera, time of day and weather change from day to day and from server to
   server.
 
-What's changed since the original open-source Fowl Engine. This page only lists what's **different from stock Fowl Engine** — not a full commit history, and not core mechanics (F10 menus, JTAC, cargo, points/lives, capturing objectives) that were already part of the base engine and are simply documented elsewhere in this wiki.
+## Before v2.0: what's different from stock Fowl Engine
+
+What changed from the original open-source Fowl Engine before numbered
+releases began. It lists only what is **different from stock Fowl Engine**,
+not core mechanics (F10 menus, JTAC, cargo, points and lives, capturing
+objectives) that were already part of the base engine and are documented
+elsewhere in this wiki. Several of these systems have changed since; the
+linked pages describe them as they are now.
 
 ## Campaign Balance Pass
 
@@ -438,26 +450,26 @@ On servers that enable it, a live GCI controller watches the coalition radar pic
 Recon-capable airframes (server-configured) get an **F10 → Recon** menu. Start a timed pass while within range of an enemy objective, hold station for the dwell time, and every enemy unit your aircraft has line-of-sight to — SAM and AAA sites included — is revealed on the coalition F10 map through the same decaying intel picture. See [Reconnaissance](../f10-menu/recon.md).
 
 **JTAC eyes-on also marks the map**
-Any target a JTAC (ground, drone, or player) has confirmed line-of-sight on now feeds the same intel picture automatically — no menu action needed. The mark stays fresh while the JTAC keeps watching and lingers for a long time (about an hour by default) after it loses the target, instead of vanishing the moment the JTAC looks away.
+Any target a JTAC (ground, drone, or player) has confirmed line-of-sight on now feeds the same intel picture automatically — no menu action needed. The mark stays at full confidence while the JTAC keeps watching; once it loses the target the confidence halves every {{cfg:elint.half_life_jtac_secs|3600}} seconds, so the mark stays on the map for hours instead of vanishing the moment the JTAC looks away. See [JTAC System](../f10-menu/jtac.md#f10-map-intel).
 
 **Mechanized Infantry**
 Infantry squads can board and dismount IFVs/APCs for overland transport, not just helicopters — troops embark near a friendly vehicle and can be dropped off anywhere it can drive.
 
 **CSAR — Combat Search & Rescue**
-Ejecting no longer costs a life outright. A downed pilot unit spawns at the crash site; a friendly helicopter can locate and extract them via the F10 → CSAR menu, restoring the lost life and earning the rescuer bonus points. Eject over a friendly airbase, FARP or carrier and the pilot walks in on their own — no helo needed. A downed pilot is held by an enemy-capture countdown (server-configurable, 30 min by default), but as long as a friendly rescue helicopter is sitting on top of them the timer can't take them, so a pickup that's a few seconds late still works.
+A lost aircraft's life can be won back. A downed pilot unit spawns at the crash site; a friendly helicopter can locate and extract them via the F10 → CSAR menu, giving the pilot the life back (where lives are enforced) and paying the rescuer {{cfg:csar.rescue_reward|0}} points. Come down inside a friendly objective's zone and the pilot recovers on their own — no helo needed. A downed pilot is held by an enemy-capture countdown ({{cfg:csar.capture_timer|15}} minutes here), but as long as a friendly rescue helicopter is near them the timer can't take them, so a pickup that's a few seconds late still works. See [Combat Search & Rescue](../f10-menu/csar.md).
 
 **C-130 Hercules & Airdrop System**
 A dedicated logistics role: the C-130 can deliver cargo, troops, and vehicles via parachute or LAPES (low-altitude extraction) runs to unprepared landing zones, with automatic detection-and-unpack on delivery — no manual trigger needed. See [C-130 Hercules & Airdrop](../advanced/c130-airdrop.md).
 
 **Capture mechanics — health/infantry gate, troop scaling, consolidation, anti-revolving-door**
-A base is capturable once its **health is ≤ 20% and every infantry defender is dead** — not when its logistics hit zero (a base bombed to Health 0 flips straight to Neutral on its own). The hold timer is **180 s base, divided by how many troop squads you have in the zone** (more squads = faster, floored at 30 s). You can't stage troops or crates from a base that is itself capturable — bring them from elsewhere.
+A base is capturable once its **health is 20% or less and every infantry defender is dead** — not when its logistics hit zero (a base whose garrison is wiped out to Health 0 drops to Neutral on its own, except a Command Center). The hold timer is **{{cfg:campaign_events.capture_time_secs|180}} s, divided by how many troop squads you have in the zone** (more squads = faster, never under 30 s). You can't stage troops or crates from a base that is itself capturable — bring them from elsewhere.
 
-After the timer completes the base flips, then your troops **hold for a ~5-minute consolidation window**. During that hold **the enemy cannot start a fresh capture timer** — to take it back they have to physically wipe out your holding troops. If they do that **and** the base is still shot up (Health ≤ 20%) it goes **Neutral**; if your new garrison has already brought it above 20% it consolidates and stays yours. For **~2 minutes after any capture or Neutral flip** a cooldown blocks a new capture timer entirely.
+After the timer completes the base flips, then your troops **hold it through consolidation** ({{cfg:capture_consolidation_secs|300}} s of progress). During that hold **the enemy cannot start a fresh capture timer** — to take it back they have to wipe out your holding troops, and if they do, the base goes **Neutral**: the new garrison isn't on the map until consolidation ends, so it can't hold the base for you. For **{{cfg:campaign_events.capture_cooldown_secs|120}} s after any capture or Neutral flip** a cooldown blocks a new capture timer entirely.
 
-On capture the previous owner's surviving combat units are destroyed and the new owner gets back only a **light garrison — AAA and infantry, ~25% health, no SAMs** (`capture_garrison_revive_fraction` / `capture_garrison_revive_include_sam`). Everything heavier rebuilds slowly through auto-repair or has to be delivered by deployable crate, so a freshly-taken base is a soft target you invest in rather than an instant fortress. SAM sites (the classified ones) still capture instantly with no timer. See [Capturing Objectives](../gameplay/capturing-objectives.md).
+On capture the previous owner's surviving units are removed and the new owner gets only a **light garrison — AAA and infantry, {{cfg:campaign_events.capture_garrison_revive_fraction|0.25}} of it, no SAMs** unless the server sets `capture_garrison_revive_include_sam`. Everything heavier rebuilds slowly through auto-repair or has to be delivered by deployable crate, so a freshly-taken base is a soft target you invest in rather than an instant fortress. A special SAM site is always open to capture (no health or infantry requirement), but the normal timer and consolidation still run. See [Capturing Objectives](../gameplay/capturing-objectives.md).
 
 **Carrier groups change hands**
-Disable an enemy carrier (sink its escorts to knock its logistics to 0) and take the naval base it's linked to, and the carrier group now **passes to the captor as their own ships** — the enemy task force is replaced by your coalition's carrier group in the same spot, with your deck slots. It comes across at 50% and can be brought back up with **carrier repair crates** (air-dropped or flown in by helo — stack several to repair faster, ~30 min at one crate) or, where the server configures them, the **Repair / Respawn Carrier** actions off the naval-base menu. A carrier whose linked naval base is still friendly and stocked also repairs automatically. An `-admin capture <objective> <blue|red|neutral>` command was also added to force any objective to change hands.
+Disable an enemy carrier (sink its escorts to knock its logistics to 0) and take the naval base it's linked to, and the carrier group now **passes to the captor as their own ships** — the enemy task force is replaced by your coalition's carrier group in the same spot, with your deck slots. It comes across at 50% and can be brought back up with **carrier repair crates** (air-dropped or flown in by helo — {{cfg:carrier.repair_time|1800}} s at one crate, and stacking several divides the time) or, where the server configures them, the **Repair / Respawn Carrier** actions off the naval-base menu. A carrier whose linked naval base is still friendly and stocked also repairs automatically. An `-admin capture <objective> <blue|red|neutral>` command was also added to force any objective to change hands.
 
 **Artillery — missile TELs, salvos, auto-turn**
 The JTAC artillery menu now also commands **ballistic/cruise missile launchers** (Scud, Iskander, Silkworm), enforces each unit type's real min/max range, and adds a **"Fire All Groups Together"** salvo and an **"all ammo"** option. Batteries that spawn facing the wrong way now **reposition to bring the launcher onto the target bearing** before firing, so hull-traverse systems that used to silently no-op actually shoot. The **Move** action follows roads instead of driving cross-country. See [Artillery Missions](../advanced/artillery.md).
@@ -466,23 +478,23 @@ The JTAC artillery menu now also commands **ballistic/cruise missile launchers**
 The airfield ATIS now reports the **real DCS runway designator** (it was deriving the number from runway heading and sometimes naming a runway that doesn't exist), fixes a mirrored surface-wind bearing, and adds field elevation, QFE, cloud base AGL, visibility and precipitation — all in **both metric and imperial**. Live weather sync also corrects the wind-speed units and syncs the upper (2000 m / 8000 m) wind layers, not just the surface.
 
 **Last Stand**
-A coalition reduced to its last primary objective (airbase, naval base, or FARP) gets a do-or-die countdown timer instead of being able to turtle indefinitely.
+A coalition reduced to {{cfg:last_stand.trigger_count|1}} primary objective(s) (airbases, naval bases, FARPs) gets a do-or-die countdown timer ({{cfg:last_stand.countdown_secs|3600}} s) instead of being able to turtle indefinitely. See [Round Rules](../gameplay/round-rules.md).
 
 **Automated Convoys & Strategic Infrastructure**
-Ground supply convoys run automatically between logistics hubs and the front — and can be interdicted. Real map buildings (warehouses, fuel depots, industrial complexes) near objectives, when destroyed, permanently degrade that objective's logistics — a second, independent way to attack enemy supply. Each objective's logistics buildings are pinned on the F10 map for the owning coalition while a friendly aircraft is nearby (they cull with the objective's units so the map stays clean). **Factories** are a new objective type that passively produces ground units for their owner. An objective flagged **fully detached** from the supply chain gets no automatic resupply at all — convoy, cargo plane, or otherwise — and has to be sustained by hand with transport crates and C-130 drops.
+Ground supply convoys run automatically between logistics hubs and the front — and can be interdicted. Real map buildings (warehouses, fuel depots, industrial complexes) near objectives, when destroyed, degrade that objective's logistics until a Logistics Repair Kit or a capture brings it back — a second, independent way to attack enemy supply. Each objective's logistics buildings carry `logi:` pins on the F10 map, for both sides, while the base is awake (an enemy nearby), so the map stays clean. See [Buildings at an Objective](../gameplay/objective-buildings.md). **Factories** are a new objective type that passively produces ground units for their owner. An objective flagged **fully detached** from the supply chain gets no automatic resupply at all — convoy, cargo plane, or otherwise — and has to be sustained by hand with transport crates and C-130 drops.
 
 **Frontline on the F10 map**
 When enabled, the division between blue-held and red-held ground is drawn as three smooth lines per front — blue on the blue side, white down the centre, red on the red side, with a gap between them. It's the zero line of a smooth influence field: every owned objective pulls the ground toward its side with a pull that fades over distance, so the front follows the overall shape of the theatre and ignores a lone base behind enemy lines. A theatre with an island and two land borders shows up as several distinct fronts; nothing is drawn where one side holds everything. Redraws whenever an objective changes hands.
 
 **Live Weather Sync**
-Server weather now syncs automatically from the running DCS mission via `bftools`/DCSServerBot integration, instead of being fixed at mission build time.
+On servers that turn it on, real-world weather and time are written into the mission just before each scheduled restart, instead of being fixed at mission build time. See [Weather, ATIS & Time](../gameplay/weather.md#real-world-weather-and-time).
 
 **Coalition tasking board**
 Any player can post a task — CAP, CAS, SEAD, STRIKE, LOGISTICS, CSAR at a map
 mark, or CAPTURE / SUPPLY against a base — and the whole coalition sees the area
 and its pin on the F10 map, ranked into the briefing and called out on the GCI
 net. Objective tasks **close themselves out** when the coalition actually does
-the job. Free, twelve slots per side. See
+the job. Usually free, {{cfg:actions.Blue.add-task.kind.AddTask.max_per_side|12}} slots per side. See
 [The Tasking Board](../gameplay/tasking-board.md).
 
 **AI helo missions**
