@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 720" width="800" height="720" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6aab1f"/>
+    </marker>
+    <marker id="ahr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#cc4444"/>
+    </marker>
+    <marker id="ahy" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c9a227"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="800" height="720" fill="#0d1009"/>
+  <text x="40" y="38" font-size="18" font-weight="700" fill="#cdd4be">Capturing a base: the sequence</text>
+  <text x="40" y="58" font-size="13" fill="#7d8a6a">Engine defaults shown; your server may set other times. Red boxes are how it fails.</text>
+
+  <!-- Step 1 -->
+  <rect x="40" y="76" width="440" height="82" rx="6" fill="#141910" stroke="#262e1d" stroke-width="2"/>
+  <text x="58" y="102" font-size="16" font-weight="700" fill="#8ec83f">1  Knock it down</text>
+  <text x="58" y="124" font-size="13" fill="#cdd4be">Health 20% or less AND every infantry defender dead</text>
+  <text x="58" y="144" font-size="13" fill="#7d8a6a">Special SAM site: always open. Carrier: sink the SUPPLY ship</text>
+  <rect x="520" y="76" width="240" height="82" rx="6" fill="#141910" stroke="#cc4444" stroke-width="2"/>
+  <text x="536" y="102" font-size="14" font-weight="700" fill="#cc4444">Left alone, it heals</text>
+  <text x="536" y="122" font-size="13" fill="#cdd4be">One group back per repair pulse,</text>
+  <text x="536" y="141" font-size="13" fill="#cdd4be">frozen while you're in sight</text>
+  <line x1="480" y1="117" x2="516" y2="117" stroke="#cc4444" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ahr)"/>
+  <line x1="260" y1="158" x2="260" y2="180" stroke="#6aab1f" stroke-width="2.5" marker-end="url(#ah)"/>
+
+  <!-- Step 2 -->
+  <rect x="40" y="184" width="440" height="82" rx="6" fill="#141910" stroke="#262e1d" stroke-width="2"/>
+  <text x="58" y="210" font-size="16" font-weight="700" fill="#8ec83f">2  Capture troops inside the ring</text>
+  <text x="58" y="232" font-size="13" fill="#cdd4be">A capture-capable squad, alive, inside the zone</text>
+  <text x="58" y="252" font-size="13" fill="#7d8a6a">Not within 120 s of the base last changing hands</text>
+  <rect x="520" y="184" width="240" height="82" rx="6" fill="#141910" stroke="#cc4444" stroke-width="2"/>
+  <text x="536" y="210" font-size="14" font-weight="700" fill="#cc4444">Nothing starts</text>
+  <text x="536" y="230" font-size="13" fill="#cdd4be">Wrong squad type (MANPADS), or</text>
+  <text x="536" y="249" font-size="13" fill="#cdd4be">both sides' capture troops inside</text>
+  <line x1="480" y1="225" x2="516" y2="225" stroke="#cc4444" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ahr)"/>
+  <line x1="260" y1="266" x2="260" y2="288" stroke="#6aab1f" stroke-width="2.5" marker-end="url(#ah)"/>
+
+  <!-- Step 3 -->
+  <rect x="40" y="292" width="440" height="82" rx="6" fill="#141910" stroke="#262e1d" stroke-width="2"/>
+  <text x="58" y="318" font-size="16" font-weight="700" fill="#8ec83f">3  Capture timer</text>
+  <text x="58" y="340" font-size="13" fill="#cdd4be">180 s divided by the squads in the zone, never under 30 s</text>
+  <text x="58" y="360" font-size="13" fill="#7d8a6a">Longer when the defenders have nobody online</text>
+  <rect x="520" y="292" width="240" height="82" rx="6" fill="#141910" stroke="#cc4444" stroke-width="2"/>
+  <text x="536" y="318" font-size="14" font-weight="700" fill="#cc4444">Timer resets</text>
+  <text x="536" y="338" font-size="13" fill="#cdd4be">All your squads dead or out of</text>
+  <text x="536" y="357" font-size="13" fill="#cdd4be">the zone for 10 s</text>
+  <line x1="480" y1="333" x2="516" y2="333" stroke="#cc4444" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ahr)"/>
+  <line x1="260" y1="374" x2="260" y2="396" stroke="#6aab1f" stroke-width="2.5" marker-end="url(#ah)"/>
+
+  <!-- Step 4 -->
+  <rect x="40" y="400" width="440" height="82" rx="6" fill="#141910" stroke="#6aab1f" stroke-width="2"/>
+  <text x="58" y="426" font-size="16" font-weight="700" fill="#8ec83f">4  BASE CAPTURE: the owner flips</text>
+  <text x="58" y="448" font-size="13" fill="#cdd4be">Old garrison overrun. A light garrison (~25%, no SAMs)</text>
+  <text x="58" y="468" font-size="13" fill="#7d8a6a">is on the books but stays off the map for now</text>
+  <line x1="260" y1="482" x2="260" y2="504" stroke="#6aab1f" stroke-width="2.5" marker-end="url(#ah)"/>
+
+  <!-- Step 5 -->
+  <rect x="40" y="508" width="440" height="82" rx="6" fill="#141910" stroke="#262e1d" stroke-width="2"/>
+  <text x="58" y="534" font-size="16" font-weight="700" fill="#8ec83f">5  Consolidation hold (300 s of progress)</text>
+  <text x="58" y="556" font-size="13" fill="#cdd4be">The assault troops must stay in the zone</text>
+  <text x="58" y="576" font-size="13" fill="#7d8a6a">+50% speed per extra squad; a crate landed = +120 s</text>
+  <rect x="520" y="496" width="240" height="50" rx="6" fill="#141910" stroke="#c9a227" stroke-width="2"/>
+  <text x="536" y="517" font-size="14" font-weight="700" fill="#c9a227">Out of the zone 15 s+</text>
+  <text x="536" y="536" font-size="13" fill="#cdd4be">Clock PAUSES, progress kept</text>
+  <rect x="520" y="554" width="240" height="64" rx="6" fill="#141910" stroke="#cc4444" stroke-width="2"/>
+  <text x="536" y="575" font-size="14" font-weight="700" fill="#cc4444">Every holding squad killed</text>
+  <text x="536" y="594" font-size="13" fill="#cdd4be">Base goes NEUTRAL: retake it</text>
+  <text x="536" y="611" font-size="13" fill="#cdd4be">from step 2</text>
+  <line x1="480" y1="530" x2="516" y2="524" stroke="#c9a227" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ahy)"/>
+  <line x1="480" y1="568" x2="516" y2="582" stroke="#cc4444" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ahr)"/>
+  <line x1="260" y1="590" x2="260" y2="612" stroke="#6aab1f" stroke-width="2.5" marker-end="url(#ah)"/>
+
+  <!-- Step 6 -->
+  <rect x="40" y="616" width="440" height="82" rx="6" fill="#141910" stroke="#6aab1f" stroke-width="2"/>
+  <text x="58" y="642" font-size="16" font-weight="700" fill="#8ec83f">6  Consolidated: the base is yours</text>
+  <text x="58" y="664" font-size="13" fill="#cdd4be">Assault troops stood down, garrison moves in,</text>
+  <text x="58" y="684" font-size="13" fill="#7d8a6a">slots open, repairs start rebuilding it</text>
+</svg>

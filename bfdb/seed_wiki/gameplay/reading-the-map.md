@@ -21,25 +21,33 @@ front line, not four hundred little markers.
 
 ## An objective at a glance
 
-Every base, FOB, factory, depot and naval base is drawn the same way.
+Every base, FOB, factory, hub and naval base is drawn the same way: rings
+for the zone and its state, a type icon in the middle, a row of four status
+hexes to the south and a label to the north-east.
+
+![Diagram of an objective on the F10 map. The dashed owner ring marks the zone; a white inner ring at nine-tenths of its size means capturable; a thick yellow ring, as wide as the logistics exclusion distance or 1.1 times the zone, appears when the base is threatened. Up to four logistics buildings inside the zone carry logi pins. A row of four status hexes, Health, Logi, Supply and Fuel, sits south of the centre, the type icon in the middle, and the label with the name and capture state to the north-east.](/api/wiki/images/ffa68774-fadf-4d8c-a09b-dcb6814d6691)
+
+Carrier groups and special SAM sites are drawn for their owner only. The enemy
+has to find them.
 
 ### The rings
 
 ```mapsymbols
 [
  {"icon":"ring-owner","side":"Blue","name":"Outer ring, dashed",
-  "text":"Who owns the base. Azure is Blue, violet is Red, white is neutral. This is the only ring that is a coalition colour — every other colour on an objective means a state, not a side."},
+  "text":"The zone, in the owner's colour: azure is Blue, violet is Red, white is neutral. Capture troops count only inside it. It and the type icon flash while the base is threatened or a capture timer is running there."},
  {"icon":"ring-unlimited","name":"Outer ring, gold",
   "text":"This base has unlimited aircraft. It will keep producing airframes no matter how many you lose out of it, so it is a main operating base — yours or theirs."},
  {"icon":"ring-capturable","side":"Blue","name":"Inner ring, white",
-  "text":"Capturable right now. Its health is under 20% and it has no infantry left: land troops in the zone and it is yours. This is the single most useful thing on the map."},
+  "text":"Capturable right now: health 20% or less and no infantry left, or just captured and still held only by its assault troops. Land capture troops inside the zone. On a special SAM site this ring is in the owner's colour while the site stands and turns white once it is destroyed."},
  {"icon":"ring-threatened","name":"Outer ring, thick yellow",
-  "text":"Threatened — an enemy is inside the exclusion zone. While it is yellow you cannot deploy crates or troops there. It clears once they leave and the cooldown runs out."}
+  "text":"Threatened: an enemy pilot in sight of the base, or an armed enemy ground unit near it. Repairs are frozen, and the owner can't unload troops inside it. It clears a few minutes after the last enemy leaves. The ring is drawn at the logistics exclusion distance."}
 ]
 ```
 
 If you see a white inner ring, the base is takeable this second. That is the
-single most useful thing on the map.
+single most useful thing on the map. Read the label to see **who** can take
+it: the ring is the same colour for both sides.
 
 ### The four status hexes
 
@@ -47,9 +55,11 @@ Beside every objective is a row of four hexagons. They are always in the same
 order:
 
 ```statushexes
-{"health":82,"logi":58,"supply":14,"fuel":95,"unlimited":["fuel"],
- "caption":"A base in trouble: still standing and holding out, but nearly out of munitions. Its fuel is gold — unlimited — so it will never run dry of that."}
+{"health":82,"logi":58,"supply":14,"fuel":95,
+ "caption":"A base in trouble: still standing and holding out, but nearly out of munitions."}
 ```
+
+Left to right: **Health, Logi, Supply, Fuel**.
 
 ### The colours
 
@@ -64,10 +74,11 @@ order:
 {"health":82,"logi":58,"supply":14,"fuel":95,"focus":["health"]}
 ```
 
-Every building, vehicle and gun at the objective counts toward it. This is the
-one that decides whether you can take the place: health has to fall **below
-20%** before the inner white ring appears and troops can capture it. Bombing a
-base with full supply and full fuel still works — you are killing health.
+Every unit of its garrison counts toward it: vehicles, guns, launchers,
+infantry. This is the one that decides whether you can take the place: health
+has to fall to **20% or less**, with the last infantry dead, before the inner
+white ring appears and troops can capture it. Bombing a base with full supply
+and full fuel still works: you are killing health.
 
 **2. Logi — its logistics buildings.**
 
@@ -94,12 +105,20 @@ supply on your own base is the usual reason "my jet won't take that bomb".
 **4. Fuel.**
 
 ```statushexes
-{"health":82,"logi":58,"supply":14,"fuel":95,"unlimited":["fuel"],"focus":["fuel"]}
+{"health":82,"logi":58,"supply":14,"fuel":95,"focus":["fuel"]}
 ```
 
-Exactly what it says. Shown here with the **gold outline**: unlimited, so it
-never depletes however much you take. Your rear airfields usually look like
-this; a forward FOB almost never does.
+Exactly what it says.
+
+**Unlimited supply** is shown on the **supply** hex: a **gold outline**. Such a
+base never runs out of weapons, vehicles or fuel, so both its supply and fuel
+hexes stay green. Your rear airfields often look like this; a forward FOB
+almost never does.
+
+```statushexes
+{"health":100,"logi":100,"supply":100,"fuel":100,"unlimited":["supply"],"focus":["supply"],
+ "caption":"A rear base with unlimited supply: gold outline on the supply hex."}
+```
 
 ### Reading the row at a glance
 
@@ -110,17 +129,23 @@ number of sorties will fix it.
 
 ### The label
 
-The name, and then only things you have to act on:
+The name and type (`Saraqib Logistics Hub`), in the owner's colour on a dark
+plate, and then only things you have to act on:
 
-- `>> CAPTURABLE - land troops in the zone`
-- `>> CONSOLIDATING 40% (2m10s left) - hold the zone with troops`
-- `>> CONSOLIDATION PAUSED - no troops in the zone`
-- `Infantry: 30% — clear all defenders to capture`
-- `Capturing: 60%` / `Repairing: 25% (ETA 4m)`
-- the base's navaids (TACAN / VOR / ILS)
+| Label line | Meaning |
+| --- | --- |
+| `>> UNDEFENDED - BLUE captures: land troops inside the ring` | A Red base Blue can take now (and the reverse for a Blue base). |
+| `>> NEUTRAL - either side captures: land troops inside the ring` | A Neutral base. |
+| `Infantry: 30% — clear all defenders to capture` | Health is down, but infantry is still alive. |
+| `Capturing: 60%` | A capture timer is running. |
+| `>> CONSOLIDATING 40% (2m10s left) - hold the zone with troops` | Just captured, consolidating. |
+| `>> CONSOLIDATION PAUSED - no troops in the zone` | Just captured, holding troops out of the zone. |
+| `>> NOT CONSOLIDATED - hold with troops or it goes Neutral` | Just captured, no progress figure yet. |
+| `Repairing: 25% (ETA 4m00s)` | Healing toward its next repaired group. |
 
-The health and supply numbers are **not** in the label any more. They are the
-hexes.
+The health and supply numbers are **not** in the label: they are the hexes.
+Navaids are not either, since the label is drawn for both sides; read them
+from `Info → Navaids Directory`.
 
 ---
 
@@ -129,9 +154,9 @@ hexes.
 ```mapsymbols
 [
  {"icon":"supply-arrow","side":"Blue","name":"Supply arrow",
-  "text":"A supply link between two bases, pointing the way the materiel flows. This is the chain that keeps the far end stocked."},
- {"icon":"frontline","name":"Front line, dashed white",
-  "text":"The boundary between the two coalitions. It moves as objectives change hands, so it is the quickest read on who is winning where."},
+  "text":"A faint grey arrow from a logistics hub to each base it supplies. This is the chain that keeps the far end stocked. A naval base's arrow to its carrier is drawn for the carrier's owner only."},
+ {"icon":"frontline","name":"Front line",
+  "text":"The boundary between the two coalitions: a dotted white centre line, with a dashed azure line on Blue's side and a dashed violet line on Red's. It moves as objectives change hands, so it is the quickest read on who is winning where."},
  {"icon":"jtac-line","side":"Blue","name":"JTAC bearing line + diamond",
   "text":"A dot-dash line from a JTAC to whatever it is currently lasing, with a diamond on the target and the laser code printed beside it. Follow the line and you are looking at the thing you were asked to kill."},
  {"icon":"convoy-chevron","side":"Blue","name":"Convoy chevron",
@@ -159,7 +184,9 @@ want the detail.
 | Tasking board | Who posted the task and what it is |
 | Deployed group | What it is and who deployed it |
 | Crate | What is inside it |
-| Logistics building | Which building, at which base |
+| Logistics building | `Saraqib logi: 12345678 (AIRBASE_WAREHOUSE_01)`: which building, at which base |
+| Last defenders | `Last defenders of Saraqib: infantry here (3 left)`, attackers only, within about 150 m of each survivor |
+| Captured base | `Saraqib captured by Blue`, for 30 minutes after a capture |
 
 ---
 
@@ -168,9 +195,9 @@ want the detail.
 ```mapsymbols
 [
  {"icon":"ring-threatened","name":"Thick yellow ring",
-  "text":"An enemy has entered this objective's exclusion zone. Deployment there is locked until it clears."},
+  "text":"The objective is threatened: an enemy is in sight of it. Its repairs are frozen until it clears."},
  {"icon":"ring-attacked","name":"Thick red ring",
-  "text":"The objective is being actively attacked right now. If it is yours, this is where to go."},
+  "text":"Your objective is under attack. Drawn for the owner only, on servers that turn under-attack alerts on, and it fades after a couple of minutes. This is where to go."},
  {"icon":"arty-burst","name":"Burst star in a circle",
   "text":"An artillery fire mission is landing there. Do not be under it, and do not expect anything soft to survive it."},
  {"icon":"recon-contacts","name":"Diamonds in a dotted box",
@@ -252,11 +279,14 @@ Class, count, source, confidence and age are all still there — click the pin.
 
 ## Quick answers
 
-**"Which base should I hit?"** One with a white inner ring, or one whose logi
-hex has gone red — that one is already starving.
+**"Which base should I hit?"** One with a white inner ring and a label naming
+your side, or one whose logi hex has gone red: that one is already starving.
 
-**"Why won't this base capture?"** Read the label. It tells you: health too
-high, infantry still alive, or a consolidation hold running.
+**"Why won't this base capture?"** Read the label: no capture line means health
+is too high, `Infantry:` means defenders are left, and a consolidation line
+means it was just taken. For the full answer, `F10 → Objectives → Capture
+Advisor` or the base's drawer on the dashboard. See
+[Capturing Objectives](./capturing-objectives.md#why-wont-it-capture).
 
 **"Where do I take crates?"** Anywhere with red supply or fuel hexes on your own
 side.
