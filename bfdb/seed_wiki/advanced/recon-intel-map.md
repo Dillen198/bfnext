@@ -55,6 +55,17 @@ There are caps per round: **400 captures per coalition** and **120 per pilot**
 delete some of your own first, so prune stale imagery you no longer need. Each
 photo can be up to 6 MB.
 
+In short:
+
+```steps
+[
+ {"title":"Load TARPS","text":"Take the **F-14B** with a **TARPS pod**."},
+ {"title":"Shoot the area","text":"Fly over or past the area and trigger the camera. Keep bank and dive under about 45° so the photo can be laid flat on the map."},
+ {"title":"Find the files","text":"Each frame is a PNG in your DCS `Screenshots` folder, with its position, altitude and attitude in the filename."},
+ {"title":"Upload","text":"On the dashboard's **Recon Intel** page, **Upload TARPS Photos** and pick the PNGs. Photos with readable coordinates land on the map at once; the rest go to **Needs Placement** for you to **Drop** by hand."}
+]
+```
+
 ## Reading the map
 
 - Each capture is a **camera marker** pointing in the direction the photo was

@@ -31,6 +31,8 @@ repair does not happen.** The base stays broken until a convoy gets through.
 That is the whole point of running a supply line — and the whole point of
 cutting the enemy's.
 
+![How supply reaches the front: outside production feeds the logistics hubs; the hubs ship to bases that are short by convoy, airlift or ship, all of which can be shot up; players spawn crates and troops from a friendly base's stock and fly them forward; a base's stock pays for automatic repairs, aircraft, weapons and fuel, and the crates and troops it issues](/api/wiki/images/3f6c2a91-8d4e-4b7a-9c15-62e0d8a4b7f3)
+
 Unpacking a deployable draws materiel from the **crate's origin objective**, not
 from where you unpack it. Building a SAM ring out in the desert still spends the
 stock of the base you picked the crates up from.

@@ -357,8 +357,10 @@ Ask the engine. Three places tell you:
    See [Objectives Menu](../f10-menu/objectives.md#the-capture-advisor).
 2. **On the F10 map:** the label and rings. See
    [Reading the F10 Map](./reading-the-map.md).
-3. **On the dashboard:** click a base on the Live Ops map, the Objectives page,
-   the TacMap or the Command page. Its drawer carries a capture report.
+3. **On the dashboard:** open a base from the SITREP's FRONT LINE list, the
+   Objectives page (map or table), the TacMap or the Command page. Its drawer
+   carries a capture report. See
+   [Reading the Live Ops Dashboard](../playbooks/reading-live-ops.md).
 
 ### The dashboard capture report
 
