@@ -5,8 +5,8 @@ down, pick again, and the answer flashes in the corner of the screen for a few
 seconds. The **Vector Strike cockpit** gives you two better ways in, both drawn
 inside DCS:
 
-- the **panel** — the whole F10 menu, your cargo, status, EWR picture and every
-  message the server sends you, on a window you can read;
+- the **panel** — the whole F10 menu, your cargo, status, EWR picture, every
+  message the server sends you and this wiki, on a window you can read;
 - the **wheel** — a ring you point at with your head or the mouse, for doing
   things in a second without looking away from flying.
 
@@ -60,7 +60,8 @@ All three can be changed in **Options → Special → Vector Strike** (see
 
 ## The panel
 
-Every tab shares the same frame: the **tabs** across the top, **-** / **+** to
+Every tab shares the same frame: the **tabs** across the top (MENU, CARGO,
+STATUS, EWR, LOG, WIKI, WHEEL), **-** / **+** to
 make the panel more see-through or more solid, **X** to hide it, and a **status
 line** at the bottom that shows the result of what you just did (or your keys).
 Drag the panel by its title bar and resize it from its edges; its position,
@@ -80,6 +81,28 @@ size and opacity are remembered.
   have to catch it in the corner of the screen.
 - **☆ / ★** pins a command to your [wheel](#the-wheel) (★ means it's pinned).
 - No `More >>` pages: long lists just scroll.
+
+Here is the MENU tab inside **Cargo** in a Huey (on the web you can click the
+rows; the replies are the server's real wording):
+
+```cockpitpanel
+{"tab":"MENU","crumb":"F10 > Cargo","rows":[
+ {"text":"Hawk Launcher crate loaded","style":"answer"},
+ {"button":"< Back","go":"F10"},
+ {"button":"Unpack Nearby Crate(s) ☆","says":"Dillen unpacked a Hawk System"},
+ {"button":"Load Nearby Crate ☆","says":"Hawk Launcher crate loaded"},
+ {"button":"Unload Crate ☆","says":"Hawk Launcher crate unloaded"},
+ {"button":"List Nearby Crates ☆","says":"Hawk Launcher crate, bearing 271, 32 meters away"},
+ {"button":"List Cargo ☆","says":"Current Cargo  ·  crates: 1 of 1  ·  Hawk Launcher crate weighing 1000 kg"},
+ {"button":"Destroy Nearby Crate ☆"},
+ {"button":"Crates >","sub":true},
+ {"button":"CSAR >","sub":true}
+],"status":"Clicked Load Nearby Crate"}
+```
+
+The full Cargo tree and every reply it can give are on
+[Cargo Operations](../f10-menu/cargo.md); the other menus have their own pages
+under [F10 Menu Systems](../f10-menu/overview.md).
 
 ### CARGO — what to carry, and how much of it
 
@@ -130,6 +153,57 @@ you're parked at, the **nearest objective** with range and bearing, and any
 Every message sent to you, newest first, tagged **YOU** (just you), **SIDE**
 (your coalition), **ALL** (everyone) or **CHAT**. When something arrives while
 you're on another tab, the tab shows a count — **LOG 3**.
+
+### WIKI — this wiki, in the cockpit
+
+The **WIKI** tab is this wiki (the same pages as wiki.vectorstrike.org),
+inside DCS, so you can look something up on the ramp or in a hover without
+leaving the sim. It works in single player too.
+
+- **Sections, then pages.** The tab opens on the wiki's sections. Pick a
+  section, then a page. **< Back** and the trail at the top
+  (`WIKI > Section > Title`) work as they do in MENU.
+- **Search.** The box at the top filters page titles as you type, then lists
+  the pages that mention your words. While you type, the keyboard is the
+  panel's: click outside the box, or switch tab, to give it back to the
+  cockpit.
+- **Links are buttons.** A link to another page appears as a button under its
+  paragraph. **NEXT** at the bottom opens the following page in the section.
+- **The numbers are your server's.** Points, timings and costs are the ones
+  the server you're flying on uses, the same as the web wiki shows for it.
+- **Pictures** load after a moment and are then kept on your PC, in
+  `Saved Games\DCS\Mods\Services\BFCockpit\cache\wiki\` (safe to delete; they
+  are downloaded again when needed). Screenshots and the drawn diagrams both
+  show as pictures. Pictures need the 3.5 installer: on an older install you
+  see their captions instead.
+- **Mockups show as text.** The interactive mockups on the web can't be
+  clicked in DCS, so they are written out: an F10 menu replica becomes an
+  indented tree with each command's answer under it, a walkthrough becomes a
+  numbered list, and a panel or wheel replica becomes its rows and labels.
+  Every page is written to make sense that way; for the clickable version, open
+  the same page on the web.
+- **On the wheel.** Add the WIKI tab to your wheel with **+ PANEL** in the
+  [WHEEL editor](#building-your-own-wheel).
+
+The panel is at least 500 pixels wide (at 100% panel size) so pages stay
+readable.
+
+A page open in the WIKI tab looks like this (an illustration: the rows depend
+on the page):
+
+```cockpitpanel
+{"tab":"WIKI","crumb":"WIKI > F10 Menu Systems > Actions Menu","rows":[
+ {"text":"Search the wiki...","style":"dim"},
+ {"button":"< Back","go":"F10 Menu Systems"},
+ {"heading":"Actions Menu"},
+ {"text":"Actions>> starts as a single command. Select it once and it rebuilds itself into the full Actions submenu, built from the world as it is right now."},
+ {"button":"F10 Menu Overview","go":"F10 Menu Systems > Overview"},
+ {"text":"[picture: the Actions menu open in the cockpit]","style":"dim"},
+ {"text":"F10 Other\n  Actions\n    AWACS(100 pts)\n      Mark 1 310/38km\n        -> action AWACS started","style":"mono"},
+ {"gap":true},
+ {"button":"NEXT: JTAC System","go":"F10 Menu Systems > JTAC System"}
+],"status":"Actions Menu"}
+```
 
 ### WHEEL — build your own wheel
 
@@ -210,12 +284,44 @@ middle spells it out; pick it to open the panel where it comes from.
 
 ### What's on it to start with
 
-Until you change it, each aircraft type gets a preset: helicopters and the
-C-130 get **Cargo**, **Troops**, **crates aboard**, **Objectives**, **Actions**,
-the **nearest objective** and **Open panel**; everything else gets **JTAC**,
-**GCI/EWR**, the **EWR picture**, the **nearest objective**, **Objectives**,
-**Actions**, **Flight** and **Open panel**. Menus your slot doesn't have are
-left out.
+Until you change it, each aircraft type gets a preset, after any commands you
+pinned with ☆. A slot whose F10 menu has **Cargo** or **C-130 Cargo** gets the
+transport set: **Cargo** (or **C-130 Cargo**), **Troops**, **crates aboard**,
+**Objectives**, **Actions**, the **nearest objective** and a shortcut to the
+**F10 MENU** tab. Everything else gets the combat set: **JTAC**, **GCI/EWR**,
+the **EWR** tab, the **nearest objective**, **Objectives**, **Actions**,
+**Flight** and **F10 MENU**. Menus your slot doesn't have are left out.
+
+The combat preset, as a fast jet sees it (on the web, point at a group to fan
+it out; the replies are the server's real wording):
+
+```wheel
+{"theme":"green","title":"VECTOR STRIKE","subtitle":"combat preset","items":[
+ {"label":"JTAC","icon":"jtac","items":[
+  {"label":"Refresh Locations"},
+  {"label":"Kobuleti (2 JTAC)>>"},
+  {"label":"Gori (1 JTAC)>>"}]},
+ {"label":"GCI/EWR","icon":"ewr","items":[
+  {"label":"Report","says":"Bandits BRAA\n   BRG°M      RNG      ALT      SPD      HDG°M      AGE  ASPECT    SRC   TYPE\n     42     38nm    A22.0    500kts     222      6s HOT       [GA]   Flanker"},
+  {"label":"Toggle","says":"ewr reports are disabled"},
+  {"label":"Friendly Report"},
+  {"label":"Ground Intel"}]},
+ {"label":"EWR","icon":"ewr","says":"opens the panel's EWR tab"},
+ {"label":"12NM 012°","icon":"compass","says":"Gori (Red) 12.0 nm @ 012°"},
+ {"label":"Objectives","icon":"objective","items":[
+  {"label":"Nearest Base (detail)"},
+  {"label":"Capturable / Contested"},
+  {"label":"Capture Advisor: Nearest"},
+  {"label":"Bases Under Threat"}]},
+ {"label":"Actions","icon":"actions"},
+ {"label":"Flight","icon":"flight"},
+ {"label":"F10 MENU","icon":"panel","says":"opens the panel's MENU tab"}
+]}
+```
+
+The exact replies of each menu are on its own page: [JTAC](../f10-menu/jtac.md),
+[GCI / EWR](../f10-menu/ewr.md), [Objectives](../f10-menu/objectives.md),
+[Actions](../f10-menu/actions.md).
 
 ![The wheel in the blue colour scheme, as set up for a jet](/api/wiki/images/f7e01aaf-8460-48c5-a6dc-81ab6f36fb17)
 
@@ -338,3 +444,7 @@ those lines to the Discord.
   firewall, or a wrong `api` in the settings file.
 - **"not supported by this server yet"** — that server hasn't been updated to
   the version the CARGO and LOG tabs need yet. Everything else still works.
+- **The WIKI tab shows captions instead of pictures** — pictures need the 3.5
+  installer. Run it again with DCS closed.
+- **The keyboard stopped working in the cockpit** — the WIKI search box still
+  has it. Click outside the box, or switch tab.
