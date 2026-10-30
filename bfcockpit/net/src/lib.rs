@@ -15,6 +15,14 @@
 //! end
 //! ```
 //!
+//! `download(url, path [, timeout [, headers]])` is `request` for a picture:
+//! the body goes into the file `path` (a `.png`, `.jpg` or `.jpeg`) instead of
+//! back to Lua, which can't take bytes that aren't text. It is written to
+//! `<path>.part` and renamed into place once complete, so a half-downloaded
+//! file is never there under its real name, and only when the response is a
+//! 2xx whose bytes really are a PNG or a JPEG. The result comes back through
+//! `poll()` like a request's, with `body` empty on success (the file has it).
+//!
 //! `update(version, write_dir)` fetches the installer for a newer plugin
 //! version and starts it hidden; it waits for DCS to close before installing
 //! (see `update` below). The installer runs only if its signature verifies
@@ -30,6 +38,7 @@
 //! http.headers             -- true: `request` takes a 5th argument, a table of
 //!                          -- extra request headers (absent in older DLLs,
 //!                          -- which ignore that argument)
+//! http.download            -- absent before 1.1: no pictures in the WIKI tab
 //! http.version             -- this DLL's crate version ("1.0.0")
 //! http.script_version      -- the BFCOCKPIT_VERSION of the Hooks script it
 //!                          -- was built with, e.g. "3.3.0": compare it with
@@ -72,6 +81,8 @@ const BUILD_STAMP: &str = concat!(
     ";END"
 );
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
+/// The largest file `download` writes. A wiki picture is well under this.
+const MAX_DOWNLOAD: u64 = 16 * 1024 * 1024;
 
 /// Where every plugin version's installer is published (a GitHub release per
 /// version, `cockpit-v<version>`). Fixed here rather than taken from the
@@ -107,6 +118,12 @@ enum Work {
     Update {
         version: String,
         write_dir: PathBuf,
+    },
+    Download {
+        url: String,
+        path: PathBuf,
+        timeout: Duration,
+        headers: Vec<(String, String)>,
     },
 }
 
@@ -188,6 +205,9 @@ fn run(agent: &ureq::Agent, job: Job) -> Done {
         Work::Http { method, url, body, timeout, headers } => {
             http(agent, job.id, &method, &url, body, timeout, &headers)
         }
+        Work::Download { url, path, timeout, headers } => {
+            download_to(agent, job.id, &url, &path, timeout, &headers)
+        }
         Work::Update { version, write_dir } => {
             match update_now(agent, &version, &write_dir) {
                 Ok(msg) => Done { id: job.id, status: 200, body: msg, error: None },
@@ -234,6 +254,93 @@ fn http(
     match read_body(resp) {
         Ok(body) => Done { id, status, body, error: None },
         Err(e) => Done { id, status, body: String::new(), error: Some(e) },
+    }
+}
+
+/// What kind of picture `path` names by its extension, or None if it is not
+/// one `download` writes.
+fn picture_kind(path: &Path) -> Option<&'static str> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => Some("png"),
+        "jpg" | "jpeg" => Some("jpeg"),
+        _ => None,
+    }
+}
+
+/// `bytes` really are the kind of picture the file name says.
+fn is_picture(kind: &str, bytes: &[u8]) -> bool {
+    match kind {
+        "png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "jpeg" => bytes.starts_with(&[0xFF, 0xD8, 0xFF]),
+        _ => false,
+    }
+}
+
+/// Write `bytes` to `path` by way of `<path>.part`, creating its folder.
+fn save_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("creating {}: {e}", dir.display()))?;
+    }
+    let mut part = path.as_os_str().to_owned();
+    part.push(".part");
+    let part = PathBuf::from(part);
+    std::fs::write(&part, bytes)
+        .map_err(|e| format!("writing {}: {e}", part.display()))?;
+    let _ = std::fs::remove_file(path);
+    std::fs::rename(&part, path).map_err(|e| {
+        let _ = std::fs::remove_file(&part);
+        format!("saving {}: {e}", path.display())
+    })
+}
+
+fn download_to(
+    agent: &ureq::Agent,
+    id: u64,
+    url: &str,
+    path: &Path,
+    timeout: Duration,
+    headers: &[(String, String)],
+) -> Done {
+    let fail =
+        |status: u16, body: String, e: String| Done { id, status, body, error: Some(e) };
+    let mut req = agent.get(url).timeout(timeout);
+    for (name, value) in headers {
+        req = req.set(name, value);
+    }
+    let resp = match req.call() {
+        Ok(resp) => resp,
+        // the reason, as bfdb words it ({"error": "..."}), for the log
+        Err(ureq::Error::Status(code, resp)) => {
+            let body = read_limited(resp.into_reader(), 64 * 1024).unwrap_or_default();
+            return fail(code, body, format!("server answered HTTP {code}"));
+        }
+        Err(ureq::Error::Transport(t)) => return fail(0, String::new(), t.to_string()),
+    };
+    let status = resp.status();
+    let mut bytes = Vec::new();
+    if let Err(e) = resp.into_reader().take(MAX_DOWNLOAD + 1).read_to_end(&mut bytes) {
+        return fail(status, String::new(), format!("reading response: {e}"));
+    }
+    if bytes.len() as u64 > MAX_DOWNLOAD {
+        return fail(
+            status,
+            String::new(),
+            format!("larger than {} MB -- not saved", MAX_DOWNLOAD / (1024 * 1024)),
+        );
+    }
+    let kind = picture_kind(path).unwrap_or("");
+    if !is_picture(kind, &bytes) {
+        return fail(
+            status,
+            String::new(),
+            format!("the response is not a {kind} picture"),
+        );
+    }
+    match save_file(path, &bytes) {
+        Ok(()) => Done { id, status, body: String::new(), error: None },
+        Err(e) => fail(status, String::new(), e),
     }
 }
 
@@ -488,6 +595,51 @@ fn request(
     })
 }
 
+fn queue_download(
+    url: &LuaValue,
+    path: &LuaValue,
+    timeout: &LuaValue,
+    headers: &LuaValue,
+) -> Result<u64, String> {
+    let url = lua_str(url).ok_or("url must be a string")?;
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("url must start with https:// or http://".into());
+    }
+    let path = PathBuf::from(lua_str(path).ok_or("path must be a string")?);
+    if !path.is_absolute() {
+        return Err(format!("not an absolute path: {}", path.display()));
+    }
+    if picture_kind(&path).is_none() {
+        return Err(format!(
+            "only .png, .jpg and .jpeg files are written: {}",
+            path.display()
+        ));
+    }
+    let timeout = match timeout {
+        LuaValue::Integer(n) => Some(*n as f64),
+        LuaValue::Number(n) => Some(*n),
+        _ => None,
+    }
+    .filter(|t| t.is_finite() && *t > 0.)
+    .map(|t| Duration::from_secs_f64(t.min(120.)))
+    .unwrap_or(Duration::from_secs(60));
+    let headers = headers_of(headers)?;
+    send(Work::Download { url, path, timeout, headers })
+}
+
+/// `download(url, path [, timeout_secs [, headers]]) -> id | nil, err`
+///
+/// Never raises (see `request`).
+fn lua_download(
+    _: &Lua,
+    (url, path, timeout, headers): (LuaValue, LuaValue, LuaValue, LuaValue),
+) -> LuaResult<(Option<u64>, Option<String>)> {
+    Ok(match queue_download(&url, &path, &timeout, &headers) {
+        Ok(id) => (Some(id), None),
+        Err(e) => (None, Some(e)),
+    })
+}
+
 /// A version is digits and dots only -- it goes into a URL and a file name.
 fn valid_version(v: &str) -> bool {
     let parts: Vec<&str> = v.split('.').collect();
@@ -630,6 +782,7 @@ fn bfcockpit_net(lua: &Lua) -> LuaResult<LuaTable> {
     m.set("poll", lua.create_function(poll)?)?;
     m.set("update", lua.create_function(update)?)?;
     m.set("random_key", lua.create_function(random_key)?)?;
+    m.set("download", lua.create_function(lua_download)?)?;
     m.set("headers", true)?;
     m.set("version", env!("CARGO_PKG_VERSION"))?;
     m.set("script_version", env!("BFCOCKPIT_SCRIPT_VERSION"))?;
@@ -719,6 +872,49 @@ Host: evil"
         let list: LuaValue = lua.load(r#"{ "a", "b" }"#).eval().unwrap();
         assert!(headers_of(&list).is_err(), "integer keys are not header names");
         assert!(headers_of(&LuaValue::Boolean(true)).is_err());
+    }
+
+    #[test]
+    fn downloads_write_only_pictures() {
+        assert_eq!(picture_kind(Path::new(r"C:\x\a.PNG")), Some("png"));
+        assert_eq!(picture_kind(Path::new("a.jpeg")), Some("jpeg"));
+        assert_eq!(picture_kind(Path::new("a.jpg")), Some("jpeg"));
+        assert_eq!(picture_kind(Path::new("a.exe")), None);
+        assert_eq!(picture_kind(Path::new("a")), None);
+        assert!(is_picture("png", b"\x89PNG\r\n\x1a\n...."));
+        assert!(!is_picture("png", &[0xFF, 0xD8, 0xFF]));
+        assert!(is_picture("jpeg", &[0xFF, 0xD8, 0xFF, 0xE0]));
+        assert!(!is_picture("jpeg", b"<html>"));
+        assert!(!is_picture("", b"\x89PNG\r\n\x1a\n"));
+    }
+
+    #[test]
+    fn download_arguments_are_checked() {
+        let lua = Lua::new();
+        let s = |v: &str| LuaValue::String(lua.create_string(v).unwrap());
+        let nil = LuaValue::Nil;
+        let png = std::env::temp_dir().join("bfcockpit-x.png");
+        let png = s(png.to_str().unwrap());
+        let exe = std::env::temp_dir().join("bfcockpit-x.exe");
+        let exe = s(exe.to_str().unwrap());
+        let err = |r: Result<u64, String>| r.unwrap_err();
+        assert!(err(queue_download(&s("ftp://x"), &png, &nil, &nil)).contains("https://"));
+        assert!(err(queue_download(&s("https://x"), &s("rel.png"), &nil, &nil))
+            .contains("absolute"));
+        assert!(err(queue_download(&s("https://x"), &exe, &nil, &nil)).contains(".png"));
+        assert!(queue_download(&nil, &png, &nil, &nil).is_err());
+    }
+
+    #[test]
+    fn saved_files_appear_whole() {
+        let dir = std::env::temp_dir()
+            .join(format!("bfcockpit-net-test-{}", std::process::id()));
+        let path = dir.join("sub").join("pic.png");
+        save_file(&path, b"\x89PNG\r\n\x1a\nfirst").unwrap();
+        save_file(&path, b"\x89PNG\r\n\x1a\nsecond").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"\x89PNG\r\n\x1a\nsecond");
+        assert!(!dir.join("sub").join("pic.png.part").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
