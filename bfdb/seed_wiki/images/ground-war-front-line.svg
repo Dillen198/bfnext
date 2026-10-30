@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" width="800" height="500" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect x="0" y="0" width="800" height="500" fill="#0d1009"/>
+  <text x="400" y="32" text-anchor="middle" font-size="16" font-weight="bold" fill="#8ec83f">A formation on the march, and the front line it pushes</text>
+
+  <!-- map panel -->
+  <rect x="20" y="50" width="760" height="330" rx="6" fill="#141910" stroke="#262e1d" stroke-width="1.5"/>
+
+  <!-- road from Senaki to Gori -->
+  <path d="M124,150 C220,135 300,200 400,185 S560,165 636,170" fill="none" stroke="#7d8a6a" stroke-width="6" stroke-opacity="0.45" stroke-linecap="round"/>
+
+  <!-- front line: blue edge, centre, red edge (bulging toward Red where the formation pushes) -->
+  <path d="M390,60 C388,120 458,150 460,185 C462,225 395,250 390,370" fill="none" stroke="#4a8fd4" stroke-width="2.5" stroke-dasharray="9 6"/>
+  <path d="M420,60 C418,120 488,150 490,185 C492,225 425,250 420,370" fill="none" stroke="#cdd4be" stroke-width="2.5" stroke-dasharray="2 5"/>
+  <path d="M450,60 C448,120 518,150 520,185 C522,225 455,250 450,370" fill="none" stroke="#cc4444" stroke-width="2.5" stroke-dasharray="9 6"/>
+
+  <!-- bases -->
+  <circle cx="110" cy="150" r="14" fill="#4a8fd4" stroke="#cdd4be" stroke-width="1.5"/>
+  <text x="110" y="182" text-anchor="middle" font-size="13" fill="#cdd4be">Senaki</text>
+  <circle cx="120" cy="310" r="14" fill="#4a8fd4" stroke="#cdd4be" stroke-width="1.5"/>
+  <text x="120" y="342" text-anchor="middle" font-size="13" fill="#cdd4be">Kutaisi</text>
+  <circle cx="650" cy="170" r="14" fill="#cc4444" stroke="#cdd4be" stroke-width="1.5"/>
+  <text x="650" y="202" text-anchor="middle" font-size="13" fill="#cdd4be">Gori</text>
+  <circle cx="660" cy="320" r="14" fill="#cc4444" stroke="#cdd4be" stroke-width="1.5"/>
+  <text x="660" y="352" text-anchor="middle" font-size="13" fill="#cdd4be">Tskhinvali</text>
+
+  <!-- 1: raised -->
+  <circle cx="110" cy="96" r="11" fill="#6aab1f"/>
+  <text x="110" y="101" text-anchor="middle" font-size="13" font-weight="bold" fill="#0d1009">1</text>
+  <text x="128" y="92" font-size="13" fill="#cdd4be">Raised from</text>
+  <text x="128" y="108" font-size="13" fill="#cdd4be">Senaki's garrison</text>
+
+  <!-- 2: column on the road -->
+  <circle cx="234" cy="160" r="5" fill="#4a8fd4"/>
+  <circle cx="260" cy="167" r="5" fill="#4a8fd4"/>
+  <circle cx="287" cy="175" r="5" fill="#4a8fd4"/>
+  <circle cx="314" cy="181" r="5" fill="#4a8fd4"/>
+  <circle cx="342" cy="186" r="6" fill="#4a8fd4" stroke="#cdd4be" stroke-width="1"/>
+  <circle cx="140" cy="226" r="11" fill="#6aab1f"/>
+  <text x="140" y="231" text-anchor="middle" font-size="13" font-weight="bold" fill="#0d1009">2</text>
+  <text x="158" y="226" font-size="13" fill="#cdd4be">Column on the road, as fast</text>
+  <text x="158" y="242" font-size="13" fill="#cdd4be">as its slowest vehicle</text>
+
+  <!-- F10 pin and attack arrow (own side only) -->
+  <rect x="170" y="268" width="210" height="42" rx="4" fill="#0d1009" stroke="#4a8fd4" stroke-width="1.2"/>
+  <text x="178" y="285" font-size="13" fill="#cdd4be">3rd Mech Coy (Senaki)</text>
+  <text x="178" y="302" font-size="13" fill="#7d8a6a">attacking Gori | ~75% strength</text>
+  <line x1="330" y1="268" x2="341" y2="193" stroke="#4a8fd4" stroke-width="1.2"/>
+  <text x="275" y="328" text-anchor="middle" font-size="13" fill="#7d8a6a">F10 pin and arrow: your side only</text>
+  <line x1="354" y1="184" x2="420" y2="176" stroke="#4a8fd4" stroke-width="3"/>
+  <polygon points="432,174 418,168 420,183" fill="#4a8fd4"/>
+
+  <!-- 3: contact, battle ring -->
+  <circle cx="565" cy="175" r="38" fill="#c9a227" fill-opacity="0.12" stroke="#c9a227" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="590" y="128" text-anchor="middle" font-size="13" font-weight="bold" fill="#c9a227">GROUND BATTLE near Gori</text>
+  <circle cx="548" cy="157" r="5" fill="#4a8fd4"/>
+  <circle cx="548" cy="169" r="5" fill="#4a8fd4"/>
+  <circle cx="548" cy="181" r="5" fill="#4a8fd4"/>
+  <circle cx="548" cy="193" r="5" fill="#4a8fd4"/>
+  <polygon points="588,163 597,172 588,181 579,172" fill="#cc4444"/>
+  <circle cx="530" cy="238" r="11" fill="#6aab1f"/>
+  <text x="530" y="243" text-anchor="middle" font-size="13" font-weight="bold" fill="#0d1009">3</text>
+  <text x="548" y="238" font-size="13" fill="#cdd4be">Contact: it stops, deploys</text>
+  <text x="548" y="254" font-size="13" fill="#cdd4be">into line and fights</text>
+
+  <!-- 4: assault -->
+  <circle cx="628" cy="160" r="3" fill="#8ec83f"/>
+  <circle cx="634" cy="167" r="3" fill="#8ec83f"/>
+  <circle cx="627" cy="174" r="3" fill="#8ec83f"/>
+  <circle cx="692" cy="142" r="11" fill="#6aab1f"/>
+  <text x="692" y="147" text-anchor="middle" font-size="13" font-weight="bold" fill="#0d1009">4</text>
+  <text x="672" y="172" font-size="13" fill="#cdd4be">Base broken:</text>
+  <text x="672" y="188" font-size="13" fill="#cdd4be">infantry go in</text>
+  <text x="672" y="204" font-size="13" fill="#cdd4be">to capture it</text>
+
+  <!-- legend -->
+  <line x1="30" y1="405" x2="80" y2="405" stroke="#4a8fd4" stroke-width="2.5" stroke-dasharray="9 6"/>
+  <text x="90" y="410" font-size="13" fill="#cdd4be">Blue's edge (azure on the F10 map)</text>
+  <line x1="420" y1="405" x2="470" y2="405" stroke="#cc4444" stroke-width="2.5" stroke-dasharray="9 6"/>
+  <text x="480" y="410" font-size="13" fill="#cdd4be">Red's edge (violet on the F10 map)</text>
+  <line x1="30" y1="432" x2="80" y2="432" stroke="#cdd4be" stroke-width="2.5" stroke-dasharray="2 5"/>
+  <text x="90" y="437" font-size="13" fill="#cdd4be">Centre of no man's land (white, dotted)</text>
+  <circle cx="445" cy="432" r="8" fill="#c9a227" fill-opacity="0.12" stroke="#c9a227" stroke-width="2" stroke-dasharray="4 3"/>
+  <text x="480" y="437" font-size="13" fill="#cdd4be">Battle ring, seen by both sides</text>
+  <text x="30" y="466" font-size="13" fill="#7d8a6a">Bases set the line. Formations in the field add their weight to it, so it bulges</text>
+  <text x="30" y="484" font-size="13" fill="#7d8a6a">ahead of them toward the enemy. It is redrawn when they have moved it, not every second.</text>
+</svg>

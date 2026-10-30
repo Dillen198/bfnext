@@ -5,6 +5,10 @@ ground war's formations, bases and battles, and every other asset your side
 has in the field, live, with the enemy you can see. Commanders give orders from
 it; everyone on the side can watch.
 
+The page is locked to your coalition: log in, and make sure your Discord is
+linked (`-linkme` in DCS chat) and that you have taken a slot on the server
+this campaign. Otherwise it shows **NO COALITION**.
+
 ## Becoming a commander
 
 Command is earned. It unlocks at rank tier
@@ -19,7 +23,17 @@ Discord, commanders get that server's **Commander** role; your Blue or Red role 
 shows your side, server by server, and follows you when you switch.
 
 The page tells you where you stand: what unlocks command, and how far off you
-are.
+are. In game, an order from someone who isn't a commander is refused with:
+
+```dcsmessage
+orders need a commander: reach Major (a campaign score of 50), or ask an admin.
+```
+
+The rank named is the server's commander rank. Server admins can always
+order. Some servers don't require a commander at all, and then anyone on a
+side can command it; and until the dashboard has told the game server who
+the commanders are (just after a restart, or on a server running without
+it), orders are let through.
 
 ## What is on the map
 
@@ -49,7 +63,7 @@ hotkey, or right-click the map for its main order:
 
 | Asset | Orders |
 |---|---|
-| Ground formations | Attack, defend, withdraw, hold (as before), and **Move** (**M**) to any point that isn't an enemy base. A Move is a road march: the column drives on past enemies it only sees and returns fire, stopping to fight only when the enemy is within about 3 km. To go looking for a fight, give an Attack |
+| Ground formations | **Attack** (**A**, then click an enemy base), **Defend** (**D**, then one of your bases), **Hold** (**H**), **Withdraw** (**W**: home, or the nearest base you hold), **Release** (**X**: hand back to the AI), **Raise** (**R**: a new formation at the base under the cursor), and **Move** (**M**) to any point that isn't an enemy base. A Move is a road march: the column drives on past enemies it only sees and returns fire, stopping to fight only when the enemy is within about 3 km. To go looking for a fight, give an Attack. The same orders as F10 → Ground Forces (see [Ground War](./ground-war.md)), under the same rules |
 | AI flights | **Station** (**S**): go to a point and work there (CAP station, tanker or AWACS orbit, attack area); given while the flight is still on the ramp, it takes effect once it is airborne. **RTB** (**B**) |
 | Deployed units, troops | **Move** (**M**) |
 | Units nobody owns, dismount squads | **DISBAND**: removed for good, nothing refunded. Not a squad holding a base it has just captured, and never a unit a player owns: only they can remove it |
@@ -62,7 +76,25 @@ the selected base (**convoy**, **helicopter supply**, **helicopter troops**),
 the operations the [Theatre HQ](./theatre-hq.md) can run right now, each
 with its price, and **BUY A FORMATION**. Click one to launch it.
 
-Press **?** on the page for every key.
+Press **?** on the page for every key. The rest of the controls: **Shift +
+click** adds or removes a formation, **Shift + drag** box-selects (Ctrl +
+Shift adds), a **double-click** selects every formation of that kind on
+screen, **Ctrl / Alt + 1-9** makes the selection a group and **1-9** selects
+it (twice to centre on it), **Space** centres on the selection, **Tab** steps
+through your formations, **F** follows your own aircraft and **Esc** cancels
+the order, then deselects.
+
+Every order you give is told to your whole side:
+
+```dcsmessage
+COMMAND Viper: barrage on the marked point ({{cfg:smart_commander.hq.costs.artillery|150}} from the treasury)
+```
+
+The price shown is what that order cost on this server (the HQ's artillery
+price, times its cost scale where the server sets one). A Move reads
+"COMMAND Viper: 3rd Mech Coy (Senaki): moving to a position 12 km away by
+road, returning fire only". Attack, Defend, Hold, Withdraw and Raise are
+announced the way F10 orders are, with "(dashboard)" after your name.
 
 ## Reading the map
 
@@ -90,7 +122,14 @@ The formation panel sets how it fights and drives, at once in DCS:
 - **Rules of engagement**: **AUTO** (the doctrine: weapons free, return fire
   only on a road march), **FREE**, **RETURN** (shoot only when shot at, and keep
   moving), **HOLD** (hold fire).
-- **Pace**: **SLOW** (half speed, keeps together), **NORMAL**, **FAST** (flat out).
+- **Pace**: **SLOW** (0.55 of normal, keeps together), **NORMAL**
+  ({{cfg:ground_war.speed_kph|35}} km/h by road at most), **FAST** (about
+  1.65 times normal: flat out, never faster than the slowest vehicle).
+
+You can't move, or change the posture of, a formation another commander is
+directing while their order stands: "3rd Mech Coy (Senaki) is carrying out
+Viper's order". A route has at most 12 waypoints, none in the water and none
+inside an enemy base ("Gori is an enemy base: order an attack to take it").
 
 ## Buying a formation
 
@@ -110,9 +149,16 @@ out along your route. That base can't be under threat, still consolidating
 after a capture, a carrier, a naval base or a SAM site. Radar and GCI units
 can't be bought this way, and nor can anything that can't drive.
 
+It is named like any other, by its unit type and base, for example "6th
+T-72B3 Coy (Kutaisi)". Each copy costs the deployable's own price times
+{{cfg:ground_war.purchase.cost_factor|1}}. The nearest base is the one used:
+if it is consolidating, the order is refused rather than sent from the next
+one.
+
 A bought formation counts towards your side's formation limit
-({{cfg:ground_war.max_formations_per_side|6}}) and starts with its base's
-supply. When it stands down, its survivors stay where they are as the buying
+({{cfg:ground_war.max_formations_per_side|6}}), and towards the
+{{cfg:ground_war.max_live_formations|6}} formations both sides together may
+have in DCS. It starts with its base's supply. When it stands down, its survivors stay where they are as the buying
 commander's deployed units.
 
 ## The order catalogue
@@ -127,7 +173,8 @@ Everything happens in DCS. Nothing is decided on the map instead:
 
 - **Air**: AWACS, tankers, fighters, attack and SEAD flights take off from a
   friendly airfield (one must be within 250 km of the point) and fly there.
-  **Bombers** go after the target a JTAC of yours is lasing nearest the point.
+  **Bombers** go after the target a JTAC of yours is lasing nearest the point
+  (there has to be one within 15 km of it).
   **Strikes** attack with the flight's own weapons, no JTAC needed (see
   [AI Strike Missions](./strike-missions.md)).
 - **Fires**: every battery in range fires (**Barrage**); deployed missile
@@ -136,15 +183,20 @@ Everything happens in DCS. Nothing is decided on the map instead:
   base within {{cfg:command.deploy_range_m|25000}} m and **drive there by road**:
   a convoy the enemy can find and kill on the way. **Ambush convoy** sends a
   force out from your nearest base to cut off the enemy convoy nearest the
-  point. **Reinforcements** rebuild a base's lost units by transporter convoy.
+  point (within 20 km of it). **Reinforcements** rebuild a base's lost units
+  by transporter convoy.
 - **Naval**: a **naval strike** has your ships launch their own cruise
   missiles at an enemy base: only ships that carry them can (a Ticonderoga or
   an Arleigh Burke). A **hunter group** (Red: a Type 093 submarine; Blue: an
   Arleigh Burke surface action group, since DCS has no modern Western
   submarine) sails out from your nearest naval base or carrier group to the
   point and attacks the enemy ships it finds with its own anti-ship missiles.
+  It costs {{cfg:command.hunters.cost|300}} before the HQ's cost scale,
+  sails up to {{cfg:command.hunters.range_m|400000}} m from where it set out,
+  and a side can have {{cfg:command.hunters.max_per_side|2}} at sea at once.
   It shows on your map; **Sail** sends it elsewhere. It heads home after
-  about 90 minutes.
+  {{cfg:command.hunters.lifetime_secs|5400}} seconds. If it is sunk, your
+  side hears "COMMAND: Surface action group 1 has been lost."
 - **Logistics**: repair flights, base-to-base transfers, carrier repair and
   respawn.
 
@@ -167,5 +219,9 @@ every order:
   insertions, the HQ operations you launch, and actions paid from the
   treasury) is **yours**: you get the credit, and you can `-delete` it, but
   nothing is refunded, since your points didn't pay for it.
-- Orders are rate limited.
+- Orders are rate limited: one every 1.5 seconds and at most 20 a minute
+  per commander ("one order at a time"), and orders to ground formations (and
+  buying one) one every
+  {{cfg:ground_war.player_order_cooldown_secs|30}} seconds, shared with your
+  F10 orders.
 - The whole side is told who ordered what.
