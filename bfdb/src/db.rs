@@ -218,6 +218,27 @@ pub(crate) struct WikiImage {
     pub(crate) uploaded_by: std::string::String,
 }
 
+impl WikiImage {
+    /// One of the SVG diagrams compiled into this binary from
+    /// `bfdb/seed_wiki/images/`. Only those are served as `image/svg+xml`: an
+    /// upload is never stored as SVG (uploads are sniffed to raster formats),
+    /// but rows from before sniffing may claim anything, so both the type and
+    /// the seed origin must match.
+    pub(crate) fn is_seed_svg(&self) -> bool {
+        self.uploaded_by == "seed" && self.content_type == "image/svg+xml"
+    }
+}
+
+/// Content type of a compiled-in seed image: the drawn diagrams are SVG, the
+/// screenshots JPEG.
+fn seed_image_type(data: &[u8]) -> &'static str {
+    if data.starts_with(b"<svg") || data.starts_with(b"<?xml") {
+        "image/svg+xml"
+    } else {
+        "image/jpeg"
+    }
+}
+
 // ── Recon intel (TARPS) types ─────────────────────────────────────────
 
 /// One reconnaissance capture (a TARPS photo) contributed through the
@@ -4506,6 +4527,13 @@ impl StatsDb {
                 include_str!("../seed_wiki/playbooks/flight-replay.md"),
             ),
             (
+                "playbooks/mission-planner",
+                "Mission Planner",
+                "Playbooks",
+                7,
+                include_str!("../seed_wiki/playbooks/mission-planner.md"),
+            ),
+            (
                 "gameplay/objectives",
                 "Objectives",
                 "Core Gameplay",
@@ -4516,56 +4544,56 @@ impl StatsDb {
                 "gameplay/reading-the-map",
                 "Reading the F10 Map",
                 "Core Gameplay",
-                1,
+                2,
                 include_str!("../seed_wiki/gameplay/reading-the-map.md"),
             ),
             (
                 "gameplay/capturing-objectives",
                 "Capturing Objectives",
                 "Core Gameplay",
-                2,
+                3,
                 include_str!("../seed_wiki/gameplay/capturing-objectives.md"),
             ),
             (
                 "gameplay/logistics",
                 "Logistics & Supply",
                 "Core Gameplay",
-                3,
+                4,
                 include_str!("../seed_wiki/gameplay/logistics.md"),
             ),
             (
                 "gameplay/points-and-lives",
                 "Points and Lives",
                 "Core Gameplay",
-                4,
+                6,
                 include_str!("../seed_wiki/gameplay/points-and-lives.md"),
             ),
             (
                 "gameplay/chat-commands",
                 "Chat Commands",
                 "Core Gameplay",
-                5,
+                18,
                 include_str!("../seed_wiki/gameplay/chat-commands.md"),
             ),
             (
                 "gameplay/gci",
                 "Live GCI (AWACS Calls)",
                 "Core Gameplay",
-                6,
+                14,
                 include_str!("../seed_wiki/gameplay/gci.md"),
             ),
             (
                 "gameplay/briefing",
                 "The Auto-Generated Briefing",
                 "Core Gameplay",
-                7,
+                12,
                 include_str!("../seed_wiki/gameplay/briefing.md"),
             ),
             (
                 "gameplay/comms-plan",
                 "Comms Plan",
                 "Core Gameplay",
-                8,
+                13,
                 include_str!("../seed_wiki/gameplay/comms-plan.md"),
             ),
             (
@@ -4579,63 +4607,70 @@ impl StatsDb {
                 "gameplay/war-economy",
                 "Materiel & the War Economy",
                 "Core Gameplay",
-                10,
+                5,
                 include_str!("../seed_wiki/gameplay/war-economy.md"),
             ),
             (
                 "gameplay/navaids",
                 "Navaids & Approaches",
                 "Core Gameplay",
-                11,
+                15,
                 include_str!("../seed_wiki/gameplay/navaids.md"),
+            ),
+            (
+                "gameplay/weather",
+                "Weather, ATIS & Time",
+                "Core Gameplay",
+                16,
+                include_str!("../seed_wiki/gameplay/weather.md"),
             ),
             (
                 "gameplay/carrier-ops",
                 "Carrier Operations",
                 "Core Gameplay",
-                12,
+                17,
                 include_str!("../seed_wiki/gameplay/carrier-ops.md"),
             ),
             (
                 "gameplay/your-task",
                 "Your Task & Rookie Mode",
                 "Core Gameplay",
-                13,
+                8,
                 include_str!("../seed_wiki/gameplay/your-task.md"),
             ),
             (
                 "gameplay/war-effort",
                 "The War Effort Bar",
                 "Core Gameplay",
-                14,
+                10,
                 include_str!("../seed_wiki/gameplay/war-effort.md"),
             ),
             (
                 "gameplay/progression",
                 "XP, Levels & Squadrons",
                 "Core Gameplay",
-                15,
+                7,
                 include_str!("../seed_wiki/gameplay/progression.md"),
             ),
             (
                 "gameplay/round-rules",
                 "Rear Bases, Era Weapons & Round Length",
                 "Core Gameplay",
-                16,
+                11,
                 include_str!("../seed_wiki/gameplay/round-rules.md"),
             ),
             (
                 "gameplay/war-diary",
                 "The War Diary",
                 "Core Gameplay",
-                17,
+                19,
                 include_str!("../seed_wiki/gameplay/war-diary.md"),
             ),
             (
                 "gameplay/objective-buildings",
                 "Buildings at an Objective: What to Look For",
                 "Core Gameplay",
-                18,
+                1,
                 include_str!("../seed_wiki/gameplay/objective-buildings.md"),
             ),
             (
@@ -4712,14 +4747,14 @@ impl StatsDb {
                 "advanced/artillery",
                 "Artillery Missions",
                 "Advanced Topics",
-                0,
+                2,
                 include_str!("../seed_wiki/advanced/artillery.md"),
             ),
             (
                 "advanced/alcm",
                 "Air-Launched Cruise Missiles",
                 "Advanced Topics",
-                1,
+                3,
                 include_str!("../seed_wiki/advanced/alcm.md"),
             ),
             (
@@ -4766,7 +4801,7 @@ impl StatsDb {
             ),
             (
                 "reference/changelog",
-                "Changelog — v2.0",
+                "Changelog",
                 "Reference",
                 6,
                 include_str!("../seed_wiki/reference/changelog.md"),
@@ -4775,21 +4810,21 @@ impl StatsDb {
                 "advanced/c130-airdrop",
                 "C-130 Hercules & Airdrop",
                 "Advanced Topics",
-                2,
+                0,
                 include_str!("../seed_wiki/advanced/c130-airdrop.md"),
             ),
             (
                 "advanced/deployables-guide",
                 "Deployables Guide",
                 "Advanced Topics",
-                3,
+                1,
                 include_str!("../seed_wiki/advanced/deployables-guide.md"),
             ),
             (
                 "advanced/recon-intel-map",
                 "Recon Intel Map (TARPS)",
                 "Advanced Topics",
-                4,
+                6,
                 include_str!("../seed_wiki/advanced/recon-intel-map.md"),
             ),
             (
@@ -4803,49 +4838,56 @@ impl StatsDb {
                 "advanced/ai-opposition",
                 "AI Opposition (CAP & Helo Patrols)",
                 "Advanced Topics",
-                6,
+                11,
                 include_str!("../seed_wiki/advanced/ai-opposition.md"),
+            ),
+            (
+                "advanced/campaign-events",
+                "Campaign Events: Barrages, Strikes & Ambushes",
+                "Advanced Topics",
+                12,
+                include_str!("../seed_wiki/advanced/campaign-events.md"),
             ),
             (
                 "advanced/air-life",
                 "Wingmen, AI Packages & Civil Traffic",
                 "Advanced Topics",
-                7,
+                13,
                 include_str!("../seed_wiki/advanced/air-life.md"),
             ),
             (
                 "advanced/modern-war",
                 "Modern War: EW, Air Defence, Raids & Tempo",
                 "Advanced Topics",
-                8,
+                10,
                 include_str!("../seed_wiki/advanced/modern-war.md"),
             ),
             (
                 "advanced/ground-war",
                 "Ground War: Formations on the March",
                 "Advanced Topics",
-                9,
+                7,
                 include_str!("../seed_wiki/advanced/ground-war.md"),
             ),
             (
                 "advanced/theatre-hq",
                 "Theatre HQ: the AI Commander",
                 "Advanced Topics",
-                10,
+                8,
                 include_str!("../seed_wiki/advanced/theatre-hq.md"),
             ),
             (
                 "advanced/command",
                 "Command: the Commander's Map",
                 "Advanced Topics",
-                11,
+                9,
                 include_str!("../seed_wiki/advanced/command.md"),
             ),
             (
                 "advanced/strike-missions",
                 "AI Strike Missions",
                 "Advanced Topics",
-                12,
+                4,
                 include_str!("../seed_wiki/advanced/strike-missions.md"),
             ),
         ];
@@ -5068,6 +5110,53 @@ impl StatsDb {
                     "../seed_wiki/images/objective-buildings-placed-logi.jpeg"
                 ),
             ),
+            // Drawn diagrams (SVG). Stored as image/svg+xml, which only seed
+            // rows can be (uploads are sniffed to raster formats), and served
+            // as such by api_wiki_get_image.
+            (
+                "e886ee43-be86-4c7d-a64b-b7a4a294b910",
+                include_bytes!("../seed_wiki/images/slot-entry-sequence.svg"),
+            ),
+            (
+                "09871940-18cb-4c19-bcf3-dee1c0a051da",
+                include_bytes!("../seed_wiki/images/capture-sequence.svg"),
+            ),
+            (
+                "ffa68774-fadf-4d8c-a09b-dcb6814d6691",
+                include_bytes!("../seed_wiki/images/objective-layout.svg"),
+            ),
+            (
+                "5f3c8a2e-9b14-4d7e-a6c1-2e8f0b7d4c93",
+                include_bytes!("../seed_wiki/images/points-flow.svg"),
+            ),
+            (
+                "1ee94c78-dd03-4ba2-b1a2-20c1e89925fb",
+                include_bytes!("../seed_wiki/images/tempo-cycle.svg"),
+            ),
+            (
+                "e1203ac6-4ad6-411c-92eb-95288ed72b2d",
+                include_bytes!("../seed_wiki/images/raid-timeline.svg"),
+            ),
+            (
+                "3f6c2a91-8d4e-4b7a-9c15-62e0d8a4b7f3",
+                include_bytes!("../seed_wiki/images/logistics-chain.svg"),
+            ),
+            (
+                "a7d14e58-2c39-4f86-b0e2-91c5f3d76a28",
+                include_bytes!("../seed_wiki/images/c130-airdrop-sequence.svg"),
+            ),
+            (
+                "abcdcd8d-500e-453d-a7f6-07596af01c71",
+                include_bytes!("../seed_wiki/images/jtac-see-vs-lase.svg"),
+            ),
+            (
+                "ffcddaf8-6ac9-4e2a-85ee-489f2c984c20",
+                include_bytes!("../seed_wiki/images/recon-pass-geometry.svg"),
+            ),
+            (
+                "92c63a2f-7f9e-4ed5-80a6-9d141fd07b1f",
+                include_bytes!("../seed_wiki/images/ground-war-front-line.svg"),
+            ),
         ];
         let mut added = 0usize;
         for (id, data) in seed {
@@ -5079,7 +5168,7 @@ impl StatsDb {
             self.wiki_images.insert(
                 &id,
                 &WikiImage {
-                    content_type: "image/jpeg".to_string(),
+                    content_type: seed_image_type(data).to_string(),
                     data: data.to_vec(),
                     uploaded_at: now,
                     uploaded_by: "seed".to_string(),
@@ -7560,6 +7649,35 @@ mod wiki_tombstone_tests {
         db.wiki_save_page(slug, page).unwrap();
         db.seed_wiki_if_empty().unwrap();
         assert_eq!(db.wiki_get_page(slug).unwrap().unwrap().content, "mine");
+        drop(db);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Every picture a seed page embeds is seeded too, and the drawn
+    /// diagrams are stored as SVG (and only they are).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn seed_pages_embed_only_seeded_images() {
+        let tmp = std::env::temp_dir().join(format!("bfdb-wiki-test-{}", Uuid::new_v4()));
+        let db = StatsDb::new_offline(tmp.join("db")).unwrap();
+        let pages = db.wiki_list_pages().unwrap();
+        assert!(pages.len() > 60, "seeded {} pages", pages.len());
+        let mut svgs = 0;
+        for (slug, page) in &pages {
+            for (i, _) in page.content.match_indices("/api/wiki/images/") {
+                let start = i + "/api/wiki/images/".len();
+                let id = page.content.get(start..start + 36).unwrap_or("");
+                let id = Uuid::parse_str(id)
+                    .unwrap_or_else(|_| panic!("{slug}: bad image id {id:?}"));
+                let image = db
+                    .wiki_get_image(&id)
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("{slug}: image {id} is not seeded"));
+                let is_svg = image.data.starts_with(b"<svg");
+                assert_eq!(is_svg, image.is_seed_svg(), "{slug}: image {id}");
+                svgs += is_svg as usize;
+            }
+        }
+        assert!(svgs > 0, "no seed page embeds a diagram");
         drop(db);
         let _ = std::fs::remove_dir_all(&tmp);
     }

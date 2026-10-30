@@ -496,6 +496,17 @@ pub(crate) async fn api_wiki_get_image(
     let image = task::block_in_place(|| db.wiki_get_image(&id))?
         .ok_or_else(|| websec::not_found("image not found"))?;
     // Re-sniffed and sandboxed on the way out as well: rows uploaded before
-    // the upload check existed may hold anything.
-    Ok(websec::serve_upload(image.data, "public, max-age=31536000, immutable"))
+    // the upload check existed may hold anything. The one exception is the
+    // seed's own SVG diagrams, compiled into bfdb: those keep their type
+    // (still under serve_upload's sandbox CSP, so no script can run).
+    let svg = image.is_seed_svg();
+    let mut r = websec::serve_upload(image.data, "public, max-age=31536000, immutable");
+    if svg {
+        r.headers_mut().insert(
+            "content-type",
+            warp::http::HeaderValue::from_static("image/svg+xml"),
+        );
+        r.headers_mut().remove("content-disposition");
+    }
+    Ok(r)
 }
