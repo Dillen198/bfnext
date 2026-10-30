@@ -235,14 +235,17 @@ do
     local p = io.popen('dir /s /b "' .. SEED .. '*.md"')
     for path in p:lines() do
         local rel = path:match("seed_wiki\\(.*)$"):gsub("\\", "/"):gsub("%.md$", "")
-        local f = io.open(path, "rb")
-        local content = f:read("*a"):gsub("\r", "")
-        f:close()
-        local folder = rel:match("^([^/]+)/") or rel
-        local e = { slug = rel, title = content:match("^#%s+([^\n]+)") or rel, section = SECTIONS[folder] or "Other",
-                    order = #page_list, updated_at = "2026-10-01T00:00:00Z", content = content }
-        pages[rel] = e
-        page_list[#page_list + 1] = e
+        -- SHOTLIST is the screenshot to-do list, not a page bfdb seeds.
+        if rel ~= "SHOTLIST" then
+            local f = io.open(path, "rb")
+            local content = f:read("*a"):gsub("\r", "")
+            f:close()
+            local folder = rel:match("^([^/]+)/") or rel
+            local e = { slug = rel, title = content:match("^#%s+([^\n]+)") or rel, section = SECTIONS[folder] or "Other",
+                        order = #page_list, updated_at = "2026-10-01T00:00:00Z", content = content }
+            pages[rel] = e
+            page_list[#page_list + 1] = e
+        end
     end
     p:close()
 end
