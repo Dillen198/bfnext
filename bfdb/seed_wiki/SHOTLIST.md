@@ -27,11 +27,13 @@ page and is not registered in `bfdb/src/db.rs`.
 Columns: **file** (target filename) · **page** (section on that page) ·
 **frame** (what to show) · **complements** (the mockup or diagram next to it).
 
-## Placeholders to replace first
+## Drawings to replace first
 
-These pages already embed labelled placeholder pictures (see the comment in
-`seed_wiki_images_if_empty`). Capture the real thing and swap the embed to the
-new UUID.
+These pages embed drawn SVG illustrations standing in for screenshots
+(`objective-buildings-*.svg`; see the comment in `seed_wiki_images_if_empty`).
+Capture the real thing and swap the embed to the new UUID. Keep the drawing
+if it explains something a screenshot can't (the Command Center's SAM network,
+the F10 pin breakdown) and add the screenshot beside it.
 
 | file | page | frame | complements |
 | --- | --- | --- | --- |

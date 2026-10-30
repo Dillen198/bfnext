@@ -76,7 +76,7 @@ zone. When you unpack it you are told to get clear, because its units arrive a
 minute later:
 
 ```dcsmessage
-Dillen unpacked Forward FARP 3, units will spawn in 60 seconds get clear
+KillerDog unpacked Forward FARP 3, units will spawn in 60 seconds get clear
 ```
 
 ## Where you can build
@@ -125,7 +125,7 @@ A unit with a repair crate can be brought back after it has been shot up.
 Spawn its repair crate (in the unit's own crate menu), put it down within
 {{cfg:crate_spread|250}} m of the damaged unit, and unpack. The repair has its
 own points price, possibly zero, and the same "not next to your own bases"
-rule. Success reads `Dillen repaired a Hawk System`. Everything without a
+rule. Success reads `KillerDog repaired a Hawk System`. Everything without a
 repair crate has to be rebuilt.
 
 `-delete <groupid>` in chat removes a group you deployed for a partial refund;

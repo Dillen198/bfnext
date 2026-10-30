@@ -38,7 +38,7 @@ can do and it's almost impossible to mess up badly.
   Crate(s)**.
 
 ```dcsmessage
-Dillen loaded Standard
+KillerDog loaded Standard
 3 of 10 Standard deployed, unloading will delete oldest, 5521 when the limit is exceeded
 ```
 

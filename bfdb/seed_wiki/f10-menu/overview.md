@@ -66,7 +66,7 @@ full as the root gets.
    {"label":"Release Wingman","says":"F-16C_50 wingman released, RTB."},
    {"label":"Wingman Status","says":"F-16C_50 wingman: 2/2 aircraft, 3.4 nm from you, 52 min left."}]}]},
  {"label":"Cargo","note":"Airframes the server gives crate slots (or lists for helicopter dynamic cargo). A C-130 gets C-130 Cargo here instead. This is the classic menu.","items":[
-  {"label":"Unpack Nearby Crate(s)","says":"Dillen unpacked a Hawk System"},
+  {"label":"Unpack Nearby Crate(s)","says":"KillerDog unpacked a Hawk System"},
   {"label":"Load Nearby Crate","says":"Hawk Launcher crate loaded\n1 of 4 Hawk System deployed, unpacking will delete oldest, 4471 when the limit is exceeded"},
   {"label":"Unload Crate","says":"Hawk Launcher crate unloaded"},
   {"label":"List Nearby Crates","says":"Hawk Launcher crate, bearing 271, 32 meters away\nHawk CC crate, bearing 268, 41 meters away"},
@@ -81,12 +81,12 @@ full as the root gets.
    {"label":"Pick Up Downed Pilot (manual)"},
    {"label":"Deliver Rescued Pilots (manual)"}]}]},
  {"label":"Troops","note":"Airframes the server gives troop slots.","items":[
-  {"label":"Unload","says":"Dillen dropped Standard troops into the field"},
+  {"label":"Unload","says":"KillerDog dropped Standard troops into the field"},
   {"label":"Extract"},
   {"label":"List","note":"Same cargo list as Cargo > List Cargo."},
-  {"label":"Return","says":"Dillen returned Standard troops"},
+  {"label":"Return","says":"KillerDog returned Standard troops"},
   {"label":"Squads","items":[
-   {"label":"Load Standard squad","says":"Dillen loaded Standard\n3 of 10 Standard deployed, unloading will delete oldest, 5521 when the limit is exceeded"},
+   {"label":"Load Standard squad","says":"KillerDog loaded Standard\n3 of 10 Standard deployed, unloading will delete oldest, 5521 when the limit is exceeded"},
    {"label":"Load Mortar squad (5 pts)"}]}]},
  {"label":"JTAC>>","note":"A command, not a folder. Select it and F10 closes; open F10 again and it is the JTAC submenu (shown in the next replica)."},
  {"label":"Actions>>","note":"A command, not a folder. Select it and the Actions submenu is built from the world as it is now (next replica)."},

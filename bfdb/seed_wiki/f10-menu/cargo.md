@@ -74,7 +74,7 @@ server's deployables, so the categories and units below are examples.
 
 ```f10menu
 {"root":"F10 Other","items":[{"label":"Cargo","items":[
- {"label":"Unpack Nearby Crate(s)","says":"Dillen unpacked a Hawk System","note":"Shown to your whole side. On a failure only you see the reasons, one per line, e.g. \"can't spawn Hawk System missing Hawk CC\" or \"can't unpack here — too close to friendly objective 'Ramat David', move 3400m away\"."},
+ {"label":"Unpack Nearby Crate(s)","says":"KillerDog unpacked a Hawk System","note":"Shown to your whole side. On a failure only you see the reasons, one per line, e.g. \"can't spawn Hawk System missing Hawk CC\" or \"can't unpack here — too close to friendly objective 'Ramat David', move 3400m away\"."},
  {"label":"Load Nearby Crate","says":"Hawk Launcher crate loaded\n1 of 4 Hawk System deployed, unpacking will delete oldest, 4471 when the limit is exceeded","note":"Takes the nearest friendly crate within the load distance. Fails with \"crate could not be loaded: no friendly crates within 50 meters\" or \"crate could not be loaded: you already have a full load onboard\"."},
  {"label":"Unload Crate","says":"Hawk Launcher crate unloaded","note":"Puts down the last crate you loaded. In a hover it must be slow and low enough: \"you are too high to unload your cargo, altitude agl must be at or below 10 m, and speed must be at or below 46 km/h\"."},
  {"label":"List Nearby Crates","says":"Hawk Launcher crate, bearing 271, 32 meters away\nHawk CC crate, bearing 268, 41 meters away","note":"Crates within the load distance, nearest first. \"No nearby crates\" if there are none."},
@@ -206,7 +206,7 @@ radar, say) put each part where its crate was.
 Unpacking a FARP deployable answers differently:
 
 ```dcsmessage
-Dillen unpacked Forward FARP 3, units will spawn in 60 seconds get clear
+KillerDog unpacked Forward FARP 3, units will spawn in 60 seconds get clear
 ```
 
 ## Base Supply crates
@@ -217,9 +217,9 @@ their own when they land (see the C-130 page).
 
 | Crate | Classic unpack | Message |
 | --- | --- | --- |
-| **{{cfg:repair_crate.Blue.name|Logistics Repair}}** | Inside the zone of a friendly base **other than the one you loaded it at**. Raises that base's logistics one step. | `Dillen repaired logistics at Ramat David to %80` |
-| **{{cfg:emergency_repair.crate.name|Emergency Repair}}** | Inside the zone of a damaged, quiet friendly base. Rebuilds one destroyed group. | `Dillen delivered an emergency repair crate. Emergency repair at Ramat David: AAA group rebuilt (health 70% -> 80%)` |
-| **Fuel / Weapons Transfer** | Inside the zone of a friendly base other than its origin. Moves {{cfg:warehouse.supply_transfer_size|25}}% of the origin's stock across. | `Dillen transfered supplies from Ramat David to Megiddo` |
+| **{{cfg:repair_crate.Blue.name|Logistics Repair}}** | Inside the zone of a friendly base **other than the one you loaded it at**. Raises that base's logistics one step. | `KillerDog repaired logistics at Ramat David to %80` |
+| **{{cfg:emergency_repair.crate.name|Emergency Repair}}** | Inside the zone of a damaged, quiet friendly base. Rebuilds one destroyed group. | `KillerDog delivered an emergency repair crate. Emergency repair at Ramat David: AAA group rebuilt (health 70% -> 80%)` |
+| **Fuel / Weapons Transfer** | Inside the zone of a friendly base other than its origin. Moves {{cfg:warehouse.supply_transfer_size|25}}% of the origin's stock across. | `KillerDog transfered supplies from Ramat David to Megiddo` |
 | **Carrier Repair** | Dynamic and C-130 menus only. Delivered to the nearest friendly carrier group. | `Carrier repair crate delivered to CVN-71 (2 crate(s)) - ~5m remaining` |
 
 A repair kit at a base whose logistics are already full is refused
@@ -228,7 +228,7 @@ consolidating after a capture: then it is spent to speed the consolidation
 up instead:
 
 ```dcsmessage
-Dillen delivered a logistics repair kit to Megiddo, speeding up its consolidation
+KillerDog delivered a logistics repair kit to Megiddo, speeding up its consolidation
 ```
 
 A repair kit pays {{cfg:points.logistics_repair|25}} points and a supply
@@ -244,7 +244,7 @@ instead of rebuilt. Spawn the unit's repair crate, set it down within
 {{cfg:crate_spread|250}} m of the damaged unit and unpack:
 
 ```dcsmessage
-Dillen repaired a Hawk System
+KillerDog repaired a Hawk System
 ```
 
 The repair has its own points price (some units charge nothing) and the same

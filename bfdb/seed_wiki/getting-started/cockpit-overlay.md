@@ -88,8 +88,7 @@ rows; the replies are the server's real wording):
 ```cockpitpanel
 {"tab":"MENU","crumb":"F10 > Cargo","rows":[
  {"text":"Hawk Launcher crate loaded","style":"answer"},
- {"button":"< Back","go":"F10"},
- {"button":"Unpack Nearby Crate(s) ☆","says":"Dillen unpacked a Hawk System"},
+ {"button":"Unpack Nearby Crate(s) ☆","says":"KillerDog unpacked a Hawk System"},
  {"button":"Load Nearby Crate ☆","says":"Hawk Launcher crate loaded"},
  {"button":"Unload Crate ☆","says":"Hawk Launcher crate unloaded"},
  {"button":"List Nearby Crates ☆","says":"Hawk Launcher crate, bearing 271, 32 meters away"},
@@ -194,14 +193,13 @@ on the page):
 ```cockpitpanel
 {"tab":"WIKI","crumb":"WIKI > F10 Menu Systems > Actions Menu","rows":[
  {"text":"Search the wiki...","style":"dim"},
- {"button":"< Back","go":"F10 Menu Systems"},
  {"heading":"Actions Menu"},
  {"text":"Actions>> starts as a single command. Select it once and it rebuilds itself into the full Actions submenu, built from the world as it is right now."},
- {"button":"F10 Menu Overview","go":"F10 Menu Systems > Overview"},
+ {"button":"F10 Menu Overview","says":"F10 Menu Overview"},
  {"text":"[picture: the Actions menu open in the cockpit]","style":"dim"},
  {"text":"F10 Other\n  Actions\n    AWACS(100 pts)\n      Mark 1 310/38km\n        -> action AWACS started","style":"mono"},
  {"gap":true},
- {"button":"NEXT: JTAC System","go":"F10 Menu Systems > JTAC System"}
+ {"button":"NEXT: JTAC System","says":"JTAC System"}
 ],"status":"Actions Menu"}
 ```
 

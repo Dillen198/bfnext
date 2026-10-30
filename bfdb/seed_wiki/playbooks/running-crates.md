@@ -37,7 +37,7 @@ menu you load and set crates down with **F8 → Ground Crew → Cargo** instead 
  {"title":"3. Spawn the crates","text":"Land inside the zone of a friendly base with working logistics. **F10 → Cargo → Crates → category → unit → crate**. A crate marked `(2)` is needed twice.\n\nThe classic menu answers `2 of 4 crates spawned, ...`: you may have only {{cfg:max_crates|4}} spawned crates out at once, and one more deletes your oldest."},
  {"title":"4. Load","text":"**F10 → Cargo → Load Nearby Crate** within {{cfg:crate_load_distance|50}} m of the crate. The answer tells you how many of the unit your side already has and what happens at the limit:\n\n`Hawk Launcher crate loaded`\n`1 of 4 Hawk System deployed, unpacking will delete oldest, 4471 when the limit is exceeded`"},
  {"title":"5. Fly and set down","text":"Fly to the site. Land and use **Unload Crate**, or drop from a slow, low hover (each crate has its own height and speed limit, and the refusal tells you both). Repeat until every crate is on the ground, all within {{cfg:crate_spread|250}} m of each other."},
- {"title":"6. Unpack","text":"Land next to the crates and press **F10 → Cargo → Unpack Nearby Crate(s)**. Your side sees `Dillen unpacked a Hawk System` and the unit appears at the crates, clear of your aircraft.\n\nIf it fails, the message says why: a missing crate, `too close to friendly objective`, not enough points, or the unit limit."},
+ {"title":"6. Unpack","text":"Land next to the crates and press **F10 → Cargo → Unpack Nearby Crate(s)**. Your side sees `KillerDog unpacked a Hawk System` and the unit appears at the crates, clear of your aircraft.\n\nIf it fails, the message says why: a missing crate, `too close to friendly objective`, not enough points, or the unit limit."},
  {"title":"7. Reposition if you want to","text":"**F10 → Actions → Move (Units/Troops)**, pick the group, then a map mark. Your own groups are at the top, marked `*`, and the cost is in the label. See [Actions](../f10-menu/actions.md)."}
 ]
 ```
@@ -53,8 +53,8 @@ menu you load and set crates down with **F8 → Ground Crew → Cargo** instead 
    base they were loaded at.
 3. **Deliver it.**
    - Classic menu: land **inside the target base's zone**, unload and unpack.
-     `Dillen repaired logistics at Megiddo to %80` or
-     `Dillen transfered supplies from Ramat David to Megiddo`.
+     `KillerDog repaired logistics at Megiddo to %80` or
+     `KillerDog transfered supplies from Ramat David to Megiddo`.
    - Dynamic or C-130 cargo: set it down or drop it on the base. Transfer
      crates and repair kits go to the **nearest** friendly objective, so put
      them right on top of the one you mean. An emergency repair crate has to

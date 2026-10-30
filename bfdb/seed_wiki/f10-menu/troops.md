@@ -18,15 +18,15 @@ load.
 
 ```f10menu
 {"root":"F10 Other","items":[{"label":"Troops","items":[
- {"label":"Unload","says":"Dillen dropped Standard troops into the field","note":"Shown to your side. Straight after, only you get a hint about the nearest enemy or neutral objective, e.g. \"troops are in Megiddo's ring -- keep them alive to capture it\"."},
- {"label":"Extract","says":"Dillen extracted Standard troops from the field (5 of 8 left)","note":"Picks up a friendly squad within the load distance. The (alive of total) part appears only when it has taken casualties."},
+ {"label":"Unload","says":"KillerDog dropped Standard troops into the field","note":"Shown to your side. Straight after, only you get a hint about the nearest enemy or neutral objective, e.g. \"troops are in Megiddo's ring -- keep them alive to capture it\"."},
+ {"label":"Extract","says":"KillerDog extracted Standard troops from the field (5 of 8 left)","note":"Picks up a friendly squad within the load distance. The (alive of total) part appears only when it has taken casualties."},
  {"label":"List","says":"Current Cargo\n----------------------------\ntroops: 1 of 1\ncrates: 0 of 1\npilots: 0 of 2\ntotal : 1 of 2\n----------------------------\nStandard troop weighing 800 kg\n----------------------------\ntotal cargo weight: 800 kg"},
- {"label":"Return","says":"Dillen returned Standard troops","note":"Hands the last squad back to the base and refunds it."},
+ {"label":"Return","says":"KillerDog returned Standard troops","note":"Hands the last squad back to the base and refunds it."},
  {"label":"Squads","items":[
-  {"label":"Load Standard squad","says":"Dillen loaded Standard\n3 of 10 Standard deployed, unloading will delete oldest, 5521 when the limit is exceeded","note":"Free squads have no (pts) suffix."},
-  {"label":"Load Anti Tank squad (1 pts)","says":"Dillen loaded Anti Tank\n0 of 10 Anti Tank deployed, unloading will delete oldest when the limit is exceeded"},
-  {"label":"Load Mortar squad (5 pts)","says":"Dillen loaded Mortar\n1 of 10 Mortar deployed, unloading will delete oldest, 5530 when the limit is exceeded"},
-  {"label":"Load Stinger squad (5 pts)","says":"Dillen loaded Stinger\n2 of 10 Stinger deployed, unloading will delete oldest, 5502 when the limit is exceeded","note":"MANPAD teams can't capture."}]}]}]}
+  {"label":"Load Standard squad","says":"KillerDog loaded Standard\n3 of 10 Standard deployed, unloading will delete oldest, 5521 when the limit is exceeded","note":"Free squads have no (pts) suffix."},
+  {"label":"Load Anti Tank squad (1 pts)","says":"KillerDog loaded Anti Tank\n0 of 10 Anti Tank deployed, unloading will delete oldest when the limit is exceeded"},
+  {"label":"Load Mortar squad (5 pts)","says":"KillerDog loaded Mortar\n1 of 10 Mortar deployed, unloading will delete oldest, 5530 when the limit is exceeded"},
+  {"label":"Load Stinger squad (5 pts)","says":"KillerDog loaded Stinger\n2 of 10 Stinger deployed, unloading will delete oldest, 5502 when the limit is exceeded","note":"MANPAD teams can't capture."}]}]}]}
 ```
 
 The squad names, prices and limits come from the server's config; the list

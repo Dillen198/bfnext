@@ -173,7 +173,7 @@ export function createGroundwarMock(mode: string): GroundMock {
     sim({
       id: 3, name: '3rd Mot Coy (Chiatura)', kind: 'motorised',
       roles: roles([['apc', 5], ['infantry', 3], ['aaa', 1], ['truck', 2]]), total: 12,
-      order: 'defend', target: 5, home: 4, commander: 'Dillen', locked: 22,
+      order: 'defend', target: 5, home: 4, commander: 'KillerDog', locked: 22,
       route: [[42.33, 43.40], [42.338, 43.43], [42.339, 43.445]],
       at: 99999, engaged: true, dugIn: true, face: 85, supply: 33, inSupply: true, morale: 70, losses: 1, kills: 2,
     }),
@@ -245,7 +245,7 @@ export function createGroundwarMock(mode: string): GroundMock {
       orbit: { c: [42.05, 43.32], r: 14_000, ang: 0 },
     },
     {
-      name: 'Dillen', typ: 'Ka-50_3', category: 'helicopter', pos: [42.2, 43.3], alt_m: 45, heading: 40, speed_kts: 115, in_air: true, is_self: mode !== 'god',
+      name: 'KillerDog', typ: 'Ka-50_3', category: 'helicopter', pos: [42.2, 43.3], alt_m: 45, heading: 40, speed_kts: 115, in_air: true, is_self: mode !== 'god',
       leg: { a: [42.12, 43.1], b: [42.31, 43.39], t: 0.35 },
     },
     {
@@ -542,7 +542,7 @@ export function createGroundwarMock(mode: string): GroundMock {
       const f = sim({
         id, name: `${id}th Mech Coy (${o.name})`, kind: 'mechanised',
         roles: roles([['ifv', 5], ['tank', 2], ['truck', 1]]), route: [offset(o.pos, face + 180, 800), o.pos], home: o.id,
-        commander: 'Dillen', locked: 60, face, stoppedFor: 0,
+        commander: 'KillerDog', locked: 60, face, stoppedFor: 0,
       })
       f.at = pathLength(f.route)
       forms.push(f)
@@ -564,9 +564,9 @@ export function createGroundwarMock(mode: string): GroundMock {
         f.face = lead(f).hdg
       }
       f.assaulting = false
-      f.commander = 'Dillen'
+      f.commander = 'KillerDog'
       f.locked = 60
-      pushEvent({ kind: 'order', text: `Dillen ordered ${short} to hold`, pos: lead(f).pos, formation: f.id })
+      pushEvent({ kind: 'order', text: `KillerDog ordered ${short} to hold`, pos: lead(f).pos, formation: f.id })
       return { ok: true, message: `${short}: holding where it is.`, formation: f.id }
     }
     if (cmd.kind === 'release') {
@@ -589,12 +589,12 @@ export function createGroundwarMock(mode: string): GroundMock {
     }
     f.order = cmd.kind
     f.target = o.id
-    f.commander = 'Dillen'
+    f.commander = 'KillerDog'
     f.locked = 60
     routeTo(f, o.pos)
     const k = pathLength(f.route.slice(-3)) / 1000
     const verb = cmd.kind === 'attack' ? 'attacking' : cmd.kind === 'defend' ? 'moving to defend' : 'withdrawing to'
-    pushEvent({ kind: 'order', text: `Dillen ordered ${short} to ${cmd.kind} ${o.name}`, pos: lead(f).pos, formation: f.id })
+    pushEvent({ kind: 'order', text: `KillerDog ordered ${short} to ${cmd.kind} ${o.name}`, pos: lead(f).pos, formation: f.id })
     return {
       ok: true,
       message: `${short}: ${verb} ${o.name}, ${k.toFixed(0)} km, about ${Math.round((k / f.speed) * 60)} min.`,
@@ -613,7 +613,7 @@ export function createGroundwarMock(mode: string): GroundMock {
     const f = sim({
       id, name: `${id}th ${label} Coy (${base.name})`, kind: role === 'tank' ? 'armour' : 'mechanised',
       roles: roles([[role, count]]), route: [base.pos, ...route], home: base.id,
-      commander: 'Dillen', locked: 60, face: bearing(base.pos, route[0]),
+      commander: 'KillerDog', locked: 60, face: bearing(base.pos, route[0]),
     })
     f.moving = true
     f.stoppedFor = 0

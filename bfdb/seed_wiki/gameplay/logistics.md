@@ -176,7 +176,7 @@ The player-flown fix for a base's **logistics** (its infrastructure). Spawn a
 kit raises the base's logistics one step:
 
 ```dcsmessage
-Dillen repaired logistics at Megiddo to %80
+KillerDog repaired logistics at Megiddo to %80
 ```
 
 - From the classic F10 cargo menu it has to be unpacked **inside the zone of a
@@ -312,13 +312,13 @@ before the enemy builds up a defence you can't crack.
 Supply state is read off the **status hexes** beside each base. The order
 never changes:
 
-```
-   Health  Logi  Supply  Fuel
-     ⬢      ⬢      ⬢      ⬢
+```statushexes
+{"health":88,"logi":25,"supply":52,"fuel":90,"focus":["logi","supply"],
+ "caption":"A raided base: its garrison is fine, but most of its logistics buildings are down and munitions are running low."}
 ```
 
-Green is above 66%, amber 33 to 66%, red below 33%. A **gold outline** means
-that resource is unlimited and will never run dry.
+```hexlegend
+```
 
 For logistics the two that matter are **Logi** (the infrastructure that lets a
 base repair and issue crates) and **Supply** (munitions). A base with a red

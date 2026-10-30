@@ -22,8 +22,8 @@ have it at the top level.
  {"label":"CSAR","items":[
   {"label":"List Downed Pilots","says":"Downed Pilots\n----------------------------\nCobra 2-1 | Mike: 47° / 8350m\nHawg 1-2 | Sam: 112° / 21900m","note":"Every downed pilot on your side, with bearing and distance from you. \"No downed pilots on your side\" when there are none."},
   {"label":"Request Nearest Pilot Smoke","says":"Cobra 2-1 | Mike popped green smoke — 1240m away","note":"The nearest one only. Each pilot can smoke once per cooldown: \"Cobra 2-1 | Mike smoke on cooldown — 212s remaining\". \"No downed pilots nearby\" when there are none."},
-  {"label":"Pick Up Downed Pilot (manual)","says":"Dillen picked up downed pilot Cobra 2-1 | Mike","note":"Shown to your side. For when the automatic pickup doesn't happen."},
-  {"label":"Deliver Rescued Pilots (manual)","says":"Dillen delivered 1 rescued pilot to safety","note":"Shown to your side. For when the automatic delivery doesn't happen."}]}]}]}
+  {"label":"Pick Up Downed Pilot (manual)","says":"KillerDog picked up downed pilot Cobra 2-1 | Mike","note":"Shown to your side. For when the automatic pickup doesn't happen."},
+  {"label":"Deliver Rescued Pilots (manual)","says":"KillerDog delivered 1 rescued pilot to safety","note":"Shown to your side. For when the automatic delivery doesn't happen."}]}]}]}
 ```
 
 ## What happens when a pilot ejects
@@ -89,7 +89,7 @@ you are **on the ground** with room aboard, they then walk to your aircraft.
 on their own:
 
 ```dcsmessage
-Dillen picked up downed pilot Cobra 2-1 | Mike — auto-boarding!
+KillerDog picked up downed pilot Cobra 2-1 | Mike — auto-boarding!
 ```
 
 **Pick Up Downed Pilot (manual)** is there for when that doesn't happen. You
@@ -102,7 +102,7 @@ seats, `this aircraft cannot carry downed pilots`.
 **Fly them home.** Land at **any friendly objective**. Delivery is automatic:
 
 ```dcsmessage
-Dillen auto-delivered 1 rescued pilot at base
+KillerDog auto-delivered 1 rescued pilot at base
 ```
 
 **Deliver Rescued Pilots (manual)** forces it. You must be on the ground
@@ -119,7 +119,7 @@ If the server limits lives, delivery also **gives the rescued pilot a life
 back**, and they are told:
 
 ```dcsmessage
-your pilot was rescued by Dillen and delivered — you have 3 Standard lives
+your pilot was rescued by KillerDog and delivered — you have 3 Standard lives
 ```
 
 A pilot who is captured gets `Your downed pilot was captured — no Standard

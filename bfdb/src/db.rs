@@ -5075,48 +5075,48 @@ impl StatsDb {
                 "da866270-2d36-4ebb-8582-49420aaa561a",
                 include_bytes!("../seed_wiki/images/cockpit-icons.jpeg"),
             ),
-            // Labelled placeholders until real screenshots are taken. Images
-            // are served immutable and never re-seeded, so a real screenshot
-            // goes in under a NEW id (here and in objective-buildings.md).
-            (
-                "bde0527a-d33b-44ea-927a-7e5457673883",
-                include_bytes!("../seed_wiki/images/objective-buildings-f10-pins.jpeg"),
-            ),
-            (
-                "57e704c4-7cbf-4382-92aa-437a3398ffb7",
-                include_bytes!("../seed_wiki/images/objective-buildings-warehouse.jpeg"),
-            ),
-            (
-                "9bb0383e-2611-4b7b-a31c-9005c9aeeefa",
-                include_bytes!("../seed_wiki/images/objective-buildings-industrial.jpeg"),
-            ),
-            (
-                "00a8ea81-cb97-47c4-99d3-b28ceb8f470c",
-                include_bytes!("../seed_wiki/images/objective-buildings-fuel.jpeg"),
-            ),
-            (
-                "b1e85974-8c99-4a90-834b-be855f21ca6b",
-                include_bytes!("../seed_wiki/images/objective-buildings-destroyed.jpeg"),
-            ),
-            (
-                "b0a22f34-8776-4cfb-8bc8-a003c9d9c759",
-                include_bytes!(
-                    "../seed_wiki/images/objective-buildings-command-center.jpeg"
-                ),
-            ),
-            (
-                "6c1f61f3-239d-4e32-bfb6-a4f65a773bdb",
-                include_bytes!("../seed_wiki/images/objective-buildings-farp.jpeg"),
-            ),
-            (
-                "ad2ed420-c314-4aab-b685-9404872fe3b3",
-                include_bytes!(
-                    "../seed_wiki/images/objective-buildings-placed-logi.jpeg"
-                ),
-            ),
             // Drawn diagrams (SVG). Stored as image/svg+xml, which only seed
             // rows can be (uploads are sniffed to raster formats), and served
             // as such by api_wiki_get_image.
+            //
+            // The objective-buildings-* ones are drawn illustrations standing
+            // in for in-game screenshots (SHOTLIST.md). Images are served
+            // immutable and never re-seeded, so a real screenshot goes in
+            // under a NEW id (here and in objective-buildings.md).
+            (
+                "c772fdcf-ef17-4a95-8d69-4cca9a2298b3",
+                include_bytes!("../seed_wiki/images/objective-buildings-f10-pins.svg"),
+            ),
+            (
+                "1076c909-d162-42c1-af6a-cbfd0cec57f2",
+                include_bytes!("../seed_wiki/images/objective-buildings-warehouse.svg"),
+            ),
+            (
+                "ac9d7ea1-c739-4c4b-9901-bebdfdeee7c3",
+                include_bytes!("../seed_wiki/images/objective-buildings-industrial.svg"),
+            ),
+            (
+                "106369a9-2019-4c29-b7a3-36bb568e34ca",
+                include_bytes!("../seed_wiki/images/objective-buildings-fuel.svg"),
+            ),
+            (
+                "3df33ccf-08ac-4df1-b0b2-257650fdf76f",
+                include_bytes!("../seed_wiki/images/objective-buildings-destroyed.svg"),
+            ),
+            (
+                "bab0f39f-5eab-4196-a350-0832f2d996b5",
+                include_bytes!(
+                    "../seed_wiki/images/objective-buildings-command-center.svg"
+                ),
+            ),
+            (
+                "cba2754e-1658-4577-b0f4-49a73b4eafe6",
+                include_bytes!("../seed_wiki/images/objective-buildings-farp.svg"),
+            ),
+            (
+                "7eaf037f-a014-495e-90c6-46f3c0cd2d68",
+                include_bytes!("../seed_wiki/images/objective-buildings-placed-logi.svg"),
+            ),
             (
                 "e886ee43-be86-4c7d-a64b-b7a4a294b910",
                 include_bytes!("../seed_wiki/images/slot-entry-sequence.svg"),

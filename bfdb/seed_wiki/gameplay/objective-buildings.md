@@ -27,7 +27,7 @@ Aleppo logi: 12345678 (AIRBASE_WAREHOUSE_01)
 
 That's the base, then the building's map name, then its DCS type in brackets.
 
-![F10 map zoomed in on an airbase, showing its logi: pins and the four status hexes](/api/wiki/images/bde0527a-d33b-44ea-927a-7e5457673883)
+![F10 map zoomed in on an airbase, showing its logi: pins and the four status hexes](/api/wiki/images/c772fdcf-ef17-4a95-8d69-4cca9a2298b3)
 
 - **Both sides see the pins.** Attackers use them to find targets, and
   defenders use them to see what they've lost.
@@ -66,14 +66,14 @@ has a DCS type name containing one of five words:
 
 ### Warehouses
 
-![A warehouse at a Syria airbase](/api/wiki/images/57e704c4-7cbf-4382-92aa-437a3398ffb7)
+![A warehouse at a Syria airbase](/api/wiki/images/1076c909-d162-42c1-af6a-cbfd0cec57f2)
 
 **Look for:** big shed-like store buildings. Most airbases have them, and
 the base's `logi:` pins tell you which ones count.
 
 ### Industrial buildings
 
-![An industrial building at a factory objective](/api/wiki/images/9bb0383e-2611-4b7b-a31c-9005c9aeeefa)
+![An industrial building at a factory objective](/api/wiki/images/ac9d7ea1-c739-4c4b-9901-bebdfdeee7c3)
 
 **Look for:** factory halls and works buildings. They're most common at
 **Factory** objectives, which are placed on real industrial sites such as
@@ -81,7 +81,7 @@ mines and oil fields.
 
 ### Fuel, depot and storage buildings
 
-![Fuel and storage tanks at an objective](/api/wiki/images/00a8ea81-cb97-47c4-99d3-b28ceb8f470c)
+![Fuel and storage tanks at an objective](/api/wiki/images/106369a9-2019-4c29-b7a3-36bb568e34ca)
 
 **Look for:** fuel tanks and storage compounds. A single tank is a small
 target, so check the pin before you drop.
@@ -120,7 +120,7 @@ As logi falls:
   from)"*. An enemy base at 0 also stops blocking your supply routes, and the
   ATIS reports the field closed.
 
-![The same warehouse after it has been destroyed](/api/wiki/images/b1e85974-8c99-4a90-834b-be855f21ca6b)
+![The same warehouse after it has been destroyed](/api/wiki/images/3df33ccf-08ac-4df1-b0b2-257650fdf76f)
 
 **Low logi doesn't make a base capturable.** Capture depends on Health and
 infantry. The exception is a base with no garrison units at all, such as some
@@ -183,7 +183,7 @@ one, without SAMs. The rest comes back one group per repair pulse.
 
 ## Command Centers
 
-![A Command Center: the star on the F10 map, and the site itself](/api/wiki/images/b0a22f34-8776-4cfb-8bc8-a003c9d9c759)
+![A Command Center: the star on the F10 map, and the SAM sites it networks](/api/wiki/images/bab0f39f-5eab-4196-a350-0832f2d996b5)
 
 **On the F10 map:** a **five-point star**. On Modern – Syria, for example,
 *SyADF 159th Regiment*.
@@ -210,7 +210,7 @@ itself when its Health reaches 0, so troops have to capture it. See
 
 ## FARPs
 
-![A crate-built FARP: tent, ammo dump and fuel depot](/api/wiki/images/6c1f61f3-239d-4e32-bfb6-a4f65a773bdb)
+![A crate-built FARP: tent, ammo dump and fuel depot](/api/wiki/images/cba2754e-1658-4577-b0f4-49a73b4eafe6)
 
 On servers that offer FARP crates, a FARP built from crates appears about a
 minute after you unpack it, with:
@@ -246,7 +246,7 @@ A base with no `logi:` pins is either asleep (no enemy nearby) or on a server
 that places its logistics as statics instead of using map buildings. In that
 case, look for this cluster at the base:
 
-![Placed logistics statics: command centre, ammunition depot and trucks](/api/wiki/images/ad2ed420-c314-4aab-b685-9404872fe3b3)
+![Placed logistics statics: command centre, ammunition depot and trucks](/api/wiki/images/7eaf037f-a014-495e-90c6-46f3c0cd2d68)
 
 | Piece | DCS type | Looks like |
 | --- | --- | --- |

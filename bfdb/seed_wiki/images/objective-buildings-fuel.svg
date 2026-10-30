@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" width="800" height="500" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect x="0" y="0" width="800" height="500" fill="#0d1009"/>
+  <text x="30" y="34" font-size="18" font-weight="700" fill="#cdd4be">Fuel, depot and storage buildings</text>
+  <text x="30" y="54" font-size="13" fill="#7d8a6a">Illustration, not an in-game screenshot. The real ones vary; the logi: pins say which count.</text>
+  <defs><linearGradient id="tank" x1="0" x2="1"><stop offset="0" stop-color="#d9d7ca"/><stop offset="0.55" stop-color="#b3b1a3"/><stop offset="1" stop-color="#7c7a6f"/></linearGradient></defs>
+  <polygon points="360.0,150.0 654.4,320.0 394.6,470.0 100.2,300.0" fill="#2b2a1f" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="344.4,179.0 543.6,294.0 543.6,287.0 344.4,172.0" fill="#4a432e" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="550.5,290.0 543.6,294.0 543.6,287.0 550.5,283.0" fill="#383323" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="351.3,168.0 550.5,283.0 543.6,287.0 344.4,172.0" fill="#61593c" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="186.8,270.0 193.7,274.0 193.7,267.0 186.8,263.0" fill="#4a432e" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="358.3,179.0 193.7,274.0 193.7,267.0 358.3,172.0" fill="#383323" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="351.3,168.0 358.3,172.0 193.7,267.0 186.8,263.0" fill="#61593c" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <path d="M314.0,190.5 L314.0,232.5 A41.6,24.0 0 0 0 397.3,232.5 L397.3,190.5 Z" fill="url(#tank)" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="355.7" cy="190.5" rx="41.6" ry="24.0" fill="#dddbcc" stroke="#0d1009" stroke-width="1"/>
+  <path d="M396.3,233.0 L396.3,275.0 A41.6,24.0 0 0 0 479.6,275.0 L479.6,233.0 Z" fill="url(#tank)" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="437.9" cy="233.0" rx="41.6" ry="24.0" fill="#dddbcc" stroke="#0d1009" stroke-width="1"/>
+  <path d="M244.7,235.5 L244.7,277.5 A41.6,24.0 0 0 0 328.0,277.5 L328.0,235.5 Z" fill="url(#tank)" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="286.4" cy="235.5" rx="41.6" ry="24.0" fill="#dddbcc" stroke="#0d1009" stroke-width="1"/>
+  <path d="M337.4,296.5 L337.4,322.5 A26.9,15.6 0 0 0 391.3,322.5 L391.3,296.5 Z" fill="url(#tank)" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="364.3" cy="296.5" rx="26.9" ry="15.6" fill="#dddbcc" stroke="#0d1009" stroke-width="1"/>
+  <polygon points="186.8,270.0 386.0,385.0 386.0,378.0 186.8,263.0" fill="#4a432e" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="392.9,381.0 386.0,385.0 386.0,378.0 392.9,374.0" fill="#383323" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="193.7,259.0 392.9,374.0 386.0,378.0 186.8,263.0" fill="#61593c" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="379.1,381.0 386.0,385.0 386.0,378.0 379.1,374.0" fill="#4a432e" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="550.5,290.0 386.0,385.0 386.0,378.0 550.5,283.0" fill="#383323" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="543.6,279.0 550.5,283.0 386.0,378.0 379.1,374.0" fill="#61593c" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="468.3,357.5 515.9,385.0 515.9,359.0 468.3,331.5" fill="#747162" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="580.8,347.5 515.9,385.0 515.9,359.0 580.8,321.5" fill="#57564a" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="533.2,294.0 580.8,321.5 515.9,359.0 468.3,331.5" fill="#989582" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="478.6,363.5 504.6,378.5 504.6,358.5 478.6,343.5" fill="#3d3a33" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <line x1="475.2" y1="361.5" x2="475.2" y2="335.5" stroke="#000000" stroke-opacity="0.22" stroke-width="1"/>
+  <line x1="482.1" y1="365.5" x2="482.1" y2="339.5" stroke="#000000" stroke-opacity="0.22" stroke-width="1"/>
+  <line x1="489.0" y1="369.5" x2="489.0" y2="343.5" stroke="#000000" stroke-opacity="0.22" stroke-width="1"/>
+  <line x1="496.0" y1="373.5" x2="496.0" y2="347.5" stroke="#000000" stroke-opacity="0.22" stroke-width="1"/>
+  <line x1="502.9" y1="377.5" x2="502.9" y2="351.5" stroke="#000000" stroke-opacity="0.22" stroke-width="1"/>
+  <line x1="509.8" y1="381.5" x2="509.8" y2="355.5" stroke="#000000" stroke-opacity="0.22" stroke-width="1"/>
+  <ellipse cx="373.0" cy="415.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="383.4" cy="421.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="400.7" cy="431.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <polygon points="367.8,411.5 395.5,427.5 395.5,423.5 367.8,407.5" fill="#30312a" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="409.4,419.5 395.5,427.5 395.5,423.5 409.4,415.5" fill="#242520" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="381.7,399.5 409.4,415.5 395.5,423.5 367.8,407.5" fill="#3f4137" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="369.5,407.5 395.5,422.5 395.5,408.5 369.5,393.5" fill="#7e7f73" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="407.6,415.5 395.5,422.5 395.5,408.5 407.6,401.5" fill="#5f6057" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="381.7,386.5 407.6,401.5 395.5,408.5 369.5,393.5" fill="#a6a797" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="398.1,428.0 408.5,434.0 408.5,416.0 398.1,410.0" fill="#595c42" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="420.6,427.0 408.5,434.0 408.5,416.0 420.6,409.0" fill="#444532" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="410.2,403.0 420.6,409.0 408.5,416.0 398.1,410.0" fill="#767956" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="418.9,418.0 408.5,424.0 408.5,418.0 418.9,412.0" fill="#2a3a44" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <line x1="355.7" y1="182.5" x2="241.0" y2="105.0" stroke="#7d8a6a" stroke-width="1"/>
+  <circle cx="355.7" cy="182.5" r="3.5" fill="#8ec83f" stroke="#0d1009" stroke-width="1.5"/>
+  <text x="235.0" y="110.0" font-size="14" fill="#cdd4be" text-anchor="end" font-weight="600">Fuel tanks</text>
+  <text x="235.0" y="131.0" font-size="12.5" fill="#7d8a6a" text-anchor="end">Big round tanks, often inside</text>
+  <text x="235.0" y="148.0" font-size="12.5" fill="#7d8a6a" text-anchor="end">an earth wall. FUEL or STORAGE.</text>
+  <line x1="524.5" y1="327.0" x2="584.0" y2="165.0" stroke="#7d8a6a" stroke-width="1"/>
+  <circle cx="524.5" cy="327.0" r="3.5" fill="#8ec83f" stroke="#0d1009" stroke-width="1.5"/>
+  <text x="590.0" y="170.0" font-size="14" fill="#cdd4be" font-weight="600">Depot or storage building</text>
+  <text x="590.0" y="191.0" font-size="12.5" fill="#7d8a6a">DEPOT or STORAGE in the</text>
+  <text x="590.0" y="208.0" font-size="12.5" fill="#7d8a6a">DCS type name.</text>
+  <line x1="364.3" y1="296.5" x2="584.0" y2="295.0" stroke="#7d8a6a" stroke-width="1"/>
+  <circle cx="364.3" cy="296.5" r="3.5" fill="#8ec83f" stroke="#0d1009" stroke-width="1.5"/>
+  <text x="590.0" y="300.0" font-size="14" fill="#cdd4be" font-weight="600">A single tank is a small target</text>
+  <text x="590.0" y="321.0" font-size="12.5" fill="#7d8a6a">Check the pin before you drop:</text>
+  <text x="590.0" y="338.0" font-size="12.5" fill="#7d8a6a">not every tank counts.</text>
+  <text x="30.0" y="482.0" font-size="13" fill="#7d8a6a">At Syria airbases look for the fuel farm; at oil fields, the tanks by the plant.</text>
+</svg>
