@@ -669,6 +669,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn seeded_jpeg_is_passed_on_with_its_size() {
+        crate::db::seed_images_in_this_test();
         let h = harness();
         let info = body_json(
             h.get(&format!("/api/cockpit/wiki/image/{SEEDED_JPEG}/info?w=480"), None)

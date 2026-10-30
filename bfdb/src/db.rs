@@ -4937,6 +4937,10 @@ impl StatsDb {
     /// is added -- so a deploy that brings new pages brings their pictures --
     /// and one already there is never replaced.
     fn seed_wiki_images_if_empty(&self) -> Result<()> {
+        #[cfg(test)]
+        if !SEED_IMAGES_IN_TESTS.with(|s| s.get()) {
+            return Ok(());
+        }
         let now = Utc::now();
         let seed: &[(&str, &[u8])] = &[
             (
@@ -7581,6 +7585,22 @@ where
 mod storage_tests;
 
 #[cfg(test)]
+thread_local! {
+    /// Whether a database opened on this thread gets the seed wiki pictures.
+    /// They are about 55 MB, every test opens its own database, and writing
+    /// them a few hundred times over loaded sled enough that the suite hung
+    /// on CI. Off unless a test asks with `seed_images_in_this_test`.
+    static SEED_IMAGES_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Seed the wiki pictures into databases this test opens (see
+/// `SEED_IMAGES_IN_TESTS`). Call it before opening the database.
+#[cfg(test)]
+pub(crate) fn seed_images_in_this_test() {
+    SEED_IMAGES_IN_TESTS.with(|s| s.set(true));
+}
+
+#[cfg(test)]
 impl StatsDb {
     /// A single default instance with no engine, no ingestion source -- what
     /// the unit tests below need. (They referred to this before it existed,
@@ -7657,6 +7677,7 @@ mod wiki_tombstone_tests {
     /// diagrams are stored as SVG (and only they are).
     #[tokio::test(flavor = "multi_thread")]
     async fn seed_pages_embed_only_seeded_images() {
+        seed_images_in_this_test();
         let tmp = std::env::temp_dir().join(format!("bfdb-wiki-test-{}", Uuid::new_v4()));
         let db = StatsDb::new_offline(tmp.join("db")).unwrap();
         let pages = db.wiki_list_pages().unwrap();
