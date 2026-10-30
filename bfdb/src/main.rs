@@ -55,6 +55,7 @@ struct SiteAssets;
 mod admin;
 mod atc;
 mod botlink;
+mod cockpit_wiki;
 mod command;
 mod db;
 mod db_id;
@@ -2660,6 +2661,29 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(with_db(db.clone()))
         .then(api_wiki_get_image);
 
+    // The cockpit panel's WIKI tab (cockpit_wiki.rs): the page index with
+    // dates for its cache, full-text search, and pictures as files DCS loads.
+    let cockpit_wiki_routes = warp::path!("api" / "cockpit" / "wiki" / "index")
+        .and(warp::get())
+        .and(with_db(db.clone()))
+        .then(cockpit_wiki::api_index)
+        .or(warp::path!("api" / "cockpit" / "wiki" / "search")
+            .and(warp::get())
+            .and(warp::query::<Q>())
+            .and(with_db(db.clone()))
+            .then(cockpit_wiki::api_search))
+        .or(warp::path!("api" / "cockpit" / "wiki" / "image" / Uuid / "info")
+            .and(warp::get())
+            .and(warp::query::<Q>())
+            .and(with_db(db.clone()))
+            .then(cockpit_wiki::api_image_info))
+        .or(warp::path!("api" / "cockpit" / "wiki" / "image" / Uuid)
+            .and(warp::get())
+            .and(warp::query::<Q>())
+            .and(with_db(db.clone()))
+            .then(cockpit_wiki::api_image))
+        .boxed();
+
     // ── Recon intel (TARPS) ──────────────────────────────────────────────
     let intel_list_route = warp::path!("api" / "intel" / "captures")
         .and(extract_session_cookie())
@@ -2948,6 +2972,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .or(cockpit_ewr_intel_route)
         .or(cockpit_carp_solve_route)
         .or(cockpit_carp_solve_latlon_route)
+        .or(cockpit_wiki_routes)
         .or(wiki_list_route)
         .or(wiki_get_route)
         .or(wiki_get_image_route)

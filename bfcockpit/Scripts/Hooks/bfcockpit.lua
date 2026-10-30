@@ -19,6 +19,9 @@
 --   STATUS  side, points, lives, crates, aircraft, position, nearest objective
 --   EWR     threat / friendly picture, ground intel, EWR on/off and units
 --   LOG     every message the server sent you, newest first
+--   WIKI    the player wiki: its sections and pages, a search box, the
+--           pictures, and this server's own numbers; a link to another
+--           page is a button. Works outside multiplayer too
 --
 -- UPDATES: when the server has a newer version this downloads its installer
 -- (from the project's GitHub release for that version) and starts it hidden;
@@ -63,7 +66,7 @@
 -- copy it was built with to answer /api/cockpit/plugin/version, and the panel
 -- compares that with its own to tell the player when to update. Keep the
 -- format exactly as it is.
-local BFCOCKPIT_VERSION = "3.4.0"
+local BFCOCKPIT_VERSION = "3.5.0"
 
 local net = require('net')
 
@@ -94,6 +97,14 @@ local Skin       = try_require('Skin')
 if not (dxgui and Window and Static and Button and ScrollPane and Skin) then
     logmsg("FATAL: required GUI modules missing, panel disabled")
     return
+end
+
+-- The WIKI tab's search box, the module rkusa/dcs-scratchpad types into.
+-- Optional: without it the tab has no box and everything else still works.
+local EditBox = nil
+do
+    local ok, mod = pcall(require, 'EditBox')
+    if ok and type(mod) == 'table' then EditBox = mod else logmsg("EditBox not available: " .. tostring(mod)) end
 end
 
 -- The HTTPS helper lives in the plugin's own folder, next to its settings
@@ -498,6 +509,26 @@ local function build_skins()
     skins.mono   = static(C.text, FONT_MONO, px(12))
     skins.status = static(C.dim, FONT, px(12))
     skins.answer = static(C.text, FONT, px(FONT_PX), C.answer)
+    skins.h1     = static(C.accent, FONT_BOLD, px(16))
+    skins.bold   = static(C.text, FONT_BOLD, px(FONT_PX))
+
+    -- The WIKI tab's search box: DCS's own edit box, in the panel's colours.
+    skins.edit = nil
+    pcall(function()
+        local e = deep_copy(Skin.editBoxSkin())
+        for _, st in pairs(e.skinData.states) do
+            for i in pairs(st) do
+                st[i].bkg = { center_center = C.btn }
+                -- [2] is the hint ("Find a page...")
+                st[i].text = text_style(i == 1 and C.text or C.dim, FONT, px(FONT_PX))
+            end
+        end
+        local caret = type(e.skinData.skins) == 'table' and e.skinData.skins.caret or nil
+        local cs = caret and caret.skinData and caret.skinData.states
+        if cs and cs.released and cs.released[1] then cs.released[1].bkg = { center_center = C.accent } end
+        e.skinData.params.selectionColor = C.btn_hover
+        skins.edit = e
+    end)
 
     local p = deep_copy(Skin.scrollPaneSkin())
     for _, st in pairs(p.skinData.states) do
@@ -932,6 +963,8 @@ local TABS = {
     { id = "status", label = "STATUS", fetch = { "status" },        every = 3 },
     { id = "ewr",    label = "EWR",    fetch = { "ewr" },           every = 5 },
     { id = "log",    label = "LOG",    fetch = {},                  every = 30 },
+    -- the wiki fetches for itself (wiki_api.tick): it needs no key
+    { id = "wiki",   label = "WIKI",   fetch = {},                  every = 60 },
     { id = "wheel",  label = "WHEEL",  fetch = { "menu", "status" }, every = 5 },
 }
 
@@ -973,6 +1006,9 @@ local pool = { buttons = {}, texts = {}, pics = {} }
 local pool_actions = {}      -- button index -> function for its current row
 local render                 -- forward
 local render_wheel           -- forward
+-- What the WIKI tab (see "Wiki") gives the rest of the panel: crumb, back,
+-- create, layout, tick, ... -- one table, for Lua 5.1's 200 locals.
+local wiki_api = {}
 local create_wheel, destroy_wheel, wheel_key_pressed  -- forward, see "Wheel"
 local wheel_update, close_wheel  -- forward, see "Wheel"
 local pin_index, toggle_pin   -- forward, see "Wheel"
@@ -1250,7 +1286,9 @@ local function geometry()
     if gw and gh and gs and gs > 0 and math.abs(gs - settings.scale) > 0.001 then
         gw, gh = math.floor(gw * settings.scale / gs + 0.5), math.floor(gh * settings.scale / gs + 0.5)
     end
-    local w = math.max(px(460), math.min(gw or dw, sw))
+    -- 500 (it was 460 with six tabs): the narrowest the seven tabs fit at
+    -- (bfcockpit/tools/luatest.lua checks it)
+    local w = math.max(px(500), math.min(gw or dw, sw))
     local h = math.max(px(300), math.min(gh or dh, sh))
     local x = math.max(0, math.min(tonumber(g.x) or dx, sw - w))
     local y = math.max(0, math.min(tonumber(g.y) or dy, sh - h))
@@ -1266,6 +1304,16 @@ local function client_size()
 end
 
 local PAD = 8
+
+-- Roughly how many ems wide an upper-case label is in the bold tab font.
+local function label_em(s)
+    local em = 0
+    for c in tostring(s):gmatch(".") do
+        em = em + (((c == "W" or c == "M") and 0.95) or ((c == "I" or c == " ") and 0.42)
+            or (c:match("%d") and 0.63) or 0.7)
+    end
+    return em
+end
 
 local function show_only(widgets, on)
     for _, w in pairs(widgets) do w:setVisible(on) end
@@ -1283,20 +1331,29 @@ local function layout()
         w_tools[i]:setBounds(rx, pad, small, row)
         rx = rx - small - gap
     end
-    local tab_w = math.min(px(80), math.floor((rx - pad) / #TABS) - gap)
+    -- Each tab as wide as its label needs, out of what is left: seven fit
+    -- the narrowest panel only because MENU, EWR, LOG and WIKI give way to
+    -- STATUS and CARGO. The widths are a guess at the bold font's glyphs.
+    local labels, units = {}, 0
+    for i, t in ipairs(TABS) do
+        labels[i] = t.id == "log" and state.unread > 0 and ("LOG " .. state.unread) or t.label
+        units = units + label_em(labels[i]) + 1.2
+    end
+    local per = math.max(1, (rx - pad) - gap * #TABS) / units
     local x = pad
-    for _, t in ipairs(TABS) do
+    for i, t in ipairs(TABS) do
         local b = w_tabs[t.id]
+        local tab_w = math.min(px(80), math.floor(per * (label_em(labels[i]) + 1.2)))
         b:setBounds(x, pad, tab_w, row)
         b:setSkin(state.tab == t.id and skins.tab_on or skins.tool)
-        b:setText(t.id == "log" and state.unread > 0 and ("LOG " .. state.unread) or t.label)
+        b:setText(labels[i])
         x = x + tab_w + gap
     end
 
     -- Second row, per tab.
     local y2 = pad + row + px(6)
     local top = y2
-    local crumb = (state.tab == "menu") or (state.tab == "cargo" and state.cargo_cat ~= nil)
+    local crumb = (state.tab == "menu") or (state.tab == "cargo" and state.cargo_cat ~= nil) or state.tab == "wiki"
     w_back:setVisible(crumb)
     w_crumb:setVisible(crumb)
     show_only(w_ewr, state.tab == "ewr")
@@ -1307,6 +1364,9 @@ local function layout()
         if state.tab == "menu" then
             w_back:setEnabled(#state.here > 0)
             w_crumb:setText("F10 > " .. (#state.here > 0 and table.concat(state.here, " > ") or "Other"))
+        elseif state.tab == "wiki" then
+            w_back:setEnabled(wiki_api.can_back and wiki_api.can_back() or false)
+            w_crumb:setText(wiki_api.crumb and wiki_api.crumb() or "WIKI")
         else
             w_back:setEnabled(true)
             w_crumb:setText("CARGO > " .. tostring(state.cargo_cat))
@@ -1321,6 +1381,9 @@ local function layout()
         end
         top = y2 + row + px(6)
     end
+    -- The wiki's search box, on a row of its own under the crumb.
+    if wiki_api.widgets then show_only(wiki_api.widgets(), state.tab == "wiki") end
+    if state.tab == "wiki" and wiki_api.layout then top = top + wiki_api.layout(pad, top, cw, row, gap) end
 
     local status_h = px(20)
     local em = w_emblem and px(22) or 0
@@ -1419,7 +1482,7 @@ local function draw_rows(rows)
         if r.pic then
             np = np + 1
             local pc = pooled_pic(np)
-            pc:setSkin(row_pic_skin(r.pic, math.min(w, h) - px(2), h))
+            pc:setSkin(r.pic_skin or row_pic_skin(r.pic, math.min(w, h) - px(2), h))
             pc:setBounds(x, y, w, h)
             pc:setVisible(true)
         elseif r.button then
@@ -1816,8 +1879,13 @@ render = function()
     if not window or not visible then return end
     local ok, err = pcall(function()
         layout()
+        if state.tab == "wiki" then
+            -- Public pages: no key and no server check, so the wiki reads
+            -- anywhere, single player included.
+            draw_rows(renderers.wiki())
+            if wiki_api.after_draw then wiki_api.after_draw() end
         -- No server, no engine, no key to register: nothing would ever load.
-        if not in_multiplayer() then
+        elseif not in_multiplayer() then
             draw_rows(message_rows("The panel works on the Vector Strike multiplayer servers. Join one and open it again."))
         elseif server_refused() then
             draw_rows(message_rows(server_refused()))
@@ -1877,6 +1945,8 @@ end
 
 local function select_tab(id)
     if state.tab == id then return end
+    -- the search box lets go of the keyboard when the wiki is left
+    if id ~= "wiki" and wiki_api.unfocus then wiki_api.unfocus() end
     state.tab = id
     if id == "log" then state.unread = 0 end
     refresh_now()
@@ -1927,6 +1997,9 @@ end
 local function tab_widgets()
     local list_ = {}
     for _, w in pairs(w_ewr) do list_[#list_ + 1] = w end
+    if wiki_api.widgets then
+        for _, w in ipairs(wiki_api.widgets()) do list_[#list_ + 1] = w end
+    end
     return list_
 end
 
@@ -1967,6 +2040,8 @@ local function create()
     w_back = tool_button("< Back", "Up one level", function()
         if state.tab == "cargo" then
             state.cargo_cat = nil
+        elseif state.tab == "wiki" then
+            return wiki_api.back()
         elseif #state.here > 0 then
             table.remove(state.here)
         end
@@ -1986,6 +2061,7 @@ local function create()
     w_ewr.enemy = tool_button("THREATS", "Enemy air picture", ewr_mode("enemy"))
     w_ewr.friendly = tool_button("FRIENDLIES", "Friendly air picture", ewr_mode("friendly"))
     w_ewr.intel = tool_button("GROUND INTEL", "Known enemy ground units", ewr_mode("intel"))
+    if wiki_api.create then wiki_api.create() end
 
 
     w_pane = ScrollPane.new()
@@ -2029,6 +2105,7 @@ hide = function()
     remember_geometry()
     visible = false
     local ok, err = pcall(function()
+        if wiki_api.unfocus then wiki_api.unfocus() end
         for _, c in ipairs(children()) do c:setVisible(false) end
         for _, c in ipairs(tab_widgets()) do c:setVisible(false) end
         window:setSkin(skins.hidden)
@@ -2177,6 +2254,7 @@ local PANEL_TABS = {
     ewr = { label = "EWR", icon = "ewr" },
     log = { label = "LOG", icon = "chat" },
     wheel = { label = "WHEEL EDITOR", icon = "gear" },
+    wiki = { label = "WIKI", icon = "list" },
 }
 
 -- Live-info slots. value() returns a short label for the ring and a longer
@@ -3292,7 +3370,7 @@ renderers.wheel = function()
                                 action = function() add({ kind = "info", what = what }) end }
         end
     elseif state.wheel_add == "panel" then
-        for _, tab in ipairs({ "menu", "cargo", "status", "ewr", "log", "wheel" }) do
+        for _, tab in ipairs({ "menu", "cargo", "status", "ewr", "log", "wiki", "wheel" }) do
             rows[#rows + 1] = { button = true, skin = skins.row, text = "  + " .. PANEL_TABS[tab].label,
                                 action = function() add({ kind = "panel", tab = tab }) end }
         end
@@ -3301,6 +3379,1299 @@ renderers.wheel = function()
 end
 end
 wheel_module()
+
+-- ── Wiki ─────────────────────────────────────────────────────────────
+-- The player wiki (the pages bfwiki shows at wiki.vectorstrike.org), read
+-- in the panel. The same data as the web wiki: the pages from
+-- /api/wiki/pages/<slug>, this server's numbers from /api/wiki/facts. Two
+-- routes are the panel's own (bfdb/src/cockpit_wiki.rs): the index, with
+-- each page's `updated_at` so a page is fetched again only when it changed,
+-- and the pictures, which dxgui can only show from a local PNG or JPEG.
+--
+-- Markdown becomes panel rows: headings in the bold skins, paragraphs
+-- wrapped to the panel, lists indented, tables and code in the mono font,
+-- emphasis dropped. A link to another page is a button under its paragraph;
+-- an outside link is written out as its address. The custom blocks the web
+-- wiki draws as pictures of the F10 menu, the panel or the wheel are drawn
+-- here as the rows and labels they show.
+--
+-- Pictures: /api/cockpit/wiki/image/<id>/info says what the file for this
+-- width will be (PNG or JPEG, and its size), bfcockpit_net.dll's `download`
+-- writes it under Mods\Services\BFCockpit\cache\wiki\img, and it is shown at
+-- the panel's width with its own shape. Once there, a picture is never
+-- fetched again. An SVG diagram comes back rasterised to PNG by bfdb.
+--
+-- Nothing here waits: every fetch goes through api_call / download and
+-- re-renders when it lands, like the other tabs.
+
+local function wiki_module()
+
+-- What can be checked outside DCS (bfcockpit/tools/luatest.lua): pure
+-- functions only, no widgets, no network.
+local W = {}
+
+local WIKI_DIR = lfs.writedir() .. [[Mods\Services\BFCockpit\cache\wiki\]]
+local IMG_DIR = WIKI_DIR .. [[img\]]
+local PAGE_DIR = WIKI_DIR .. [[pages\]]
+-- Picture widths asked of the server: a few steps, so resizing the panel a
+-- little reuses the file already on disk.
+local IMG_WIDTHS = { 320, 480, 640, 800, 960, 1280, 1600 }
+local INDEX_EVERY = 300   -- seconds between re-reads of the index
+local FACTS_EVERY = 300
+local SEARCH_DELAY = 0.6  -- seconds after the last keystroke
+
+local wk = {
+    nav = { view = "home" },  -- { view = "home" | "section" | "page", section, slug, scroll }
+    stack = {},               -- where Back goes
+    index = nil,              -- { pages = {...}, sections = {...}, by_slug = {}, dated = bool }
+    index_err = nil,
+    index_at = -1e9,
+    facts = nil,              -- the fact object of /api/wiki/facts
+    facts_label = nil,        -- which server's numbers they are
+    facts_for = nil,          -- the server they were fetched for
+    facts_at = -1e9,
+    facts_rev = 0,
+    pages = {},               -- slug -> { title, section, updated_at, content }
+    page_err = {},            -- slug -> message
+    parsed = {},              -- slug -> { key, blocks }
+    query = "",
+    query_at = 0,
+    searched = nil,           -- the query the last full-text answer is for
+    hits = nil,
+    search_err = nil,
+    images = {},              -- "<id>@<width>" -> { state, file, w, h, why }
+    img_disk = nil,           -- what is already in IMG_DIR, read once
+    inflight = {},
+    scroll_top = false,
+}
+local w_search, w_clear, w_hint
+
+-- ── Pure: text ──
+
+local function trim(s) return (tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", "")) end
+W.trim = trim
+
+local ENTITIES = { amp = "&", lt = "<", gt = ">", quot = '"', apos = "'", nbsp = " ",
+                   mdash = "—", ndash = "–", hellip = "...", rarr = "→", larr = "←", times = "×", deg = "°" }
+
+-- `{{cfg:path|fallback}}`: path into the fact object, `.` for keys and `[n]`
+-- for array indices, as bfwiki/src/lib/cfgTokens.ts reads it.
+function W.lookup(facts, path)
+    local keys = {}
+    for part in (tostring(path) .. "."):gmatch("([^%.]*)%.") do
+        local head = part:match("^([^%[]*)")
+        if head ~= "" then keys[#keys + 1] = head end
+        for idx in part:gmatch("%[([^%]]*)%]") do keys[#keys + 1] = idx end
+    end
+    local cur = facts
+    for _, k in ipairs(keys) do
+        if type(cur) ~= 'table' then return nil end
+        local n = tonumber(k)
+        -- JSON arrays arrive 1-based; [0] is the first element
+        if n and #cur > 0 then cur = cur[n + 1] else cur = cur[k] end
+        if cur == nil then return nil end
+    end
+    return cur
+end
+
+function W.format_fact(v)
+    local t = type(v)
+    if t == 'number' then
+        if v == math.floor(v) and math.abs(v) < 1e15 then return string.format("%.0f", v) end
+        local s = string.format("%.2f", v):gsub("0+$", ""):gsub("%.$", "")
+        return s
+    elseif t == 'boolean' then
+        return v and "yes" or "no"
+    elseif t == 'string' then
+        return v
+    elseif t == 'table' and #v > 0 then
+        local out = {}
+        for i, x in ipairs(v) do out[i] = W.format_fact(x) or "" end
+        return table.concat(out, ", ")
+    end
+    return nil
+end
+
+-- `{{list:path|fallback}}`: a table of a server's deployables, troops or
+-- actions, as Markdown (cfgTokens.ts, applyListTokens).
+local function num(v)
+    if type(v) == 'number' then return W.format_fact(v) end
+    if v == nil or type(v) == 'table' or type(v) == 'userdata' then return "" end
+    return tostring(v)
+end
+local function cell(v) return (tostring(v):gsub("|", "\\|"):gsub("\n+", " ")) end
+local LIST_SHAPES = {
+    deployables = { { "Deployable", "Menu group", "Crates required", "Limit", "Provides" }, function(d)
+        local path = type(d.path) == 'table' and d.path or {}
+        local name = #path > 0 and tostring(path[#path]) or tostring(d.name or "?")
+        local group = {}
+        for i = 1, #path - 1 do group[i] = tostring(path[i]) end
+        local need = {}
+        for _, c in ipairs(type(d.crates) == 'table' and d.crates or {}) do
+            if type(c) == 'table' then
+                need[#need + 1] = num(c.required) .. "x " .. tostring(c.name or "") .. " (" .. num(c.weight) .. " kg)"
+            end
+        end
+        local tags = {}
+        if d.jtac == true then tags[#tags + 1] = "JTAC" end
+        if d.ewr == true then tags[#tags + 1] = "EWR" end
+        if d.gci == true then tags[#tags + 1] = "GCI" end
+        return { "**" .. name .. "**", table.concat(group, " / "), #need > 0 and table.concat(need, ", ") or "—",
+                 num(d.limit) ~= "" and num(d.limit) or "—", #tags > 0 and table.concat(tags, ", ") or "—" }
+    end },
+    troops = { { "Squad", "Cost", "Weight", "Can capture", "Limit" }, function(t)
+        return { "**" .. tostring(t.name or "?") .. "**", num(t.cost) ~= "" and num(t.cost) or "0",
+                 num(t.weight) .. " kg", t.can_capture == true and "yes" or "no", num(t.limit) ~= "" and num(t.limit) or "—" }
+    end },
+    actions = { { "Action", "Cost", "Type", "Limit" }, function(a)
+        return { "**" .. tostring(a.name or "?") .. "**", num(a.cost) ~= "" and num(a.cost) or "0",
+                 type(a.kind) == 'string' and a.kind or "—", num(a.limit) ~= "" and num(a.limit) or "—" }
+    end },
+}
+
+local function list_table(path, facts)
+    local shape = LIST_SHAPES[path:match("^[^%.]+") or ""]
+    local v = W.lookup(facts, path)
+    if not (shape and type(v) == 'table' and #v > 0) then return nil end
+    local lines = { "| " .. table.concat(shape[1], " | ") .. " |" }
+    local rule = {}
+    for i = 1, #shape[1] do rule[i] = "---" end
+    lines[2] = "|" .. table.concat(rule, "|") .. "|"
+    for _, row in ipairs(v) do
+        if type(row) == 'table' then
+            local cells = shape[2](row)
+            for i, c in ipairs(cells) do cells[i] = trim(cell(c)) end
+            lines[#lines + 1] = "| " .. table.concat(cells, " | ") .. " |"
+        end
+    end
+    return table.concat(lines, "\n")
+end
+
+-- Both kinds of token, lists first (a row may hold a cfg token). A token
+-- that can't be resolved reads as its fallback, then as its path: never as
+-- nothing, which would turn "worth 350 points" into "worth points".
+function W.apply_tokens(md, facts)
+    md = tostring(md or "")
+    if not md:find("{{", 1, true) then return md end
+    local function split(inner)
+        local path, fallback = inner:match("^([^|]*)|(.*)$")
+        if not path then path = inner end
+        return trim(path), fallback and trim(fallback) or nil
+    end
+    md = md:gsub("{{%s*list:([^}]-)}}", function(inner)
+        local path, fallback = split(inner)
+        local t = list_table(path, facts)
+        if t then return t end
+        if fallback and fallback ~= "" then return fallback end
+        return "_No " .. path:gsub("%.", " ", 1) .. " are configured on this server._"
+    end)
+    md = md:gsub("{{%s*cfg:([^}]-)}}", function(inner)
+        local path, fallback = split(inner)
+        local v = W.format_fact(W.lookup(facts, path))
+        if v and v ~= "" then return v end
+        if fallback then return fallback end
+        return path
+    end)
+    return md
+end
+
+-- A link in page `slug` to another page, resolved the way bfwiki's
+-- resolveHref does (relative to the page, ".md" dropped), as a slug; nil
+-- for an outside link, an anchor, or anything that isn't a page.
+function W.resolve(href, slug)
+    href = trim(href)
+    if href == "" or href:sub(1, 1) == "#" or href:match("^%a[%w%+%.%-]*:") or href:sub(1, 2) == "//" then
+        return nil
+    end
+    href = href:gsub("#.*$", ""):gsub("%?.*$", "")
+    if href == "" or href:sub(1, 5) == "/api/" then return nil end
+    local parts = {}
+    if href:sub(1, 1) ~= "/" then
+        for seg in (tostring(slug or "") .. "/"):gmatch("([^/]*)/") do parts[#parts + 1] = seg end
+        parts[#parts] = nil  -- the page itself: links resolve against its folder
+    end
+    for seg in (href .. "/"):gmatch("([^/]*)/") do
+        if seg == ".." then
+            if #parts > 0 then parts[#parts] = nil end
+        elseif seg ~= "." and seg ~= "" then
+            parts[#parts + 1] = seg
+        end
+    end
+    local out = table.concat(parts, "/"):gsub("%.[mM][dD]$", ""):gsub("%.markdown$", "")
+    if out == "" or not out:match("^[%w%-%._/]+$") then return nil end
+    return out
+end
+
+-- Inline Markdown reduced to plain text. Returns the text, the links to
+-- other pages ({ text, slug }) and the pictures in it ({ alt, src }).
+-- Outside links stay in the text as "text (address)".
+function W.inline(s, slug, api)
+    s = tostring(s or "")
+    local keep, links, pics = {}, {}, {}
+    local function stash(v)
+        keep[#keep + 1] = v
+        return "\1" .. #keep .. "\2"
+    end
+    -- code first: what is inside `...` is shown as it is
+    s = s:gsub("(`+)(.-)%1", function(_, code) return stash(trim(code)) end)
+    s = s:gsub("\\([%p])", function(c) return stash(c) end)
+    s = s:gsub("!%[([^%]]*)%]%(%s*([^%)%s]*)[^%)]*%)", function(alt, src)
+        pics[#pics + 1] = { alt = alt, src = src }
+        return ""
+    end)
+    s = s:gsub("%[([^%]]*)%]%(%s*([^%)%s]*)[^%)]*%)", function(text, href)
+        local target = W.resolve(href, slug)
+        if target then
+            links[#links + 1] = { text = trim(text), slug = target }
+            return text
+        end
+        if href:sub(1, 1) == "#" or href == "" then return text end
+        if href:sub(1, 5) == "/api/" and api then href = api .. href end
+        if trim(text) == href or text == "" then return stash(href) end
+        return text .. " (" .. stash(href) .. ")"
+    end)
+    s = s:gsub("<(https?://[^>%s]+)>", function(u) return stash(u) end)
+    s = s:gsub("<[bB][rR]%s*/?>", "\n")
+    s = s:gsub("</?%a[^>]*>", "")
+    s = s:gsub("%*%*%*(.-)%*%*%*", "%1"):gsub("%*%*(.-)%*%*", "%1"):gsub("__(.-)__", "%1")
+    s = s:gsub("~~(.-)~~", "%1")
+    s = s:gsub("%*([^%*%s][^%*]-)%*", "%1")
+    s = (" " .. s .. " "):gsub("([%s%(%[\"'])_([^_%s][^_]-)_([%s%.,;:!%?%)%]\"'])", "%1%2%3")
+    s = s:sub(2, -2)
+    s = s:gsub("&(#?%w+);", function(e)
+        if ENTITIES[e] then return ENTITIES[e] end
+        local n = tonumber(e:match("^#(%d+)$") or "")
+        if n and n < 128 then return string.char(n) end
+        return "&" .. e .. ";"
+    end)
+    for _ = 1, 3 do  -- a stash can hold a stash (code inside a link's text)
+        s = s:gsub("\1(%d+)\2", function(i) return keep[tonumber(i)] end)
+    end
+    return s, links, pics
+end
+
+-- ── Pure: blocks ──
+
+local CUSTOM = { f10menu = true, dcsmessage = true, cockpitpanel = true, wheel = true,
+                 steps = true, statushexes = true, hexlegend = true, mapsymbols = true }
+
+local function is_rule(l) return l:match("^%s*[-*_][-*_%s]*$") and select(2, l:gsub("[-*_]", "")) >= 3 end
+local function list_item(l)
+    local sp, mark, rest = l:match("^(%s*)([-*+])%s+(.*)$")
+    if sp then return #sp:gsub("\t", "    "), nil, rest end
+    local sp2, n, rest2 = l:match("^(%s*)(%d+)[.)]%s+(.*)$")
+    if sp2 then return #sp2:gsub("\t", "    "), tonumber(n), rest2 end
+end
+-- |---|:--:| under a table's header row
+local function is_table_rule(l)
+    return l:match("^[%s|:%-]+$") ~= nil and l:find("-", 1, true) ~= nil and l:find("|", 1, true) ~= nil
+end
+local function split_row(l)
+    l = trim(l):gsub("^|", ""):gsub("|$", "")
+    l = l:gsub("\\|", "\1")
+    local cells = {}
+    for c in (l .. "|"):gmatch("([^|]*)|") do cells[#cells + 1] = trim(c:gsub("\1", "|")) end
+    return cells
+end
+local function starts_block(l, nxt)
+    return l:match("^%s*```") or l:match("^%s*~~~") or l:match("^#+%s") or l:match("^%s*>")
+        or list_item(l) or is_rule(l) or l:match("^%s*!%[[^%]]*%]%([^%)]*%)%s*$")
+        or (nxt and l:find("|", 1, true) and is_table_rule(nxt))
+end
+
+-- Markdown to a list of blocks: heading, para, list, code, table, quote,
+-- image, rule, and the custom fenced blocks (kind = their language).
+function W.parse(md)
+    local lines = {}
+    md = tostring(md or ""):gsub("\r", ""):gsub("<!%-%-.-%-%->", "")
+    for l in (md .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = l end
+    local blocks, i = {}, 1
+    while i <= #lines do
+        local l = lines[i]
+        local fence = l:match("^%s*(```+)") or l:match("^%s*(~~~+)")
+        if fence then
+            local lang = trim(l:sub(l:find(fence, 1, true) + #fence)):match("^([%w%-_]*)") or ""
+            local body = {}
+            i = i + 1
+            while i <= #lines and not lines[i]:match("^%s*" .. fence:gsub("%p", "%%%0")) do
+                body[#body + 1] = lines[i]
+                i = i + 1
+            end
+            i = i + 1
+            lang = lang:lower()
+            blocks[#blocks + 1] = { kind = CUSTOM[lang] and lang or "code", lang = lang, text = table.concat(body, "\n") }
+        elseif trim(l) == "" then
+            i = i + 1
+        elseif l:match("^#+%s") then
+            local h, text = l:match("^(#+)%s+(.-)%s*#*%s*$")
+            blocks[#blocks + 1] = { kind = "heading", level = #h, text = text }
+            i = i + 1
+        elseif is_rule(l) then
+            blocks[#blocks + 1] = { kind = "rule" }
+            i = i + 1
+        elseif l:find("|", 1, true) and lines[i + 1] and is_table_rule(lines[i + 1]) then
+            local t = { kind = "table", head = split_row(l), rows = {} }
+            i = i + 2
+            while i <= #lines and trim(lines[i]) ~= "" and lines[i]:find("|", 1, true) do
+                t.rows[#t.rows + 1] = split_row(lines[i])
+                i = i + 1
+            end
+            blocks[#blocks + 1] = t
+        elseif l:match("^%s*>") then
+            local inner = {}
+            while i <= #lines and lines[i]:match("^%s*>") do
+                inner[#inner + 1] = lines[i]:gsub("^%s*>%s?", "")
+                i = i + 1
+            end
+            blocks[#blocks + 1] = { kind = "quote", blocks = W.parse(table.concat(inner, "\n")) }
+        elseif list_item(l) then
+            local items, stack = {}, {}
+            while i <= #lines do
+                local cur = lines[i]
+                local ind, n, rest = list_item(cur)
+                -- bullets then numbers (or back) at the top: a new list
+                if ind and #items > 0 and ind <= stack[1] and (n ~= nil) ~= (items[1].n ~= nil) then break end
+                if ind then
+                    while #stack > 0 and ind < stack[#stack] do table.remove(stack) end
+                    if #stack == 0 or ind > stack[#stack] then stack[#stack + 1] = ind end
+                    local check = rest:match("^%[([ xX])%]%s+")
+                    if check then rest = (check == " " and "☐ " or "☑ ") .. rest:gsub("^%[[ xX]%]%s+", "") end
+                    items[#items + 1] = { level = #stack - 1, n = n, text = rest }
+                    i = i + 1
+                elseif trim(cur) == "" then
+                    -- a blank line ends the list unless more of it follows
+                    local nxt = lines[i + 1]
+                    if nxt and (list_item(nxt) or (nxt:match("^%s%s+%S") and #items > 0)) then
+                        i = i + 1
+                    else
+                        break
+                    end
+                elseif #items > 0 and not starts_block(cur, lines[i + 1]) then
+                    items[#items].text = items[#items].text .. " " .. trim(cur)  -- continuation
+                    i = i + 1
+                else
+                    break
+                end
+            end
+            blocks[#blocks + 1] = { kind = "list", items = items }
+        elseif l:match("^%s*!%[[^%]]*%]%([^%)]*%)%s*$") then
+            local alt, src = l:match("!%[([^%]]*)%]%(%s*([^%)%s]*)")
+            blocks[#blocks + 1] = { kind = "image", alt = alt, src = src }
+            i = i + 1
+        else
+            local para = {}
+            while i <= #lines and trim(lines[i]) ~= "" and (#para == 0 or not starts_block(lines[i], lines[i + 1])) do
+                local cur = lines[i]
+                -- two trailing spaces or a backslash: a line break
+                local hard = cur:match("  $") or cur:match("\\$")
+                para[#para + 1] = trim(cur:gsub("\\$", "")) .. (hard and "\n" or " ")
+                i = i + 1
+            end
+            blocks[#blocks + 1] = { kind = "para", text = trim(table.concat(para)) }
+        end
+    end
+    return blocks
+end
+
+-- ── Rows ──
+-- ctx: { slug, width, x (indent), open(slug), image(src, alt, x, width) -> rows,
+--        skin (override for every text row, e.g. quotes), json(text) -> value }
+
+local function push(rows, r) rows[#rows + 1] = r return r end
+
+-- Wrapped text. With a `prefix` (a list marker) the first line starts with
+-- it and the others hang `hang` pixels in, under the text.
+local function text_rows(rows, text, x, width, skin, font_px, prefix, hang)
+    hang = prefix and (hang or px(14)) or 0
+    local lines = wrap(text, width - hang, font_px)
+    for k, line in ipairs(lines) do
+        if k == 1 and prefix then
+            push(rows, { text = prefix .. line, skin = skin, x = x, w = width })
+        else
+            push(rows, { text = line, skin = skin, x = x + hang, w = width - hang })
+        end
+    end
+    return #lines
+end
+
+local function link_buttons(rows, links, ctx, x, width)
+    local seen = {}
+    for _, lk in ipairs(links) do
+        if not seen[lk.slug] then
+            seen[lk.slug] = true
+            local target = lk.slug
+            push(rows, { button = true, skin = skins.row_sub, x = x, w = width,
+                         text = "  " .. (lk.text ~= "" and lk.text or target) .. "  >",
+                         action = function() ctx.open(target) end })
+        end
+    end
+end
+
+local function pic_rows(rows, pics, ctx, x, width)
+    for _, p in ipairs(pics) do
+        for _, r in ipairs(ctx.image(p.src, p.alt, x, width)) do push(rows, r) end
+    end
+end
+
+-- One run of inline text: a lone link is a button, anything else wrapped
+-- text with its links as buttons underneath.
+local function inline_rows(rows, raw, ctx, x, width, skin, font_px, prefix, hang)
+    local text, links, pics = W.inline(raw, ctx.slug, ctx.api)
+    local h = prefix and (hang or px(14)) or 0
+    if #links == 1 and trim(text) == links[1].text then
+        -- nothing but a link: the button is the line
+        link_buttons(rows, links, ctx, x + h, width - h)
+    else
+        if trim(text) ~= "" then text_rows(rows, text, x, width, skin, font_px, prefix, hang) end
+        link_buttons(rows, links, ctx, x + h, width - h)
+    end
+    pic_rows(rows, pics, ctx, x + h, width - h)
+end
+
+local function mono_rows(rows, text, x, width)
+    local per = math.max(16, math.floor(width / (px(12) * (settings.text_scale or 1) * 0.62)))
+    for line in (tostring(text) .. "\n"):gmatch("(.-)\n") do
+        line = line:gsub("\t", "    ")
+        if line == "" then push(rows, { text = "", skin = skins.mono, mono = true, x = x, w = width }) end
+        while #line > 0 do
+            push(rows, { text = line:sub(1, per), skin = skins.mono, mono = true, x = x, w = width })
+            line = line:sub(per + 1)
+        end
+    end
+    return per
+end
+
+local function gap(rows, h) push(rows, { text = "", h = px(h or 6) }) end
+
+local custom_rows  -- forward
+
+function W.rows(blocks, ctx)
+    local rows = {}
+    local x0 = ctx.x or 0
+    local width = ctx.width - x0
+    for bi, b in ipairs(blocks) do
+        local k = b.kind
+        if k == "heading" then
+            if bi > 1 then gap(rows, b.level <= 2 and 8 or 4) end
+            local skin, size = skins.bold, px(FONT_PX)
+            if b.level == 1 then skin, size = skins.h1 or skins.head, px(16)
+            elseif b.level == 2 then skin, size = skins.head, px(14) end
+            local text, links = W.inline(b.text, ctx.slug, ctx.api)
+            text_rows(rows, text, x0, width, ctx.skin or skin, size)
+            link_buttons(rows, links, ctx, x0, width)
+        elseif k == "para" then
+            inline_rows(rows, b.text, ctx, x0, width, ctx.skin or skins.text)
+            gap(rows, 4)
+        elseif k == "list" then
+            for _, it in ipairs(b.items) do
+                local ind = x0 + it.level * px(16)
+                local mark = it.n and (tostring(it.n) .. ". ") or "•  "
+                local hang = it.n and px(10 + 7 * #tostring(it.n)) or px(14)
+                inline_rows(rows, it.text, ctx, ind, ctx.width - ind, ctx.skin or skins.text, nil, mark, hang)
+            end
+            gap(rows, 4)
+        elseif k == "code" then
+            mono_rows(rows, b.text, x0, width)
+            gap(rows, 4)
+        elseif k == "table" then
+            local head, body = {}, {}
+            for c, v in ipairs(b.head) do head[c] = (W.inline(v, ctx.slug, ctx.api)) end
+            for r, row in ipairs(b.rows) do
+                body[r] = {}
+                for c = 1, #head do body[r][c] = (W.inline(row[c] or "", ctx.slug, ctx.api)) end
+            end
+            local per = math.max(16, math.floor(width / (px(12) * (settings.text_scale or 1) * 0.62)))
+            local widths, total = {}, 0
+            for c = 1, #head do
+                widths[c] = #head[c]
+                for _, row in ipairs(body) do widths[c] = math.max(widths[c], #row[c]) end
+                total = total + widths[c] + (c > 1 and 2 or 0)
+            end
+            if total <= per then
+                local function line(cells)
+                    local out = {}
+                    for c = 1, #head do out[c] = cells[c] .. string.rep(" ", widths[c] - #cells[c]) end
+                    return (table.concat(out, "  "):gsub("%s+$", ""))
+                end
+                push(rows, { text = line(head), skin = skins.mono, mono = true, x = x0, w = width })
+                push(rows, { text = string.rep("-", total), skin = skins.mono, mono = true, x = x0, w = width })
+                for _, row in ipairs(body) do
+                    push(rows, { text = line(row), skin = skins.mono, mono = true, x = x0, w = width })
+                end
+            else
+                -- too wide for the panel: one card per row, "Header: value"
+                for _, row in ipairs(body) do
+                    text_rows(rows, row[1], x0, width, skins.bold)
+                    for c = 2, #head do
+                        if row[c] ~= "" then
+                            text_rows(rows, (head[c] ~= "" and (head[c] .. ": ") or "") .. row[c],
+                                x0 + px(12), width - px(12), ctx.skin or skins.text)
+                        end
+                    end
+                    gap(rows, 3)
+                end
+            end
+            gap(rows, 4)
+        elseif k == "quote" then
+            local sub = {}
+            for kk, vv in pairs(ctx) do sub[kk] = vv end
+            sub.x, sub.skin = x0 + px(8), skins.answer
+            for _, r in ipairs(W.rows(b.blocks, sub)) do push(rows, r) end
+        elseif k == "image" then
+            pic_rows(rows, { { alt = b.alt, src = b.src } }, ctx, x0, width)
+            gap(rows, 4)
+        elseif k == "rule" then
+            push(rows, { text = string.rep("─", math.max(4, math.floor(width / px(9)))), skin = skins.label, x = x0, w = width, h = px(12) })
+        elseif custom_rows[k] then
+            local ok, err = pcall(custom_rows[k], rows, b.text, ctx, x0, width)
+            if not ok then
+                logmsg("wiki: " .. k .. " block in " .. tostring(ctx.slug) .. ": " .. tostring(err))
+                mono_rows(rows, b.text, x0, width)
+            end
+            gap(rows, 6)
+        end
+    end
+    return rows
+end
+
+-- ── Pure: the custom blocks ──
+
+local function json_of(ctx, text)
+    local ok, v = pcall(ctx.json, text)
+    if ok and type(v) == 'table' then return v end
+    error("not JSON")
+end
+local function str(v) return (type(v) == 'string' or type(v) == 'number') and tostring(v) or nil end
+
+custom_rows = {}
+
+-- An F10 menu (or wheel) as an indented tree: a submenu with ">" after it,
+-- a command with what F10 answers under it.
+local function tree_rows(rows, items, ctx, x, width, depth, wheel)
+    for _, it in ipairs(type(items) == 'table' and items or {}) do
+        if type(it) == 'table' then
+            local ind = x + depth * px(16)
+            local label = str(it.label) or str(it.name) or "?"
+            local kids = type(it.items) == 'table' and #it.items > 0
+            local value = str(it.value) or str(it.info)
+            local text
+            if wheel then
+                text = (depth == 0 and "◯ " or "– ") .. label .. (value and ("   " .. value) or "") .. (kids and "  >" or "")
+            else
+                text = kids and (label .. "  >") or label
+            end
+            text_rows(rows, text, ind, x + width - ind, kids and skins.good or skins.text)
+            local says = str(it.says)
+            if says then
+                for _, line in ipairs(wrap(says, x + width - ind - px(28))) do
+                    push(rows, { text = "  " .. line, skin = skins.answer, x = ind + px(16), w = x + width - ind - px(16) })
+                end
+            end
+            local note = str(it.note)
+            if note then text_rows(rows, note, ind + px(16), x + width - ind - px(16), skins.label) end
+            if kids then tree_rows(rows, it.items, ctx, x, width, depth + 1, wheel) end
+        end
+    end
+end
+
+custom_rows.f10menu = function(rows, text, ctx, x, width)
+    local m = json_of(ctx, text)
+    local root = str(m.root) or "F10 Other"
+    push(rows, { text = "F10 RADIO MENU  --  " .. root:gsub("^F10%s*", ""), skin = skins.label, x = x, w = width })
+    tree_rows(rows, m.items, ctx, x + px(8), width - px(8), 0, false)
+end
+
+custom_rows.wheel = function(rows, text, ctx, x, width)
+    local m = json_of(ctx, text)
+    push(rows, { text = "THE WHEEL" .. (str(m.title) and ("  --  " .. str(m.title)) or ""), skin = skins.label, x = x, w = width })
+    tree_rows(rows, m.items, ctx, x + px(8), width - px(8), 0, true)
+end
+
+custom_rows.cockpitpanel = function(rows, text, ctx, x, width)
+    local m = json_of(ctx, text)
+    push(rows, { text = "THE PANEL" .. (str(m.tab) and ("  --  " .. str(m.tab):upper() .. " TAB") or ""), skin = skins.label, x = x, w = width })
+    local ix, iw = x + px(8), width - px(8)
+    for _, r in ipairs(type(m.rows) == 'table' and m.rows or {}) do
+        if type(r) == 'table' then
+            if str(r.heading) then text_rows(rows, str(r.heading), ix, iw, skins.head, px(14)) end
+            if str(r.text) then text_rows(rows, str(r.text), ix, iw, skins.text) end
+            if str(r.label) and str(r.value) then
+                text_rows(rows, str(r.label) .. ":  " .. str(r.value), ix, iw, skins.text)
+            end
+            if str(r.button) then text_rows(rows, "[ " .. str(r.button) .. " ]", ix, iw, skins.bold) end
+            if str(r.says) then
+                for _, line in ipairs(wrap(str(r.says), iw - px(28))) do
+                    push(rows, { text = "  " .. line, skin = skins.answer, x = ix + px(16), w = iw - px(16) })
+                end
+            end
+            if str(r.note) then text_rows(rows, str(r.note), ix + px(16), iw - px(16), skins.label) end
+        end
+    end
+    if str(m.status) then text_rows(rows, str(m.status), ix, iw, skins.status, px(12)) end
+end
+
+custom_rows.dcsmessage = function(rows, text, ctx, x, width)
+    push(rows, { text = "ON SCREEN IN DCS", skin = skins.label, x = x, w = width })
+    for _, line in ipairs(wrap(text, width - px(20))) do
+        push(rows, { text = "  " .. line, skin = skins.answer, x = x + px(8), w = width - px(8) })
+    end
+end
+
+custom_rows.steps = function(rows, text, ctx, x, width)
+    local steps = json_of(ctx, text)
+    for n, s in ipairs(steps) do
+        if type(s) == 'table' then
+            text_rows(rows, n .. ".  " .. (str(s.title) or ""), x, width, skins.bold)
+            if str(s.text) then
+                local sub = {}
+                for kk, vv in pairs(ctx) do sub[kk] = vv end
+                sub.x, sub.width = x + px(22), x + width
+                for _, r in ipairs(W.rows(W.parse(str(s.text)), sub)) do push(rows, r) end
+            end
+            if str(s.image) then
+                pic_rows(rows, { { alt = str(s.alt) or str(s.title) or "", src = str(s.image) } }, ctx, x + px(22), width - px(22))
+            end
+            gap(rows, 4)
+        end
+    end
+end
+
+local function bucket(v)
+    v = tonumber(v)
+    if not v then return nil end
+    return v > 66 and "green" or (v >= 33 and "amber" or "red")
+end
+
+custom_rows.statushexes = function(rows, text, ctx, x, width)
+    local h = json_of(ctx, text)
+    local unlimited, focus = {}, nil
+    for _, u in ipairs(type(h.unlimited) == 'table' and h.unlimited or {}) do unlimited[tostring(u)] = true end
+    if type(h.focus) == 'table' and #h.focus > 0 then
+        focus = {}
+        for _, f in ipairs(h.focus) do focus[tostring(f)] = true end
+    end
+    local NAMES = { { "health", "Health" }, { "logi", "Logistics" }, { "supply", "Supply" }, { "fuel", "Fuel" } }
+    for _, nm in ipairs(NAMES) do
+        local v = h[nm[1]]
+        if (type(v) == 'number' or unlimited[nm[1]]) and (not focus or focus[nm[1]]) then
+            local val = unlimited[nm[1]] and "unlimited" or (string.format("%d%%", v) .. "  (" .. bucket(v) .. ")")
+            push(rows, { text = string.format("  %-10s %s", nm[2], val), skin = skins.mono, mono = true, x = x, w = width })
+        end
+    end
+    if str(h.caption) then text_rows(rows, str(h.caption), x, width, skins.label) end
+end
+
+custom_rows.hexlegend = function(rows, text, ctx, x, width)
+    for _, r in ipairs({ { "Green", "Above 66% — fine." }, { "Amber", "33–66% — getting thin." },
+                         { "Red", "Below 33% — critical." },
+                         { "Gold outline", "That resource is unlimited — it never runs dry." } }) do
+        text_rows(rows, r[1] .. ":  " .. r[2], x, width, skins.text)
+    end
+end
+
+custom_rows.mapsymbols = function(rows, text, ctx, x, width)
+    for _, r in ipairs(json_of(ctx, text)) do
+        if type(r) == 'table' then
+            local side = str(r.side)
+            text_rows(rows, (str(r.name) or str(r.icon) or "?") .. (side and ("  (" .. side .. ")") or ""), x, width,
+                side == "blue" and skins.blue or (side == "red" and skins.red or skins.bold))
+            if str(r.text) then text_rows(rows, str(r.text), x + px(14), width - px(14), skins.text) end
+        end
+    end
+end
+
+-- ── Index, pages, facts ──
+
+local function api_root() return (tostring(cfg.api):gsub("/+$", "")) end
+
+local function server_key() return tostring(cfg.instance or server_name() or "") end
+
+local function page_file(slug) return PAGE_DIR .. slug:gsub("[^%w%-%._]", "~") .. ".lua" end
+
+local function mkdirs()
+    if wk.dirs_made then return end
+    wk.dirs_made = true
+    local base = lfs.writedir() .. [[Mods\Services\BFCockpit\]]
+    for _, d in ipairs({ base, base .. [[cache\]], WIKI_DIR, IMG_DIR, PAGE_DIR }) do
+        pcall(lfs.mkdir, (d:gsub("\\$", "")))
+    end
+end
+
+local function load_page_file(slug)
+    local chunk = loadfile(page_file(slug))
+    if not chunk then return nil end
+    setfenv(chunk, {})
+    local ok, p = pcall(chunk)
+    if ok and type(p) == 'table' and type(p.content) == 'string' then return p end
+    return nil
+end
+
+local function save_page_file(slug, p)
+    mkdirs()
+    local ok, err = pcall(function()
+        local f, e = io.open(page_file(slug), "w")
+        if not f then error(tostring(e)) end
+        f:write("return " .. serialize({ title = p.title, section = p.section, updated_at = p.updated_at, content = p.content }) .. "\n")
+        f:close()
+    end)
+    if not ok then logmsg("wiki: could not cache " .. slug .. ": " .. tostring(err)) end
+end
+
+local function index_entry(slug)
+    return wk.index and wk.index.by_slug[slug] or nil
+end
+
+local function set_index(pages, sections, dated)
+    local idx = { pages = {}, sections = {}, by_slug = {}, dated = dated }
+    local seen = {}
+    for _, p in ipairs(list(pages)) do
+        if type(p) == 'table' and present(p.slug) then
+            local e = { slug = tostring(p.slug), title = present(p.title) and tostring(p.title) or tostring(p.slug),
+                        section = present(p.section) and tostring(p.section) or "Other",
+                        order = tonumber(p.order) or 0, updated_at = present(p.updated_at) and tostring(p.updated_at) or nil }
+            idx.pages[#idx.pages + 1] = e
+            idx.by_slug[e.slug] = e
+            if not seen[e.section] then seen[e.section] = true; idx.sections[#idx.sections + 1] = e.section end
+        end
+    end
+    -- the server's own section order when it gives one
+    if type(sections) == 'table' and #sections > 0 then
+        local ordered, have = {}, {}
+        for _, s in ipairs(sections) do
+            if present(s) and seen[tostring(s)] and not have[tostring(s)] then
+                ordered[#ordered + 1] = tostring(s); have[tostring(s)] = true
+            end
+        end
+        for _, s in ipairs(idx.sections) do if not have[s] then ordered[#ordered + 1] = s end end
+        idx.sections = ordered
+    end
+    wk.index = idx
+end
+
+local function fetch_index()
+    if wk.inflight.index then return end
+    wk.inflight.index = true
+    api_call("GET", "/api/cockpit/wiki/index", nil, nil, false, function(data, err, status)
+        if type(data) == 'table' and type(data.pages) == 'table' then
+            wk.inflight.index = nil
+            wk.index_err = nil
+            set_index(data.pages, data.sections, true)
+            redraw()
+            return
+        end
+        if status ~= 404 then
+            wk.inflight.index = nil
+            wk.index_err = err
+            redraw()
+            return
+        end
+        -- a bfdb from before the panel's own index: the web wiki's list,
+        -- which has no dates, so pages are cached for this session only
+        api_call("GET", "/api/wiki/pages", nil, nil, false, function(d2, e2)
+            wk.inflight.index = nil
+            if type(d2) == 'table' then
+                wk.index_err = nil
+                set_index(d2, nil, false)
+            else
+                wk.index_err = e2
+            end
+            redraw()
+        end)
+    end)
+end
+
+local function fetch_facts()
+    if wk.inflight.facts then return end
+    wk.inflight.facts = true
+    local key = server_key()
+    api_call("GET", "/api/wiki/facts", nil, nil, false, function(data)
+        wk.inflight.facts = nil
+        wk.facts_for = key
+        -- no numbers is fine: every token has its fallback
+        if type(data) == 'table' and type(data.facts) == 'table' then
+            wk.facts = data.facts
+            local inst = type(data.instance) == 'table' and data.instance or {}
+            wk.facts_label = present(inst.label) and tostring(inst.label) or (present(inst.id) and tostring(inst.id) or nil)
+        end
+        wk.facts_rev = wk.facts_rev + 1
+        redraw()
+    end)
+end
+
+-- The page's text as it is now, from memory, the disk cache or the server.
+-- nil while it is being fetched.
+local function page_now(slug)
+    local e = index_entry(slug)
+    local want = e and e.updated_at or nil
+    local p = wk.pages[slug]
+    local dated = wk.index and wk.index.dated
+    if p and (not dated or not want or p.updated_at == want) then return p end
+    if dated and want and not p then
+        local disk = load_page_file(slug)
+        if disk and disk.updated_at == want then
+            wk.pages[slug] = disk
+            return disk
+        end
+    end
+    if not wk.inflight["page:" .. slug] and not wk.page_err[slug] then
+        wk.inflight["page:" .. slug] = true
+        api_call("GET", "/api/wiki/pages/" .. slug, nil, nil, false, function(data, err, status)
+            wk.inflight["page:" .. slug] = nil
+            if type(data) == 'table' and present(data.content) then
+                local got = { title = present(data.title) and tostring(data.title) or slug,
+                              section = present(data.section) and tostring(data.section) or "",
+                              updated_at = present(data.updated_at) and tostring(data.updated_at) or nil,
+                              content = tostring(data.content) }
+                wk.pages[slug] = got
+                wk.parsed[slug] = nil
+                if got.updated_at then save_page_file(slug, got) end
+            else
+                wk.page_err[slug] = status == 404 and ("There is no page \"" .. slug .. "\" in this wiki.") or err
+            end
+            redraw()
+        end)
+    end
+    return p  -- a stale copy is better than nothing while the new one comes
+end
+
+-- ── Pictures ──
+
+local function img_width(w)
+    for _, s in ipairs(IMG_WIDTHS) do if s >= w then return s end end
+    return IMG_WIDTHS[#IMG_WIDTHS]
+end
+
+local function scan_img_dir()
+    wk.img_disk = {}
+    local ok = pcall(function()
+        for f in lfs.dir(IMG_DIR) do
+            local id, bw, w, h = f:match("^([%x%-]+)%-(%d+)%-(%d+)x(%d+)%.%a+$")
+            if id then wk.img_disk[id .. "@" .. bw] = { file = IMG_DIR .. f, w = tonumber(w), h = tonumber(h) } end
+        end
+    end)
+    if not ok then wk.img_disk = {} end
+end
+
+local pic_skins, pic_skin_count = {}, 0
+
+local function picture_skin(file, w, h)
+    local key = file .. "|" .. w .. "|" .. h
+    local s = pic_skins[key]
+    if s then return s end
+    if pic_skin_count > 200 then pic_skins, pic_skin_count = {}, 0 end
+    s = deep_copy(Skin.staticSkin())
+    for _, st in pairs(s.skinData.states) do
+        for i in pairs(st) do
+            st[i].picture = { file = file, color = "0xffffffff", horzAlign = { type = "min", offset = 0 },
+                              vertAlign = { type = "min", offset = 0 }, size = { horz = w, vert = h }, userTexSampler = 0 }
+        end
+    end
+    pic_skins[key] = s
+    pic_skin_count = pic_skin_count + 1
+    return s
+end
+
+local function start_image(key, id, bw)
+    local img = { state = "info" }
+    wk.images[key] = img
+    api_call("GET", "/api/cockpit/wiki/image/" .. id .. "/info", { w = tostring(bw) }, nil, false, function(info, err)
+        if type(info) ~= 'table' or not present(info.url) or not tostring(info.url):match("^/api/") then
+            img.state, img.why = "failed", err or "no picture"
+            if err then logmsg("wiki picture " .. id .. ": " .. tostring(err)) end
+            redraw()
+            return
+        end
+        local w, h = tonumber(info.width), tonumber(info.height)
+        local ext = info.format == "jpg" and "jpg" or "png"
+        if not (w and h and w > 0 and h > 0) then
+            img.state, img.why = "failed", "no size"
+            redraw()
+            return
+        end
+        local file = IMG_DIR .. id .. "-" .. bw .. "-" .. w .. "x" .. h .. "." .. ext
+        local did, derr = http.download(api_root() .. tostring(info.url), file, 60)
+        if not did then
+            img.state, img.why = "failed", derr
+            logmsg("wiki picture " .. id .. ": " .. tostring(derr))
+            redraw()
+            return
+        end
+        img.state = "downloading"
+        pending_raw[did] = function(r)
+            if r.status >= 200 and r.status < 300 and not r.error then
+                img.state, img.file, img.w, img.h = "ready", file, w, h
+            else
+                img.state, img.why = "failed", r.error
+                logmsg("wiki picture " .. id .. ": " .. tostring(r.error))
+            end
+            redraw()
+        end
+    end)
+end
+
+-- Rows for one picture: the picture itself once it is on disk, otherwise
+-- its alt text as a caption (while it comes, or for good when it can't).
+local function image_rows(src, alt, x, width)
+    local rows = {}
+    alt = trim(W.inline(alt or ""))
+    local id = tostring(src or ""):match("/api/wiki/images/(%x%x%x%x%x%x%x%x%-[%x%-]+)")
+    local why
+    if not id then
+        why = "picture"
+    elseif not (http and http.download) then
+        why = "picture -- needs the newer bfcockpit_net.dll"
+    else
+        local bw = img_width(width)
+        local key = id .. "@" .. bw
+        if not wk.img_disk then scan_img_dir() end
+        local img = wk.images[key]
+        if not img and wk.img_disk[key] then
+            local d = wk.img_disk[key]
+            img = { state = "ready", file = d.file, w = d.w, h = d.h }
+            wk.images[key] = img
+        end
+        if not img then
+            mkdirs()
+            start_image(key, id, bw)
+            img = wk.images[key]
+        end
+        if img.state == "ready" then
+            local dw = math.min(width, img.w)
+            local dh = math.floor(dw * img.h / img.w + 0.5)
+            local max_h = px(520)
+            if dh > max_h then dw, dh = math.floor(dw * max_h / dh + 0.5), max_h end
+            rows[1] = { pic = img.file, pic_skin = picture_skin(img.file, dw, dh), x = x, w = dw, h = dh }
+            return rows
+        end
+        why = img.state == "failed" and "picture" or "picture, loading"
+    end
+    text_rows(rows, "[" .. why .. "]" .. (alt ~= "" and ("  " .. alt) or ""), x, width, skins.label)
+    return rows
+end
+W.image_rows = image_rows
+
+-- ── Views ──
+
+local function scroll_top() wk.scroll_top = true end
+
+local function go(nav)
+    local ok, v = pcall(function() return w_pane:getVertScrollValue() end)
+    wk.nav.scroll = ok and v or nil
+    wk.stack[#wk.stack + 1] = wk.nav
+    if #wk.stack > 30 then table.remove(wk.stack, 1) end
+    wk.nav = nav
+    scroll_top()
+    render()
+end
+
+local function open_page(slug)
+    wk.page_err[slug] = nil
+    go({ view = "page", slug = slug })
+end
+
+local function clear_search()
+    wk.query, wk.hits, wk.searched, wk.search_err = "", nil, nil, nil
+    if w_search then pcall(function() w_search:setText("") end) end
+end
+
+local function back()
+    if wk.query ~= "" then
+        clear_search()
+    elseif #wk.stack > 0 then
+        wk.nav = table.remove(wk.stack)
+        wk.restore = wk.nav.scroll
+    else
+        wk.nav = { view = "home" }
+    end
+    render()
+end
+
+local function crumb()
+    if wk.query ~= "" then return "WIKI > Search" end
+    local n = wk.nav
+    if n.view == "section" then return "WIKI > " .. tostring(n.section) end
+    if n.view == "page" then
+        local e = index_entry(n.slug)
+        local p = wk.pages[n.slug]
+        local section = (e and e.section) or (p and p.section) or ""
+        local title = (e and e.title) or (p and p.title) or n.slug
+        return "WIKI > " .. (section ~= "" and (section .. " > ") or "") .. title
+    end
+    return "WIKI"
+end
+
+local function pages_in(section)
+    local out = {}
+    for _, p in ipairs(wk.index and wk.index.pages or {}) do
+        if p.section == section then out[#out + 1] = p end
+    end
+    table.sort(out, function(a, b)
+        if a.order ~= b.order then return a.order < b.order end
+        return a.title < b.title
+    end)
+    return out
+end
+
+local function page_button(rows, p, text)
+    local slug = p.slug
+    push(rows, { button = true, skin = skins.row, text = "  " .. (text or p.title), action = function() open_page(slug) end })
+end
+
+local function view_home()
+    local rows = {}
+    if not wk.index then
+        add_text(rows, wk.index_err or "Reading the wiki...", wk.index_err and skins.bad or skins.label)
+        return rows
+    end
+    if wk.index_err then add_text(rows, wk.index_err, skins.bad) end
+    if #wk.index.pages == 0 then
+        add_text(rows, "This server's wiki has no pages yet.", skins.label)
+        return rows
+    end
+    add_text(rows, string.format("%d pages. Pick a section, or type in the box above to find a page.", #wk.index.pages), skins.label)
+    gap(rows, 2)
+    for _, s in ipairs(wk.index.sections) do
+        local section = s
+        push(rows, { button = true, skin = skins.row_sub, text = string.format("  %s   (%d)  >", s, #pages_in(s)),
+                     action = function() go({ view = "section", section = section }) end })
+    end
+    return rows
+end
+
+local function view_section(section)
+    local rows = {}
+    local list_ = pages_in(section)
+    if #list_ == 0 then
+        add_text(rows, wk.index and "Nothing in this section any more." or "Reading the wiki...", skins.label)
+        return rows
+    end
+    push(rows, { text = section:upper(), skin = skins.head })
+    for _, p in ipairs(list_) do page_button(rows, p) end
+    return rows
+end
+
+local function page_ctx(slug, width)
+    return { slug = slug, width = width, x = 0, open = open_page, image = image_rows, api = api_root(),
+             json = function(t) return net.json2lua(t) end }
+end
+
+local function view_page(slug)
+    local rows = {}
+    local p = page_now(slug)
+    if not p then
+        if wk.page_err[slug] then
+            add_text(rows, wk.page_err[slug], skins.bad)
+            push(rows, { button = true, skin = skins.tool, x = 0, w = px(120), text = "TRY AGAIN",
+                         action = function() wk.page_err[slug] = nil; render() end })
+        else
+            add_text(rows, "Reading the page...", skins.label)
+        end
+        return rows
+    end
+    -- a server change brings other numbers
+    if wk.facts_for ~= server_key() and not wk.inflight.facts then fetch_facts() end
+    local width = content_width()
+    local key = tostring(p.updated_at) .. "|" .. wk.facts_rev
+    local parsed = wk.parsed[slug]
+    if not parsed or parsed.key ~= key then
+        parsed = { key = key, blocks = W.parse(W.apply_tokens(p.content, wk.facts)) }
+        wk.parsed[slug] = parsed
+    end
+    local blocks = parsed.blocks
+    -- the page's own "# Title" stands for the title; otherwise add it
+    if not (blocks[1] and blocks[1].kind == "heading" and blocks[1].level == 1) then
+        text_rows(rows, p.title, 0, width, skins.h1 or skins.head, px(16))
+    end
+    for _, r in ipairs(W.rows(blocks, page_ctx(slug, width))) do push(rows, r) end
+    if p.content:find("{{", 1, true) and wk.facts_label then
+        add_text(rows, "Numbers on this page are " .. wk.facts_label .. "'s.", skins.label)
+    end
+    -- the next page in its section, like turning a page
+    local e = index_entry(slug)
+    if e then
+        local list_ = pages_in(e.section)
+        for i, q in ipairs(list_) do
+            if q.slug == slug and list_[i + 1] then
+                gap(rows, 6)
+                local nxt = list_[i + 1]
+                push(rows, { button = true, skin = skins.row_sub, text = "  NEXT:  " .. nxt.title .. "  >",
+                             action = function() open_page(nxt.slug) end })
+            end
+        end
+    end
+    if present(p.updated_at) then
+        add_text(rows, "Updated " .. tostring(p.updated_at):gsub("T.*$", ""), skins.label)
+    end
+    return rows
+end
+
+local function view_search()
+    local rows = {}
+    local q = wk.query:lower()
+    local titles, shown = {}, {}
+    for _, p in ipairs(wk.index and wk.index.pages or {}) do
+        if p.title:lower():find(q, 1, true) then titles[#titles + 1] = p end
+    end
+    push(rows, { text = #titles > 0 and "PAGE TITLES" or "No page title has that in it.", skin = #titles > 0 and skins.head or skins.label })
+    for _, p in ipairs(titles) do
+        page_button(rows, p, p.title .. "   -- " .. p.section)
+        shown[p.slug] = true
+    end
+    gap(rows, 6)
+    if wk.search_err then
+        add_text(rows, wk.search_err, skins.label)
+    elseif wk.searched ~= wk.query or not wk.hits then
+        add_text(rows, "Searching the text...", skins.label)
+    else
+        local more = {}
+        for _, h in ipairs(wk.hits) do
+            if type(h) == 'table' and present(h.slug) and not shown[tostring(h.slug)] then more[#more + 1] = h end
+        end
+        push(rows, { text = #more > 0 and "IN THE TEXT" or "Nothing else in the text.", skin = #more > 0 and skins.head or skins.label })
+        for _, h in ipairs(more) do
+            local slug = tostring(h.slug)
+            push(rows, { button = true, skin = skins.row, text = "  " .. tostring(h.title or slug) .. "   -- " .. tostring(h.section or ""),
+                         action = function() open_page(slug) end })
+            if present(h.snippet) then
+                for _, line in ipairs(wrap(tostring(h.snippet), content_width() - px(16), px(12))) do
+                    push(rows, { text = line, skin = skins.label, x = px(12), w = content_width() - px(12) })
+                end
+            end
+        end
+    end
+    return rows
+end
+
+renderers.wiki = function()
+    if wk.query ~= "" then return view_search() end
+    local n = wk.nav
+    if n.view == "section" then return view_section(n.section) end
+    if n.view == "page" then return view_page(n.slug) end
+    return view_home()
+end
+
+-- ── What the rest of the panel calls ──
+
+wiki_api.crumb = crumb
+wiki_api.back = back
+wiki_api.can_back = function() return wk.query ~= "" or #wk.stack > 0 or wk.nav.view ~= "home" end
+wiki_api.open = open_page
+
+-- Every frame while the tab is showing: keep the index and the numbers
+-- fresh, and run the full-text search once typing stops.
+wiki_api.tick = function(now)
+    if now - wk.index_at > INDEX_EVERY then
+        wk.index_at = now
+        fetch_index()
+    end
+    if wk.facts_for ~= server_key() or now - wk.facts_at > FACTS_EVERY then
+        if not wk.inflight.facts then
+            wk.facts_at = now
+            fetch_facts()
+        end
+    end
+    if wk.query ~= "" and wk.searched ~= wk.query and not wk.inflight.search and now - wk.query_at >= SEARCH_DELAY then
+        local q = wk.query
+        wk.inflight.search = true
+        api_call("GET", "/api/cockpit/wiki/search", { q = q }, nil, false, function(data, err, status)
+            wk.inflight.search = nil
+            wk.searched = q
+            if type(data) == 'table' then
+                wk.hits, wk.search_err = list(data.hits), nil
+            else
+                wk.hits = {}
+                wk.search_err = status == 404 and "This server can only search page titles." or err
+            end
+            if q == wk.query then render() end
+        end)
+    end
+end
+
+wiki_api.after_draw = function()
+    if wk.scroll_top then
+        wk.scroll_top = false
+        pcall(function() w_pane:setVertScrollValue(0) end)
+    elseif wk.restore then
+        local v = wk.restore
+        wk.restore = nil
+        pcall(function() w_pane:setVertScrollValue(v) end)
+    end
+end
+
+local function on_query(text)
+    text = trim(text)
+    if text == wk.query then return end
+    wk.query = text
+    wk.query_at = os.clock()
+    wk.search_err = nil
+    scroll_top()
+    render()
+end
+
+wiki_api.create = function()
+    w_search, w_clear, w_hint = nil, nil, nil
+    if not EditBox then
+        w_hint = label_widget("Search needs DCS's EditBox -- not available")
+        return
+    end
+    local ok, err = pcall(function()
+        w_search = EditBox.new("")
+        if skins.edit then w_search:setSkin(skins.edit) end
+        pcall(function() w_search:setHintText("Find a page...") end)
+        w_search:addChangeCallback(function()
+            local ok2, e2 = pcall(function() on_query(w_search:getText()) end)
+            if not ok2 then logmsg("wiki search errored: " .. tostring(e2)) end
+        end)
+        window:insertWidget(w_search)
+        w_clear = tool_button("X", "Clear the search", function()
+            clear_search()
+            render()
+        end)
+    end)
+    if not ok then
+        logmsg("wiki search box not available: " .. tostring(err))
+        w_search = nil
+    end
+end
+
+wiki_api.widgets = function()
+    local out = {}
+    for _, w in ipairs({ w_search, w_clear, w_hint }) do if w then out[#out + 1] = w end end
+    return out
+end
+
+-- Lay out the search row at y; returns the height it took.
+wiki_api.layout = function(pad, y, cw, row, gap_)
+    if w_hint then w_hint:setBounds(pad, y, cw - pad * 2, row) end
+    if w_search then
+        w_search:setBounds(pad, y, cw - pad * 2 - row - gap_, row)
+        w_clear:setBounds(cw - pad - row, y, row, row)
+    end
+    return (w_search or w_hint) and (row + px(6)) or 0
+end
+
+-- Give the keyboard back to the sim when the tab or the panel goes away.
+wiki_api.unfocus = function()
+    if w_search then pcall(function() w_search:setFocused(false) end) end
+end
+
+-- A new server: its own numbers; the pages and pictures stay cached.
+wiki_api.reset = function()
+    wk.facts, wk.facts_label, wk.facts_for, wk.facts_at = nil, nil, nil, -1e9
+    wk.facts_rev = wk.facts_rev + 1
+    wk.index_at = -1e9
+    wk.page_err = {}
+    for k, img in pairs(wk.images) do
+        if img.state == "failed" then wk.images[k] = nil end
+    end
+end
+
+if rawget(_G, "BFCOCKPIT_TEST") then
+    BFCOCKPIT_TEST.wiki = W
+    BFCOCKPIT_TEST.wk = wk
+end
+end
+wiki_module()
 
 -- ── DCS callbacks ────────────────────────────────────────────────────
 
@@ -3311,6 +4682,7 @@ local function reset_session()
     state.here, state.errors, state.note, state.cargo_cat = {}, {}, nil, nil
     state.feed, state.feed_next, state.feed_off, state.unread, state.answer = {}, 0, false, 0, nil
     state.checked_version = false
+    if wiki_api.reset then pcall(wiki_api.reset) end
 end
 
 -- Throw the window away so the next frame builds a new one -- for a changed
@@ -3423,6 +4795,13 @@ DCS.setUserCallbacks({
         local ok_w, err_w = pcall(wheel_update, now)
         if not ok_w then logmsg("wheel update errored: " .. tostring(err_w)) end
 
+        -- The wiki fetches for itself: it needs neither the key nor a
+        -- confirmed server.
+        if visible and state.tab == "wiki" and wiki_api.tick then
+            local ok_k, err_k = pcall(wiki_api.tick, now)
+            if not ok_k then logmsg("wiki update errored: " .. tostring(err_k)) end
+        end
+
         if (visible or wheel.open) and key_ready_at and now >= key_ready_at then
             if now >= state.next_fetch then
                 local t = visible and tab_def(state.tab) or nil
@@ -3477,5 +4856,18 @@ DCS.setUserCallbacks({
 
 -- Materialise the settings file on first run so there is something to edit.
 save_config()
+
+-- For bfcockpit/tools/luatest.lua, which runs this file outside DCS with
+-- stand-ins for dxgui and the DLL. Never set inside DCS.
+if rawget(_G, "BFCOCKPIT_TEST") then
+    BFCOCKPIT_TEST.panel = {
+        state = state, cfg = cfg, settings = settings, skins = skins, wiki_api = wiki_api,
+        show = function() show() end, hide = function() hide() end,
+        select_tab = function(id) select_tab(id) end, render = function() render() end,
+        widgets = function() return { tabs = w_tabs, back = w_back, crumb = w_crumb, pane = w_pane, window = window } end,
+        rows = function() return pool, pool_actions end,
+        label_em = label_em, wrap = wrap, px = px,
+    }
+end
 
 logmsg("hooks registered (api " .. tostring(cfg.api) .. ")")

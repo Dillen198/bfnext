@@ -21,6 +21,7 @@ These need no DCS, no netidx resolver and no network. CI (`.github/workflows/bui
 | Dashboard and Manager UI | `npm --prefix bfweb test` | vitest |
 | Range site | `npm --prefix bfrange-web test` | vitest |
 | DCSServerBot plugin | `pip install -r DCSServerBot/tests/requirements.txt`, then `python -m pytest -q` in `DCSServerBot/tests` | Fakes of the bot's core: no bot, Discord, DCS or database |
+| Cockpit panel script (WIKI tab) | `"D:\DCS World\bin-mt\luae.exe" bfcockpit\tools\luatest.lua` | Runs `bfcockpit.lua` on DCS's own Lua 5.1 with stand-ins for dxgui and the DLL, every `bfdb/seed_wiki` page through the renderer. Not in CI (needs a DCS install). `LUATEST_PAGE=<slug>` prints one page as laid out |
 
 They do not cover the DCS runtime (spawns, events, F10 menus, slots), real Discord posts, the Windows service or real GitHub releases. The tables below do.
 
@@ -741,6 +742,30 @@ Client side, on a player PC, flying on a campaign server. `bfcockpit/README.md` 
 | 27C.6 | Auto-update off | Untick **Update automatically**, rejoin | Status line says the version is available; nothing downloads | |
 | 27C.7 | Release missing | bfdb advertises a version with no GitHub release | `auto-update failed` in `dcs.log`; nothing runs; the panel keeps working | |
 
+### 27D. WIKI tab
+
+Needs plugin 3.5 (script and `bfcockpit_net.dll` 1.1) and a bfdb with `/api/cockpit/wiki/*`.
+
+| # | Item | Steps | Expected | Pass |
+|---|------|-------|----------|------|
+| 27D.1 | Tab bar | Smallest panel (drag it as narrow as it goes, then reopen), Panel size 100% and 70% | Seven tabs, every label readable, none under the `-` `+` `X` buttons | |
+| 27D.2 | Home | Open WIKI | The sections in the web wiki's sidebar order, each with its page count | |
+| 27D.3 | Section and page | Pick a section, then a page; `< Back` twice | Pages in the sidebar's order; the crumb reads `WIKI > Section > Title`; Back returns to the section (at the same scroll position) and then home | |
+| 27D.4 | Markdown | Open a page with headings, lists, a table and a code block (e.g. Theatre HQ, Chat Commands) | Headings bold and green, lists indented, tables as columns (or one card per row when the panel is narrow), code in the mono font; no `**`, `[`, `](` or backticks left | |
+| 27D.5 | Links | On Welcome, click the button under a paragraph that links to another page | That page opens; Back comes back. An outside link shows its address in the text | |
+| 27D.6 | Server numbers | Open Points and Lives on two servers with different engine configs | The numbers differ per server; `Numbers on this page are <server>'s` at the bottom; with bfdb's engine config unset, the page's fallback numbers | |
+| 27D.7 | Pictures (JPEG) | Open Welcome (server browser screenshot) | The picture loads after a moment, panel-wide with its own shape; `Mods\Services\BFCockpit\cache\wiki\img\<id>-<w>-<W>x<H>.jpg` written | |
+| 27D.8 | Pictures (SVG) | Open a page with an SVG diagram | Shown as a picture (rasterised PNG in the cache); readable on the panel's dark background | |
+| 27D.9 | Picture cache | Close DCS, start it again, reopen the page | Pictures appear at once; no new file in the cache folder | |
+| 27D.10 | Page cache | Reopen a page; then edit it in bfwiki and reopen it within 5 minutes of the edit on the panel | First: no request in `dcs.log` with `debug = true`; second: the edited text | |
+| 27D.11 | Custom blocks | Open pages with the F10 menu, panel, wheel, steps and DCS message mockups | F10 menu as an indented tree with what each command answers; steps numbered; panel and wheel as their rows and labels | |
+| 27D.12 | Search | Type `cargo` in the box | Titles with `cargo` at once; after a pause, pages that mention it, with a snippet; Back or `X` clears the search | |
+| 27D.13 | Keyboard | Click into the search box, then switch to MENU or close the panel | Typing goes to the box while it has focus; afterwards keys reach the cockpit again | |
+| 27D.14 | Offline | Open WIKI in single player | The wiki works (no key or server check needed) | |
+| 27D.15 | Old DLL | Copy the 1.0 `bfcockpit_net.dll` over the new one | Pages work; pictures show `[picture -- needs the newer bfcockpit_net.dll]` with their caption; status line warns about the DLL | |
+| 27D.16 | Wheel shortcut | WHEEL tab: + PANEL > WIKI; open the wheel and pick it | The panel opens on the WIKI tab | |
+| 27D.17 | No sim stalls | Open several picture-heavy pages quickly in a busy mission | No frame hitch while pages and pictures load | |
+
 ---
 
 ## 28. Auto-Update and Server Ops
@@ -847,6 +872,7 @@ On the server box. `deploy/auto-update.md` is the reference; `DCSServerBot/plugi
 | 27A. Cockpit: Install | | | | |
 | 27B. Cockpit: Panel & Wheel | | | | |
 | 27C. Cockpit: Updates | | | | |
+| 27D. Cockpit: WIKI tab | | | | |
 | 28A. Releases, Staging & Rollback | | | | |
 | 28B. OPS Page & /feops | | | | |
 | 28C. Fowl Engine Manager | | | | |
