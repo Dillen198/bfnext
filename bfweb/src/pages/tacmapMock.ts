@@ -4,7 +4,7 @@
 // TacMap's base drawer reads besides: the public objective list, each base's
 // warehouse as the engine would scope it for Blue (ours in full, the enemy's
 // from recon or not at all) and the round's captures.
-import type { CaptureEvent, GroundPicture, Objective, Warehouse, WarehouseItem } from '../api'
+import type { CaptureEvent, CaptureReport, GroundPicture, Objective, Warehouse, WarehouseItem } from '../api'
 
 /** Deterministic 0..1 from a name, so the numbers don't jump between frames. */
 function seed(name: string, salt: number): number {
@@ -68,6 +68,50 @@ function stock(name: string, keys: string[], cap: number, salt: number): Record<
   return out
 }
 
+
+/** The engine's capture report, as it would read for Blue: one enemy base
+ *  still defended (recon has its garrison), one whose zone has nothing in it
+ *  to destroy, a neutral one waiting on troops, and our own. */
+function mockCapture(o: Objective, ours: boolean, seen: boolean): CaptureReport {
+  const at = (dn: number, de: number) => ({
+    lat: o.lat + dn / 111_000, lon: o.lon + de / (111_000 * Math.cos((o.lat * Math.PI) / 180)),
+  })
+  const grid = (i: number) => `38T LM ${String(41230 + i * 137).padStart(5, '0')} ${String(65810 + i * 91).padStart(5, '0')}`
+  const base = { health_threshold: 20, troops: [], notes: [] as string[], unlocated: 0, kills_needed: 0, infantry_left: 0, targets: [] }
+  if (o.owner === 'Neutral') {
+    return {
+      ...base, perspective: 'attacker', open: true, summary: 'Capturable now: get capture troops into the zone.',
+      blockers: [{ kind: 'no_troops_in_zone', text: 'Your nearest capture squad (Rifle squad) is 3.4 km outside the zone.', action: 'Move them into the zone and hold.' }],
+      troops: [{ name: 'Rifle squad', can_capture: true, in_zone: false, outside_by_m: 3400 }],
+    }
+  }
+  if (!ours && !seen) {
+    return {
+      ...base, perspective: 'attacker', open: false, summary: 'Can’t be captured: nothing here counts toward its health.',
+      blockers: [{ kind: 'nothing_to_destroy', text: `Nothing here counts toward its health: it has no garrison units and no logistics buildings in its zone. Its health is stuck at ${o.health}%, so it can't be captured.`, action: '' }],
+    }
+  }
+  const targets: CaptureReport['targets'] = [
+    { kind: 'unit', label: 'Soldier AK', class: 'infantry', count: 1, infantry: true, ...at(120, -80), grid: grid(0) },
+    { kind: 'unit', label: 'Soldier AK', class: 'infantry', count: 1, infantry: true, ...at(140, -60), grid: grid(1) },
+    { kind: 'unit', label: 'T-72B', class: 'armor', count: 1, infantry: false, ...at(-300, 250), grid: grid(2) },
+    { kind: 'unit', label: 'ZSU-23-4 Shilka', class: 'AAA', count: 1, infantry: false, ...at(420, 380), grid: grid(3) },
+    { kind: 'unit', label: null, class: 'short-range SAM', count: 2, infantry: false, lat: null, lon: null, grid: null },
+    { kind: 'building', label: 'Warehouse 1 (WAREHOUSE_A)', class: 'building', count: 1, infantry: false, ...at(-90, -420), grid: grid(4) },
+  ]
+  return {
+    ...base, perspective: ours ? 'defender' : 'attacker', open: false,
+    summary: 'Not capturable yet: destroy 3 more targets, then kill the infantry.',
+    kills_needed: 3, infantry_left: 2, unlocated: ours ? 0 : 2, targets,
+    blockers: [
+      { kind: 'health', text: `Health is ${o.health}%. A capture needs 20% or less.`, action: 'Destroy 3 more garrison units.' },
+      { kind: 'infantry', text: '2 infantry defenders are still alive. Every one must die.', action: 'Hunt down the infantry: strafe them, or bring ground forces.' },
+      ...(ours ? [] : [{ kind: 'no_troops_in_zone' as const, text: 'None of your capture troops are near it.', action: 'Fly or drive capture-capable troops into the zone and hold it.' }]),
+    ],
+    notes: ours ? ['Destroying its logistics buildings lowers logistics, not health.'] : ['2 defenders are not on your intel picture. Recon, a JTAC or a closer look will place them.'],
+  }
+}
+
 export function mockWarehouse(pic: GroundPicture, name: string): Warehouse {
   const objs = mockObjectives(pic)
   const o = objs.find((x) => x.name === name)
@@ -85,6 +129,7 @@ export function mockWarehouse(pic: GroundPicture, name: string): Warehouse {
       ...base, visibility: o.owner === 'Neutral' ? 'intel' : seen ? 'intel' : 'hidden',
       intel_as_of: seen ? isoAgo(23) : null, supply: seen ? o.supply : null, fuel: seen ? o.fuel : null,
       equipment: {}, liquids: {}, supplier: null, destinations: [],
+      capture: mockCapture(o, false, seen),
     }
   }
   const hub = objs.find((x) => x.name === 'Kharagauli')!
@@ -106,6 +151,7 @@ export function mockWarehouse(pic: GroundPicture, name: string): Warehouse {
     },
     supplier: o.name === 'Kharagauli' ? null : link(hub, o.name === 'Sachkhere'),
     destinations: fed,
+    capture: mockCapture(o, true, true),
   }
 }
 

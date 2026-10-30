@@ -4,6 +4,7 @@ import { api, type Warehouse, type WarehouseItem } from '../api'
 import { campaign } from '../config/campaign'
 import { ago } from '../lib/format'
 import QueryState from './QueryState'
+import CaptureBlockers from './CaptureBlockers'
 import { useAuth } from '../context/AuthContext'
 import { Link } from 'react-router-dom'
 import { X, Alert, Supply, Logistics } from '@icons'
@@ -260,6 +261,11 @@ export default function ObjectiveDrawer({
                 </div>
               ))}
             </div>
+
+            {/* What stands between this base and a capture. Scoped by the
+                engine like the rest: enemy units are placed only where our
+                intel has them. */}
+            {w.capture && <CaptureBlockers report={w.capture} objectiveName={w.objective_name} />}
 
             {w.damaged && (
               <div style={{ display: 'flex', gap: 7, alignItems: 'center', padding: '8px 14px', color: 'var(--red)', fontSize: '0.68rem', borderBottom: '1px solid var(--border)' }}>

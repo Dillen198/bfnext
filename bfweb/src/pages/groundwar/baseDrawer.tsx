@@ -13,6 +13,7 @@ import type {
   Asset, CaptureEvent, GroundEnemyContact, GroundObjective, GroundPicture, Objective, SupplyLink, Warehouse, WarehouseItem,
 } from '../../api'
 import { ago } from '../../lib/format'
+import CaptureBlockers from '../../components/CaptureBlockers'
 import { fmtAge, km } from './geo'
 import { Gauge } from './hud'
 import { OBJ_ICON, natoSymbol, shortName } from './sprites'
@@ -219,6 +220,9 @@ export function BaseDrawer({ o, pub, side, pic, assets, captures, intel, onClose
           )}
         </>
       )}
+
+      {/* Neutral bases too: "why won't it take?" is asked of those as well. */}
+      {w?.capture && <CaptureBlockers report={w.capture} objectiveName={w.objective_name} />}
 
       {ours && (
         <>

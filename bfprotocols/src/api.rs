@@ -176,6 +176,136 @@ pub struct WarehouseInfo {
     pub supplier: Option<SupplyLink>,
     /// Objectives this one feeds.
     pub destinations: Vec<SupplyLink>,
+    /// Why this objective can or can't be captured right now. `None` from an
+    /// engine that predates the report.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture: Option<CaptureReport>,
+}
+
+/// Whose view a [`CaptureReport`] is written for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CapturePerspective {
+    /// The asking side does not own the objective and could take it.
+    Attacker,
+    /// The asking side owns it: the report says what the enemy needs.
+    Defender,
+    /// Unscoped/admin query.
+    Admin,
+}
+
+/// One condition the engine checks before a capture timer can run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureBlockerKind {
+    /// Health is above the capture threshold.
+    Health,
+    /// Infantry defenders are still alive.
+    Infantry,
+    /// The campaign wants a share of the defenders destroyed first.
+    DefendersDestroyed,
+    /// Nothing at the objective can be destroyed, so its health can never
+    /// fall. A mission-design problem, not something players can fix.
+    NothingToDestroy,
+    /// Just captured: held by its assault troops until they consolidate.
+    ConsolidationHold,
+    /// Just changed hands: no new capture can start yet.
+    Cooldown,
+    /// The asking side has no capture-capable troops in the zone.
+    NoTroopsInZone,
+    /// Capture troops from more than one side are in the zone.
+    Contested,
+}
+
+/// A blocker in player language: what is wrong and what to do about it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CaptureBlocker {
+    pub kind: CaptureBlockerKind,
+    pub text: String,
+    /// What to do about it. Empty when players can't do anything.
+    pub action: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CaptureTargetKind {
+    /// A garrison unit.
+    Unit,
+    /// A logistics building on the map (warehouse, depot, fuel tank).
+    Building,
+}
+
+/// Something still standing that counts against the objective's health.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CaptureTarget {
+    pub kind: CaptureTargetKind,
+    /// Unit type, or the building's map name and type. `None` when the asking
+    /// side's intel hasn't identified it.
+    pub label: Option<String>,
+    /// "infantry", "armor", "air defence", "logistics", "building", ...
+    pub class: String,
+    /// How many units this entry stands for: 1 when located, the group's
+    /// remaining count when it isn't.
+    pub count: u32,
+    /// Must die before infantry stops blocking the capture.
+    pub infantry: bool,
+    pub lat: Option<f64>,
+    pub lon: Option<f64>,
+    /// MGRS grid, e.g. "37S BA 12345 67890".
+    pub grid: Option<String>,
+}
+
+/// A capture timer that is running now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaptureProgressInfo {
+    pub side: Side,
+    pub held_secs: i64,
+    pub needed_secs: i64,
+}
+
+/// One of the asking side's capture squads near the objective.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CaptureTroopInfo {
+    pub name: String,
+    pub can_capture: bool,
+    pub in_zone: bool,
+    /// Metres outside the zone edge; 0 when in the zone.
+    pub outside_by_m: f64,
+}
+
+/// Why an objective can or can't be captured right now, and what to do.
+/// Built by the engine from the same checks its capture tick runs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CaptureReport {
+    pub perspective: CapturePerspective,
+    /// The objective itself is open to capture: troops in the zone would
+    /// start (or are running) a capture timer.
+    pub open: bool,
+    /// One line for a list or a header.
+    pub summary: String,
+    /// Objective health a capture needs, at most this (percent).
+    pub health_threshold: u8,
+    /// Garrison units or buildings still to destroy before health is low
+    /// enough. 0 when health is already low enough.
+    pub kills_needed: u32,
+    /// Live infantry defenders, all of whom must die.
+    pub infantry_left: u32,
+    /// Everything stopping the capture, most important first.
+    pub blockers: Vec<CaptureBlocker>,
+    /// What is still standing, located where the asking side can see it.
+    pub targets: Vec<CaptureTarget>,
+    /// Live garrison units the asking side has no position for.
+    pub unlocated: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cooldown_secs: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_progress: Option<CaptureProgressInfo>,
+    /// The asking side's capture squads nearby. Attacker view only.
+    #[serde(default)]
+    pub troops: Vec<CaptureTroopInfo>,
+    /// Things worth knowing that aren't blockers.
+    #[serde(default)]
+    pub notes: Vec<String>,
 }
 
 /// Logistics state information

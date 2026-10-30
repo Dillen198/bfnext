@@ -2750,7 +2750,7 @@ impl Db {
         );
     }
 
-    fn defender_destruction_ratio(&self, obj: &Objective) -> f64 {
+    pub(super) fn defender_destruction_ratio(&self, obj: &Objective) -> f64 {
         let Some(gids) = obj.groups.get(&obj.owner) else {
             return 1.0;
         };

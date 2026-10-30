@@ -44,6 +44,7 @@ use tokio::sync::mpsc::UnboundedSender;
 pub mod actions;
 pub mod balance;
 pub mod battle;
+pub mod capture_report;
 pub mod cargo;
 pub mod combat;
 pub mod economy;

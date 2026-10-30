@@ -1423,6 +1423,52 @@ export interface Warehouse {
   liquids: Record<string, WarehouseItem>
   supplier: SupplyLink | null
   destinations: SupplyLink[]
+  /** Why it can or can't be captured right now. Absent from an older engine. */
+  capture?: CaptureReport
+}
+
+export type CaptureBlockerKind =
+  | 'health' | 'infantry' | 'defenders_destroyed' | 'nothing_to_destroy'
+  | 'consolidation_hold' | 'cooldown' | 'no_troops_in_zone' | 'contested'
+
+export interface CaptureBlocker {
+  kind: CaptureBlockerKind
+  text: string
+  /** What to do about it; empty when players can't do anything. */
+  action: string
+}
+
+/** Something still standing that counts against the objective's health. */
+export interface CaptureTarget {
+  kind: 'unit' | 'building'
+  /** Unit type or building name; null when intel hasn't identified it. */
+  label: string | null
+  class: string
+  /** Units this entry stands for: 1 when located, more for an unlocated group. */
+  count: number
+  infantry: boolean
+  lat: number | null
+  lon: number | null
+  grid: string | null
+}
+
+/** Built by the engine from the same checks its capture tick runs, scoped
+ *  to the asking side: enemy units are located only where its intel has
+ *  them. */
+export interface CaptureReport {
+  perspective: 'attacker' | 'defender' | 'admin'
+  open: boolean
+  summary: string
+  health_threshold: number
+  kills_needed: number
+  infantry_left: number
+  blockers: CaptureBlocker[]
+  targets: CaptureTarget[]
+  unlocated: number
+  cooldown_secs?: number
+  in_progress?: { side: 'Red' | 'Blue' | 'Neutral'; held_secs: number; needed_secs: number }
+  troops: { name: string; can_capture: boolean; in_zone: boolean; outside_by_m: number }[]
+  notes: string[]
 }
 
 export type { AuthUser }

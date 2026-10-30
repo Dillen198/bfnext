@@ -1771,6 +1771,7 @@ fn supply_link(
 /// used to read the other coalition's logistics for free.
 pub(crate) fn query_warehouse(
     ctx: &Context,
+    lua: MizLua,
     key: &str,
     for_side: Option<Side>,
 ) -> Result<WarehouseInfo> {
@@ -1828,6 +1829,30 @@ pub(crate) fn query_warehouse(
             .collect();
     }
 
+    // A failed report shouldn't take the stock readout down with it.
+    let coord = dcso3::coord::Coord::singleton(lua).ok();
+    let locate = |p: Vector2| {
+        let Some(coord) = coord.as_ref() else { return (None, None) };
+        let Ok(ll) = coord.lo_to_ll(dcso3::LuaVec3(dcso3::Vector3::new(p.x, 0., p.y)))
+        else {
+            return (None, None);
+        };
+        let grid = coord.ll_to_mgrs(ll.latitude, ll.longitude).ok().map(|m| {
+            format!(
+                "{} {} {:05.0} {:05.0}",
+                m.utm_zone, m.mgrs_digraph, m.easting, m.northing
+            )
+        });
+        (Some((ll.latitude, ll.longitude)), grid)
+    };
+    let capture = match ctx.db.capture_report(&oid, for_side, locate) {
+        Ok(r) => Some(r),
+        Err(e) => {
+            warn!("query_warehouse: capture report for {}: {e:?}", obj.name);
+            None
+        }
+    };
+
     Ok(WarehouseInfo {
         objective_id: oid,
         objective_name: obj.name.to_string(),
@@ -1844,6 +1869,7 @@ pub(crate) fn query_warehouse(
         liquids,
         supplier,
         destinations,
+        capture,
     })
 }
 
@@ -3694,7 +3720,7 @@ fn run_admin_command(
             Err(e) => reply_err!("failed to query units: {e:?}"),
         },
         AdminCommand::QueryWarehouse { objective, side } => {
-            match query_warehouse(ctx, &objective, side) {
+            match query_warehouse(ctx, lua, &objective, side) {
                 Ok(warehouse) => match serde_json::to_string(&warehouse) {
                     Ok(json) => rep.out.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize warehouse: {e:?}"),
