@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 336" width="800" height="336" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect x="0" y="0" width="800" height="336" fill="#0d1009"/>
+  <text x="20" y="34" font-size="16" font-weight="bold" fill="#cdd4be">What appears after you take an aircraft slot</text>
+  <text x="20" y="54" font-size="13" fill="#7d8a6a">Engine defaults. Each message box stays up for the time shown, then clears.</text>
+
+  <!-- row labels -->
+  <text x="20" y="102" font-size="14" fill="#cdd4be">GCI line</text>
+  <text x="20" y="118" font-size="12" fill="#7d8a6a">if configured</text>
+  <text x="20" y="162" font-size="14" fill="#cdd4be">ATIS</text>
+  <text x="20" y="178" font-size="12" fill="#7d8a6a">airfield / carrier</text>
+  <text x="20" y="222" font-size="14" fill="#cdd4be">Situation</text>
+  <text x="20" y="238" font-size="12" fill="#7d8a6a">if enabled</text>
+
+  <!-- grid lines -->
+  <line x1="140" y1="74" x2="140" y2="262" stroke="#262e1d" stroke-width="1"/>
+  <line x1="283" y1="74" x2="283" y2="262" stroke="#262e1d" stroke-width="1"/>
+  <line x1="350" y1="74" x2="350" y2="262" stroke="#262e1d" stroke-width="1"/>
+  <line x1="569" y1="74" x2="569" y2="262" stroke="#262e1d" stroke-width="1"/>
+  <line x1="731" y1="74" x2="731" y2="262" stroke="#262e1d" stroke-width="1"/>
+
+  <!-- bars -->
+  <rect x="140" y="86" width="191" height="36" rx="4" fill="#141910" stroke="#4a8fd4" stroke-width="2"/>
+  <text x="150" y="109" font-size="13" fill="#cdd4be">GCI: Magic on ...  20 s</text>
+
+  <rect x="283" y="146" width="286" height="36" rx="4" fill="#141910" stroke="#c9a227" stroke-width="2"/>
+  <text x="293" y="169" font-size="13" fill="#cdd4be">ATIS-REPORT / CARRIER ATIS  30 s</text>
+
+  <rect x="350" y="206" width="381" height="36" rx="4" fill="#141910" stroke="#6aab1f" stroke-width="2"/>
+  <text x="360" y="229" font-size="13" fill="#cdd4be">=== SITUATION ===  tasking, YOUR TASK  40 s</text>
+
+  <!-- axis -->
+  <line x1="140" y1="262" x2="760" y2="262" stroke="#7d8a6a" stroke-width="1.5"/>
+  <text x="140" y="282" font-size="13" fill="#8ec83f" text-anchor="middle">0 s</text>
+  <text x="283" y="282" font-size="13" fill="#8ec83f" text-anchor="middle">+15 s</text>
+  <text x="350" y="282" font-size="13" fill="#8ec83f" text-anchor="middle">+22 s</text>
+  <text x="569" y="282" font-size="13" fill="#7d8a6a" text-anchor="middle">45 s</text>
+  <text x="731" y="282" font-size="13" fill="#7d8a6a" text-anchor="middle">62 s</text>
+
+  <text x="20" y="306" font-size="12" fill="#7d8a6a">The +15 s ATIS delay is fixed. The GCI line, the briefing delay and the display times are server settings.</text>
+  <text x="20" y="324" font-size="12" fill="#7d8a6a">FARP and FOB slots get no ATIS. A slot's menus are built on entry too, so the F10 Info pages work at once.</text>
+</svg>
