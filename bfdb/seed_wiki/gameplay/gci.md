@@ -16,9 +16,19 @@ can also key up and ask it questions.
 
 ## Getting set up
 
-1. **Find the frequency.** When you take a slot a note appears on screen:
-   *"GCI: Magic on 251.0 AM (SRS)"*. It is also on the
-   [Briefing](../f10-menu/overview.md) kneeboard under **Radios**.
+On servers that publish it, this note appears for
+{{cfg:gci_briefing.display_secs|20}} seconds when you take a slot:
+
+```dcsmessage
+GCI: Magic on 251.0 AM (SRS)
+```
+
+The callsign is your side's (Blue {{cfg:gci_briefing.blue_callsign|Magic}},
+Red {{cfg:gci_briefing.red_callsign|Overlord}}), and the server may add a line of
+its own under it.
+
+1. **Find the frequency.** It is in that note, and on the
+   [comms plan](comms-plan.md) in your briefing.
 2. **Tune it in SRS.** Put the GCI frequency on a radio you can hear (COM2 /
    the guard radio / an SRS overlay preset). AM vs FM matters — match what the
    note says.
@@ -49,54 +59,66 @@ talk, and it listens before it keys up so it won't step on you.
 | Say | You get back |
 |---|---|
 | *"Magic, **radio check**"* | *"loud and clear"* — confirms two-way. |
-| *"Magic, **checking in**"* / *"…on station"* | *"radar contact, copy the picture, bullseye is …"* plus the current group count. |
+| *"Magic, **checking in**"* / *"…on station"* | *"radar contact, 2 groups on the picture"*, or *"radar contact, picture clean"*. |
 | *"Magic, **alpha check**"* | your own position as bullseye bearing/range — a nav sanity check. |
 | *"Magic, **bogey dope**"* | your nearest hostile group: bearing, range, altitude, aspect, and what it is. |
 | *"Magic, **picture**"* | the whole picture — every group GCI holds for you, nearest first, with a group label. |
 | *"Magic, **declare**"* / *"…declare bullseye 270 40"* | **hostile** or **clean** for the contact nearest you (or nearest the bullseye point you named). |
 | *"Magic, **snaplock**"* | quick hostile / clean confirmation on the group you're pointing at. |
-| *"Magic, **commit**"* | GCI takes you onto the nearest group and starts feeding **intercept vectors** — see below. |
+| *"Magic, **commit**"* | The nearest group's BRAA ending *"your control"*; GCI then feeds you **intercept vectors**, see below. |
 
 ### A worked intercept
 
 ```
 You:    Magic, Viper 1-1, checking in, angels 25.
-Magic:  Viper 1-1, Magic, radar contact, copy the picture, bullseye is DALLAS.
+Magic:  Viper 1-1, Magic, radar contact, 1 group on the picture.
 Magic:  Viper 1-1, single group, BRAA 040 for 38, 22 thousand, hot, hostile Flankers.
 You:    Magic, Viper 1-1, bogey dope.
-Magic:  Viper 1-1, single group, BRAA 042 for 30, 22 thousand, hot, hostile Flankers.
+Magic:  Viper 1-1, Magic, single group, BRAA 042 for 30, 22 thousand, hot, hostile Flankers.
 You:    Magic, Viper 1-1, commit.
-Magic:  Viper 1-1, Magic, come right 055, single group, 25 miles, 22 thousand, hot.
-Magic:  Viper 1-1, come left 040, single group, 14 miles, 22 thousand, hot.
-Magic:  Viper 1-1, 6 miles.
+Magic:  Viper 1-1, Magic, single group, BRAA 042 for 30, 22 thousand, hot, hostile Flankers, your control.
+Magic:  Viper 1-1, Magic, come right 055, single group, BRAA 048 for 25, 22 thousand, hot.
+Magic:  Viper 1-1, Magic, come left 040, single group, BRAA 041 for 14, 22 thousand, hot.
 Magic:  Viper 1-1, merged, merged.
    …after the fight…
-Magic:  Viper 1-1, splash, 040 for 22.
-Magic:  Viper 1-1, clean, resume CAP.
+Magic:  Viper 1-1, Magic, splash, 040 for 22.
+Magic:  Viper 1-1, Magic, clean, resume CAP.
 ```
 
-Under **commit**, GCI recomputes a lead-collision heading every few seconds and
-gives you turn calls ("come left / come right / continue heading") until you're
-inside 3 miles ("merged"), then hands control back when the group is dead or
-runs away ("clean, resume CAP").
+Numbers are spoken digit by digit ("zero four zero"). Under **commit**, GCI
+works out a lead-collision heading and gives you a turn call ("come left / come
+right / continue heading") at most every 10 seconds until you're inside 3 miles
+("merged, merged"). It ends the intercept with "clean, resume CAP" when the
+group is dead, gone, or more than 60 miles away.
 
 ---
 
 ## Tuning your own calls
 
-Set these in-game with chat commands, or via **F10 → GCI/EWR → GCI Voice**:
+Set these in-game with chat commands, or from the F10 menu under
+**GCI/EWR → GCI Voice** (see [GCI / EWR](../f10-menu/ewr.md#gci-voice)):
 
-| Command | Effect |
-|---|---|
-| `-gci` | Show your current GCI settings |
-| `-gci on` / `-gci off` | Unmute / mute GCI calls to you (proactive **and** answers) |
-| `-gci imperial` / `-gci metric` | Range in nautical miles + altitude in thousands of feet, **or** kilometres + metres |
-| `-gci braa` | Position given as bearing/range **from your jet** (default) |
-| `-gci bulls` | Position given as bearing/range **from the bullseye** |
-| `-gci clock` | Position given as a **clock code + high/low** relative to your nose |
-| `-gci auto` | Follow the server defaults |
+| Command | F10 entry | Effect |
+|---|---|---|
+| `-gci` (or `-gci status`) | | Show your settings and this list |
+| `-gci on` / `-gci off` | `Toggle GCI Calls` | Off takes you out of the controller's picture entirely: no calls **and** no answers |
+| `-gci callouts` / `-gci quiet` | `Toggle Auto Callouts` | Unprompted calls on or off. With them off GCI still answers when you key up |
+| `-gci imperial` / `-gci metric` | `Units: Imperial` / `Units: Metric` | Range in nautical miles and altitude in thousands of feet, **or** kilometres and metres |
+| `-gci braa` | `Reference: BRAA` | Position as bearing/range **from your jet** |
+| `-gci bulls` | `Reference: Bullseye` | Position as bearing/range **from the bullseye** |
+| `-gci clock` | `Reference: Clock` | Position as a **clock code + high/low** relative to your nose |
+| `-gci auto` | `Units: Server Default` (units only) | Back to the server's default units and reference |
 
-Your choice sticks with your pilot across slots and sessions.
+```dcsmessage
+GCI voice: ON | auto callouts: OFF | units: server default | reference: BRAA (own jet)
+  -gci on | off              GCI on or off entirely
+  -gci callouts | quiet      unprompted calls on or off
+  -gci metric | imperial     spoken units
+  -gci braa | bulls | clock   position reference
+  -gci auto                  follow the server defaults
+```
+
+Your choices follow you across slots until the mission restarts.
 
 ---
 

@@ -31,6 +31,8 @@ repair does not happen.** The base stays broken until a convoy gets through.
 That is the whole point of running a supply line — and the whole point of
 cutting the enemy's.
 
+![How supply reaches the front: outside production feeds the logistics hubs; the hubs ship to bases that are short by convoy, airlift or ship, all of which can be shot up; players spawn crates and troops from a friendly base's stock and fly them forward; a base's stock pays for automatic repairs, aircraft, weapons and fuel, and the crates and troops it issues](/api/wiki/images/3f6c2a91-8d4e-4b7a-9c15-62e0d8a4b7f3)
+
 Unpacking a deployable draws materiel from the **crate's origin objective**, not
 from where you unpack it. Building a SAM ring out in the desert still spends the
 stock of the base you picked the crates up from.
@@ -111,7 +113,7 @@ supply transfer — it just isn't handed out automatically.
 
 | | Hub | Forward base |
 | --- | --- | --- |
-| Supplies | {{cfg:warehouse.hub_max|1}} × delivery | {{cfg:warehouse.airbase_max|1}} × delivery |
+| Supplies | {{cfg:warehouse.hub_max|25}} × delivery | {{cfg:warehouse.airbase_max|5}} × delivery |
 | Airframes | {{cfg:warehouse.airframe_max[0]|3}} × source count | {{cfg:warehouse.airframe_max[1]|1}} × source count |
 
 Aircraft and ammunition want different depths, so airframes get their own cap
@@ -137,7 +139,7 @@ When a base changes hands, some of the losing side's parked aircraft also come w
 | | |
 | --- | --- |
 | Fraction salvaged | {{cfg:warehouse.captured_airframes.salvage_percent|25}}% |
-| Hard cap per type | {{cfg:warehouse.captured_airframes.max_per_type|4}} |
+| Hard cap per type | {{cfg:warehouse.captured_airframes.max_per_type|none}} |
 | Base health needed before they can be slotted | {{cfg:warehouse.captured_airframes.min_health|100}}% |
 
 The rest is assumed destroyed on the ramp, sabotaged, or flown out ahead of the
@@ -158,18 +160,30 @@ fly them.
 | `F10 → Objectives → Capture Advisor` | The `REPAIR:` line — whether a target can heal faster than you can hurt it |
 | Dashboard → Briefing | The same picture on a map |
 
+## The treasury and base funds
+
+Materiel is not points. Points are the second economy, described in
+[Points and Lives](./points-and-lives.md), and they have a side-level layer
+too, where the server runs the smart commander:
+
+- Each side has a **treasury** that earns
+  {{cfg:smart_commander.treasury_income_amount|500}} points every
+  {{cfg:smart_commander.treasury_income_period_secs|300}} seconds, raised by
+  underdog pay for a side that is behind.
+- The treasury drips points into the **funds of its damaged bases**, the
+  neediest (most damaged, under threat) first. A base's fund pays for a pilot's
+  flight, troops and deployables when the pilot's own points run short, and
+  players can pay into it with `-transfer <amount> objective:<base>`.
+- On servers running the [Theatre HQ](../advanced/theatre-hq.md), the treasury
+  also pays for everything the HQ does: its air packages, fires, convoys, helo
+  runs and reinforcements. While the HQ runs, the drip into bases only takes
+  {{cfg:smart_commander.hq.objective_funding_share|0.5}} of the income, so the
+  HQ always has something left to act with.
+
 ## See Also
 
 - [Logistics & Supply](./logistics.md) — convoys, hubs, air/sea logistics, crates
 - [Objectives](./objectives.md) — what factories, hubs and command centres do
+- [Points and Lives](./points-and-lives.md) — the points economy
 - [AI Helo Missions](../advanced/helo-missions.md)
 - [Capturing Objectives](./capturing-objectives.md)
-
-## The treasury and the HQ
-
-On servers running the [Theatre HQ](../advanced/theatre-hq.md), each side's
-treasury also pays for everything the HQ does: its air packages, fires,
-convoys, helo runs and reinforcements. While the HQ runs, the passive drip of
-treasury points into damaged bases only takes
-{{cfg:smart_commander.hq.objective_funding_share|0.5}} of the income, so the HQ
-always has something left to act with.

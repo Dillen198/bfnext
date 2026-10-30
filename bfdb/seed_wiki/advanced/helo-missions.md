@@ -7,16 +7,41 @@ and only then delivers — troops on the ground, or supply into the warehouse.
 If a troop helo fails, the squad is **driven in by road** instead; if that
 fails too, or it was a supply run, you get your points back.
 
-```
-F10 → Actions>> → AI Helo Missions
-├── Insert Troops: Nearest Capturable
-├── Insert Troops: Capturable Now     → [base]
-├── Insert Troops: Any Objective      → [base]
-├── Resupply: Nearest Friendly
-└── Resupply: Friendly Base           → [base]
+`AI Helo Missions` sits at the end of the [Actions menu](../f10-menu/actions.md)
+whenever the server has these missions on. Bases are listed nearest first with
+their range from you in nautical miles; `[CAP]` marks one that can be captured
+right now. Long lists are split into alphabetical ranges.
+
+```f10menu
+{"root":"F10 Other","items":[
+ {"label":"Actions","items":[
+  {"label":"AI Helo Missions","items":[
+   {"label":"Insert Troops: Nearest Capturable","says":"Helo troop insertion dispatched (HELO_blue_3_1761830412).","note":"Picks the nearest enemy or neutral base, preferring one that is capturable now."},
+   {"label":"Insert Troops: Capturable Now","note":"Only present when something is capturable or being captured.","items":[
+    {"label":"Gori 23nm [CAP]","says":"Helo troop insertion dispatched (HELO_blue_4_1761830470)."},
+    {"label":"Khashuri 41nm [CAP]","says":"Could not dispatch: not enough points for a helo troop insertion (60 needed, 35 available)"}
+   ]},
+   {"label":"Insert Troops: Any Objective","items":[
+    {"label":"Gori 23nm [CAP]","says":"Helo troop insertion dispatched (HELO_blue_5_1761830502)."},
+    {"label":"Tskhinvali 31nm","says":"Helo troop insertion dispatched (HELO_blue_6_1761830530)."},
+    {"label":"Beslan 95nm","says":"Could not dispatch: nearest friendly launch field (Senaki) is 162km away, past the 150km max range"}
+   ]},
+   {"label":"Resupply: Nearest Friendly","says":"Helo resupply run dispatched (HELO_blue_7_1761830560).","note":"Sends supply to the friendly base nearest you."},
+   {"label":"Resupply: Friendly Base","items":[
+    {"label":"Senaki 12nm","says":"Helo resupply run dispatched (HELO_blue_8_1761830600)."},
+    {"label":"Kobuleti 30nm","says":"Could not dispatch: Batumi has nothing on hand that Kobuleti has room for"}
+   ]}
+  ]}
+ ]}
+]}
 ```
 
-Any slot can order one — you do not have to be in a helo. It costs points, not
+The text version: `Actions → AI Helo Missions`, then `Insert Troops: Nearest
+Capturable`, `Insert Troops: Capturable Now → [base]`, `Insert Troops: Any
+Objective → [base]`, `Resupply: Nearest Friendly` or `Resupply: Friendly Base
+→ [base]`.
+
+Any slot can order one: you do not have to be in a helo. It costs points, not
 your time.
 
 ## Why you would use it
@@ -58,14 +83,19 @@ The squad belongs to you, exactly as if you had unloaded it from your own
 aircraft — it holds the zone, it counts toward the capture timer, it speeds up
 consolidation.
 
-**Refusals you will see:**
+**Refusals you will see** (after `Could not dispatch:`):
 
-- *"X is already yours and isn't under threat"* — troop insertion is for taking
-  ground or defending ground under attack, not for garrisoning quiet bases.
-- *"no friendly field able to launch the mission"* — nothing with a live pad in
+- *"Senaki is already yours and isn't under threat"*: troop insertion is for
+  taking ground or defending ground under attack, not for garrisoning quiet
+  bases.
+- *"no friendly field able to launch the mission (a launch field has to be an
+  airbase, FARP or FOB with a live DCS pad)"*: nothing with a live pad in
   reach. Take a closer base, or build a FARP.
-- *"nearest friendly launch field (X) is N km away, past the M km max range"* —
-  self-explanatory. Shorten the problem first.
+- *"nearest friendly launch field (Senaki) is 162km away, past the 150km max
+  range"*: shorten the problem first.
+- *"not enough points for a helo troop insertion (60 needed, 35 available)"*.
+- *"AI helo missions are not enabled"*, or a missing helicopter for your side:
+  a server configuration problem; tell an admin.
 
 ### Which list to use
 
@@ -89,12 +119,21 @@ delivery for anything waiting on one — a `SUPPLY` task, and
 [consolidation progress](../gameplay/capturing-objectives.md) at a base that has
 just been taken.
 
-**Refusals:**
+```dcsmessage
+your helo delivered its supply run to Senaki
+```
 
-- *"X has no surplus supply on hand to send"* — the origin is as dry as the
-  destination. Fix the supply line, not the symptom; see
-  [Logistics & Supply](../gameplay/logistics.md).
-- Range refusals work the same as troop insertion.
+If the base fell while the helo was inbound: *"your helo landed at Senaki, but
+it is no longer ours -- the supply went back"*.
+
+**Refusals** (after `Could not dispatch:`):
+
+- *"Batumi has nothing on hand that Senaki has room for"*: the launch field has
+  nothing to spare, or the destination is already full. Fix the supply line,
+  not the symptom; see [Logistics & Supply](../gameplay/logistics.md).
+- *"nearest friendly hub (Batumi) is 162km away, past the 150km max range"*.
+- *"not enough points for a helo supply run (50 needed, 35 available)"*.
+- *"the launch field had nothing left to load"*.
 
 ## How it behaves in the world
 
@@ -232,6 +271,47 @@ the restart.
 Losing a supply helo — to terrain, to a SAM, to a fighter — refunds what the
 mission cost you. You are told in the panel when it happens. Nothing is
 delivered, so the base is no better off; you have only lost the round trip.
+
+## What you will be told
+
+Everything goes to the player who called the mission.
+
+```dcsmessage
+your helo landed at Gori, troops are on the ground -- keep them alive in the zone to capture it
+```
+
+| Message | When |
+| --- | --- |
+| `Helo troop insertion dispatched (HELO_blue_3_1761830412).` / `Helo resupply run dispatched (...)` | accepted; the id names the mission |
+| `your helo to Gori is routed around 2 known air-defence threat(s) (+14 km), flying low near them` | the route bends around known air defence |
+| `no clean way into Gori past known air defence -- your helo takes the least-defended gap, flying low` | there was no threat-free route |
+| `your helo to Gori is under fire -- re-routing` | it was shot at and re-planned |
+| `your helo to Gori is re-routing around newly reported air defence` | new air defence was reported across its route |
+| `your helo landed at Gori, troops are on the ground -- ...` | troops delivered |
+| `your helo landed at Gori but the troops could not be deployed: ...` | landed, but the squad could not spawn (for example the squad limit) |
+| `your helo delivered its supply run to Senaki` | supply delivered |
+| `helo mission to Gori lost en route` | shot down or crashed on the way |
+| `helo mission to Gori lost on the ground at Senaki before it took off` | destroyed on the ramp |
+| `your helo to Gori never took off from Senaki: ..., mission cancelled` | it never got airborne (the reason is given) |
+| `helo mission to Gori never made it down, recalled` | it ran out of time without landing |
+| `helo mission target lost` | the destination no longer exists |
+
+For a supply run (or a troop run with the road fallback off) these failure
+messages end in `, refunding 50 points` when there is something to refund.
+A failed troop run goes by road instead:
+
+```dcsmessage
+helo mission to Gori lost en route -- sending the squad to Gori by road from Kareli instead, ETA ~18 min
+```
+
+and then either
+`your squad dismounted at Gori after the drive from Kareli -- keep them alive in the zone to capture it`,
+or `road insertion to Gori failed: the vehicle carrying the squad was destroyed -- refunding 60 points`
+(other reasons: `the vehicle got stuck 2.4 km short of Gori`,
+`the vehicle didn't reach Gori in 46 min`, `its target no longer exists`,
+`the squad could not be deployed: ...`). If no road trip is possible the first
+message says why instead: `...; the squad can't go by road either: nothing of
+ours within 60 km has a road to Gori -- refunding 60 points`.
 
 ## Using it well
 

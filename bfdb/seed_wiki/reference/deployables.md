@@ -1,7 +1,7 @@
 # Deployable Units Reference
 
 Every deployable ground unit and troop type configured on **the server selected in the
-top bar** — crate requirements and weights, unit caps, and whether the unit brings a
+top bar**: crate requirements and weights, unit caps, and whether the unit brings a
 JTAC, an EWR or a GCI station with it.
 
 These tables are generated from that server's own campaign config when the page loads.
@@ -15,50 +15,60 @@ the battlefield and when to call for one.
 **Reading the tables**
 
 - **Crates required** lists each crate type, how many of it you need, and the weight of
-  *one* crate. Multiply to get the tonnage you have to fly in — across as many sorties
+  *one* crate. Multiply to get the tonnage you have to fly in, across as many sorties
   as it takes.
-- **Limit** is how many of that unit your coalition may have alive at once. At the cap,
-  **DeleteOldest** removes your oldest one to make room.
+- **Limit** is how many of that unit your **side** may have at once. At the limit a
+  unit either refuses new ones or replaces your side's oldest, depending on its
+  setting (**DenyCrate** or **DeleteOldest**).
 - **Provides** flags a deployment that also acts as a JTAC, an EWR radar, or a GCI
   station.
 
 ---
 
-## How to Deploy
+## How to deploy
 
-1. Load crates onto a cargo helicopter/aircraft at a friendly objective.
-2. Fly the crates to the deployment location.
-3. Unload every required crate for the unit (see "Crates required").
-4. The unit spawns automatically once the last required crate is delivered.
+1. Spawn the crates inside the zone of a friendly base with working logistics. They
+   are issued from that base's stock.
+2. Fly them to the build site: well away from your own bases (at least
+   {{cfg:logistics_exclusion|10000}} m from any friendly objective's centre), or next
+   to an enemy base you are attacking.
+3. Put every required crate down close together.
+4. Unpack: **F10 → Cargo → Unpack Nearby Crate(s)** on the classic or helicopter
+   cargo menu. Crates dropped from a C-130 (and helicopter crates, where the server
+   turns on auto-unpack) unpack themselves once the whole set has landed.
+5. The unit's price is taken at unpack, from you first and then from the fund of the
+   base the crates came from.
 
-**Drop parameters**: exceeding a crate's max drop height or speed when unloading fails
-the drop — the game reports the exact limits back to you when you try.
+**Dropping from a hover** (classic menu): each crate has a maximum height and speed
+for **Unload Crate**. Go over either and the drop is refused with both limits in the
+message, for example
+`you are going too fast to unload your cargo, speed must be at or below 46 km/h, and altitude agl must be at or below 10 m`.
+Dynamic cargo and C-130 drops have no such check.
 
-**Threatened objectives**:
+**Threatened bases** don't stop crates. They stop **troops** being unloaded inside
+your own threatened base (`you can't deploy troops here while enemies are near`), for
+{{cfg:threatened_cooldown|300}} seconds after the last enemy is out of sight.
 
-- ⚠️ You **cannot** deploy troops or crates at a threatened objective.
-- Wait for it to clear ({{cfg:threatened_cooldown|300}} second cooldown after enemies
-  leave).
-- A white circle = capturable; you can still deploy there if you own it.
+The full rules, failures and messages are on
+[Cargo Operations](../f10-menu/cargo.md#unpacking-the-rules).
 
 ---
 
 ## Blue deployables
 
-{{list:deployables.Blue|_This server publishes no deployable list. Check the F10 → Deploy menu in game._}}
+{{list:deployables.Blue|_This server publishes no deployable list. Check F10 → Cargo → Crates in game._}}
 
 ## Red deployables
 
-{{list:deployables.Red|_This server publishes no deployable list. Check the F10 → Deploy menu in game._}}
+{{list:deployables.Red|_This server publishes no deployable list. Check F10 → Cargo → Crates in game._}}
 
 ---
 
 ## Troop types
 
-Troops are loaded at friendly objectives and carried by helicopter or ground vehicle.
-The **weight** column is what the squad adds to your aircraft as internal cargo — it
-directly affects hover performance and useful load. Heavier squads mean fewer per
-airframe.
+Troops are loaded at friendly objectives and carried by helicopter.
+The **weight** column is what the squad adds to your aircraft as internal cargo: it
+directly affects hover performance and useful load.
 
 ### Blue troops
 
@@ -70,36 +80,39 @@ airframe.
 
 **Notes**:
 
-- Rifle, anti-tank and mortar squads can all **capture objectives**; MANPADS teams
-  (Igla / Stinger) cannot. The "Can capture" column above is the authority — it is read
-  from the server's config, not from this sentence.
-- Heavier squads = fewer fit in a transport. A half-fuel SA342L Gazelle can lift one
-  MANPAD team (150 kg); a rifle or mortar squad needs a Huey or larger.
+- Only squads marked as able to capture can take an objective; MANPAD teams usually
+  can't. The "Can capture" column above is the authority: it is read from the
+  server's config, not from this sentence.
+- A squad's price is paid when you load it, and **Troops → Return** at a friendly base
+  refunds what is left of it.
 - See [Troop Transport](../f10-menu/troops.md) and
-  [Cargo Operations](../f10-menu/cargo.md) for aircraft troop/crate slot counts.
+  [Cargo Operations](../f10-menu/cargo.md#what-each-airframe-carries) for slot counts
+  per airframe.
 
 ---
 
-## General Notes
+## General notes
 
-### Repair Crates
+### Repair crates
 
-Multi-component systems accept a repair crate that restores a damaged deployment for
-free. Everything else must be redeployed from scratch if destroyed. Which units have one
-is part of the deployable's own config; the F10 menu shows a **Repair** entry for any
-deployment that accepts it.
+Units with a repair crate can be repaired in the field: put the repair crate down
+within {{cfg:crate_spread|250}} m of the damaged unit and unpack. The repair crate is
+listed in the unit's own crate menu. Everything else must be rebuilt from scratch if
+destroyed.
 
-### Unit Limits
+### Unit limits
 
-At the per-type maximum, **DeleteOldest** removes your oldest deployed unit of that type
-to make room for the new one.
+Limits count your whole side, not just your own units. With **DeleteOldest**, the
+side's oldest unit of that type is removed to make room for the new one; with
+**DenyCrate**, the unpack is refused until one is lost or deleted.
 
 ---
 
 ## See Also
 
-- [Deployables Guide](../advanced/deployables-guide.md) — what each category does, and when to call for it
-- [Cargo Operations](../f10-menu/cargo.md) — how to transport crates
-- [Troop Transport](../f10-menu/troops.md) — loading and moving infantry
-- [Actions Menu](../f10-menu/actions.md) — air deployments
-- [Points and Lives](../gameplay/points-and-lives.md) — earning points
+- [Deployables Guide](../advanced/deployables-guide.md) - what each category does, and when to call for it
+- [Cargo Operations](../f10-menu/cargo.md) - how to transport crates
+- [C-130 Hercules & Airdrop](../advanced/c130-airdrop.md)
+- [Troop Transport](../f10-menu/troops.md) - loading and moving infantry
+- [Actions Menu](../f10-menu/actions.md) - air deployments
+- [Points and Lives](../gameplay/points-and-lives.md) - earning points

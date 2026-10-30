@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 560" width="800" height="560" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6aab1f"/>
+    </marker>
+    <marker id="arrow-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c9a227"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="800" height="560" fill="#0d1009"/>
+  <text x="24" y="40" fill="#cdd4be" font-size="16" font-weight="bold">How points flow</text>
+
+  <rect x="24" y="70" width="220" height="270" rx="6" fill="#141910" stroke="#262e1d" stroke-width="2"/>
+  <text x="40" y="98" fill="#8ec83f" font-size="16" font-weight="bold">EARN</text>
+  <text x="40" y="128" fill="#cdd4be" font-size="14">Air and ground kills</text>
+  <text x="40" y="156" fill="#cdd4be" font-size="14">Captures (shared)</text>
+  <text x="40" y="184" fill="#cdd4be" font-size="14">Logistics repair, supply</text>
+  <text x="40" y="212" fill="#cdd4be" font-size="14">Convoy interdiction</text>
+  <text x="40" y="240" fill="#cdd4be" font-size="14">CSAR rescues</text>
+  <text x="40" y="268" fill="#cdd4be" font-size="14">Holding pay, in a slot</text>
+  <text x="40" y="296" fill="#cdd4be" font-size="14">Task-zone kills x1.5</text>
+  <text x="40" y="324" fill="#7d8a6a" font-size="13">the points message says why</text>
+
+  <rect x="300" y="110" width="200" height="140" rx="6" fill="#141910" stroke="#6aab1f" stroke-width="2"/>
+  <text x="316" y="138" fill="#8ec83f" font-size="16" font-weight="bold">YOUR BALANCE</text>
+  <text x="316" y="164" fill="#cdd4be" font-size="13">raised by underdog pay,</text>
+  <text x="316" y="184" fill="#cdd4be" font-size="13">slowed above the</text>
+  <text x="316" y="204" fill="#cdd4be" font-size="13">high-balance line</text>
+  <text x="316" y="232" fill="#7d8a6a" font-size="13">-balance  -status</text>
+
+  <rect x="556" y="70" width="220" height="270" rx="6" fill="#141910" stroke="#262e1d" stroke-width="2"/>
+  <text x="572" y="98" fill="#8ec83f" font-size="16" font-weight="bold">SPEND</text>
+  <text x="572" y="128" fill="#cdd4be" font-size="14">Flight cost at takeoff</text>
+  <text x="572" y="148" fill="#7d8a6a" font-size="13">airframe + weapons</text>
+  <text x="572" y="178" fill="#cdd4be" font-size="14">F10 Actions</text>
+  <text x="572" y="206" fill="#cdd4be" font-size="14">Troop squads</text>
+  <text x="572" y="234" fill="#cdd4be" font-size="14">Deployables at unpack</text>
+  <text x="572" y="262" fill="#cdd4be" font-size="14">Recon pass, AI wingman</text>
+  <text x="572" y="290" fill="#cdd4be" font-size="14">-transfer to pilot/base</text>
+  <text x="572" y="324" fill="#7d8a6a" font-size="13">price shown before you buy</text>
+
+  <line x1="244" y1="180" x2="296" y2="180" stroke="#6aab1f" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="500" y1="180" x2="552" y2="180" stroke="#6aab1f" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <rect x="24" y="380" width="266" height="160" rx="6" fill="#141910" stroke="#262e1d" stroke-width="2"/>
+  <text x="40" y="408" fill="#8ec83f" font-size="16" font-weight="bold">COMES BACK</text>
+  <text x="40" y="434" fill="#cdd4be" font-size="13">Land at a friendly base:</text>
+  <text x="40" y="452" fill="#7d8a6a" font-size="13">stores still aboard</text>
+  <text x="40" y="476" fill="#cdd4be" font-size="13">-delete: half the cost</text>
+  <text x="40" y="498" fill="#cdd4be" font-size="13">Troops returned to base</text>
+  <text x="40" y="520" fill="#cdd4be" font-size="13">Missions that never delivered</text>
+
+  <rect x="310" y="380" width="200" height="160" rx="6" fill="#141910" stroke="#262e1d" stroke-width="2"/>
+  <text x="326" y="408" fill="#c9a227" font-size="16" font-weight="bold">PENALTIES</text>
+  <text x="326" y="434" fill="#cdd4be" font-size="13">Team kills</text>
+  <text x="326" y="456" fill="#cdd4be" font-size="13">Action group destroyed</text>
+  <text x="326" y="478" fill="#cdd4be" font-size="13">A unit you moved is lost</text>
+  <text x="326" y="500" fill="#cdd4be" font-size="13">Civilian shot down</text>
+
+  <rect x="556" y="380" width="220" height="160" rx="6" fill="#141910" stroke="#262e1d" stroke-width="2"/>
+  <text x="572" y="408" fill="#8ec83f" font-size="16" font-weight="bold">BASE FUND</text>
+  <text x="572" y="434" fill="#cdd4be" font-size="13">Pays what your balance</text>
+  <text x="572" y="454" fill="#cdd4be" font-size="13">can't: flight, troops,</text>
+  <text x="572" y="474" fill="#cdd4be" font-size="13">deployables. Gets its</text>
+  <text x="572" y="494" fill="#cdd4be" font-size="13">share of refunds back</text>
+  <text x="572" y="514" fill="#cdd4be" font-size="13">while your side holds it.</text>
+
+  <line x1="200" y1="380" x2="326" y2="258" stroke="#6aab1f" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="410" y1="380" x2="410" y2="256" stroke="#c9a227" stroke-width="3" marker-end="url(#arrow-warn)"/>
+  <text x="418" y="322" fill="#c9a227" font-size="13">minus</text>
+  <line x1="666" y1="380" x2="666" y2="346" stroke="#6aab1f" stroke-width="3" marker-end="url(#arrow)"/>
+</svg>

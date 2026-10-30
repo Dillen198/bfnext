@@ -32,8 +32,11 @@ That's the base, then the building's map name, then its DCS type in brackets.
 - **Both sides see the pins.** Attackers use them to find targets, and
   defenders use them to see what they've lost.
 - **Pins only show while the base is awake.** A base wakes up when an enemy
-  aircraft or unit comes within about {{cfg:unit_cull_distance|37040}} m. A
-  quiet base deep behind the lines shows none.
+  aircraft comes within about {{cfg:unit_cull_distance|37040}} m (or is
+  heading there fast enough to arrive within a minute), an enemy ground unit
+  within {{cfg:ground_vehicle_cull_distance|10000}} m, or a player-deployed
+  enemy unit within 10 km. A quiet base deep behind the lines shows none.
+  Special SAM sites never get pins.
 - **A pin disappears when its building is destroyed.** If a base has fewer
   pins than it used to, the missing ones are already destroyed.
 - **The engine counts only up to four buildings per base**: the warehouses,
@@ -96,8 +99,9 @@ Logi is simply the share of the base's counted buildings still standing:
 | 0 of 4 | **0%** | **none** |
 
 A base with three counted buildings drops 100 → 67 → 33 → 0, and so on. A
-base with **no** counted buildings in its zone always reads **100% logi**, so
-you can't hurt it this way. Go after its garrison instead.
+base with **no** counted buildings in its zone always reads
+**{{cfg:logi_from_scenery.fallback_logi|100}}% logi**, so you can't hurt it
+this way. Go after its garrison instead.
 
 As logi falls:
 
@@ -137,6 +141,43 @@ The rubble stays on the map, but the rating can recover:
   garrison.
 
 Losses carry over when the server restarts.
+
+---
+
+## The garrison
+
+The garrison is everything at the base that counts towards **Health**: armour,
+AAA, SAM launchers, infantry and any other units the mission placed there. It
+is only in the DCS world while someone is near the base, so a quiet base can
+look empty from a distance. Its units still count, and a base that has been
+threatened for a minute brings any missing garrison groups back in.
+
+Where the server leaves it on (`garrison`, on by default), the garrison does
+not just stand there:
+
+- **It moves out to meet you.** An enemy ground unit within
+  {{cfg:garrison.react_m|5000}} m of the base's edge sets the armour and
+  infantry driving out to fight it, up to {{cfg:garrison.leash_m|2500}} m past
+  the edge. A unit that fires on the base gives itself away and becomes a
+  target too. The owner is told `Saraqib: enemy armour at the perimeter, the
+  garrison is moving to engage.`
+- **It calls for help.** If the intruder is still there after
+  {{cfg:garrison.qrf_delay_secs|60}} seconds, a nearby formation may be sent as
+  a quick reaction force: `GROUND COMMAND: 3rd Armoured Bn is the quick reaction
+  force for Saraqib.`
+- **It goes home** {{cfg:garrison.clear_secs|120}} seconds after the last
+  intruder, and patrols inside the base while it is quiet (not at airfields, where armour would block the taxiways).
+- **Mobile SAM sites move.** A SAM group whose vehicles all drive relocates
+  inside its base after it stops firing and now and then while quiet, and the
+  new spot is saved, so a site is rarely where it was last round.
+
+When the base is down to 20% health with its last few infantry alive, the
+attacking side gets a pin on each survivor: `Last defenders of Saraqib:
+infantry here (3 left)`. See
+[Capturing Objectives](./capturing-objectives.md#step-1-knock-it-down).
+
+On capture, the old owner's garrison is removed and the new owner gets a light
+one, without SAMs. The rest comes back one group per repair pulse.
 
 ---
 

@@ -1,115 +1,107 @@
 # Air-Launched Cruise Missiles
 
-Deploy long-range cruise missiles for precision strikes on high-value targets.
+An ALCM platform is a bomber you buy from the Actions menu that orbits behind
+the lines with a load of cruise missiles. A JTAC then aims them: each missile
+flies to one of the JTAC's contacts.
 
 ![Bomber launching a long-range cruise missile at a high-value target](/api/wiki/images/7fc9ec2b-79a6-46d1-b61f-27dd1a313ee9)
 
-> **Availability**: the ALCM platform is an optional action. It is **not on the
-> live mission's action list** — if you don't see an ALCM entry under
-> `Actions>>`, this server isn't running it. The page documents how it works
-> where it is enabled. For long-range fires on the live mission, use
-> **Naval Strike** ([Carrier Operations](../gameplay/carrier-ops.md)), the
-> **B-1B / Tu-22M3** bomber action, or
-> [artillery and missile TELs](./artillery.md).
+> **Availability**: the ALCM platform is an optional action
+> (`CruiseMissileSpawn` in the [action list](../f10-menu/actions.md#what-this-server-offers)).
+> If you don't see one under `Actions>>`, this server isn't running it. For
+> long-range fires without it, use the **naval cruise missile strike**
+> ([Carrier Operations](../gameplay/carrier-ops.md)), a **bomber** or
+> **strike** action, or [artillery and missile TELs](./artillery.md).
 
-## Overview
+## Step 1: put a platform up
 
-ALCMs provide:
-- Stand-off capability
-- Precision strikes
-- High survivability
-- Strategic reach
-
-## Deploying ALCM Units
-
-**Via Actions Menu**:
 ```
-F10 → Actions>> → [ALCM action] → [Location]
+F10 → Actions>> → [ALCM action] → [your map mark]
 ```
 
-**Cost**: shown in the menu label, as with every action.
+Drop a map mark where you want it to orbit (see
+[map marks](../f10-menu/overview.md#map-marks-are-your-targeting-system)),
+then pick the action and the mark. It takes off from the nearest friendly
+airfield with a large stand more than 10 km from the mark and flies a circle
+over it, with unlimited fuel. Cost is in the menu label, as with every action.
 
-**Unit**: Usually bomber/strike aircraft (Tu-95, B-52, etc.)
+To move it later: `Actions → [cruise missile waypoint action] → [platform] →
+[new mark]`. To send it home: `Actions → RTB`, which refunds a quarter of its
+cost when it lands. Its orbit mark on the F10 map shows the group id you will
+need below.
 
-## Requesting ALCM Strike
+## Step 2: fire through a JTAC
 
-**Via JTAC Menu**:
+Any JTAC on your side whose current target is within
+{{cfg:alcm_mission_range|600000}} m of a platform lists it under **ALCM**, as
+`id(missiles left)`:
+
+```f10menu
+{"root":"F10 Other","items":[
+ {"label":"JTAC","items":[
+  {"label":"Axeman 11","items":[
+   {"label":"ALCM","items":[
+    {"label":"5230(12)","items":[
+     {"label":"Fire Quarter","items":[
+      {"label":"Fire One per target","says":"ALCM MISSION STARTED for 5230\ndirected by jtac 1187 near Gori\nrequested by Viper"},
+      {"label":"Fire Two per target","says":"ALCM MISSION STARTED for 5230\ndirected by jtac 1187 near Gori\nrequested by Viper"},
+      {"label":"Fire Four per target","says":"jtac 1187 could not start ALCM mission ALCM Abort: not enough missiles to complete a minimum launch."}
+     ]},
+     {"label":"Fire Half","items":[
+      {"label":"Fire One per target","says":"ALCM MISSION STARTED for 5230\ndirected by jtac 1187 near Gori\nrequested by Viper"},
+      {"label":"Fire Two per target","says":"ALCM MISSION STARTED for 5230\ndirected by jtac 1187 near Gori\nrequested by Viper"},
+      {"label":"Fire Four per target","says":"ALCM MISSION STARTED for 5230\ndirected by jtac 1187 near Gori\nrequested by Viper"}
+     ]},
+     {"label":"Fire All","items":[
+      {"label":"Fire One per target","says":"ALCM MISSION STARTED for 5230\ndirected by jtac 1187 near Gori\nrequested by Viper"},
+      {"label":"Fire Two per target","says":"ALCM MISSION STARTED for 5230\ndirected by jtac 1187 near Gori\nrequested by Viper"},
+      {"label":"Fire Four per target","says":"ALCM MISSION STARTED for 5230\ndirected by jtac 1187 near Gori\nrequested by Viper"}
+     ]}
+    ]}
+   ]}
+  ]}
+ ]}
+]}
 ```
-F10 → JTAC → [JTAC ID] → ALCM → [Unit ID] → [Parameters]
-```
 
-**Requirements**:
-1. Deployed ALCM unit
-2. JTAC with contacts
-3. Sufficient missiles
-4. In range
+With no platform in range the ALCM submenu holds one line,
+`(no ALCM shooters in range)`.
 
-## Strike Parameters
+### How the missiles are shared out
 
-### Missiles Per Target
+1. **Magazine**: `Fire Quarter`, `Fire Half` or `Fire All` sets how much of
+   the platform's load this mission may use (a quarter, half or all of it,
+   rounded down).
+2. **Per target**: one, two or four missiles go at each contact.
+3. The platform works down the JTAC's contact list, in the JTAC's order, giving
+   each contact its missiles until the allowance runs out.
 
-**Options**: 1, 2, or 4 missiles per target
+So `Fire Quarter → Fire One per target` on a 12-missile platform sends one
+missile at each of the first three contacts. `Fire All → Fire Four per target`
+puts four into each of the first three.
 
-**Selection**:
-- High-value: 2-4 missiles
-- Regular: 1-2 missiles
-- Multiple targets: 1 each
+Use two or four per target for hard, high-value targets (SAM radars, command
+posts); one per target to spread damage over a column.
 
-### Magazine Expenditure
+### Refusals
 
-**Options**:
-- **Quarter**: 25% of missiles
-- **Half**: 50% of missiles
-- **All**: 100% of missiles
-
-**Considerations**:
-- Save some for later vs. maximum effect now
-- Resupply via logistics
-
-## Target Selection
-
-**JTAC Contacts**:
-- ALCM strikes all contacts JTAC has
-- Prioritized by JTAC's priority list
-- Up to magazine limit
-
-**Optimal Targets**:
-- SAM systems
-- Armored formations
-- Command posts
-- Logistics sites
-- High-value units
-
-## Mission Profile
-
-**Typical ALCM Strike**:
-1. Unit receives launch order
-2. Aircraft launches missiles
-3. Missiles fly to targets
-4. Impact in sequence
-5. BDA via JTAC
-
-**Time to Impact**: 5-15 minutes depending on range
-
-## ALCM Specifications
-
-**Deployment cost**: read the exact figure off the menu label. Typical
-configurations run a cheap light platform (around 25 points) and an expensive
-heavy one (around 150).
-
-**Max range**: {{cfg:alcm_mission_range|600000}} m on this server
-**Time to impact**: 5–15 minutes, depending on range
-**RTB refund**: a fraction of the deployment cost
+- `no target`: the JTAC has nothing designated.
+- `ALCM Abort: 5230 is out of missiles.`
+- `ALCM Abort: 5230 has only 1 missiles remaining, cannot launch 2.`
+- `ALCM Abort: not enough missiles to complete a minimum launch.`: the chosen
+  share of the magazine is less than one missile.
 
 ## Limitations
 
-- Limited missiles (check JTAC status for count)
-- Expensive to deploy
-- Depends on JTAC having contacts
-- Not reusable immediately (reload time via logistics)
-- **Max range**: {{cfg:alcm_mission_range|600000}} m on this server
-- JTAC must have detected targets
+- The JTAC needs a target, and the platform's missiles only go at the JTAC's
+  contacts.
+- Missiles spent are gone; buy a new platform when it is empty.
+- The platform is a big, slow aircraft. Keep it behind your fighters.
+- The platform's slot counts against the action's limit until it is destroyed,
+  lands or is removed.
 
 ## See Also
 
 - [JTAC System](../f10-menu/jtac.md)
+- [Actions Menu](../f10-menu/actions.md)
+- [Action Types](../reference/action-types.md)

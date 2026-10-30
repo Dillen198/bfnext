@@ -1,218 +1,261 @@
 # Objectives
 
-Objectives are the heart of the Fowl Engine dynamic campaign. Understanding how they work is essential for strategic success.
-
-## What Are Objectives?
-
-Objectives represent strategic locations on the battlefield:
-- **Airbases**: Major air facilities with full services
-- **FARPs**: Forward Arming and Refueling Points
-- **FOBs**: Forward Operating Bases for ground operations
-- **Logistics Hubs**: Supply distribution centers
-- **Factories**: Produce ground units over time
-- **Naval Bases**: Spawn and resupply naval assets
-- **SAM Sites**: High-value integrated air defense, hidden and networked
-- **Command Centers**: IADN network nodes that keep nearby SAM sites smart
+Objectives are the places the campaign is fought over: airbases, FARPs, FOBs,
+logistics hubs, factories, naval bases, carrier groups, SAM sites and command
+centers. Each one has an owner, a zone, a garrison and a set of numbers that
+say how it is doing. This page explains all of it.
 
 ![Overview of objective types across the campaign map](/api/wiki/images/934a41dc-d2ad-4b52-8dfd-60cbdc4deb78)
 
-## Objective Types
+## Objective types
 
-### Airbases
-- Full repair and rearm capabilities
-- Spawning locations for aircraft
-- Critical for air superiority
-- Highest strategic value
+| Type | F10 icon | Menu tag | What it is for |
+| --- | --- | --- | --- |
+| **Airbase** | none of ours (DCS draws the airfield) | `AB` | Fixed-wing and helicopter slots, warehouse, repair and rearm |
+| **FARP** | an "H" | `FARP` | Forward helicopter base. A FARP whose logistics reach 0 is removed from the map |
+| **FOB** | a tent | `FOB` | Forward ground base, a zone with a garrison |
+| **Logistics Hub** | a hexagon | `LOGI` | Feeds supply down the chain to the bases it is linked to (grey arrows on the map) |
+| **Factory** | a factory with a sawtooth roof | `FACT` | Produces for its side's war economy in proportion to its logistics |
+| **Naval Base** | an anchor | `NAVAL` | Port; each carrier group links to its nearest friendly naval base |
+| **Carrier Group** | a ship hull | `CVN` | A moving task force with deck slots. Drawn for its owner only |
+| **Special SAM Site** | a boxed missile | `SAM` | A long-range air defence site. Drawn for its owner only |
+| **Command Center** | a five-point star | `CC` | Keeps nearby SAM sites networked |
 
-### FARPs (Forward Arming and Refueling Points)
-- Forward helicopter bases
-- Limited repair capabilities
-- Mobile deployment possible
-- Tactical importance
+Airbases, naval bases and FARPs are **primary objectives**: they are what the
+[Last Stand](./round-rules.md) counts.
 
-### FOBs (Forward Operating Bases)
-- Ground unit staging areas
-- Limited but essential support
-- Strategic positions for ground war
-- Supply storage
-
-### Logistics Hubs
-- Central supply distribution
-- Connect to multiple objectives
-- Critical for sustained operations
-- Often heavily defended
-
-### Factories
-- Produce ground units over time for their owning coalition
-- Destroy enemy factories to starve their offensive
-- Distinct from Logistics Hubs (supply) — factories generate new units
-
-### Naval Bases
-- Spawn and resupply naval assets
-- Control coastal and maritime operations
-- Every carrier group auto-links to its nearest friendly naval base — see [Capturing Objectives](./capturing-objectives.md) for how that link affects capturing a carrier, and how a captured carrier is repaired from the base
-- Carrier groups show up in the web dashboard's Objectives list with full Health/Logi/Supply/Fuel status, but **no map position** — their location stays hidden, same as in-game
+The F10 map labels each objective with its name and type, for example
+`Saraqib Logistics Hub` (a special SAM site shows its name only). See
+[Reading the F10 Map](./reading-the-map.md) for the rings and hexes around it,
+and [Buildings at an Objective](./objective-buildings.md) for what to shoot.
 
 ![Naval carrier strike group at sea](/api/wiki/images/f2ad53a9-2e98-4925-bced-de97267fc7e6)
 
-### SAM Sites
-High-value integrated air defense sites, networked with other sensors:
-- Search radars stay dark until a real threat is confirmed, then power up
-- **Position is classified** — not shown on the F10 map or the dashboard; you have to locate it yourself (EWR tracks help)
-- Ownership can flip either way, including from neutral — a captured site re-arms under its new owner's coalition and defends *their* airspace, not the enemy's
-- Captures instantly once troops hold the zone (no capture timer) — see [Capturing Objectives](./capturing-objectives.md)
+### Carrier groups and SAM sites are secret
 
-**Taking a base does not give you air defence.** Objectives carry point defence
-only — guns and short-range launchers that cover their own perimeter. Everything
-with real reach lives in a SAM site, which stands off several kilometres from
-whatever it protects precisely so that it has to be found and fought for
-separately. Capture the airbase and the battery covering it is still out there,
-still hostile, and still yours to deal with.
+Two kinds are drawn on the F10 map **for their owner only**: carrier groups,
+because they move, and special SAM sites, because they are meant to be found.
+Every menu, report and briefing follows the same rule, so the enemy's carrier
+or SAM site never appears in your lists until your side owns it. A Neutral one
+is hidden from both sides. The dashboard follows the same rule.
 
-That cuts both ways. Your own strategic cover comes from the SAM sites your
-coalition holds and from what your pilots deploy by crate — not from the
-objective list. Lose the sites and the bases behind them are naked however many
-you own.
-
-**Early-warning radars are their own sites.** They sit further back than the
-SAM batteries, they are what feeds the networked picture, and they are
-capturable on the same terms. Killing one blinds a sector without having to
-fight the batteries in it — the cheapest SEAD you will ever fly, and the same
-is true in reverse when yours go down.
+### SAM sites
 
 ![Hidden SAM site tucked into rocky terrain](/api/wiki/images/0ce0f6d9-ab3e-4f5b-87e3-799b0e2964cd)
 
-**Warning**: SAM sites don't just sit there with radars blaring — they share detections across the coalition's whole sensor network and only light up their radar for a confirmed threat, so a "quiet" site isn't necessarily undefended. Fire a HARM or other anti-radiation missile at one and it'll go dark to deny you a lock — and some sites keep a short-range point-defense system (Pantsir, Shilka) alert the entire time specifically to shoot your missile down before it arrives. Don't treat radar silence as an all-clear.
+High-value air defence sites, networked with other sensors:
+
+- Search radars stay dark until a real threat is confirmed, then power up.
+- The enemy has to find them: they are not on the enemy's F10 map or
+  dashboard (EWR tracks, recon and ELINT help).
+- Ownership can flip either way, including from Neutral. A captured site
+  re-arms under its new owner and defends *their* airspace.
+- Troops can capture one at any time, with the normal capture timer. See
+  [Capturing Objectives](./capturing-objectives.md#special-sam-sites).
+
+**Taking a base does not give you air defence.** Objectives carry point defence
+only: guns and short-range launchers that cover their own perimeter. Everything
+with real reach lives in a SAM site, which stands off several kilometres from
+whatever it protects, so it has to be found and fought for separately. Capture
+the airbase and the battery covering it is still out there.
+
+That cuts both ways. Your own strategic cover comes from the SAM sites your
+coalition holds and from what your pilots deploy by crate. Lose the sites and
+the bases behind them are naked however many you own.
+
+**Early-warning radars are their own sites.** They sit further back than the
+SAM batteries, they feed the networked picture, and they are capturable on the
+same terms. Killing one blinds a sector without fighting the batteries in it.
+
+**Warning**: a "quiet" site isn't necessarily undefended. Sites share
+detections across the coalition's sensor network and only light up for a
+confirmed threat. Fire an anti-radiation missile at one and it goes dark, and
+some keep a short-range point-defence system alert specifically to shoot your
+missile down. Don't treat radar silence as an all-clear.
 
 ### Command Centers
 
-The network node behind the IADN (Integrated Air Defence Network) described above. A Command Center is a pure trigger-zone objective — no airbase or pad association, no warehouse, no supply-chain consumption of its own — whose only job is keeping nearby SAM sites smart.
+The network node behind the Integrated Air Defence Network. A Command Center is
+a trigger-zone objective with a garrison: no airfield, no pad.
 
-- At mission start, every SAM site auto-links to its **nearest friendly Command Center**
-- As long as that Command Center is alive and still owned by the same coalition, its linked SAM sites get the full networked behavior: shared sensor picture, radars dark until a confirmed threat, HARM defense
-- **If the Command Center is destroyed or captured, every SAM site linked to it immediately loses that networking** — it falls back to plain DCS AI (`Auto` alarm state: always-on radar, no coordination, no HARM-defense reaction), whether or not the SAM site itself was ever touched
+- At mission start, every SAM site links to its **nearest friendly Command
+  Center**.
+- While that Command Center is alive and still owned by the same side, its SAM
+  sites get the full networked behaviour: shared picture, radars dark until a
+  confirmed threat, anti-radiation missile defence.
+- **If the Command Center is destroyed or captured, every SAM site linked to it
+  falls back to plain DCS AI**: always-on radar, no coordination.
+- A Command Center never drops to Neutral at health 0. Troops have to capture
+  it.
 
-**Tactical implication**: a Command Center is a legitimate high-value target in its own right. Taking one out (or capturing it) quietly de-fangs every SAM site it was covering — often a cheaper way to open a corridor through a defended sector than trying to individually locate and kill each classified SAM position first. The flip side applies when defending: protect your Command Centers as hard as the SAM sites themselves, since losing one degrades a whole cluster of air defense at once.
+Taking one out quietly de-fangs every SAM site it covered, often a cheaper way
+to open a corridor than finding each site. Defend yours as hard as the sites.
 
-## Objective Ownership
+## Ownership
 
-### Current Owner
-Each objective is controlled by:
-- **Blue Coalition**
-- **Red Coalition**
-- **Neutral** (rare, usually initial state)
+Every objective belongs to **Blue**, **Red** or **Neutral**. A base becomes
+Neutral when:
 
-### Ownership Display
-Check ownership via:
-- **F10 Map Markers**: Color-coded (Blue/Red)
-- **Objective Name**: Prefix indicates owner
-- **JTAC Reports**: Include ownership info
+- its garrison is wiped out completely (health 0), or
+- it was just captured and the enemy killed every one of the troops holding it
+  during [consolidation](./capturing-objectives.md#step-5-consolidation).
 
-## Objective Status
+A Neutral base has no garrison, locks its slots, never repairs, and is taken by
+whichever side gets capture troops into it first.
+
+## The numbers
+
+Each objective tracks these. The first four are the hexes under it on the F10
+map.
+
+```statushexes
+{"health":82,"logi":58,"supply":14,"fuel":95,"caption":"A base in trouble: its garrison is mostly standing and its logistics half there, but it is nearly out of munitions."}
+```
 
 ### Health
-Indicates physical damage to facilities:
-- **100%**: Fully operational
-- **75-99%**: Minor damage
-- **50-74%**: Moderate damage
-- **25-49%**: Heavy damage
-- **0-24%**: Critical condition
 
-**Effects of Low Health**:
-- Reduced repair speeds
-- Limited aircraft spawns
-- Slower logistics processing
+The share of the base's garrison still alive: every unit at the objective
+except indestructible decoration. It is what decides whether the base can be
+captured: **20% or less, with no infantry left**.
+
+- A base with no garrison units at all reads 100%, unless its health comes from
+  its logistics buildings (see
+  [Buildings at an Objective](./objective-buildings.md)).
+- A Neutral base reads 0% until someone captures it.
+- Health 0 on a Blue or Red base drops it to Neutral (not carriers, command
+  centers or special SAM sites).
 
 ### Logistics (Logi)
-Represents infrastructure for supply operations:
-- **0**: Completely destroyed — repair, rearm and resupply stop working
-- **1-100**: Infrastructure present and functioning
 
-Logistics is about whether the base *works*, not whether it can be taken. [Buildings at an Objective](./objective-buildings.md) shows which buildings count and what each one does when destroyed. **Capturing** an objective is gated on **health ≤ 20% and every infantry defender dead** — see [Capturing Objectives](./capturing-objectives.md).
+Whether the base *works*: its logistics buildings, or on servers without
+map-building logistics, its logistics group. At 0% it can't issue crates or
+troops and can't repair itself; in between it repairs more slowly. On a carrier
+group, Logi is the SUPPLY ship: sink it and Logi drops to 0%. Logistics does
+**not** gate capture. See [Buildings at an Objective](./objective-buildings.md).
 
-### Supply Level
-Resources available for operations:
-- **100%**: Fully supplied
-- **50-99%**: Adequate supplies
-- **25-49%**: Low supplies
-- **0-24%**: Critical shortage
+### Supply
 
-### Fuel Level
-Aviation fuel availability:
-- **100%**: Full fuel stocks
-- **0%**: No fuel available
+Munitions and materiel in the warehouse, weighted by what the side actually
+uses. Low supply takes loadouts off the rearm menu and stops repairs: each
+repair pulse needs {{cfg:repair_supply_cost|5}}% supply. See
+[Logistics & Supply](./logistics.md).
 
-## Objective States
+### Fuel
+
+Fuel in the warehouse.
+
+### Aircraft and infantry
+
+Two more numbers, shown on your own bases' cards in the
+[Objectives Menu](../f10-menu/objectives.md):
+
+- **Aircraft**: airframes on the ramp. Low means the type you want may not be
+  slottable.
+- **Infantry**: the share of the garrison's infantry still alive (not a head
+  count). The F10 label shows it to everyone once health is down to 20%.
+
+### Hex colours
+
+| Colour | Value |
+| --- | --- |
+| Green | above 66% |
+| Amber | 34% to 66% |
+| Red | 33% or less |
+
+```hexlegend
+```
+
+A **gold outline on the supply hex** means unlimited supply: the base never
+runs out of weapons, vehicles or fuel. A **gold owner ring** means unlimited
+aircraft.
+
+### Base fund
+
+Each base also carries a fund of points, seeded at the start of a map
+(`objective_start_points`, {{cfg:objective_start_points.Blue|0}} for Blue on
+this server) and topped up with `-transfer <amt> objective:<name>`. When a base
+changes hands most of its fund is lost; a base that falls Neutral loses all of
+it. See [Materiel & the War Economy](./war-economy.md).
+
+## States
 
 ### Threatened
-An objective becomes "threatened" when:
-- Enemy units are nearby (within aircraft-specific threat distance)
-- Enemy ground forces are close
-- Recently captured by enemy
 
-**Cooldown**: 300 seconds (5 minutes) - objective stays threatened for 5 minutes after last enemy contact
+An objective is **threatened** while:
 
-**Effects**:
-- ⚠️ **Blocks cargo and troop deployment** - cannot unload at threatened objectives!
-- May trigger defensive unit spawns
-- Tracked internally by system
+- an enemy **pilot** is within threat range of it (set per airframe) with line
+  of sight, or
+- an armed enemy **ground unit** is within
+  {{cfg:ground_vehicle_cull_distance|10000}} m.
 
-**Important**: You cannot deploy units (troops or crates) at threatened objectives. The system will show: "you can't deploy troops here while enemies are near"
+Enemy AI aircraft wake a base up but never threaten it. It stays threatened
+until {{cfg:threatened_cooldown|300}} seconds after the last enemy left.
+
+What it does:
+
+- **Repairs freeze**, and the repair countdown restarts from the last moment
+  an enemy was seen.
+- The garrison is put on the map (if it was asleep) and moves out to meet enemy
+  ground units.
+- Troops can't be unloaded inside your own threatened base: `you can't deploy
+  troops here while enemies are near`.
+- The F10 map draws the **yellow ring**, and the owner ring and icon flash. If
+  the server turns on under-attack alerts, the owner also gets a red ring.
+- It shows as `[THREAT]` in the status lists and under `Bases Under Threat`.
 
 ### Capturable
-Ready to be captured when:
-- Health ≤ 20% (or Health 0, which flips the base to Neutral automatically)
-- Every infantry defender is dead
-- Capture-capable troops of yours in the zone
-- It is **not** in a post-capture consolidation hold, and **not** in the
-  ~2-minute cooldown after a recent ownership change
 
-**Visual Indicator**: Capturable objectives show a **white circle** on F10 map instead of the owner's color. A base in its consolidation hold shows "NOT CONSOLIDATED" instead — you can't start a capture there, you have to break the holding troops.
+Health at or below 20% and no infantry left. The **inner ring turns white** and
+the label reads `>> UNDEFENDED - BLUE captures: land troops inside the ring`
+(or `>> NEUTRAL - either side captures: ...` on a Neutral base). You can't slot
+in at your own base while it is capturable, and you can't load crates or
+troops there. It still repairs if left alone, burning supply to do it.
 
-### Consolidating (post-capture hold)
-For ~5 minutes after a base is taken, its new owner's assault troops hold it while the garrison moves in. The enemy can't start a capture timer against it during this window — they can only take it back by physically destroying the holding troops (which forces it Neutral, *if* the base is still at ≤ 20% health). On capture the previous garrison is wiped and you get back only a light AAA/infantry garrison (~25%, no SAMs) — the rest rebuilds through auto-repair or has to be delivered by crate.
+### Being taken
 
-## Objective Information
+A capture timer is running: `Capturing: 50%` on the label, `[BEING TAKEN]` in
+the lists. Repairs are frozen.
 
-## Reading Map Markers
+### Consolidating
 
-The numbers are no longer printed on the map. An objective now shows its
-**name**, its rings, and a row of **four status hexagons** — see
-[Reading the F10 Map](/wiki/gameplay/reading-the-map) for the full key.
+For a while after a capture the base is held only by the troops that took it.
+The label counts it down (`>> CONSOLIDATING 42% (2m54s left) - hold the zone
+with troops`), nobody can slot in, and the enemy can't start a capture timer:
+they have to kill the holding troops. See
+[Capturing Objectives](./capturing-objectives.md#step-5-consolidation).
 
-```
-   Aleppo
-   Health  Logi  Supply  Fuel
-     ⬢      ⬢      ⬢      ⬢
-```
+### Commander's priority
 
-- **Green** above 66%, **amber** 33–66%, **red** below 33%.
-- A **gold outline** on a hex means that resource is unlimited.
-- A **gold owner ring** means the base has unlimited aircraft.
+A base the command has flagged shows `[PRIORITY]` in your status lists and
+`- COMMANDER PRIORITY` on its card. Only its owner sees the flag.
 
-The label keeps only what you have to act on — `>> CAPTURABLE`,
-`>> CONSOLIDATING 40% (2m10s left)`, `Infantry: 30%`, repair progress and the
-base's navaids.
+### Logistics detached
 
-**Capturable:** health at or below 20% with no infantry left. The engine says so
-in the label, and the **inner ring turns WHITE** — the quickest way to spot a
-takeable base at a glance.
+A base set up with no automatic resupply. Its card says `NOTE: logistics
+detached -- no automatic resupply`: crates, C-130 drops and helo runs are all
+it gets.
 
-## Objective Zones
+## The zone
 
-### Capture Zone
-The physical area for capturing:
-- Defined by mission design (circular or polygonal)
-- Infantry must be inside to capture
-- Check F10 map markers for zone location
-- Only one zone per objective
+Each objective has one zone, a circle or a four-sided area set in the mission.
+On the F10 map it is the **dashed owner ring**. Capture troops count only while
+they are alive inside it; its radius is printed on every card (`Zone radius:
+2500 m`).
+
+![Diagram of an objective on the F10 map. The dashed owner ring marks the zone; a white inner ring at nine-tenths of its size means capturable; a thick yellow ring, as wide as the logistics exclusion distance or 1.1 times the zone, appears when the base is threatened. Up to four logistics buildings inside the zone carry logi pins. A row of four status hexes, Health, Logi, Supply and Fuel, sits south of the centre, the type icon in the middle, and the label with the name and capture state to the north-east.](/api/wiki/images/ffa68774-fadf-4d8c-a09b-dcb6814d6691)
+
+Around it, {{cfg:logistics_exclusion|10000}} m from the centre (the logistics
+exclusion), you can't unpack deployables near your own objectives. The yellow
+threatened ring is drawn at that distance, or 1.1 times the zone if that is
+bigger.
 
 ## See Also
 
-- [Buildings at an Objective](./objective-buildings.md) — what to look for and what each building does
-- [Capturing Objectives](./capturing-objectives.md) — the full capture sequence
-- [Objectives Menu](../f10-menu/objectives.md) — the in-cockpit reports and the **Capture Advisor**, which tells you why a specific base won't flip
-- [Logistics & Supply](./logistics.md) — keeping what you hold
-- [Materiel & the War Economy](./war-economy.md) — why factories and hubs decide the round
-- [Navaids & Approaches](./navaids.md) — finding a FARP or carrier
+- [Capturing Objectives](./capturing-objectives.md): the full capture sequence
+- [Buildings at an Objective](./objective-buildings.md): what to look for and what each building does
+- [Reading the F10 Map](./reading-the-map.md): rings, hexes, labels and pins
+- [Objectives Menu](../f10-menu/objectives.md): the in-cockpit reports and the Capture Advisor
+- [Logistics & Supply](./logistics.md): keeping what you hold
+- [Materiel & the War Economy](./war-economy.md): why factories and hubs decide the round
+- [Navaids & Approaches](./navaids.md): finding a FARP or carrier
 - [Carrier Operations](./carrier-ops.md)
