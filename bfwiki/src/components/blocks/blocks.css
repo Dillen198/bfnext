@@ -1,0 +1,310 @@
+/* ═══════════════════════════════════════════════════════════════
+   MOCKUP BLOCKS -- live replicas of what the player sees in DCS
+   (components/blocks/). The replicas keep the game's own dark
+   colours in either wiki theme, the way a screenshot would; the
+   frames, captions and error boxes around them follow the theme.
+   ═══════════════════════════════════════════════════════════════ */
+
+.mk-block {
+  /* DCS and the cockpit plugin draw in DejaVu Sans Condensed. Not a web
+     font, so the nearest condensed face stands in where it is missing. */
+  --mk-font: 'DejaVu Sans Condensed', 'DejaVu LGC Sans Condensed', 'Roboto Condensed', 'Arial Narrow', 'Liberation Sans Narrow', sans-serif;
+  --mk-mono: 'DejaVu Sans Mono', var(--font-mono);
+  margin: 1.2rem 0 1.4rem;
+  font-style: normal;
+}
+.mk-block kbd, .mk-hint kbd {
+  font-family: var(--font-mono); font-size: 0.72em; padding: 0.05em 0.4em;
+  border: 1px solid var(--border-light); border-bottom-width: 2px; border-radius: 3px;
+  background: var(--bg-elevated); color: var(--text);
+}
+.mk-hint {
+  margin: 0.45rem 0 0 !important; font-size: 0.72rem !important; line-height: 1.5;
+  color: var(--text-dim);
+}
+.mk-note {
+  margin: 0.6rem 0 0 !important; padding: 0.55rem 0.8rem;
+  background: var(--bg-input); border: 1px solid var(--border-light);
+  border-left: 2px solid var(--accent); border-radius: 3px;
+  font-size: 0.84rem; line-height: 1.55; color: var(--text-muted);
+}
+.mk-note strong { color: var(--text); }
+
+/* ── error box ─────────────────────────────────────────────────── */
+.mk-error {
+  margin: 1.2rem 0; padding: 0.7rem 0.9rem;
+  border: 1px solid rgba(204,68,68,0.45); border-left: 3px solid var(--red);
+  background: rgba(204,68,68,0.06); border-radius: 3px;
+}
+.mk-error-head { margin: 0 0 0.5rem !important; font-size: 0.84rem; color: var(--text); }
+.mk-error-head strong { color: var(--red); }
+.wiki-prose .mk-error-src, .mk-error-src {
+  margin: 0 !important; max-height: 220px; overflow: auto;
+  border-left-color: var(--red) !important; font-size: 0.75rem;
+}
+
+/* ── the DCS screen the replicas sit on ────────────────────────── */
+.mk-screen {
+  position: relative; margin: 0; min-height: 230px; overflow: hidden;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-light); border-radius: 3px;
+  /* a hazy sky over terrain, so the translucent boxes read as they do in game */
+  background:
+    radial-gradient(120% 80% at 70% 10%, rgba(150,170,190,0.35), transparent 60%),
+    linear-gradient(180deg, #5d6f80 0%, #7d8c96 38%, #6c7458 62%, #4f5a3c 100%);
+  box-shadow: inset 0 0 60px rgba(0,0,0,0.35);
+}
+.mk-screen--msg { min-height: 120px; justify-content: flex-end; }
+.mk-screen-tl { flex: 0 1 auto; min-width: 0; max-width: 58%; }
+.mk-screen-tr { flex: 0 1 44%; min-width: 0; display: flex; justify-content: flex-end; }
+.mk-screen--msg .mk-screen-tr { flex-basis: 70%; }
+
+/* The message box: top right, light text on a translucent band. */
+.mk-dcsmsg {
+  font-family: var(--mk-font); font-size: 14px; line-height: 1.3; color: #f2f2f2;
+  background: rgba(0,0,0,0.58); padding: 5px 9px;
+  white-space: pre-wrap; overflow-wrap: anywhere; text-align: left;
+  text-shadow: 1px 1px 0 rgba(0,0,0,0.7);
+  animation: mk-fade-in .18s ease-out;
+}
+@keyframes mk-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* The radio menu: top left, the same band, numbered entries. */
+.mk-f10 {
+  font-family: var(--mk-font); font-size: 14px; line-height: 1.32; color: #f2f2f2;
+  background: rgba(0,0,0,0.58); padding: 5px 4px 6px;
+  text-shadow: 1px 1px 0 rgba(0,0,0,0.7);
+}
+.mk-f10-title { padding: 0 6px 2px; color: #f2f2f2; font-weight: 700; }
+.mk-f10-list { display: flex; flex-direction: column; outline: none; }
+.mk-f10-list:focus-visible { box-shadow: 0 0 0 2px #e0c25a; }
+.mk-f10-item {
+  all: unset; box-sizing: border-box; display: block; cursor: pointer;
+  padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font: inherit; color: inherit;
+}
+.mk-f10-item:hover { background: rgba(255,255,255,0.14); }
+.mk-f10-item:focus-visible { background: rgba(255,255,255,0.2); outline: 1px solid #e0c25a; outline-offset: -1px; }
+.mk-f10-item:active { color: #ffd84a; }
+.mk-f10-empty { padding: 0 6px; color: #b8b8b8; font-style: italic; }
+.mk-f10-sep { height: 4px; }
+.mk-f10-reopen {
+  all: unset; box-sizing: border-box; cursor: pointer;
+  font-family: var(--mk-font); font-size: 13px; color: #e6e6e6;
+  background: rgba(0,0,0,0.45); padding: 5px 9px;
+}
+.mk-f10-reopen:focus-visible { outline: 2px solid #e0c25a; }
+.mk-f10-reopen kbd { background: rgba(255,255,255,0.12); color: #fff; border-color: rgba(255,255,255,0.3); }
+
+@media (max-width: 560px) {
+  .mk-screen { flex-direction: column; align-items: stretch; min-height: 0; }
+  .mk-screen-tl, .mk-screen-tr, .mk-screen--msg .mk-screen-tr { max-width: none; flex-basis: auto; }
+  .mk-f10, .mk-dcsmsg { font-size: 13px; }
+  .mk-f10-item { white-space: normal; }
+}
+
+/* ── cockpit panel (bfcockpit.lua: C, build_skins, layout) ──────── */
+.mk-panel-stage {
+  margin: 0; padding: 14px;
+  border: 1px solid var(--border-light); border-radius: 3px;
+  background:
+    radial-gradient(90% 70% at 30% 20%, rgba(150,170,190,0.25), transparent 60%),
+    linear-gradient(180deg, #46535e 0%, #5d675a 55%, #3e4630 100%);
+}
+.cp {
+  --cp-bg: rgba(13,16,9,0.95);
+  --cp-header: #1a2212; --cp-text: #cdd4be; --cp-dim: #7d8a68; --cp-accent: #8ec83f;
+  --cp-bad: #e06c6c; --cp-warn: #e0a050; --cp-blue: #6fa8dc;
+  --cp-btn: #27341e; --cp-btn-hover: #364a28; --cp-btn-off: #14190f; --cp-ink: #0d1009;
+  --cp-border: #3a4a2e; --cp-answer: #1d2a14;
+  container-type: inline-size;
+  max-width: 560px; margin: 0 auto;
+  background: var(--cp-bg); color: var(--cp-text);
+  font-family: var(--mk-font); font-size: 13px; line-height: 1;
+  box-shadow: 6px 8px 22px rgba(0,0,0,0.55);
+}
+.cp-titlebar {
+  height: 24px; padding: 0 8px; display: flex; align-items: center;
+  background: var(--cp-header); color: var(--cp-accent); font-weight: 700; font-size: 13px;
+}
+.cp-client { padding: 8px; }
+.cp-toolbar { display: flex; gap: 4px; height: 26px; }
+.cp-tab {
+  flex: 0 1 80px; min-width: 0; height: 26px; display: flex; align-items: center; justify-content: center;
+  background: var(--cp-btn); color: var(--cp-text); font-weight: 700; font-size: 13px;
+  white-space: nowrap; overflow: hidden;
+}
+.cp-tab.cp-on { background: var(--cp-accent); color: var(--cp-ink); }
+.cp-tools { margin-left: auto; display: flex; gap: 4px; padding-left: 4px; }
+.cp-tool { flex: 0 0 26px; width: 26px; }
+.cp-crumbrow { display: flex; align-items: center; gap: 8px; margin-top: 6px; height: 26px; }
+.cp-back { flex: 0 0 64px; }
+.cp-back.cp-off { background: var(--cp-btn-off); color: var(--cp-dim); }
+.cp-crumb { color: var(--cp-dim); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cp-pane {
+  margin-top: 6px; padding: 4px 34px 4px 4px;
+  border: 1px solid var(--cp-border);
+  min-height: 140px; max-height: 440px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.cp-row { min-height: 19px; display: flex; align-items: center; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.3; }
+.cp-head { color: var(--cp-accent); font-weight: 700; font-size: 14px; margin-top: 4px; }
+.cp-head:first-child { margin-top: 0; }
+.cp-text { color: var(--cp-text); }
+.cp-dim { color: var(--cp-dim); }
+.cp-bad { color: var(--cp-bad); }
+.cp-warn { color: var(--cp-warn); }
+.cp-good { color: var(--cp-accent); }
+.cp-blue { color: var(--cp-blue); font-weight: 700; }
+.cp-mono { font-family: var(--mk-mono); font-size: 12px; min-height: 16px; white-space: pre; }
+.cp-answer { background: var(--cp-answer); padding-left: 10px; }
+.cp-gap { height: 6px; }
+.cp-line { display: flex; gap: 4px; }
+.cp-btn {
+  all: unset; box-sizing: border-box; flex: 1 1 auto; min-width: 0; min-height: 26px;
+  display: flex; align-items: center; padding: 3px 4px 3px 14px;
+  background: var(--cp-btn); color: var(--cp-text);
+  font-family: var(--mk-font); font-size: 13px; line-height: 1.25; cursor: pointer;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.cp-btn:hover { background: var(--cp-btn-hover); }
+.cp-btn:active { background: var(--cp-accent); color: var(--cp-ink); }
+.cp-btn:focus-visible { outline: 2px solid var(--cp-accent); outline-offset: -2px; }
+.cp-btn:disabled { background: var(--cp-btn-off); color: var(--cp-dim); cursor: default; }
+.cp-sub { color: var(--cp-accent); font-weight: 700; }
+.cp-go { background: var(--cp-accent); color: var(--cp-ink); font-weight: 700; justify-content: center; padding-left: 4px; }
+.cp-go:hover { background: var(--cp-btn-hover); color: var(--cp-text); }
+.cp-star { flex: 0 0 30px; width: 30px; justify-content: center; padding: 0; cursor: default; }
+.cp-star:hover { background: var(--cp-btn); }
+.cp-status { display: flex; align-items: center; gap: 4px; height: 20px; margin-top: 4px; }
+.cp-emblem { width: 18px; height: 18px; flex: 0 0 18px; margin: 0 2px !important; border: 0 !important; box-shadow: none !important; display: block; }
+.cp-status-text { color: var(--cp-dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.cp-status-note { color: var(--cp-text); animation: cp-note 1.2s ease-out; }
+@keyframes cp-note { from { color: var(--cp-accent); } to { color: var(--cp-text); } }
+
+/* A phone: smaller tab captions, then the window tools go. */
+@container (max-width: 470px) {
+  .cp-tab { font-size: 10px; letter-spacing: -0.02em; }
+  .cp-pane { padding-right: 4px; }
+}
+@container (max-width: 380px) {
+  .cp-tools { display: none; }
+  .cp-tab { font-size: 9px; }
+  .cp-toolbar { gap: 2px; }
+}
+@media (max-width: 560px) {
+  .mk-panel-stage { padding: 6px; }
+}
+
+/* ── wheel (bfcockpit.lua render_wheel, Theme/wheel/layout.lua) ─── */
+.wh-stage {
+  margin: 0; padding: 8px;
+  border: 1px solid var(--border-light); border-radius: 3px;
+  background:
+    radial-gradient(70% 60% at 50% 45%, rgba(150,170,190,0.28), transparent 70%),
+    linear-gradient(180deg, #4a5966 0%, #67715f 55%, #3e4630 100%);
+  container-type: inline-size;
+}
+.wh { display: block; width: 100%; max-width: 600px; height: auto; margin: 0 auto; touch-action: manipulation; user-select: none; }
+.wh text {
+  font-family: var(--mk-font); text-anchor: middle; dominant-baseline: central;
+  pointer-events: none;
+}
+.wh-seg { cursor: pointer; outline: none; }
+.wh-seg:focus-visible path:nth-of-type(2), .wh-hub:focus-visible circle:nth-of-type(2) { stroke-width: 4px; }
+.wh-label { font-size: 13.3px; font-weight: 700; }
+.wh-label--small { font-size: 12px; }
+.wh-label--arc { font-size: 10.6px; }
+.wh-mark { font-size: 16px; font-weight: 700; }
+.wh-hub-title { font-size: 14.6px; font-weight: 700; }
+.wh-hub-sub { font-size: 10.6px; }
+.wh-hub-hint { font-size: 9.3px; }
+.wh-strip-tag { font-size: 12px; font-weight: 700; }
+.wh-strip-text { font-size: 14px; text-anchor: start !important; }
+/* On a phone the whole wheel shrinks; the writing shrinks less. */
+@container (max-width: 480px) {
+  .wh-label { font-size: 17px; }
+  .wh-label--small { font-size: 15px; }
+  .wh-label--arc { font-size: 14px; }
+  .wh-hub-title { font-size: 18px; }
+  .wh-hub-sub { font-size: 14px; }
+  .wh-hub-hint { display: none; }
+  .wh-strip-text, .wh-strip-tag { font-size: 18px; }
+}
+.wh-closed {
+  display: flex; align-items: center; justify-content: center; min-height: 160px;
+  border: 1px dashed var(--border-light); border-radius: 3px; background: var(--bg-input);
+}
+.wh-reopen {
+  font-family: var(--font-display); letter-spacing: .08em; font-size: 0.9rem;
+  padding: 8px 16px; border-radius: 2px; cursor: pointer;
+  background: transparent; color: var(--accent); border: 1px solid var(--accent-border);
+}
+.wh-reopen:hover { background: var(--accent-glow); }
+
+/* ── steps ─────────────────────────────────────────────────────── */
+.mk-steps {
+  padding: 14px 16px 12px;
+  background: var(--bg-card); border: 1px solid var(--border-light);
+  border-left: 2px solid var(--accent); border-radius: 3px;
+}
+.mk-steps-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.wiki-prose .mk-steps-dots, .mk-steps-dots {
+  display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0;
+}
+.wiki-prose .mk-steps-dots li { margin: 0; }
+.mk-steps-dot {
+  width: 26px; height: 26px; border-radius: 50%; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); font-size: 0.7rem; font-weight: 700;
+  background: var(--bg-input); color: var(--text-muted); border: 1px solid var(--border-light);
+}
+.mk-steps-dot:hover { border-color: var(--accent); color: var(--text); }
+.mk-steps-dot.mk-done { background: var(--accent-glow); border-color: var(--accent-border); color: var(--accent); }
+.mk-steps-dot.mk-on { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.mk-steps-dot:focus-visible, .mk-steps-btn:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 2px; }
+.mk-steps-count {
+  font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--text-dim);
+}
+.mk-steps-bar { height: 3px; margin: 10px 0 12px; background: var(--border); border-radius: 2px; overflow: hidden; }
+.mk-steps-fill { height: 100%; background: var(--accent); transition: width .25s ease; }
+.mk-steps-title {
+  margin: 0 0 0.6rem !important; display: flex; align-items: baseline; gap: 10px;
+  font-family: var(--font-display); font-size: 1.25rem; letter-spacing: 0.03em; color: var(--text);
+}
+.mk-steps-num { color: var(--accent-bright); }
+.wiki-prose .mk-steps-img, .mk-steps-img { max-width: 100%; margin: 0.2rem 0 0.9rem; }
+.mk-steps-text > :last-child { margin-bottom: 0; }
+.mk-steps-nav { display: flex; justify-content: space-between; gap: 10px; margin-top: 12px; }
+.mk-steps-btn { padding: 6px 14px; border-radius: 2px; cursor: pointer; font-family: var(--font-display); letter-spacing: .1em; font-size: 0.8rem; }
+.mk-steps-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mk-dcsmsg, .cp-status-note { animation: none; }
+  .mk-steps-fill { transition: none; }
+}
+
+/* ── editor: the Blocks reference ──────────────────────────────── */
+.mk-ref { margin: 0 0 12px; border: 1px solid var(--border-light); border-radius: 3px; background: var(--bg-card); }
+.mk-ref > summary {
+  cursor: pointer; padding: 8px 12px; list-style: none;
+  font-family: var(--font-display); letter-spacing: .1em; font-size: 0.85rem; color: var(--accent);
+}
+.mk-ref > summary::-webkit-details-marker { display: none; }
+.mk-ref > summary::before { content: '▸ '; }
+.mk-ref[open] > summary::before { content: '▾ '; }
+.mk-ref-body { padding: 0 12px 12px; display: grid; gap: 12px; }
+.mk-ref-intro { margin: 0; font-size: 0.78rem; color: var(--text-muted); line-height: 1.5; }
+.mk-ref-item { border-top: 1px solid var(--border); padding-top: 10px; }
+.mk-ref-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mk-ref-head code { font-family: var(--font-mono); font-size: 0.8rem; color: var(--accent-bright); }
+.mk-ref-head strong { font-size: 0.82rem; color: var(--text); }
+.mk-ref-actions { margin-left: auto; display: flex; gap: 6px; }
+.mk-ref-btn { padding: 3px 9px; border-radius: 2px; font-size: 0.66rem; letter-spacing: .08em; font-family: var(--font-display); cursor: pointer; }
+.mk-ref-about { margin: 6px 0; font-size: 0.75rem; color: var(--text-muted); line-height: 1.5; }
+.mk-ref-code {
+  margin: 0; max-height: 200px; overflow: auto; padding: 8px 10px;
+  background: var(--bg-input); border: 1px solid var(--border); border-radius: 2px;
+  font-family: var(--font-mono); font-size: 0.7rem; line-height: 1.45; color: var(--text);
+}

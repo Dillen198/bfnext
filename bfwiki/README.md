@@ -69,6 +69,38 @@ array indices.
 Implementation: `src/lib/cfgTokens.ts` (parser), `src/context/InstanceContext.tsx`
 (selection + fact fetch), `src/components/InstanceSelect.tsx` (the control).
 
+## Mockup blocks: live replicas of the game
+
+A fenced code block whose language is one of these draws as a working copy
+of what the player sees in DCS, not as code. The body is JSON except for
+`dcsmessage`.
+
+| Block | Draws | Body |
+|---|---|---|
+| ` ```f10menu ` | The F10 radio menu, top left: `F1.`..`F10.`, `F11. Back`, `F12. Exit`, submenus ending in `...`, more than ten entries split into `Next Page...`. Click an entry or press its number (`1`-`9`, `0` for F10, `Backspace`, `Esc`, `\` to reopen). A command shows its `says` in the message box and its `note` under the screen | `{"root":"F10 Other","items":[{"label":"Cargo","items":[{"label":"Unpack","says":"...","note":"..."}]}]}` |
+| ` ```dcsmessage ` | The top-right message box | plain text, exactly as printed |
+| ` ```cockpitpanel ` | The Vector Strike panel (colours, fonts, tab bar, rows, status line and emblem from `bfcockpit.lua`). A button row's `says` goes in the status line | `{"tab":"CARGO","rows":[{"heading":"..."},{"text":"..."},{"button":"label","says":"..."}],"status":"..."}` |
+| ` ```wheel ` | The radial wheel (geometry from `Theme/wheel/layout.lua`, themes green/blue/amber/red/white, the plugin's icons). Point at a group to open its arc, click to fire or go in, the hub goes back; destructive entries ask twice; arrow keys work as in the plugin | `{"theme":"green","items":[{"label":"Cargo","items":[{"label":"Unload","says":"..."}]}]}` |
+| ` ```steps ` | A walkthrough with Back/Next and progress | `[{"title":"...","text":"markdown","image":"/api/wiki/images/<uuid>"}]` |
+
+Optional extras beyond that contract: `cockpitpanel` takes `crumb`, a text
+row's `style` (`dim`, `bad`, `warn`, `good`, `blue`, `mono`, `answer`), and a
+button's `sub`, `go` and `enabled`; `wheel` takes `title`/`subtitle` for the
+hub and per item `icon`, `hub` and `danger`; a step takes `alt`. Unknown
+fields are ignored.
+
+A body that does not parse draws as a red box saying what is wrong and
+where, with the source under it, never as a blank. The editor has a
+**Blocks** panel above the text area with a copy-paste (or insert) example of
+each, and its live preview draws them as you type.
+
+Code: `src/components/blocks/` (parsers in `parse.ts`, the menu and wheel
+behaviour in `f10menuModel.ts` / `wheelModel.ts`, examples in `examples.ts`).
+The wheel icons and emblem are copies of the plugin's, in `public/cockpit/`.
+Under `npm run dev`, `/__blocks` draws every block without a bfdb, and
+`node scripts/shoot-blocks.mjs` (dev server on port 5274, headless Edge or
+Chrome) refreshes the pictures in `docs/blocks/`.
+
 ## Admin editing
 
 Log in (top-right "ADMIN LOGIN") with the same Discord account / local admin credentials used for the `bfweb` dashboard — `is_admin` is a property of the session, not something configured per-app. Once logged in as admin:

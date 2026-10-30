@@ -9,6 +9,7 @@ import { api } from '../api'
 import { useAuth } from '../context/AuthContext'
 import { useOffline } from '@shared/web/snapshot'
 import WikiMarkdown from '../components/WikiMarkdown'
+import BlocksReference from '../components/blocks/BlocksReference'
 
 export default function EditPage({ isNew = false }: { isNew?: boolean }) {
   const { user, loading: authLoading } = useAuth()
@@ -176,6 +177,7 @@ export default function EditPage({ isNew = false }: { isNew?: boolean }) {
             onChange={e => { if (e.target.files) handleImageFiles(e.target.files); e.target.value = '' }}
           />
         </div>
+        <BlocksReference onInsert={insertAtCursor} />
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <textarea
             id="wiki-content"

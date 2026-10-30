@@ -1,22 +1,13 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Link, useLocation } from 'react-router-dom'
-import { API_ROOT } from '../api'
+import { resolveSrc } from '../lib/resolveSrc'
 import { useInstance } from '../context/InstanceContext'
 import { applyCfgTokens, applyListTokens } from '../lib/cfgTokens'
 import StatusHexes, { HexLegend, type HexSpec } from './StatusHexes'
 import MapSymbolList, { type SymbolRow } from './MapSymbol'
-
-// Rewrites bare "/api/..." image paths (used by seed content and any
-// hand-typed markdown) to include API_ROOT, so images still resolve when
-// bfwiki and bfdb are hosted on different origins (e.g. Vercel frontend +
-// a separately-hosted bfdb). Uploaded-via-editor images already come back
-// as full API_ROOT-prefixed URLs from api.wiki.uploadImage, so this is a
-// no-op for those -- it only matters for relative paths.
-function resolveSrc(src?: string): string | undefined {
-  if (src && src.startsWith('/api/')) return `${API_ROOT}${src}`
-  return src
-}
+import MockupBlock from './blocks/MockupBlock'
+import { isMockupLang } from './blocks/langs'
 
 function isExternal(href: string): boolean {
   return /^([a-z]+:)?\/\//i.test(href) || href.startsWith('mailto:') || href.startsWith('tel:')
@@ -54,6 +45,10 @@ function resolveHref(href: string, basePath: string): string | null {
  *
  * Returns the language when `node` is such a block, so `pre` can swap the
  * whole <pre><code> for a component instead of printing JSON at the reader.
+ *
+ * The mockup blocks (```f10menu, ```dcsmessage, ```cockpitpanel, ```wheel,
+ * ```steps) are live replicas of what the player sees in game; see
+ * components/blocks/ and "Mockup blocks" in the README.
  */
 function customBlock(node: unknown): { lang: string; text: string } | null {
   const el = node as
@@ -67,7 +62,8 @@ function customBlock(node: unknown): { lang: string; text: string } | null {
   const lang = classes
     .find(c => c.startsWith('language-'))
     ?.slice('language-'.length)
-  if (lang !== 'statushexes' && lang !== 'hexlegend' && lang !== 'mapsymbols') return null
+  if (!lang) return null
+  if (lang !== 'statushexes' && lang !== 'hexlegend' && lang !== 'mapsymbols' && !isMockupLang(lang)) return null
   const text = (code.children ?? []).map(c => c.value ?? '').join('')
   return { lang, text }
 }
@@ -89,6 +85,15 @@ export default function WikiMarkdown({ children, slug }: { children: string; slu
         pre: ({ node, children }) => {
           const block = customBlock(node)
           if (!block) return <pre>{children}</pre>
+          if (isMockupLang(block.lang)) {
+            return (
+              <MockupBlock
+                lang={block.lang}
+                text={block.text.replace(/\n$/, '')}
+                renderMarkdown={md => <WikiMarkdown slug={slug}>{md}</WikiMarkdown>}
+              />
+            )
+          }
           if (block.lang === 'hexlegend') return <HexLegend />
           if (block.lang === 'mapsymbols') {
             try {
