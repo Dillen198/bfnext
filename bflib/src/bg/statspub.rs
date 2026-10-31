@@ -2,6 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use arcstr::ArcStr;
 use bfprotocols::stats::{PATH, Stat};
 use chrono::prelude::*;
+use dcso3::String as LuaString;
 use netidx::{
     chars::Chars,
     config::Config,
@@ -25,6 +26,8 @@ pub(super) struct Statspub {
     id: Id,
     log: ArchiveCollectionWriter,
     _recorder: Recorder,
+    last_rotate: DateTime<Utc>,
+    sortie: LuaString,
 }
 
 impl Statspub {
@@ -33,6 +36,8 @@ impl Statspub {
         cfg: &Config,
         write_dir: PathBuf,
         base: Path,
+        sortie: LuaString,
+        fresh: bool,
     ) -> Result<Self> {
         let shard = ArcStr::from("0");
         let config = ConfigBuilder::default()
@@ -40,7 +45,7 @@ impl Statspub {
             .publish(
                 PublishConfigBuilder::default()
                     .base(base)
-                    .bind_from_cfg(&cfg)
+                    .bind_from_cfg(cfg)
                     .build()
                     .context("publish config builder")?,
             )
@@ -70,9 +75,8 @@ impl Statspub {
         if log.len()? > 4096 {
             let now = Utc::now();
             log.rotate_and_compress(now, None).await?;
-            let reader = log
-                .current_reader()
-                .context("get current reader after rotate")?;
+            let reader =
+                log.current_reader().context("get current reader after rotate")?;
             recorder
                 .shards
                 .notify_rotated(shard_id, now, reader)
@@ -87,11 +91,19 @@ impl Statspub {
                     .ok_or_else(|| anyhow!("no id after adding id"))?
             }
         };
-        Ok(Self {
-            id,
-            log,
-            _recorder: recorder,
-        })
+        let now = Utc::now();
+        let mut t = Self { id, log, _recorder: recorder, last_rotate: now, sortie };
+        // Only announce a genuinely new round here -- bflib already decided
+        // this in lib.rs (no saved state to resume) and callers pass that
+        // through as `fresh`. Writing this unconditionally made bfdb close
+        // and reopen the round on every technical restart (crash recovery,
+        // bot-triggered restart) that resumes existing saved state, not
+        // just real campaign resets. When resuming, bfdb keeps whatever
+        // round context it already has for this sortie.
+        if fresh {
+            t.append(now, &Stat::NewRound { sortie: t.sortie.clone() })?;
+        }
+        Ok(t)
     }
 
     /// This will not block
@@ -100,7 +112,17 @@ impl Statspub {
             let mut batch = BATCH_POOL.take();
             let buf = Chars::from_bytes(encode(&stat)?.freeze())?;
             batch.push(BatchItem(self.id, Event::Update(Value::String(buf))));
-            self.log.add_batch(false, ts, &batch)
+            self.log.add_batch(false, ts, &batch)?;
+            // Rotate every 60 seconds so bfdb can read completed historical files.
+            // bfdb already has round context from the genuine NewRound seen at
+            // round start and doesn't need it re-announced on every rotation --
+            // doing so would end and reopen the round every 60 seconds.
+            if (ts - self.last_rotate).num_seconds() >= 60 {
+                self.last_rotate = ts;
+                self.log.flush_current()?;
+                self.log.rotate(ts)?;
+            }
+            Ok(())
         })
     }
 

@@ -1,0 +1,41 @@
+{
+  "Aircraft": "C130",
+  "Upload": {
+    "Waypoints": false,
+    "Route": false,
+    "Radios": false
+  },
+  "Waypoints": {
+    "Waypoints": []
+  },
+  "Route": {
+    "Route": {
+      "Mode": 0,
+      "Waypoints": null
+    }
+  },
+  "Radios": {
+    "Radio1": {
+      "Presets": null,
+      "SelectedFrequency": null,
+      "SelectedPreset": null,
+      "EnableGuard": false,
+      "Mode": 0
+    },
+    "Radio2": {
+      "Presets": null,
+      "SelectedFrequency": null,
+      "SelectedPreset": null,
+      "EnableGuard": false,
+      "Mode": 0
+    }
+  },
+  "WaypointsCapture": {
+    "NavPointsMode": 0,
+    "TgtPointsMode": 0,
+    "NavPointsRangeFrom": 1,
+    "TgtPointsRangeFrom": 1
+  },
+  "Version": 2,
+  "KneeboardNotes": null
+}

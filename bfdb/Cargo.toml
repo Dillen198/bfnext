@@ -6,36 +6,32 @@ edition = "2021"
 [[bin]]
 name = "bfdb"
 
-[[bin]]
-name = "test"
-path = "src/test.rs"
-
-[[bin]]
-name = "migrate"
-path = "src/migrate.rs"
-
 [dependencies]
 anyhow = { workspace = true }
 arrayvec = { workspace = true }
+base64 = { workspace = true }
 bfprotocols = { version = "0.1.0", path = "../bfprotocols" }
-bincode = { workspace = true }
+fowlbg = { version = "0.1", path = "../fowlbg", default-features = false }
 bytes = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
-compact_str = { workspace = true }
-dcso3 = { version = "0.1", path = "../dcso3" }
+# `dcso3` here is dcso3-core under dcso3's name: the same types at the same
+# paths (dcso3::net::Ucid, dcso3::coalition::Side, ...) without mlua, so
+# this crate builds and runs without DCS's lua.dll. Code that needs the Lua
+# side of dcso3 depends on dcso3 itself.
+dcso3 = { package = "dcso3-core", version = "0.1", path = "../dcso3-core" }
 enumflags2 = { workspace = true, features = ["serde"] }
 env_logger = { workspace = true }
 futures = { workspace = true }
 fxhash = { workspace = true }
-handlebars = { workspace = true }
 log = { workspace = true }
-mlua = { version = "0.9.9", features = ["lua51", "serialize"] }
 netidx-protocols = { workspace = true }
 netidx = { workspace = true }
+netidx-archive = { workspace = true }
+arcstr = { workspace = true }
 paste = { workspace = true }
-pin-project = { workspace = true }
 regex = { workspace = true }
+schemars = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
@@ -45,3 +41,42 @@ tokio = { workspace = true }
 uuid = { workspace = true }
 warp = { workspace = true }
 yats = { version = "0.1", path = "../yats" }
+rust-embed = "8"
+# The listener under warp (src/serve.rs): hyper 1 connections, TLS by
+# rustls 0.23. All of these were already in the build through warp/reqwest.
+http = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["server-auto", "tokio", "service"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+tower-service = "0.3"
+# The voice/model worker's link to bfdb (src/worker): a WebSocket client, the
+# same tungstenite warp serves with.
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }
+mime_guess = "2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking", "multipart"] }
+urlencoding = "2"
+sysinfo = "0.32"
+nvml-wrapper = "0.10"
+# Live GCI: native SRS voice client. Opus encoding is done by dynamically
+# loading opus.dll at runtime (the one that ships with DCS-SRS) via libloading,
+# so there is no build-time native/CMake dependency. hound reads the WAV that
+# the TTS engine (Piper or Windows SAPI) produces.
+libloading = "0.8"
+hound = "3"
+# Training range (src/range): result cards are SVG strings rasterised to PNG
+# for Discord embeds (resvg, pure Rust, system fonts), and the per-result
+# debrief tracks are stored zstd-compressed.
+resvg = { version = "0.48", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
+zstd = { workspace = true }
+# Flight replay (src/replay): Tacview `.zip.acmi` recordings in, gzip'd
+# track files out (served with Content-Encoding: gzip).
+zip = { workspace = true }
+flate2 = "1"
+# Public snapshot (src/snapshot.rs): AWS SigV4 signing for the uploads to R2.
+# Both were already in the build through the TLS stack.
+sha2 = "0.10"
+hmac = "0.12"
+
+[lints]
+workspace = true

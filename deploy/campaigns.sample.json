@@ -1,0 +1,21 @@
+{
+  "_comment": [
+    "publish-release.ps1 -Campaigns <this file>: one campaign pack per DCS server.",
+    "Key = the server's bfdb instance id (fowlengine.yaml bfdb.instances[].id, e.g. vs1),",
+    "or, on a box without bfdb.instances, its DCSServerBot instance name (DCS.vectorstrike_1).",
+    "cfg      = the campaign config on THIS PC (validated as JSON before packing).",
+    "cfg_name = its name on the server, <sortie>_CFG (default: the cfg file's own name).",
+    "miz      = mission file(s); each replaces the file of the same name on that server.",
+    "Relative paths are relative to this file. Keys starting with _ are ignored."
+  ],
+  "vs1": {
+    "cfg": "C:\Users\YOU\Saved Games\DCS\Missions\Vector\ODFv2_CFG",
+    "cfg_name": "ODFv2_CFG",
+    "miz": ["C:\Users\YOU\Saved Games\DCS\Missions\Vector\vs-odf-1.0.0.miz"]
+  },
+  "vs2": {
+    "cfg": "C:\Users\YOU\Saved Games\DCS\Missions\Vector\caucasus\RGW2008_CFG",
+    "cfg_name": "RGW2008_CFG",
+    "miz": ["C:\Users\YOU\Saved Games\DCS\Missions\Vector\caucasus\rgw2008_1.0.0.miz"]
+  }
+}

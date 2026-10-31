@@ -1,0 +1,272 @@
+{
+ "Core.AircraftCarrier": {
+  "stern_y": -166,
+  "bow_y": 166,
+  "keel_x": -4.27,
+  "deck_z": 16.5,
+  "bottom_z": -16.5,
+  "top_z": 16.5,
+  "deck_area_m2": 25498
+ },
+ "Core.Watercraft": {
+  "stern_y": -57,
+  "bow_y": 57,
+  "keel_x": -0.89,
+  "deck_z": 5.75,
+  "bottom_z": -5.75,
+  "top_z": 5.75,
+  "deck_area_m2": 1824
+ },
+ "Watercraft.Admiral Kuznetsov": {
+  "stern_y": -152.5,
+  "bow_y": 152.5,
+  "keel_x": 1.38,
+  "deck_z": -5.25,
+  "bottom_z": -34.44,
+  "top_z": 34.44,
+  "deck_area_m2": 5254
+ },
+ "Watercraft.CG-47": {
+  "stern_y": -86.53,
+  "bow_y": 86.53,
+  "keel_x": -0.06,
+  "deck_z": -11.25,
+  "bottom_z": -26.72,
+  "top_z": 26.72,
+  "deck_area_m2": 1665
+ },
+ "Watercraft.CV-41": {
+  "stern_y": -153.58,
+  "bow_y": 153.58,
+  "keel_x": 1.42,
+  "deck_z": -9.5,
+  "bottom_z": -27.7,
+  "top_z": 27.7,
+  "deck_area_m2": 15526
+ },
+ "Watercraft.CVN-59": {
+  "stern_y": -166.5,
+  "bow_y": 166.5,
+  "keel_x": 5.83,
+  "deck_z": -6.5,
+  "bottom_z": -29.12,
+  "top_z": 29.12,
+  "deck_area_m2": 6934
+ },
+ "Watercraft.CVN-65": {
+  "stern_y": -172.21,
+  "bow_y": 172.21,
+  "keel_x": 1.74,
+  "deck_z": -3.25,
+  "bottom_z": -32.28,
+  "top_z": 32.28,
+  "deck_area_m2": 18414
+ },
+ "Watercraft.CVN-68": {
+  "stern_y": -167.32,
+  "bow_y": 167.32,
+  "keel_x": 1.87,
+  "deck_z": -1.25,
+  "bottom_z": -30.73,
+  "top_z": 30.73,
+  "deck_area_m2": 18191
+ },
+ "Watercraft.CVN-72": {
+  "stern_y": -167.01,
+  "bow_y": 167.01,
+  "keel_x": -0.13,
+  "deck_z": -7.25,
+  "bottom_z": -38.29,
+  "top_z": 38.29,
+  "deck_area_m2": 20656
+ },
+ "Watercraft.CVN-74": {
+  "stern_y": -166.5,
+  "bow_y": 166.5,
+  "keel_x": 6.38,
+  "deck_z": -7.5,
+  "bottom_z": -28.46,
+  "top_z": 28.46,
+  "deck_area_m2": 19303
+ },
+ "Watercraft.Cargo": {
+  "stern_y": -93.51,
+  "bow_y": 93.51,
+  "keel_x": -0.06,
+  "deck_z": -1.5,
+  "bottom_z": -21.84,
+  "top_z": 21.84,
+  "deck_area_m2": 3260
+ },
+ "Watercraft.D621": {
+  "stern_y": -76.58,
+  "bow_y": 76.58,
+  "keel_x": 0.01,
+  "deck_z": -11.25,
+  "bottom_z": -24.01,
+  "top_z": 24.01,
+  "deck_area_m2": 2420
+ },
+ "Watercraft.F710": {
+  "stern_y": -60.5,
+  "bow_y": 60.5,
+  "keel_x": -0.09,
+  "deck_z": -10,
+  "bottom_z": -19.7,
+  "top_z": 19.7,
+  "deck_area_m2": 543
+ },
+ "Watercraft.Frigate": {
+  "stern_y": -62.8,
+  "bow_y": 62.8,
+  "keel_x": 0,
+  "deck_z": -10,
+  "bottom_z": -14.4,
+  "top_z": 14.4,
+  "deck_area_m2": 1614
+ },
+ "Watercraft.Krivak": {
+  "stern_y": -61.75,
+  "bow_y": 61.75,
+  "keel_x": 0,
+  "deck_z": -4,
+  "bottom_z": -16.73,
+  "top_z": 16.73,
+  "deck_area_m2": 796
+ },
+ "Watercraft.LHA-1": {
+  "stern_y": -123.78,
+  "bow_y": 123.78,
+  "keel_x": 0.02,
+  "deck_z": -13.5,
+  "bottom_z": -37.48,
+  "top_z": 37.48,
+  "deck_area_m2": 7693
+ },
+ "Watercraft.LST-1": {
+  "stern_y": -50.32,
+  "bow_y": 50.32,
+  "keel_x": -0.26,
+  "deck_z": -6.75,
+  "bottom_z": -15.35,
+  "top_z": 15.35,
+  "deck_area_m2": 1216
+ },
+ "Watercraft.Moskva": {
+  "stern_y": -92.57,
+  "bow_y": 92.57,
+  "keel_x": 0.15,
+  "deck_z": -12.5,
+  "bottom_z": -19.89,
+  "top_z": 19.89,
+  "deck_area_m2": 1182
+ },
+ "Watercraft.Ohio": {
+  "stern_y": -54.95,
+  "bow_y": 54.95,
+  "keel_x": 0,
+  "deck_z": 1.75,
+  "bottom_z": -8.03,
+  "top_z": 8.03,
+  "deck_area_m2": 148
+ },
+ "Watercraft.Project 877": {
+  "stern_y": -37.27,
+  "bow_y": 37.27,
+  "keel_x": 0.02,
+  "deck_z": 2.5,
+  "bottom_z": -7.49,
+  "top_z": 7.49,
+  "deck_area_m2": 163
+ },
+ "Watercraft.Project 971U": {
+  "stern_y": -55.3,
+  "bow_y": 55.3,
+  "keel_x": 0.07,
+  "deck_z": 1.75,
+  "bottom_z": -12.22,
+  "top_z": 12.22,
+  "deck_area_m2": 197
+ },
+ "Watercraft.R91": {
+  "stern_y": -130.79,
+  "bow_y": 130.79,
+  "keel_x": 8.88,
+  "deck_z": -11.75,
+  "bottom_z": -35.71,
+  "top_z": 35.71,
+  "deck_area_m2": 15802
+ },
+ "Watercraft.Seawise Giant": {
+  "stern_y": -228.78,
+  "bow_y": 228.78,
+  "keel_x": -1.59,
+  "deck_z": -0.5,
+  "bottom_z": -29.68,
+  "top_z": 29.68,
+  "deck_area_m2": 24115
+ },
+ "Watercraft.Type 052D": {
+  "stern_y": -78.51,
+  "bow_y": 78.51,
+  "keel_x": -0.04,
+  "deck_z": -8.75,
+  "bottom_z": -20.82,
+  "top_z": 20.82,
+  "deck_area_m2": 1418
+ },
+ "Watercraft.Type 054A": {
+  "stern_y": -67.05,
+  "bow_y": 67.05,
+  "keel_x": 0.03,
+  "deck_z": -10.25,
+  "bottom_z": -22.29,
+  "top_z": 22.29,
+  "deck_area_m2": 605
+ },
+ "Watercraft.Type S130": {
+  "stern_y": -17.5,
+  "bow_y": 17.5,
+  "keel_x": 0.02,
+  "deck_z": -0.5,
+  "bottom_z": -2.01,
+  "top_z": 2.01,
+  "deck_area_m2": 77
+ },
+ "Watercraft.Type VIIC": {
+  "stern_y": -33.61,
+  "bow_y": 33.61,
+  "keel_x": 0,
+  "deck_z": 0.25,
+  "bottom_z": -5.97,
+  "top_z": 5.97,
+  "deck_area_m2": 119
+ },
+ "Watercraft.Type23": {
+  "stern_y": -47.72,
+  "bow_y": 47.72,
+  "keel_x": 0.07,
+  "deck_z": -5,
+  "bottom_z": -12.4,
+  "top_z": 12.4,
+  "deck_area_m2": 554
+ },
+ "Watercraft.Warship": {
+  "stern_y": -25.5,
+  "bow_y": 25.5,
+  "keel_x": -0.08,
+  "deck_z": -3,
+  "bottom_z": -7,
+  "top_z": 7,
+  "deck_area_m2": 83
+ },
+ "Watercraft.Zodiac": {
+  "stern_y": -3.71,
+  "bow_y": 3.71,
+  "keel_x": 0,
+  "deck_z": -0.25,
+  "bottom_z": -1.16,
+  "top_z": 1.16,
+  "deck_area_m2": 11
+ }
+}

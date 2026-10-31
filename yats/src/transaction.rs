@@ -12,11 +12,7 @@ pub struct TransactionalTree<'a, K, V> {
 
 impl<'a, K, V> TransactionalTree<'a, K, V> {
     pub(crate) fn new(sled: &'a sled::transaction::TransactionalTree) -> Self {
-        Self {
-            inner: sled,
-            _key: PhantomData,
-            _value: PhantomData,
-        }
+        Self { inner: sled, _key: PhantomData, _value: PhantomData }
     }
 
     pub fn insert(
@@ -28,46 +24,49 @@ impl<'a, K, V> TransactionalTree<'a, K, V> {
         K: KV,
         V: KV,
     {
-        let k_ser = serialize(key).map_err(|e| ConflictableTransactionError::Abort(e.into()))?;
-        let v_ser = serialize(value).map_err(|e| ConflictableTransactionError::Abort(e.into()))?;
-        Ok(self
-            .inner
+        let k_ser = serialize(key).map_err(ConflictableTransactionError::Abort)?;
+        let v_ser = serialize(value).map_err(ConflictableTransactionError::Abort)?;
+        self.inner
             .insert(k_ser, v_ser)?
-            .map(|v| deserialize(&v).map_err(|e| ConflictableTransactionError::Abort(e.into())))
-            .transpose()?)
+            .map(|v| deserialize(&v).map_err(ConflictableTransactionError::Abort))
+            .transpose()
     }
 
-    pub fn remove(&self, key: &K) -> Res<Option<V>, ConflictableTransactionError<anyhow::Error>>
+    pub fn remove(
+        &self,
+        key: &K,
+    ) -> Res<Option<V>, ConflictableTransactionError<anyhow::Error>>
     where
         K: KV,
         V: KV,
     {
-        let k_ser = serialize(key).map_err(|e| ConflictableTransactionError::Abort(e.into()))?;
-        Ok(self
-            .inner
+        let k_ser = serialize(key).map_err(ConflictableTransactionError::Abort)?;
+        self.inner
             .remove(k_ser)?
-            .map(|v| deserialize(&v).map_err(|e| ConflictableTransactionError::Abort(e.into())))
-            .transpose()?)
+            .map(|v| deserialize(&v).map_err(ConflictableTransactionError::Abort))
+            .transpose()
     }
 
-    pub fn get(&self, key: &K) -> Res<Option<V>, ConflictableTransactionError<anyhow::Error>>
+    pub fn get(
+        &self,
+        key: &K,
+    ) -> Res<Option<V>, ConflictableTransactionError<anyhow::Error>>
     where
         K: KV,
         V: KV,
     {
-        let k_ser = serialize(key).map_err(|e| ConflictableTransactionError::Abort(e.into()))?;
-        Ok(self
-            .inner
+        let k_ser = serialize(key).map_err(ConflictableTransactionError::Abort)?;
+        self.inner
             .get(k_ser)?
-            .map(|v| deserialize(&v).map_err(|e| ConflictableTransactionError::Abort(e.into())))
-            .transpose()?)
+            .map(|v| deserialize(&v).map_err(ConflictableTransactionError::Abort))
+            .transpose()
     }
 
     pub fn apply_batch(
         &self,
         batch: &Batch<K, V>,
     ) -> std::result::Result<(), sled::transaction::UnabortableTransactionError> {
-        self.inner.apply_batch(&batch.inner)
+        self.inner.apply_batch(&batch.to_sled())
     }
 
     pub fn flush(&self) {
@@ -100,7 +99,9 @@ macro_rules! impl_transactional {
           {
               use sled::Transactional;
 
-              ($(&self.$i.inner),+).transaction(|trees| {
+              let unsupported = || sled::transaction::TransactionError::Storage(
+                  sled::Error::Unsupported("transactions on a redb-backed tree".into()));
+              ($(self.$i.raw().as_sled().ok_or_else(unsupported)?),+).transaction(|trees| {
                   f((
                       $(TransactionalTree::new(&trees.$i)),+
                   ))
@@ -115,35 +116,38 @@ impl_transactional!(K0, V0, 0, K1, V1, 1, K2, V2, 2);
 impl_transactional!(K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3);
 impl_transactional!(K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4);
 impl_transactional!(K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5);
-impl_transactional!(K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5, K6, V6, 6);
 impl_transactional!(
-    K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5, K6, V6, 6, K7, V7, 7
+    K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5, K6, V6, 6
 );
 impl_transactional!(
-    K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5, K6, V6, 6, K7, V7, 7, K8, V8,
-    8
+    K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5, K6, V6, 6, K7, V7,
+    7
 );
 impl_transactional!(
-    K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5, K6, V6, 6, K7, V7, 7, K8, V8,
-    8, K9, V9, 9
+    K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5, K6, V6, 6, K7, V7,
+    7, K8, V8, 8
 );
 impl_transactional!(
-    K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5, K6, V6, 6, K7, V7, 7, K8, V8,
-    8, K9, V9, 9, K10, V10, 10
+    K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5, K6, V6, 6, K7, V7,
+    7, K8, V8, 8, K9, V9, 9
+);
+impl_transactional!(
+    K0, V0, 0, K1, V1, 1, K2, V2, 2, K3, V3, 3, K4, V4, 4, K5, V5, 5, K6, V6, 6, K7, V7,
+    7, K8, V8, 8, K9, V9, 9, K10, V10, 10
 );
 
 #[test]
 fn test_multiple_tree_transaction() {
     let db = sled::Config::new().temporary(true).open().unwrap();
-    let tree0 = Tree::<u32, i32>::open(&db, "tree0");
-    let tree1 = Tree::<u16, i16>::open(&db, "tree1");
-    let tree2 = Tree::<u8, i8>::open(&db, "tree2");
+    let tree0 = Tree::<u32, i32>::open(&db, "tree0").unwrap();
+    let tree1 = Tree::<u16, i16>::open(&db, "tree1").unwrap();
+    let tree2 = Tree::<u8, i8>::open(&db, "tree2").unwrap();
     (&tree0, &tree1, &tree2)
         .transaction(|(t0, t1, t2)| {
             t0.insert(&0, &0)?;
             t1.insert(&0, &0)?;
             t2.insert(&0, &0)?;
-            Ok(())
+            Ok::<(), ConflictableTransactionError<anyhow::Error>>(())
         })
         .unwrap();
     assert_eq!(tree0.get(&0).unwrap(), Some(0));

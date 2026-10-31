@@ -7,7 +7,7 @@ license = "MIT"
 description = "Minimal Rust binding to the DCS lua api"
 homepage = "https://github.com/estokes/bfnext"
 repository = "https://github.com/estokes/bfnext"
-documentation = "https://estokes.github.io/bfnext/dcso3/dcso3"
+documentation = "https://docs.rs/dcso3"
 readme = "README.md"
 keywords = ["DCS", "gamedev"]
 categories = ["api-bindings", "game-development"]
@@ -15,9 +15,18 @@ categories = ["api-bindings", "game-development"]
 [features]
 default = []
 perf = []
+# Tests only: build Lua 5.1 from source (mlua's vendored copy) instead of
+# linking DCS's lua.dll, so `cargo test -p dcso3 --features vendored-lua`
+# runs on a machine without DCS (or on Linux). Never for a DLL that DCS
+# loads: it would carry a second Lua runtime. A release build with it on
+# refuses to compile. Give it its own CARGO_TARGET_DIR, or every switch
+# between it and lua.dll rebuilds mlua.
+vendored-lua = ["mlua/vendored"]
 
 [dependencies]
-mlua = { version = "0.9.9", features = ["lua51", "serialize"] }
+# The Lua-free types (ids, sides, slots, perf), re-exported at their old paths.
+dcso3-core = { version = "0.1", path = "../dcso3-core", features = ["lua"] }
+mlua = { workspace = true, features = ["serialize"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_derive = { workspace = true }
@@ -33,3 +42,8 @@ hdrhistogram = { workspace = true }
 chrono = { workspace = true }
 base64 = { workspace = true }
 bytes = { workspace = true }
+schemars = { workspace = true }
+zip = { workspace = true }
+
+[lints]
+workspace = true

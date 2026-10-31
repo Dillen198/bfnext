@@ -1,0 +1,79 @@
+{
+  "name": "MarianaIslands",
+  "center": [
+    14.568208603394671,
+    145.1976332679238
+  ],
+  "airports": [
+    {
+      "name": "Rota Intl",
+      "position": [
+        14.17437266612623,
+        145.24109239880622
+      ],
+      "heli": false
+    },
+    {
+      "name": "Saipan Intl",
+      "position": [
+        15.118931054655562,
+        145.72912914447548
+      ],
+      "heli": false
+    },
+    {
+      "name": "Tinian Intl",
+      "position": [
+        14.999193626218306,
+        145.6191816236229
+      ],
+      "heli": false
+    },
+    {
+      "name": "Antonio B. Won Pat Intl",
+      "position": [
+        13.484779760120219,
+        144.79682382088177
+      ],
+      "heli": false
+    },
+    {
+      "name": "Olf Orote",
+      "position": [
+        13.438200572978271,
+        144.6422396805305
+      ],
+      "heli": false
+    },
+    {
+      "name": "Andersen AFB",
+      "position": [
+        13.581703326238694,
+        144.9310523152917
+      ],
+      "heli": false
+    },
+    {
+      "name": "Pagan Airstrip",
+      "position": [
+        18.123153737446692,
+        145.76314859232707
+      ],
+      "heli": false
+    },
+    {
+      "name": "North West Field",
+      "position": [
+        13.625334083373405,
+        144.8583985674548
+      ],
+      "heli": true
+    }
+  ],
+  "projection": {
+    "centralMeridian": 147,
+    "falseEasting": 238417.99999989968,
+    "falseNorthing": -1491840.000000048,
+    "scaleFactor": 0.9996
+  }
+}

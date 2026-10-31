@@ -11,15 +11,16 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
-use super::{as_tbl, coalition::Side, controller::Controller, cvt_err, unit::Unit, String};
+use super::{as_tbl, coalition::Side, controller::Controller, unit::Unit, String};
+use crate::object::DcsOidExt;
 use crate::{
     env::miz::{GroupId, GroupKind},
     object::{DcsObject, DcsOid, Object},
     simple_enum, wrapped_table, LuaEnv, MizLua, Sequence,
 };
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use mlua::{prelude::*, Value};
-use serde_derive::{Deserialize, Serialize};
+use serde_derive::Serialize;
 use std::{marker::PhantomData, ops::Deref};
 
 simple_enum!(GroupCategory, u8, [
@@ -48,8 +49,8 @@ pub enum Owner {
     Side(Side),
 }
 
-impl<'lua> FromLua<'lua> for Owner {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for Owner {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         match i64::from_lua(value.clone(), lua)? {
             3 => Ok(Self::Contested),
             _ => Ok(Owner::Side(Side::from_lua(value, lua)?)),
@@ -59,8 +60,8 @@ impl<'lua> FromLua<'lua> for Owner {
 
 wrapped_table!(Group, Some("Group"));
 
-impl<'lua> Group<'lua> {
-    pub fn get_by_name(lua: MizLua<'lua>, name: &str) -> Result<Group<'lua>> {
+impl Group {
+    pub fn get_by_name(lua: MizLua, name: &str) -> Result<Group> {
         let globals = lua.inner().globals();
         let class = as_tbl("Group", None, globals.raw_get("Group")?)?;
         let g: Group = class.call_function("getByName", name)?;
@@ -108,15 +109,15 @@ impl<'lua> Group<'lua> {
         Ok(self.t.call_method("getInitialSize", ())?)
     }
 
-    pub fn get_unit(&self, index: usize) -> Result<Unit<'lua>> {
+    pub fn get_unit(&self, index: usize) -> Result<Unit> {
         Ok(self.t.call_method("getUnit", index)?)
     }
 
-    pub fn get_units(&self) -> Result<Sequence<'lua, Unit<'lua>>> {
+    pub fn get_units(&self) -> Result<Sequence<Unit>> {
         Ok(self.t.call_method("getUnits", ())?)
     }
 
-    pub fn get_controller(&self) -> Result<Controller<'lua>> {
+    pub fn get_controller(&self) -> Result<Controller> {
         Ok(self.t.call_method("getController", ())?)
     }
 
@@ -124,25 +125,22 @@ impl<'lua> Group<'lua> {
         Ok(self.t.call_method("enableEmission", on)?)
     }
 
-    pub fn as_object(&self) -> Result<Object<'lua>> {
-        Ok(Object::from_lua(Value::Table(self.t.clone()), self.lua)?)
+    pub fn as_object(&self) -> Result<Object> {
+        Ok(Object::from_lua(Value::Table(self.t.clone()), &self.lua)?)
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ClassGroup;
 
-impl<'lua> DcsObject<'lua> for Group<'lua> {
+impl DcsObject for Group {
     type Class = ClassGroup;
 
-    fn get_instance(lua: MizLua<'lua>, id: &DcsOid<Self::Class>) -> Result<Self> {
+    fn get_instance(lua: MizLua, id: &DcsOid<Self::Class>) -> Result<Self> {
         let t = lua.inner().create_table()?;
         t.set_metatable(Some(lua.inner().globals().raw_get(&**id.class)?));
         t.raw_set("id_", id.id)?;
-        let t = Group {
-            t,
-            lua: lua.inner(),
-        };
+        let t = Group { t, lua: lua.inner().clone() };
         if !t.is_exist()? {
             bail!("{} is an invalid group", id.id)
         }
@@ -154,13 +152,9 @@ impl<'lua> DcsObject<'lua> for Group<'lua> {
         Ok(t)
     }
 
-    fn get_instance_dyn<T>(lua: MizLua<'lua>, id: &DcsOid<T>) -> Result<Self> {
+    fn get_instance_dyn<T>(lua: MizLua, id: &DcsOid<T>) -> Result<Self> {
         id.check_implements(lua, "Group")?;
-        let id = DcsOid {
-            id: id.id,
-            class: id.class.clone(),
-            t: PhantomData,
-        };
+        let id = DcsOid { id: id.id, class: id.class.clone(), t: PhantomData };
         Self::get_instance(lua, &id)
     }
 
@@ -178,7 +172,7 @@ impl<'lua> DcsObject<'lua> for Group<'lua> {
     }
 
     fn change_instance_dyn<T>(self, id: &DcsOid<T>) -> Result<Self> {
-        id.check_implements(MizLua(self.lua), "Group")?;
+        id.check_implements(MizLua(&self.lua), "Group")?;
         self.t.raw_set("id_", id.id)?;
         if !self.is_exist()? {
             bail!("{} is an invalid group", id.id)

@@ -4,8 +4,16 @@ use arcstr::ArcStr;
 use bfprotocols::db::group::GroupId;
 use chrono::prelude::*;
 use crossbeam::queue::SegQueue;
-use dcso3::coalition::Side;
-use futures::{channel::mpsc, stream::StreamExt};
+use dcso3::{
+    Vector2,
+    coalition::Side,
+    net::{PlayerId, Ucid},
+};
+use futures::{
+    channel::mpsc,
+    select_biased,
+    stream::{FuturesUnordered, StreamExt},
+};
 use netidx::{
     chars::Chars,
     path::Path,
@@ -17,7 +25,7 @@ use netidx_protocols::{
     rpc_err,
 };
 use regex::Regex;
-use std::{str::FromStr, sync::Arc};
+use std::{str::FromStr, sync::Arc, time::Duration};
 use tokio::{sync::oneshot, task};
 
 pub struct Rpcs {
@@ -37,6 +45,7 @@ pub struct Rpcs {
     _search: Proc,
     _log_warehouse: Proc,
     _reset_lives: Proc,
+    _reset_lives_all: Proc,
     _add_admin: Proc,
     _remove_admin: Proc,
     _balance: Proc,
@@ -46,15 +55,115 @@ pub struct Rpcs {
     _remark: Proc,
     _reset: Proc,
     _shutdown: Proc,
+    // Query API
+    _query_objectives: Proc,
+    _query_objective: Proc,
+    _query_players: Proc,
+    _query_player: Proc,
+    _query_groups: Proc,
+    _query_group: Proc,
+    _query_units: Proc,
+    _query_warehouse: Proc,
+    _query_logistics: Proc,
+    _query_campaign_state: Proc,
+    _query_perf: Proc,
+    _query_briefing: Proc,
+    _query_situation: Proc,
+    _query_tacmap: Proc,
+    _query_ground_war: Proc,
+    _query_hq: Proc,
+    _hq_directive: Proc,
+    _hq_command: Proc,
+    _set_commanders: Proc,
+    _query_command: Proc,
+    _command_order: Proc,
+    _ground_command: Proc,
+    _query_unitdb: Proc,
+    _query_gci: Proc,
+    _query_cas: Proc,
+    _query_atc: Proc,
+    // Action API
+    _spawn_deployable: Proc,
+    _spawn_troop: Proc,
+    _move_group: Proc,
+    _add_points: Proc,
+    _set_objective_priority: Proc,
+    // Cockpit UI API (player-scoped, not admin-wide)
+    _resolve_player_id: Proc,
+    _ewr_toggle: Proc,
+    _ewr_report: Proc,
+    _ewr_set_units: Proc,
+    _ewr_ground_intel: Proc,
+    _carp_solve: Proc,
+    _carp_solve_latlon: Proc,
+    _cargo_spawn_crate: Proc,
+    _cockpit_context: Proc,
+    _cockpit_menu: Proc,
+    _cockpit_menu_invoke: Proc,
+    _cockpit_messages: Proc,
+    _cockpit_cargo: Proc,
+    _set_server_info: Proc,
+    _intel_marks: Proc,
 }
 
+/// Parse the JSON bfdb pushes on `set-server-info` into an `AdminCommand`.
+/// Shape: `{"restart_at": "<rfc3339>"|null, "weather": {"temp_c", "wind_speed_kts",
+/// "wind_from_deg", "qnh_hpa", "cloud_base_m"}|null}`.
+fn parse_server_info(s: &str) -> Result<AdminCommand> {
+    let v: serde_json::Value = serde_json::from_str(s)?;
+    let restart_at = v
+        .get("restart_at")
+        .and_then(|r| r.as_str())
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|d| d.with_timezone(&Utc));
+    let weather = v.get("weather").filter(|w| !w.is_null()).map(|w| {
+        let f = |k: &str| w.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
+        crate::BotWeather {
+            temp_c: f("temp_c"),
+            wind_speed_kts: f("wind_speed_kts"),
+            wind_from_deg: f("wind_from_deg"),
+            qnh_hpa: f("qnh_hpa"),
+            cloud_base_m: f("cloud_base_m"),
+            visibility_m: f("visibility_m"),
+            cloud_density: f("cloud_density"),
+        }
+    });
+    Ok(AdminCommand::SetServerInfo { restart_at, weather })
+}
+
+/// The longest an RPC waits for the mission to answer it. Admin commands are
+/// drained ten times a second (`ADMIN_DRAIN_HZ` in lib.rs), so a healthy
+/// mission answers within a few hundred ms; a paused or wedged one never
+/// does, and the caller should hear so rather than wait forever.
+const REPLY_TIMEOUT: Duration = Duration::from_secs(60);
+
+async fn reply_one(mut c: RpcCall, ch: oneshot::Receiver<Value>) {
+    match tokio::time::timeout(REPLY_TIMEOUT, ch).await {
+        Ok(Ok(v)) => c.reply.send(v),
+        Ok(Err(_)) => c.reply.send(Value::Error("call failed".into())),
+        Err(_) => c
+            .reply
+            .send(Value::Error("timed out waiting for the mission to answer".into())),
+    }
+}
+
+/// Deliver RPC replies as they become ready. This used to await them one at a
+/// time, in arrival order, so a single slow command (a big query, or anything
+/// queued while the mission was busy) held every reply behind it -- and with
+/// no timeout a call the mission never answered held them all forever.
 async fn wait_task(mut ch: mpsc::Receiver<(RpcCall, oneshot::Receiver<Value>)>) {
-    while let Some((mut c, ch)) = ch.next().await {
-        match ch.await {
-            Err(_) => c.reply.send(Value::Error("call failed".into())),
-            Ok(v) => c.reply.send(v),
+    let mut pending = FuturesUnordered::new();
+    loop {
+        select_biased! {
+            call = ch.next() => match call {
+                Some((c, rx)) => pending.push(reply_one(c, rx)),
+                None => break,
+            },
+            () = pending.select_next_some() => (),
+            complete => break,
         }
     }
+    while pending.next().await.is_some() {}
 }
 
 impl Rpcs {
@@ -66,7 +175,7 @@ impl Rpcs {
         let base = base.append("api");
         let (wait, rx) = mpsc::channel(10);
         task::spawn(wait_task(rx));
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let reduce_inventory = define_rpc!(
             publisher,
             base.append("reduce-inventory"),
@@ -81,7 +190,7 @@ impl Rpcs {
             airbase: Chars = Value::Null; "The airbase to reduce",
             amount: u8 = Value::Null; "The amount, as a whole number percentage, to reduce"
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let transfer_supply = define_rpc!(
             publisher,
             base.append("transfer-supply"),
@@ -96,7 +205,7 @@ impl Rpcs {
             from: Chars = Value::Null; "The airbase to transfer supply from",
             to: Chars = Value::Null; "The airbase to transfer supply to"
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let logistics_tick_now = define_rpc!(
             publisher,
             base.append("logistics-tick-now"),
@@ -110,7 +219,7 @@ impl Rpcs {
             Some(wait.clone()),
             arg: Value = Value::Null; ""
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let logistics_deliver_now = define_rpc!(
             publisher,
             base.append("logistics-deliver-now"),
@@ -124,7 +233,7 @@ impl Rpcs {
             Some(wait.clone()),
             arg: Value = Value::Null; ""
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let repair = define_rpc!(
             publisher,
             base.append("repair"),
@@ -138,7 +247,7 @@ impl Rpcs {
             Some(wait.clone()),
             airbase: Chars = Value::Null; "The airbase to repair"
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let tim = define_rpc!(
             publisher,
             base.append("tim"),
@@ -154,7 +263,7 @@ impl Rpcs {
             size: usize = 3000; "The size of the explosion in kg of TNT",
             alt: Option<i64> = Value::Null; "The altitude of the explosion"
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let spawn = define_rpc!(
             publisher,
             base.append("spawn"),
@@ -168,14 +277,14 @@ impl Rpcs {
             Some(wait.clone()),
             key: Chars = Value::Null; "The key of the mark you want to spawn"
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let side_switch = define_rpc!(
             publisher,
             base.append("side-switch"),
             "Side switch a player",
             |mut c: RpcCall, player: Chars, side: Chars| {
                 let (tx, rx) = oneshot::channel();
-                let side = match Side::from_str(&side) {
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
                     Ok(side) => side,
                     Err(e) => {
                         c.reply.send(Value::Error(format!("{e:?}").into()));
@@ -190,7 +299,7 @@ impl Rpcs {
             player: Chars = Value::Null; "The name of the player to switch",
             side: Chars = Value::Null; "The side to switch the player to"
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let ban = define_rpc!(
             publisher,
             base.append("ban"),
@@ -205,7 +314,7 @@ impl Rpcs {
             player: Chars = Value::Null; "The name of the player to ban",
             until: Option<DateTime<Utc>> = Value::Null; "Optional end time of the ban"
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let unban = define_rpc!(
             publisher,
             base.append("unban"),
@@ -219,7 +328,7 @@ impl Rpcs {
             Some(wait.clone()),
             player: Chars = Value::Null; "The name of the player to unban"
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let kick = define_rpc!(
             publisher,
             base.append("kick"),
@@ -233,7 +342,7 @@ impl Rpcs {
             Some(wait.clone()),
             player: Chars = Value::Null; "The name of the player to kick"
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let connected = define_rpc!(
             publisher,
             base.append("connected"),
@@ -246,7 +355,7 @@ impl Rpcs {
             Some(wait.clone()),
             arg: Value = Value::Null; ""
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let banned = define_rpc!(
             publisher,
             base.append("banned"),
@@ -259,7 +368,7 @@ impl Rpcs {
             Some(wait.clone()),
             arg: Value = Value::Null; ""
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let search = define_rpc!(
             publisher,
             base.append("search"),
@@ -279,7 +388,7 @@ impl Rpcs {
             Some(wait.clone()),
             expr: Chars = Value::Null; "The regular expression to search for"
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let log_warehouse = define_rpc!(
             publisher,
             base.append("log-warehouse"),
@@ -288,7 +397,7 @@ impl Rpcs {
                 let (tx, rx) = oneshot::channel();
                 let kind = match kind.as_ref() {
                     "Objective" => WarehouseKind::Objective,
-                    "DCS" => WarehouseKind::DCS,
+                    "DCS" => WarehouseKind::Dcs,
                     s => {
                         c.reply.send(Value::Error(format!("invalid objective kind {s}").into()));
                         return None
@@ -302,7 +411,7 @@ impl Rpcs {
             airbase: Chars = Value::Null; "The airbase to log",
             kind: Chars = Value::Null; "The kind of warehouse to log (Objective or DCS)"
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let reset_lives = define_rpc!(
             publisher,
             base.append("reset-lives"),
@@ -316,7 +425,20 @@ impl Rpcs {
             Some(wait.clone()),
             player: Chars = Value::Null; "The player to reset"
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
+        let reset_lives_all = define_rpc!(
+            publisher,
+            base.append("reset-lives-all"),
+            "Reset every player's lives",
+            |c: RpcCall, _: Value| {
+                let (tx, rx) = oneshot::channel();
+                _q.push((AdminCommand::ResetLivesAll, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            arg: Value = Value::Null; ""
+        )?;
+        let _q = Arc::clone(q);
         let add_admin = define_rpc!(
             publisher,
             base.append("add-admin"),
@@ -330,7 +452,7 @@ impl Rpcs {
             Some(wait.clone()),
             player: Chars = Value::Null; "The player to add"
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let remove_admin = define_rpc!(
             publisher,
             base.append("remove-admin"),
@@ -344,7 +466,7 @@ impl Rpcs {
             Some(wait.clone()),
             player: Chars = Value::Null; "The player to remove"
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let balance = define_rpc!(
             publisher,
             base.append("balance"),
@@ -358,7 +480,7 @@ impl Rpcs {
             Some(wait.clone()),
             player: Chars = Value::Null; "The player"
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let set_points = define_rpc!(
             publisher,
             base.append("set-points"),
@@ -373,7 +495,7 @@ impl Rpcs {
             player: Chars = Value::Null; "The player",
             amount: i32 = Value::Null; "The balance"
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let delete = define_rpc!(
             publisher,
             base.append("delete-group"),
@@ -387,7 +509,7 @@ impl Rpcs {
             Some(wait.clone()),
             group: i64 = Value::Null; "The id of the group to delete"
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let deslot = define_rpc!(
             publisher,
             base.append("deslot"),
@@ -401,7 +523,7 @@ impl Rpcs {
             Some(wait.clone()),
             player: Chars = Value::Null; "The player to deslot"
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let remark = define_rpc!(
             publisher,
             base.append("remark"),
@@ -415,7 +537,7 @@ impl Rpcs {
             Some(wait.clone()),
             objective: Chars = Value::Null; "The objective to remark"
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let reset = define_rpc!(
             publisher,
             base.append("reset"),
@@ -435,7 +557,7 @@ impl Rpcs {
             Some(wait.clone()),
             winner: Option<Chars> = Value::Null; "The winner, if any"
         )?;
-        let _q = Arc::clone(&q);
+        let _q = Arc::clone(q);
         let shutdown = define_rpc!(
             publisher,
             base.append("shutdown"),
@@ -447,6 +569,973 @@ impl Rpcs {
             },
             Some(wait.clone()),
             arg: Value = Value::Null; ""
+        )?;
+        // ==================== Query API ====================
+        let _q = Arc::clone(q);
+        let query_objectives = define_rpc!(
+            publisher,
+            base.append("query-objectives"),
+            "Query all objectives (returns JSON)",
+            |c: RpcCall, _: Value| {
+                let (tx, rx) = oneshot::channel();
+                _q.push((AdminCommand::QueryObjectives, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            arg: Value = Value::Null; ""
+        )?;
+        let _q = Arc::clone(q);
+        let query_objective = define_rpc!(
+            publisher,
+            base.append("query-objective"),
+            "Query a single objective by name (returns JSON)",
+            |c: RpcCall, name: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let cmd = AdminCommand::QueryObjective { name: name.as_ref().into() };
+                _q.push((cmd, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            name: Chars = Value::Null; "The objective name or partial match"
+        )?;
+        let _q = Arc::clone(q);
+        let query_players = define_rpc!(
+            publisher,
+            base.append("query-players"),
+            "Query all players (returns JSON)",
+            |c: RpcCall, _: Value| {
+                let (tx, rx) = oneshot::channel();
+                _q.push((AdminCommand::QueryPlayers, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            arg: Value = Value::Null; ""
+        )?;
+        let _q = Arc::clone(q);
+        let query_player = define_rpc!(
+            publisher,
+            base.append("query-player"),
+            "Query a single player by name/ucid (returns JSON)",
+            |c: RpcCall, player: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let cmd = AdminCommand::QueryPlayer { player: player.as_ref().into() };
+                _q.push((cmd, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            player: Chars = Value::Null; "The player name, UCID, or player ID"
+        )?;
+        let _q = Arc::clone(q);
+        let query_groups = define_rpc!(
+            publisher,
+            base.append("query-groups"),
+            "Query all spawned groups, optionally filtered by side (returns JSON)",
+            |mut c: RpcCall, side: Option<Chars>| {
+                let (tx, rx) = oneshot::channel();
+                let side = match side.map(|s| Side::from_str(&s)).transpose() {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                let cmd = AdminCommand::QueryGroups { side };
+                _q.push((cmd, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Option<Chars> = Value::Null; "Optional side filter (Blue, Red, Neutral)"
+        )?;
+        let _q = Arc::clone(q);
+        let query_group = define_rpc!(
+            publisher,
+            base.append("query-group"),
+            "Query a single group by ID (returns JSON)",
+            |c: RpcCall, id: i64| {
+                let (tx, rx) = oneshot::channel();
+                let cmd = AdminCommand::QueryGroup { id: GroupId::from(id) };
+                _q.push((cmd, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            id: i64 = Value::Null; "The group ID"
+        )?;
+        let _q = Arc::clone(q);
+        let query_units = define_rpc!(
+            publisher,
+            base.append("query-units"),
+            "Query all units in a group (returns JSON)",
+            |c: RpcCall, group: i64| {
+                let (tx, rx) = oneshot::channel();
+                let cmd = AdminCommand::QueryUnits { group: GroupId::from(group) };
+                _q.push((cmd, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            group: i64 = Value::Null; "The group ID"
+        )?;
+        let _q = Arc::clone(q);
+        let query_warehouse = define_rpc!(
+            publisher,
+            base.append("query-warehouse"),
+            "Query warehouse inventory for an objective (returns JSON)",
+            |c: RpcCall, objective: Chars, side: Chars| {
+                let (tx, rx) = oneshot::channel();
+                // Empty/absent side = unscoped admin query. Anything else is
+                // a coalition asking, and only sees its own bases in full.
+                let side = match side.as_ref() {
+                    "" => None,
+                    s => Side::from_str(s).ok(),
+                };
+                let cmd = AdminCommand::QueryWarehouse {
+                    objective: objective.as_ref().into(),
+                    side,
+                };
+                _q.push((cmd, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            objective: Chars = Value::Null; "The objective id or exact name",
+            side: Chars = Value::from(""); "Asking coalition (blue/red), or empty for unscoped"
+        )?;
+        let _q = Arc::clone(q);
+        let query_logistics = define_rpc!(
+            publisher,
+            base.append("query-logistics"),
+            "Query logistics state (returns JSON)",
+            |c: RpcCall, _: Value| {
+                let (tx, rx) = oneshot::channel();
+                _q.push((AdminCommand::QueryLogistics, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            arg: Value = Value::Null; ""
+        )?;
+        let _q = Arc::clone(q);
+        let query_campaign_state = define_rpc!(
+            publisher,
+            base.append("query-campaign-state"),
+            "Query overall campaign state summary (returns JSON)",
+            |c: RpcCall, _: Value| {
+                let (tx, rx) = oneshot::channel();
+                _q.push((AdminCommand::QueryCampaignState, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            arg: Value = Value::Null; ""
+        )?;
+        let _q = Arc::clone(q);
+        let query_perf = define_rpc!(
+            publisher,
+            base.append("query-perf"),
+            "Query live engine/API performance stats for the current session (returns JSON)",
+            |c: RpcCall, _: Value| {
+                let (tx, rx) = oneshot::channel();
+                _q.push((AdminCommand::QueryPerf, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            arg: Value = Value::Null; ""
+        )?;
+        let _q = Arc::clone(q);
+        let query_briefing = define_rpc!(
+            publisher,
+            base.append("query-briefing"),
+            "Query the per-side kneeboard briefing: navaids, radios, artillery, deployables, threats (returns JSON)",
+            |mut c: RpcCall, side: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::QueryBriefing { side }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red, neutral)"
+        )?;
+        let _q = Arc::clone(q);
+        let query_situation = define_rpc!(
+            publisher,
+            base.append("query-situation"),
+            "Query the per-side auto-generated situational briefing: posture, ranked tasking, hotspots, known threats, air picture, logistics, comms card, objective map layer (returns JSON)",
+            |mut c: RpcCall, side: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::QuerySituation { side }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red, neutral)"
+        )?;
+        let _q = Arc::clone(q);
+        let query_unitdb = define_rpc!(
+            publisher,
+            base.append("query-unitdb"),
+            "Query the unit range database harvested from the running DCS install -- engagement and detection ranges per unit type, tagged with the DCS version (returns JSON)",
+            |c: RpcCall, _: Value| {
+                let (tx, rx) = oneshot::channel();
+                _q.push((AdminCommand::QueryUnitDb, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            arg: Value = Value::Null; ""
+        )?;
+        let _q = Arc::clone(q);
+        let query_tacmap = define_rpc!(
+            publisher,
+            base.append("query-tacmap"),
+            "Query the per-side fog-of-war tactical picture: air tracks, ground/naval intel contacts, radar coverage rings (returns JSON)",
+            |mut c: RpcCall, side: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::QueryTacmap { side }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red, neutral)"
+        )?;
+        let _q = Arc::clone(q);
+        let query_hq = define_rpc!(
+            publisher,
+            base.append("query-hq"),
+            "Query one side's theatre HQ as that side sees it: plan, operations, requests, record and its fog-of-war picture (returns JSON HqView)",
+            |mut c: RpcCall, side: Chars, ucid: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                let ucid = Ucid::from_str(ucid.trim()).ok();
+                _q.push((AdminCommand::QueryHq { side, ucid }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red)",
+            ucid: Chars = Value::from(""); "The viewing player's ucid, for can_command (optional)"
+        )?;
+        let _q = Arc::clone(q);
+        let hq_directive = define_rpc!(
+            publisher,
+            base.append("hq-directive"),
+            "Hand one side's HQ a strategist directive (JSON Directive); returns a JSON HqReply",
+            |mut c: RpcCall, side: Chars, directive: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                let directive = match serde_json::from_str::<bfprotocols::hq::Directive>(&directive) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("bad directive: {e}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::HqDirective { side, directive }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red)",
+            directive: Chars = Value::Null; "JSON Directive: posture, main_effort, defend, supply_priority, avoid, weights, intent, rationale, ttl_secs"
+        )?;
+        let _q = Arc::clone(q);
+        let hq_command = define_rpc!(
+            publisher,
+            base.append("hq-command"),
+            "Command one side's HQ (JSON HqCommand: request, cancel_request, override, clear_override, cancel_op) as a player, or as an admin with an empty ucid; returns a JSON HqReply",
+            |mut c: RpcCall, side: Chars, ucid: Chars, cmd: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                let ucid = if ucid.trim().is_empty() {
+                    None
+                } else {
+                    match Ucid::from_str(&ucid) {
+                        Ok(ucid) => Some(ucid),
+                        Err(e) => {
+                            c.reply.send(Value::Error(format!("{e:?}").into()));
+                            return None
+                        }
+                    }
+                };
+                let cmd = match serde_json::from_str::<bfprotocols::hq::HqCommand>(&cmd) {
+                    Ok(cmd) => cmd,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("bad HQ command: {e}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::HqCommand { side, ucid, cmd }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red)",
+            ucid: Chars = Value::Null; "The calling player's ucid, empty for a server admin",
+            cmd: Chars = Value::Null; "JSON HqCommand"
+        )?;
+        let _q = Arc::clone(q);
+        let query_command = define_rpc!(
+            publisher,
+            base.append("query-command"),
+            "One side's own assets (AI flights, convoys, deployed units, troops, batteries, carriers) with live unit positions, and what its commanders can launch (returns JSON CommandPicture)",
+            |mut c: RpcCall, side: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::QueryCommand { side }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red)"
+        )?;
+        let _q = Arc::clone(q);
+        let command_order = define_rpc!(
+            publisher,
+            base.append("command-order"),
+            "A commander's order from the command map (JSON CommandOrder), as a player or as an admin with an empty ucid; returns a JSON CommandReply",
+            |mut c: RpcCall, side: Chars, ucid: Chars, order: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                let ucid = if ucid.trim().is_empty() {
+                    None
+                } else {
+                    match Ucid::from_str(&ucid) {
+                        Ok(ucid) => Some(ucid),
+                        Err(e) => {
+                            c.reply.send(Value::Error(format!("{e:?}").into()));
+                            return None
+                        }
+                    }
+                };
+                let order = match serde_json::from_str::<bfprotocols::command::CommandOrder>(&order) {
+                    Ok(o) => o,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("bad order: {e}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::CommandOrder { side, ucid, order }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red)",
+            ucid: Chars = Value::Null; "The commander's ucid, empty for a server admin",
+            order: Chars = Value::Null; "JSON CommandOrder"
+        )?;
+        let _q = Arc::clone(q);
+        let set_commanders = define_rpc!(
+            publisher,
+            base.append("set-commanders"),
+            "Tell the engine who commands each side (JSON Commanders: blue, red ucid lists), as bfdb works it out from rank and admin grants",
+            |mut c: RpcCall, commanders: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let commanders = match serde_json::from_str::<bfprotocols::command::Commanders>(&commanders) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("bad commanders: {e}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::SetCommanders { commanders }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            commanders: Chars = Value::Null; "JSON Commanders"
+        )?;
+        let _q = Arc::clone(q);
+        let query_ground_war = define_rpc!(
+            publisher,
+            base.append("query-ground-war"),
+            "Query the ground war as one side sees it: its formations, enemy formations in contact, battles and objectives (returns JSON)",
+            |mut c: RpcCall, side: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::QueryGroundWar { side }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red)"
+        )?;
+        let _q = Arc::clone(q);
+        let ground_command = define_rpc!(
+            publisher,
+            base.append("ground-command"),
+            "Order the calling player's side's ground formations (JSON GroundCommand); returns a JSON GroundCommandReply",
+            |mut c: RpcCall, ucid: Chars, cmd: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                let cmd = match serde_json::from_str::<bfprotocols::groundwar::GroundCommand>(&cmd) {
+                    Ok(cmd) => cmd,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("bad ground command: {e}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::GroundCommand { ucid, cmd }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid",
+            cmd: Chars = Value::Null; "JSON GroundCommand: kind (attack, defend, withdraw, hold, release, raise), formation id, objective id"
+        )?;
+        let _q = Arc::clone(q);
+        let query_gci = define_rpc!(
+            publisher,
+            base.append("query-gci"),
+            "Query the live GCI controller picture for one side: every airborne human flight plus, per flight, the hostile groups its coalition sensors are painting (returns JSON)",
+            |mut c: RpcCall, side: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::QueryGci { side }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red)"
+        )?;
+        let _q = Arc::clone(q);
+        let query_cas = define_rpc!(
+            publisher,
+            base.append("query-cas"),
+            "Query the live close air support picture for one side: every JTAC, what it is looking at and lasing, plus the human flights that could work with it (returns JSON)",
+            |mut c: RpcCall, side: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::QueryCas { side }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red)"
+        )?;
+        let _q = Arc::clone(q);
+        let query_atc = define_rpc!(
+            publisher,
+            base.append("query-atc"),
+            "Query the air traffic control picture for one side: every field it holds with weather, active runway and serviceability, plus its aircraft (returns JSON)",
+            |mut c: RpcCall, side: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::QueryAtc { side }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red)"
+        )?;
+        // ==================== Action API ====================
+        let _q = Arc::clone(q);
+        let spawn_deployable = define_rpc!(
+            publisher,
+            base.append("spawn-deployable"),
+            "Spawn a deployable unit at a position",
+            |mut c: RpcCall, side: Chars, name: Chars, x: f64, z: f64, heading: f64| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                let cmd = AdminCommand::SpawnDeployable {
+                    side,
+                    name: name.as_ref().into(),
+                    pos: Vector2::new(x, z),
+                    heading,
+                };
+                _q.push((cmd, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (Blue or Red)",
+            name: Chars = Value::Null; "The deployable name",
+            x: f64 = Value::Null; "X position (DCS coordinates)",
+            z: f64 = Value::Null; "Z position (DCS coordinates)",
+            heading: f64 = 0.0; "Heading in radians"
+        )?;
+        let _q = Arc::clone(q);
+        let spawn_troop = define_rpc!(
+            publisher,
+            base.append("spawn-troop"),
+            "Spawn a troop unit at a position",
+            |mut c: RpcCall, side: Chars, name: Chars, x: f64, z: f64, heading: f64| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                let cmd = AdminCommand::SpawnTroop {
+                    side,
+                    name: name.as_ref().into(),
+                    pos: Vector2::new(x, z),
+                    heading,
+                };
+                _q.push((cmd, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (Blue or Red)",
+            name: Chars = Value::Null; "The troop name",
+            x: f64 = Value::Null; "X position (DCS coordinates)",
+            z: f64 = Value::Null; "Z position (DCS coordinates)",
+            heading: f64 = 0.0; "Heading in radians"
+        )?;
+        let _q = Arc::clone(q);
+        let move_group = define_rpc!(
+            publisher,
+            base.append("move-group"),
+            "Move a group to a new position",
+            |c: RpcCall, id: i64, x: f64, z: f64| {
+                let (tx, rx) = oneshot::channel();
+                let cmd = AdminCommand::MoveGroup {
+                    id: GroupId::from(id),
+                    pos: Vector2::new(x, z),
+                };
+                _q.push((cmd, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            id: i64 = Value::Null; "The group ID",
+            x: f64 = Value::Null; "X position (DCS coordinates)",
+            z: f64 = Value::Null; "Z position (DCS coordinates)"
+        )?;
+        let _q = Arc::clone(q);
+        let add_points = define_rpc!(
+            publisher,
+            base.append("add-points"),
+            "Add or subtract points from a player",
+            |c: RpcCall, player: Chars, amount: i32, reason: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let cmd = AdminCommand::AddPoints {
+                    player: player.as_ref().into(),
+                    amount,
+                    reason: reason.as_ref().into(),
+                };
+                _q.push((cmd, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            player: Chars = Value::Null; "The player name, UCID, or player ID",
+            amount: i32 = Value::Null; "The points to add (negative to subtract)",
+            reason: Chars = Value::Null; "The reason for the points change"
+        )?;
+        let _q = Arc::clone(q);
+        let set_objective_priority = define_rpc!(
+            publisher,
+            base.append("set-objective-priority"),
+            "Set or clear the commander's-intent priority marker on an objective (display/coordination only)",
+            |c: RpcCall, objective: Chars, priority: bool| {
+                let (tx, rx) = oneshot::channel();
+                let cmd = AdminCommand::SetObjectivePriority {
+                    objective: objective.as_ref().into(),
+                    priority,
+                };
+                _q.push((cmd, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            objective: Chars = Value::Null; "The objective name or partial match",
+            priority: bool = false; "Whether the objective should be marked high priority"
+        )?;
+        // ==================== Cockpit UI API ====================
+        let _q = Arc::clone(q);
+        let resolve_player_id = define_rpc!(
+            publisher,
+            base.append("resolve-player-id"),
+            "Resolve a connected player's local DCS player id (net.get_my_player_id()) to their ucid",
+            |c: RpcCall, id: i64, key: Chars| {
+                let (tx, rx) = oneshot::channel();
+                _q.push((
+                    AdminCommand::ResolvePlayerId { id: PlayerId::from(id), key: key.as_ref().into() },
+                    tx,
+                ));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            id: i64 = Value::Null; "The player's local DCS player id",
+            key: Chars = Value::Null; "The key the player's overlay registered with -cockpitkey"
+        )?;
+        let _q = Arc::clone(q);
+        let ewr_toggle = define_rpc!(
+            publisher,
+            base.append("ewr-toggle"),
+            "Toggle EWR reports on/off for the calling player",
+            |mut c: RpcCall, ucid: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::EwrToggle { ucid }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid"
+        )?;
+        let _q = Arc::clone(q);
+        let ewr_report = define_rpc!(
+            publisher,
+            base.append("ewr-report"),
+            "Get a BRAA contact report (bandits or friendlies) for the calling player",
+            |mut c: RpcCall, ucid: Chars, friendly: bool| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::EwrReport { ucid, friendly }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid",
+            friendly: bool = false; "Report friendlies instead of bandits"
+        )?;
+        let _q = Arc::clone(q);
+        let ewr_set_units = define_rpc!(
+            publisher,
+            base.append("ewr-set-units"),
+            "Set the calling player's EWR report units",
+            |mut c: RpcCall, ucid: Chars, imperial: bool| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::EwrSetUnits { ucid, imperial }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid",
+            imperial: bool = false; "Imperial units if true, otherwise metric"
+        )?;
+        let _q = Arc::clone(q);
+        let ewr_ground_intel = define_rpc!(
+            publisher,
+            base.append("ewr-ground-intel"),
+            "Get the ground intel picture for the calling player",
+            |mut c: RpcCall, ucid: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::EwrGroundIntel { ucid }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid"
+        )?;
+        let _q = Arc::clone(q);
+        let carp_solve = define_rpc!(
+            publisher,
+            base.append("carp-solve"),
+            "Solve CARP INIT 1/5, 3/5 and 4/5 auto-fillable fields (PI position, elevations, wind, temp) for the PI marked with the given F10 map mark text",
+            |mut c: RpcCall, ucid: Chars, mark_key: Chars, drop_altitude_agl_ft: f64| {
+                let (tx, rx) = oneshot::channel();
+                // ucid is validated (bfdb only calls this for a resolved, trusted
+                // player) but the solve itself doesn't need per-player state.
+                if let Err(e) = Ucid::from_str(&ucid) {
+                    c.reply.send(Value::Error(format!("{e:?}").into()));
+                    return None
+                }
+                _q.push((AdminCommand::CarpSolve {
+                    mark_key: mark_key.as_ref().into(),
+                    drop_altitude_agl_ft,
+                }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid",
+            mark_key: Chars = Value::Null; "The text of the F10 map mark placed on the PI",
+            drop_altitude_agl_ft: f64 = Value::Null; "Planned drop altitude, feet AGL"
+        )?;
+        let _q = Arc::clone(q);
+        let carp_solve_latlon = define_rpc!(
+            publisher,
+            base.append("carp-solve-latlon"),
+            "Solve CARP INIT 1/5, 3/5 and 4/5 auto-fillable fields for a PI given directly as lat/long (e.g. a click on the dashboard's map), no F10 mark required",
+            |mut c: RpcCall, ucid: Chars, lat: f64, lon: f64, drop_altitude_agl_ft: f64| {
+                let (tx, rx) = oneshot::channel();
+                if let Err(e) = Ucid::from_str(&ucid) {
+                    c.reply.send(Value::Error(format!("{e:?}").into()));
+                    return None
+                }
+                _q.push((AdminCommand::CarpSolveLatLon { lat, lon, drop_altitude_agl_ft }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid",
+            lat: f64 = Value::Null; "PI latitude",
+            lon: f64 = Value::Null; "PI longitude",
+            drop_altitude_agl_ft: f64 = Value::Null; "Planned drop altitude, feet AGL"
+        )?;
+        let _q = Arc::clone(q);
+        let cargo_spawn_crate = define_rpc!(
+            publisher,
+            base.append("cargo-spawn-crate"),
+            "Queue qty copies of a named crate for the calling player's current slot",
+            |mut c: RpcCall, ucid: Chars, crate_name: Chars, qty: i64, c130: bool| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                if qty < 1 {
+                    c.reply.send(Value::Error("qty must be at least 1".into()));
+                    return None
+                }
+                let cmd = AdminCommand::CockpitSpawnCrate {
+                    ucid,
+                    crate_name: crate_name.as_ref().into(),
+                    qty: qty as u32,
+                    c130,
+                };
+                _q.push((cmd, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid",
+            crate_name: Chars = Value::Null; "The crate's name, as configured in cfg.deployables",
+            qty: i64 = 1; "How many copies to queue",
+            c130: bool = true; "Use C-130 cargo rules (true) or helo cargo rules (false)"
+        )?;
+        let _q = Arc::clone(q);
+        let cockpit_context = define_rpc!(
+            publisher,
+            base.append("cockpit-context"),
+            "Who the calling player is, what they are flying and where (JSON), so the cockpit overlay can shape itself without asking",
+            |mut c: RpcCall, ucid: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::CockpitContext { ucid }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid"
+        )?;
+        let _q = Arc::clone(q);
+        let cockpit_menu = define_rpc!(
+            publisher,
+            base.append("cockpit-menu"),
+            "The calling player's entire F10 menu tree as JSON, in the order they see it",
+            |mut c: RpcCall, ucid: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::CockpitMenu { ucid }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid"
+        )?;
+        let _q = Arc::clone(q);
+        let cockpit_menu_invoke = define_rpc!(
+            publisher,
+            base.append("cockpit-menu-invoke"),
+            "Click one item in the calling player's F10 menu, by the path cockpit-menu reported",
+            |mut c: RpcCall, ucid: Chars, path: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                // A JSON array of path segments rather than a delimited string:
+                // menu labels contain every punctuation character we might
+                // otherwise have picked as a separator ("More >>", "C-130
+                // Cargo", "JTAC>>").
+                let path: Vec<std::string::String> = match serde_json::from_str::<Vec<std::string::String>>(&path) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("path must be a JSON array of strings: {e}").into()));
+                        return None
+                    }
+                };
+                if path.is_empty() {
+                    c.reply.send(Value::Error("path must not be empty".into()));
+                    return None
+                }
+                _q.push((AdminCommand::CockpitMenuInvoke { ucid, path }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid",
+            path: Chars = Value::Null; "JSON array of menu path segments, e.g. [\"Cargo\",\"Unpack Crate\"]"
+        )?;
+        let _q = Arc::clone(q);
+        let cockpit_messages = define_rpc!(
+            publisher,
+            base.append("cockpit-messages"),
+            "Text messages the calling player was sent after feed sequence `since`, as JSON",
+            |mut c: RpcCall, ucid: Chars, since: i64| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::CockpitMessages { ucid, since: since.max(0) as u64 }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid",
+            since: i64 = Value::Null; "Feed sequence the caller has already seen (0 for the recent backlog)"
+        )?;
+        let _q = Arc::clone(q);
+        let cockpit_cargo = define_rpc!(
+            publisher,
+            base.append("cockpit-cargo"),
+            "What the calling player's slot can spawn, crate requirements, cargo on board and crates nearby, as JSON",
+            |mut c: RpcCall, ucid: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::CockpitCargo { ucid }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid"
+        )?;
+        let _q = Arc::clone(q);
+        let set_server_info = define_rpc!(
+            publisher,
+            base.append("set-server-info"),
+            "Push DCSServerBot-derived restart time + surface weather into the F10 Info menu",
+            |mut c: RpcCall, info: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let cmd = match parse_server_info(info.as_ref()) {
+                    Ok(cmd) => cmd,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("bad server-info json: {e:?}").into()));
+                        return None;
+                    }
+                };
+                _q.push((cmd, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            info: Chars = Value::Null; "JSON {restart_at, weather:{temp_c,wind_speed_kts,wind_from_deg,qnh_hpa,cloud_base_m}}"
+        )?;
+        let _q = Arc::clone(q);
+        let intel_marks = define_rpc!(
+            publisher,
+            base.append("intel-marks"),
+            "Push the dashboard's coalition recon markup onto the F10 map",
+            |mut c: RpcCall, data: Chars| {
+                let (tx, rx) = oneshot::channel();
+                if data.is_empty() {
+                    c.reply.send(Value::Error("empty intel-marks payload".into()));
+                    return None;
+                }
+                _q.push((AdminCommand::SetIntelMarks(data.as_ref().into()), tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            data: Chars = Value::Null; "JSON {marks:[{id,side,kind,points,color,by_name}]}"
         )?;
         Ok(Self {
             _reduce_inventory: reduce_inventory,
@@ -465,6 +1554,7 @@ impl Rpcs {
             _search: search,
             _log_warehouse: log_warehouse,
             _reset_lives: reset_lives,
+            _reset_lives_all: reset_lives_all,
             _add_admin: add_admin,
             _remove_admin: remove_admin,
             _balance: balance,
@@ -474,6 +1564,54 @@ impl Rpcs {
             _remark: remark,
             _reset: reset,
             _shutdown: shutdown,
+            // Query API
+            _query_objectives: query_objectives,
+            _query_objective: query_objective,
+            _query_players: query_players,
+            _query_player: query_player,
+            _query_groups: query_groups,
+            _query_group: query_group,
+            _query_units: query_units,
+            _query_warehouse: query_warehouse,
+            _query_logistics: query_logistics,
+            _query_campaign_state: query_campaign_state,
+            _query_perf: query_perf,
+            _query_briefing: query_briefing,
+            _query_situation: query_situation,
+            _query_tacmap: query_tacmap,
+            _query_ground_war: query_ground_war,
+            _query_hq: query_hq,
+            _hq_directive: hq_directive,
+            _hq_command: hq_command,
+            _set_commanders: set_commanders,
+            _query_command: query_command,
+            _command_order: command_order,
+            _ground_command: ground_command,
+            _query_unitdb: query_unitdb,
+            _query_gci: query_gci,
+            _query_cas: query_cas,
+            _query_atc: query_atc,
+            // Action API
+            _spawn_deployable: spawn_deployable,
+            _spawn_troop: spawn_troop,
+            _move_group: move_group,
+            _add_points: add_points,
+            _set_objective_priority: set_objective_priority,
+            _resolve_player_id: resolve_player_id,
+            _ewr_toggle: ewr_toggle,
+            _ewr_report: ewr_report,
+            _ewr_set_units: ewr_set_units,
+            _ewr_ground_intel: ewr_ground_intel,
+            _carp_solve: carp_solve,
+            _carp_solve_latlon: carp_solve_latlon,
+            _cargo_spawn_crate: cargo_spawn_crate,
+            _cockpit_context: cockpit_context,
+            _cockpit_menu: cockpit_menu,
+            _cockpit_menu_invoke: cockpit_menu_invoke,
+            _cockpit_messages: cockpit_messages,
+            _cockpit_cargo: cockpit_cargo,
+            _set_server_info: set_server_info,
+            _intel_marks: intel_marks,
         })
     }
 }

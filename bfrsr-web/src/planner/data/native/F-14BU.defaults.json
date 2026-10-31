@@ -1,0 +1,846 @@
+{
+  "CMDS": {
+    "CMDSAutoOverrides": [],
+    "CMDSAutoPrograms": {
+      "AAA": {
+        "Program": 2,
+        "Threshold": 2
+      },
+      "Aircraft": {
+        "Program": 4,
+        "Threshold": 3
+      },
+      "Naval": {
+        "Program": 5,
+        "Threshold": 3
+      },
+      "SAM": {
+        "Program": 5,
+        "Threshold": 3
+      },
+      "Unknown": {
+        "Program": 4,
+        "Threshold": 3
+      }
+    },
+    "CMDSBingoSettings": {
+      "ChaffNum": 10,
+      "FlaresNum": 10,
+      "Other1Num": 0,
+      "Other2Num": 0
+    },
+    "CMDSProgramSettings": {
+      "PROG_1": {
+        "Chaff": {
+          "BurstInterval": 0.2,
+          "BurstQuantity": 2,
+          "SalvoInterval": 1,
+          "SalvoQuantity": 8
+        },
+        "Flare": {
+          "BurstInterval": 0.5,
+          "BurstQuantity": 2,
+          "SalvoInterval": 1,
+          "SalvoQuantity": 8
+        },
+        "Other1": {
+          "BurstInterval": 0,
+          "BurstQuantity": 0,
+          "SalvoInterval": 0,
+          "SalvoQuantity": 0
+        },
+        "Other2": {
+          "BurstInterval": 0,
+          "BurstQuantity": 0,
+          "SalvoInterval": 0,
+          "SalvoQuantity": 0
+        },
+        "Priority": 2
+      },
+      "PROG_2": {
+        "Chaff": {
+          "BurstInterval": 0.25,
+          "BurstQuantity": 3,
+          "SalvoInterval": 2,
+          "SalvoQuantity": 3
+        },
+        "Flare": {
+          "BurstInterval": 1,
+          "BurstQuantity": 1,
+          "SalvoInterval": 1,
+          "SalvoQuantity": 1
+        },
+        "Other1": {
+          "BurstInterval": 0,
+          "BurstQuantity": 0,
+          "SalvoInterval": 0,
+          "SalvoQuantity": 0
+        },
+        "Other2": {
+          "BurstInterval": 0,
+          "BurstQuantity": 0,
+          "SalvoInterval": 0,
+          "SalvoQuantity": 0
+        },
+        "Priority": 0
+      },
+      "PROG_3": {
+        "Chaff": {
+          "BurstInterval": 1,
+          "BurstQuantity": 1,
+          "SalvoInterval": 1,
+          "SalvoQuantity": 1
+        },
+        "Flare": {
+          "BurstInterval": 0.5,
+          "BurstQuantity": 2,
+          "SalvoInterval": 3,
+          "SalvoQuantity": 4
+        },
+        "Other1": {
+          "BurstInterval": 0,
+          "BurstQuantity": 0,
+          "SalvoInterval": 0,
+          "SalvoQuantity": 0
+        },
+        "Other2": {
+          "BurstInterval": 0,
+          "BurstQuantity": 0,
+          "SalvoInterval": 0,
+          "SalvoQuantity": 0
+        },
+        "Priority": 0
+      },
+      "PROG_4": {
+        "Chaff": {
+          "BurstInterval": 0.25,
+          "BurstQuantity": 2,
+          "SalvoInterval": 3,
+          "SalvoQuantity": 4
+        },
+        "Flare": {
+          "BurstInterval": 1,
+          "BurstQuantity": 1,
+          "SalvoInterval": 3,
+          "SalvoQuantity": 4
+        },
+        "Other1": {
+          "BurstInterval": 0,
+          "BurstQuantity": 0,
+          "SalvoInterval": 0,
+          "SalvoQuantity": 0
+        },
+        "Other2": {
+          "BurstInterval": 0,
+          "BurstQuantity": 0,
+          "SalvoInterval": 0,
+          "SalvoQuantity": 0
+        },
+        "Priority": 0
+      },
+      "PROG_5": {
+        "Chaff": {
+          "BurstInterval": 0.2,
+          "BurstQuantity": 4,
+          "SalvoInterval": 2,
+          "SalvoQuantity": 4
+        },
+        "Flare": {
+          "BurstInterval": 1,
+          "BurstQuantity": 1,
+          "SalvoInterval": 2,
+          "SalvoQuantity": 2
+        },
+        "Other1": {
+          "BurstInterval": 0,
+          "BurstQuantity": 0,
+          "SalvoInterval": 0,
+          "SalvoQuantity": 0
+        },
+        "Other2": {
+          "BurstInterval": 0,
+          "BurstQuantity": 0,
+          "SalvoInterval": 0,
+          "SalvoQuantity": 0
+        },
+        "Priority": 1
+      },
+      "PROG_6": {
+        "Chaff": {
+          "BurstInterval": 1,
+          "BurstQuantity": 1,
+          "SalvoInterval": 2,
+          "SalvoQuantity": 2
+        },
+        "Flare": {
+          "BurstInterval": 0.5,
+          "BurstQuantity": 2,
+          "SalvoInterval": 2,
+          "SalvoQuantity": 6
+        },
+        "Other1": {
+          "BurstInterval": 0,
+          "BurstQuantity": 0,
+          "SalvoInterval": 0,
+          "SalvoQuantity": 0
+        },
+        "Other2": {
+          "BurstInterval": 0,
+          "BurstQuantity": 0,
+          "SalvoInterval": 0,
+          "SalvoQuantity": 0
+        },
+        "Priority": 1
+      },
+      "PROG_7": {
+        "Chaff": {
+          "BurstInterval": 1,
+          "BurstQuantity": 1,
+          "SalvoInterval": 1,
+          "SalvoQuantity": 1
+        },
+        "Flare": {
+          "BurstInterval": 1,
+          "BurstQuantity": 1,
+          "SalvoInterval": 1,
+          "SalvoQuantity": 1
+        },
+        "Other1": {
+          "BurstInterval": 0,
+          "BurstQuantity": 0,
+          "SalvoInterval": 0,
+          "SalvoQuantity": 0
+        },
+        "Other2": {
+          "BurstInterval": 0,
+          "BurstQuantity": 0,
+          "SalvoInterval": 0,
+          "SalvoQuantity": 0
+        },
+        "Priority": 0
+      },
+      "PROG_8": {
+        "Chaff": {
+          "BurstInterval": 1,
+          "BurstQuantity": 1,
+          "SalvoInterval": 1,
+          "SalvoQuantity": 1
+        },
+        "Flare": {
+          "BurstInterval": 1,
+          "BurstQuantity": 1,
+          "SalvoInterval": 1,
+          "SalvoQuantity": 1
+        },
+        "Other1": {
+          "BurstInterval": 0,
+          "BurstQuantity": 0,
+          "SalvoInterval": 0,
+          "SalvoQuantity": 0
+        },
+        "Other2": {
+          "BurstInterval": 0,
+          "BurstQuantity": 0,
+          "SalvoInterval": 0,
+          "SalvoQuantity": 0
+        },
+        "Priority": 0
+      }
+    }
+  },
+  "JDAM": {
+    "stations": [
+      {
+        "targets": [
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          }
+        ]
+      },
+      {
+        "targets": [
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          }
+        ]
+      },
+      {
+        "targets": [
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          }
+        ]
+      },
+      {
+        "targets": [
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          },
+          {
+            "active": false,
+            "attack_heading": 0,
+            "drop_alt": 20000,
+            "drop_spd": 450,
+            "elev": 0,
+            "has_impact_angle": false,
+            "has_impact_heading": false,
+            "impact_angle": 65,
+            "impact_heading": 0,
+            "lar_half_angle_deg": 44.983734395416,
+            "lar_rmax_nmi": 7.2509806211745,
+            "lar_rmin_nmi": 1.5712031862492,
+            "name": ""
+          }
+        ]
+      }
+    ]
+  },
+  "NAV": [
+    {
+      "additional_points": [],
+      "lines": [],
+      "name": "",
+      "route_as_line": false,
+      "waypoints": []
+    },
+    {
+      "additional_points": [],
+      "lines": [],
+      "name": "",
+      "route_as_line": false,
+      "waypoints": []
+    },
+    {
+      "additional_points": [],
+      "lines": [],
+      "name": "",
+      "route_as_line": false,
+      "waypoints": []
+    },
+    {
+      "additional_points": [],
+      "lines": [],
+      "name": "",
+      "route_as_line": false,
+      "waypoints": []
+    },
+    {
+      "additional_points": [],
+      "lines": [],
+      "name": "",
+      "route_as_line": false,
+      "waypoints": []
+    },
+    {
+      "additional_points": [],
+      "lines": [],
+      "name": "",
+      "route_as_line": false,
+      "waypoints": []
+    },
+    {
+      "additional_points": [],
+      "lines": [],
+      "name": "",
+      "route_as_line": false,
+      "waypoints": []
+    },
+    {
+      "additional_points": [],
+      "lines": [],
+      "name": "",
+      "route_as_line": false,
+      "waypoints": []
+    },
+    {
+      "additional_points": [],
+      "lines": [],
+      "name": "",
+      "route_as_line": false,
+      "waypoints": []
+    },
+    {
+      "additional_points": [],
+      "lines": [],
+      "name": "",
+      "route_as_line": false,
+      "waypoints": []
+    },
+    {
+      "additional_points": [],
+      "lines": [],
+      "name": "",
+      "route_as_line": false,
+      "waypoints": []
+    },
+    {
+      "additional_points": [],
+      "lines": [],
+      "name": "",
+      "route_as_line": false,
+      "waypoints": []
+    }
+  ],
+  "TIS": {
+    "add_wingmen_to_list": true,
+    "own_callsign": "      ",
+    "send_to_callsigns": [],
+    "use_mission_callsign": true
+  },
+  "cartridge_name": "DEFAULT",
+  "name": "F-14BU DTC",
+  "type": "F-14BU"
+}

@@ -11,21 +11,23 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
-use super::{as_tbl, controller::Controller, cvt_err, group::Group, object::Object, String};
+use super::{as_tbl, controller::Controller, group::Group, object::Object, String};
+use crate::object::DcsOidExt;
 use crate::{
     env::miz::UnitId,
     net::SlotId,
     object::{DcsObject, DcsOid},
-    record_perf, simple_enum, wrapped_table, LuaEnv, LuaVec2, LuaVec3, MizLua, Position3, Sequence,
+    record_perf, simple_enum_unknown, wrapped_table, LuaEnv, LuaVec2, LuaVec3, MizLua,
+    Position3, Sequence,
 };
 use anyhow::{bail, Result};
-use log::warn;
+use log::debug;
 use mlua::{prelude::*, Value};
 use na::Vector2;
-use serde_derive::{Deserialize, Serialize};
+use serde_derive::Serialize;
 use std::{marker::PhantomData, ops::Deref};
 
-simple_enum!(UnitCategory, u8, [
+simple_enum_unknown!(UnitCategory, u8, [
     Airplane => 0,
     GroundUnit => 2,
     Helicopter => 1,
@@ -35,56 +37,54 @@ simple_enum!(UnitCategory, u8, [
 
 wrapped_table!(Ammo, None);
 
-impl<'lua> Ammo<'lua> {
+impl Ammo {
     pub fn count(&self) -> Result<u32> {
         Ok(self.t.raw_get("count")?)
     }
 
     pub fn type_name(&self) -> Result<String> {
-        Ok(self.t.raw_get::<_, LuaTable>("desc")?.raw_get("typeName")?)
+        Ok(self.t.raw_get::<LuaTable>("desc")?.raw_get("typeName")?)
+    }
+
+    /// `desc.missileCategory` when this is a missile (DCS
+    /// `Weapon.MissileCategory`: 1 AAM, 2 SAM, 3 BM, 4 anti-ship,
+    /// 5 cruise, 6 other), None for guns, shells and bombs.
+    pub fn missile_category(&self) -> Result<Option<u8>> {
+        Ok(self.t.raw_get::<LuaTable>("desc")?.raw_get("missileCategory")?)
     }
 
     pub fn display_name(&self) -> Result<String> {
-        Ok(self
-            .t
-            .raw_get::<_, LuaTable>("desc")?
-            .raw_get("displayName")?)
+        Ok(self.t.raw_get::<LuaTable>("desc")?.raw_get("displayName")?)
     }
 
     pub fn weapon_flags(&self) -> Result<u64> {
-        Ok(self.t.raw_get::<_, LuaTable>("desc")?.raw_get("flags")?)
+        Ok(self.t.raw_get::<LuaTable>("desc")?.raw_get("flags")?)
     }
 }
 
 wrapped_table!(Unit, Some("Unit"));
 
-impl<'lua> Unit<'lua> {
-    pub fn get_by_name(lua: MizLua<'lua>, name: &str) -> Result<Unit<'lua>> {
+impl Unit {
+    pub fn get_by_name(lua: MizLua, name: &str) -> Result<Unit> {
         let globals = lua.inner().globals();
         let unit = as_tbl("Unit", None, globals.raw_get("Unit")?)?;
-        Ok(record_perf!(
-            unit_get_by_name,
-            unit.call_function("getByName", name)?
-        ))
+        Ok(record_perf!(unit_get_by_name, unit.call_function("getByName", name)?))
     }
 
     pub fn is_exist(&self) -> Result<bool> {
-        Ok(record_perf!(
-            unit_is_exist,
-            self.t.call_method("isExist", ())?
-        ))
+        Ok(record_perf!(unit_is_exist, self.t.call_method("isExist", ())?))
     }
 
     pub fn destroy(self) -> Result<()> {
         Ok(self.t.call_method("destroy", ())?)
     }
 
-    pub fn get_desc(&self) -> Result<mlua::Table<'lua>> {
+    pub fn get_desc(&self) -> Result<mlua::Table> {
         Ok(self.t.call_method("getDesc", ())?)
     }
 
-    pub fn as_object(&self) -> Result<Object<'lua>> {
-        Ok(Object::from_lua(Value::Table(self.t.clone()), self.lua)?)
+    pub fn as_object(&self) -> Result<Object> {
+        Ok(Object::from_lua(Value::Table(self.t.clone()), &self.lua)?)
     }
 
     pub fn get_type_name(&self) -> Result<String> {
@@ -96,10 +96,7 @@ impl<'lua> Unit<'lua> {
     }
 
     pub fn get_position(&self) -> Result<Position3> {
-        Ok(record_perf!(
-            get_position,
-            self.t.call_method("getPosition", ())?
-        ))
+        Ok(record_perf!(get_position, self.t.call_method("getPosition", ())?))
     }
 
     pub fn get_ground_position(&self) -> Result<LuaVec2> {
@@ -108,10 +105,7 @@ impl<'lua> Unit<'lua> {
     }
 
     pub fn get_velocity(&self) -> Result<LuaVec3> {
-        Ok(record_perf!(
-            get_velocity,
-            self.t.call_method("getVelocity", ())?
-        ))
+        Ok(record_perf!(get_velocity, self.t.call_method("getVelocity", ())?))
     }
 
     pub fn in_air(&self) -> Result<bool> {
@@ -142,11 +136,11 @@ impl<'lua> Unit<'lua> {
         Ok(self.t.call_method("getNumber", ())?)
     }
 
-    pub fn get_controller(&self) -> Result<Controller<'lua>> {
+    pub fn get_controller(&self) -> Result<Controller> {
         Ok(self.t.call_method("getController", ())?)
     }
 
-    pub fn get_group(&self) -> Result<Group<'lua>> {
+    pub fn get_group(&self) -> Result<Group> {
         Ok(self.t.call_method("getGroup", ())?)
     }
 
@@ -154,12 +148,36 @@ impl<'lua> Unit<'lua> {
         Ok(self.t.call_method("getCallsign", ())?)
     }
 
-    pub fn get_life(&self) -> Result<i32> {
+    /// Current hit points, as the float DCS returns. By DCS's own rule a
+    /// unit whose life is below 1 is dead (a wreck can still report e.g.
+    /// 0.4), so callers test `< 1.`, not `<= 0.`. It is read as a float so
+    /// fractional hit points above 1 on a damaged unit aren't truncated.
+    pub fn get_life(&self) -> Result<f64> {
         Ok(self.t.call_method("getLife", ())?)
     }
 
-    pub fn get_life0(&self) -> Result<i32> {
+    pub fn get_life0(&self) -> Result<f64> {
         Ok(self.t.call_method("getLife0", ())?)
+    }
+
+    /// Animation argument `arg` of the unit's 3D model, usually 0..1 (gear,
+    /// tailhook, refuelling probe, flaps). Argument numbers are per model --
+    /// check them in the DCS Model Viewer. Aircraft args replicate to a
+    /// dedicated server; a carrier's arresting-wire args do not.
+    pub fn get_draw_argument_value(&self, arg: i64) -> Result<f64> {
+        Ok(self.t.call_method("getDrawArgumentValue", arg)?)
+    }
+
+    pub fn get_coalition(&self) -> Result<crate::coalition::Side> {
+        Ok(self.t.call_method("getCoalition", ())?)
+    }
+
+    pub fn get_country(&self) -> Result<crate::country::Country> {
+        Ok(self.t.call_method("getCountry", ())?)
+    }
+
+    pub fn has_attribute(&self, attr: &str) -> Result<bool> {
+        Ok(self.t.call_method("hasAttribute", attr)?)
     }
 
     pub fn get_fuel(&self) -> Result<f32> {
@@ -174,79 +192,109 @@ impl<'lua> Unit<'lua> {
         Ok(self.t.call_method("getCategory", ())?)
     }
 
-    pub fn get_ammo(&self) -> Result<Sequence<'lua, Ammo<'lua>>> {
+    /// `Unit.getRadar()`: whether at least one of the unit's radars is on,
+    /// and the object it is tracking -- a lock -- if any.
+    pub fn get_radar(&self) -> Result<(bool, Option<Object>)> {
+        let (on, target): (Option<bool>, Value) = self.t.call_method("getRadar", ())?;
+        let target = match target {
+            Value::Nil => None,
+            v => Some(Object::from_lua(v, &self.lua)?),
+        };
+        Ok((on.unwrap_or(false), target))
+    }
+
+    pub fn get_ammo(&self) -> Result<Sequence<Ammo>> {
         Ok(record_perf!(get_ammo, self.t.call_method("getAmmo", ())?))
+    }
+
+    /// The names of the DCS cargo objects currently loaded inside this unit.
+    ///
+    /// This is DCS's own cargo transport system -- the one behind the F8
+    /// ground crew "Load cargo" menu that the CH-47 and Mi-8 use. A crate
+    /// loaded that way is not removed from the world: the static object keeps
+    /// existing and rides along at the aircraft's position, which is why
+    /// anything that scans for crates "on the ground near the player" has to
+    /// ask this question first.
+    ///
+    /// Returns an empty list for an aircraft that carries nothing (and for a
+    /// type that cannot carry cargo at all). Errors if the running DCS does
+    /// not have `getCargosOnBoard`, so callers can fall back rather than
+    /// treat "cannot tell" as "nothing on board".
+    pub fn get_cargos_on_board(&self) -> Result<Vec<String>> {
+        let cargos: Option<mlua::Table> = self.t.call_method("getCargosOnBoard", ())?;
+        let mut res = vec![];
+        if let Some(cargos) = cargos {
+            for v in cargos.sequence_values::<mlua::Table>() {
+                let cargo = v?;
+                // A cargo object is a StaticObject; getName is the mission
+                // name of the static, which is what the crate tracking keys
+                // off. Skip anything that will not answer rather than failing
+                // the whole scan.
+                if let Ok(name) = cargo.call_method::<String>("getName", ()) {
+                    res.push(name)
+                }
+            }
+        }
+        Ok(res)
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ClassUnit;
+pub use dcso3_core::unit::ClassUnit;
 
-impl<'lua> DcsObject<'lua> for Unit<'lua> {
+impl DcsObject for Unit {
     type Class = ClassUnit;
 
     fn object_id(&self) -> Result<DcsOid<Self::Class>> {
-        Ok(DcsOid {
-            id: self.raw_get("id_")?,
-            class: "Unit".into(),
-            t: PhantomData,
-        })
+        Ok(DcsOid { id: self.raw_get("id_")?, class: "Unit".into(), t: PhantomData })
     }
 
-    fn get_instance(lua: MizLua<'lua>, id: &DcsOid<Self::Class>) -> Result<Self> {
+    fn get_instance(lua: MizLua, id: &DcsOid<Self::Class>) -> Result<Self> {
         let t = lua.inner().create_table()?;
         t.set_metatable(Some(lua.inner().globals().raw_get(&**id.class)?));
         t.raw_set("id_", id.id)?;
-        let t = Unit {
-            t,
-            lua: lua.inner(),
-        };
+        let t = Unit { t, lua: lua.inner().clone() };
         if !t.is_exist()? {
-            warn!("{} is an invalid unit", id.id);
+            debug!("{} is an invalid unit", id.id);
             bail!("{} is an invalid unit", id.id)
         }
         // work around DCS bug that results in isExist => true for dead units
-        if t.get_life()? <= 0 {
-            warn!("{} is dead", id.id);
+        if t.get_life()? < 1. {
+            debug!("{} is dead", id.id);
             bail!("{} is dead", id.id)
         }
         Ok(t)
     }
 
-    fn get_instance_dyn<T>(lua: MizLua<'lua>, id: &DcsOid<T>) -> Result<Self> {
+    fn get_instance_dyn<T>(lua: MizLua, id: &DcsOid<T>) -> Result<Self> {
         id.check_implements(lua, "Unit")?;
-        let id = DcsOid {
-            id: id.id,
-            class: id.class.clone(),
-            t: PhantomData,
-        };
+        let id = DcsOid { id: id.id, class: id.class.clone(), t: PhantomData };
         Self::get_instance(lua, &id)
     }
 
     fn change_instance(self, id: &DcsOid<Self::Class>) -> Result<Self> {
         self.raw_set("id_", id.id)?;
         if !self.is_exist()? {
-            warn!("{} is an invalid unit", id.id);
+            debug!("{} is an invalid unit", id.id);
             bail!("{} is an invalid unit", id.id)
         }
         // work around DCS bug that results in isExist => true for dead units
-        if self.get_life()? <= 0 {
-            warn!("{} is dead", id.id);
+        if self.get_life()? < 1. {
+            debug!("{} is dead", id.id);
             bail!("{} is dead", id.id)
         }
         Ok(self)
     }
 
     fn change_instance_dyn<T>(self, id: &DcsOid<T>) -> Result<Self> {
-        id.check_implements(MizLua(self.lua), "Unit")?;
+        id.check_implements(MizLua(&self.lua), "Unit")?;
         self.t.raw_set("id_", id.id)?;
         if !self.is_exist()? {
-            warn!("{} is an invalid unit", id.id);
+            debug!("{} is an invalid unit", id.id);
             bail!("{} is an invalid unit", id.id)
         }
         // work around DCS bug that results in isExist => true for dead units
-        if self.get_life()? <= 0 {
-            warn!("{} is dead", id.id);
+        if self.get_life()? < 1. {
+            debug!("{} is dead", id.id);
             bail!("{} is dead", id.id)
         }
         Ok(self)

@@ -3,7 +3,11 @@
 codegen-units = 1
 opt-level = 3
 lto = true
-debug = false
+# Line tables only: enough for a panic backtrace to name file:line instead of
+# a column of bare addresses, without full debug info's size. On MSVC this
+# lands in the separate .pdb (the .dll barely changes) -- ship the .pdb next
+# to the .dll or the backtraces stay unsymbolised.
+debug = "line-tables-only"
 
 # for quick dev
 # currently mlua only performs it's special linking steps on a release build
@@ -25,10 +29,11 @@ chrono = { version = "0.4.31", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 compact_str = { version = "0.8", features = ["serde"] }
 crossbeam = { version = "0.8" }
-enumflags2 = "0.7.8"
+enumflags2 = { version = "0.7.8", features = ["serde"] }
 env_logger = "0.11.0"
 fixedstr = { version = "0.5.5", features = ["serde"] }
 futures = { version = "0.3" }
+schemars = { version = "0.8", features = ["chrono", "indexmap2"] }
 fxhash = "0.2"
 handlebars = { version = "6" }
 hdrhistogram = { version = "7" }
@@ -36,6 +41,12 @@ humantime = { version = "2" }
 immutable-chunkmap = { version = "2.0.4", features = ["serde"] }
 indexmap = { version = "2", features = ["serde"] }
 log = "0.4.20"
+# DCS embeds Lua 5.1, so every crate uses lua51 (and links DCS's lua.dll,
+# see setup-build.ps1). Crates add "serialize" / "module" as they need;
+# bftools is outside the workspace and pins its own (vendored) copy.
+# error-send: 0.10's Error is only Send + Sync with it, and every crate
+# turns Lua errors into anyhow::Error with `?`.
+mlua = { version = "0.10.5", features = ["lua51", "error-send"] }
 nalgebra = { version = "0.33", features = ["serde-serialize"] }
 netidx-archive = { version = "0.27.1" }
 netidx-protocols = { version = "0.27" }
@@ -45,6 +56,7 @@ parking_lot = "0.12"
 paste = "1"
 pin-project = { version = "1" }
 rand = { version = "0.8" }
+rstar = "0.12"
 regex = { version = "1" }
 serde_derive = "1"
 serde_json = { version = "1" }
@@ -53,11 +65,51 @@ simplelog = "0.12"
 sled = { version = "0.34" }
 smallvec = { version = "1", features = ["const_generics", "union", "serde"] }
 tokio = { version = "1", features = ["full"] }
+ureq = { version = "2" }
 uuid = { version = "1", features = ["v4", "serde"] }
-warp = { version = "0.3", features = ["tls"] }
+# hyper 1 line. warp 0.4 has no TLS server of its own: bfdb terminates TLS
+# itself on tokio-rustls 0.26 (bfdb/src/serve.rs), the stack reqwest uses.
+# `test` is not only for tests: the public snapshot renders wiki pages
+# through the route chain with warp::test.
+warp = { version = "0.4", features = ["server", "websocket", "test"] }
+# deflate only: .miz files and Tacview .zip.acmi are deflate, and zip's
+# defaults pulled a second zstd (0.11, beside the 0.13 above), bzip2 and AES.
+zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 zstd = { version = "0.13" }
+
+# Shared lint levels, used by every workspace crate (`[lints] workspace =
+# true`). Everything here is `warn` or `allow`, never `deny`, so a new hit
+# cannot break a build; CI's rust-lint job runs clippy with `-D warnings`,
+# so it does fail the lint check. The clippy entries only fire under
+# `cargo clippy`.
+[workspace.lints.rust]
+# `unsafe fn` bodies must still mark each unsafe operation (the 2024 edition
+# default): an unsafe fn is a contract for the caller, not a licence for the
+# whole body.
+unsafe_op_in_unsafe_fn = "warn"
+static_mut_refs = "warn"
+
+[workspace.lints.clippy]
+# Every `unsafe {}` block says why it is sound.
+undocumented_unsafe_blocks = "warn"
+# Style lints this codebase does not follow, on purpose:
+# - DCS callbacks and spawn helpers take many plain arguments, and their
+#   nested generic types (Lua callbacks, netidx channels) read better inline
+#   than behind one-use aliases.
+too_many_arguments = "allow"
+type_complexity = "allow"
+# Large variants hold mission state that is moved rarely; boxing them would
+# only add allocations on the hot paths.
+large_enum_variant = "allow"
+result_large_err = "allow"
+# `!(a < b)` is how float code here says "not less, NaN included".
+neg_cmp_op_on_partial_ord = "allow"
+# Config and test fixtures build a default and then set a few fields.
+field_reassign_with_default = "allow"
+# Index loops over parallel arrays (grids, waypoints) stay index loops.
+needless_range_loop = "allow"
 
 [workspace]
 resolver = "2"
-members = ["dcso3", "bflib", "bfdb", "bfprotocols", "yats"]
+members = ["dcso3", "dcso3-core", "livewx", "fowlbg", "bflib", "bfrange", "bfdb", "bfprotocols", "yats", "bfcockpit/installer", "bfcockpit/net"]
 exclude = ["bftools"]

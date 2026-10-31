@@ -20,8 +20,7 @@ use crate::{bg::Task, db::ephemeral::Ephemeral, jtac::JtId};
 use anyhow::{Result, anyhow};
 use bfprotocols::{
     cfg::{
-        Action, ActionKind, AwacsCfg, Cfg, Deployable, DeployableEwr, DeployableJtac, DroneCfg,
-        Troop,
+        Action, ActionKind, AwacsCfg, Cfg, Deployable, DeployableJtac, DroneCfg, Troop,
     },
     db::{
         group::{GroupId, UnitId},
@@ -29,23 +28,50 @@ use bfprotocols::{
     },
 };
 use dcso3::{
-    Vector3, centroid3d,
+    Position3, Vector3, centroid3d,
     coalition::Side,
     env::miz::{Miz, MizIndex},
 };
-use std::{cmp::max, fs::File, path::Path, sync::Arc};
+use std::{
+    cmp::max,
+    fs::{self, File},
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::SystemTime,
+};
 use tokio::sync::mpsc::UnboundedSender;
 
 pub mod actions;
+pub mod balance;
+pub mod battle;
+pub mod capture_report;
 pub mod cargo;
+pub mod combat;
+pub mod economy;
+pub mod emergency_repair;
 pub mod ephemeral;
+pub mod events;
+pub mod fat_cow;
+pub mod formation;
+pub mod garrison;
+pub mod ghosts;
+pub mod ground_insertion;
 pub mod group;
+pub mod helo_route;
+pub mod intel;
+pub mod last_defenders;
 pub mod logistics;
+pub mod map_layer;
 pub mod markup;
 pub mod mizinit;
 pub mod objective;
 pub mod persisted;
 pub mod player;
+pub mod recon;
+pub mod reinforce;
+pub mod tasking;
+pub mod tasks;
+pub mod war_effort;
 
 pub type Map<K, V> = immutable_chunkmap::map::Map<K, V, 256>;
 pub type MapM<K, V> = immutable_chunkmap::map::Map<K, V, 64>;
@@ -60,32 +86,28 @@ pub struct JtDesc {
     pub id: JtId,
     pub side: Side,
     pub spec: DeployableJtac,
+    pub state: Option<bfprotocols::cfg::JtacState>,
     pub air: bool,
 }
 
 #[macro_export]
 macro_rules! maybe {
     ($t:expr, $id:expr, $name:expr) => {
-        $t.get(&$id)
-            .ok_or_else(|| anyhow!("no such {} {:?}", $name, $id))
+        $t.get(&$id).ok_or_else(|| anyhow!("no such {} {:?}", $name, $id))
     };
 }
 
 #[macro_export]
 macro_rules! maybe_mut {
     ($t:expr, $id:expr, $name:expr) => {
-        $t.get_mut_cow(&$id)
-            .ok_or_else(|| anyhow!("no such {} {:?}", $name, $id))
+        $t.get_mut_cow(&$id).ok_or_else(|| anyhow!("no such {} {:?}", $name, $id))
     };
 }
 
 #[macro_export]
 macro_rules! unit {
     ($t:expr, $id:expr) => {
-        $t.persisted
-            .units
-            .get(&$id)
-            .ok_or_else(|| anyhow!("no such unit {:?}", $id))
+        $t.persisted.units.get(&$id).ok_or_else(|| anyhow!("no such unit {:?}", $id))
     };
 }
 
@@ -113,10 +135,7 @@ macro_rules! unit_by_name {
 #[macro_export]
 macro_rules! group {
     ($t:expr, $id:expr) => {
-        $t.persisted
-            .groups
-            .get(&$id)
-            .ok_or_else(|| anyhow!("no such group {:?}", $id))
+        $t.persisted.groups.get(&$id).ok_or_else(|| anyhow!("no such group {:?}", $id))
     };
 }
 
@@ -181,7 +200,175 @@ pub struct Db {
     pub ephemeral: Ephemeral,
 }
 
+/// A donor to the EWR radar network.
+/// `aspect_half_angle` is the half-angle of the forward detection cone in degrees;
+/// `None` means omnidirectional (ground EWRs, AWACS, ships).
+#[derive(Debug, Clone, Copy)]
+pub struct RadarDonor {
+    pub pos: Position3,
+    pub side: Side,
+    pub range: u32,
+    pub aspect_half_angle: Option<u16>,
+    pub airborne: bool,
+    pub sensor_type: bfprotocols::cfg::SensorType,
+    pub pulse_doppler: bool,
+    pub look_down_capable: bool,
+    /// Owning group, when this donor is a real DCS ground/naval unit (as
+    /// opposed to a deployed EWR or an airborne player). Lets IADN EMCON
+    /// control resolve a live Controller for this donor when it needs to --
+    /// always by name via Group::get_by_name at the point of use, never
+    /// cached, so a donor whose objective gets culled and later respawned
+    /// is handled correctly with no stale reference.
+    pub gid: Option<GroupId>,
+    /// Scales how much a nearby jammer degrades this donor's detection.
+    pub ecm_susceptibility: f32,
+    pub scan_interval_secs: u32,
+    pub frequency_band: bfprotocols::cfg::RadarBand,
+}
+
+/// How an objective kind weighs in the side's `objective_start_points`,
+/// see `Db::seed_objective_points` and `Db::objective_fund_ceilings`.
+fn fund_weight(kind: &bfprotocols::db::objective::ObjectiveKind) -> i32 {
+    use bfprotocols::db::objective::ObjectiveKind;
+    match kind {
+        ObjectiveKind::Airbase => 5,
+        ObjectiveKind::NavalBase => 4,
+        ObjectiveKind::Factory { .. } => 4,
+        ObjectiveKind::Logistics => 3,
+        ObjectiveKind::CommandCenter => 3,
+        ObjectiveKind::Fob => 2,
+        ObjectiveKind::CarrierGroup { .. } => 2,
+        ObjectiveKind::Farp { .. } => 1,
+        ObjectiveKind::SpecialSamSite => 1,
+    }
+}
+
 impl Db {
+    /// Distribute `budget` points across owned objectives on `side`, weighted by
+    /// objective kind. Only seeds objectives whose current points == 0 (when
+    /// `only_zero` is true) so existing earned points are preserved on load.
+    /// Each base's share is sized against ALL the side's bases, so seeding a
+    /// few empty ones gives them their normal share, not the whole budget.
+    fn seed_objective_points(&mut self, side: Side, budget: i32, only_zero: bool) {
+        let weight = fund_weight;
+        let owned: Vec<_> = self
+            .persisted
+            .objectives
+            .into_iter()
+            .filter(|(_, obj)| obj.owner() == side)
+            .map(|(id, obj)| (*id, weight(obj.kind()), obj.points))
+            .collect();
+        let total_weight: i32 = owned.iter().map(|(_, w, _)| w).sum();
+        if total_weight == 0 {
+            return;
+        }
+        let candidates = owned
+            .into_iter()
+            .filter(|(_, _, pts)| !only_zero || *pts == 0)
+            .map(|(id, w, _)| (id, w));
+        for (oid, w) in candidates {
+            let share = (budget as i64 * w as i64 / total_weight as i64) as i32;
+            if share > 0
+                && let Some(obj) = self.persisted.objectives.get_mut_cow(&oid)
+            {
+                obj.points = share;
+            }
+        }
+    }
+
+    /// The most the commander's funding drip tops each objective's fund up
+    /// to: its share of its side's `objective_start_points`, weighted exactly
+    /// as the start is seeded, among the objectives the side holds now.
+    /// Objectives of a side with no start budget are absent.
+    ///
+    /// The drip had no ceiling. A base that stayed damaged was the neediest
+    /// ask on every pass, forever: on vs2 (Sept 29) Sochi-Adler sat on an
+    /// 11,487,562 point fund -- free flights for its whole side -- while
+    /// Gudauta, at its seeded share, held about 5,000.
+    pub(crate) fn objective_fund_ceilings(&self) -> fxhash::FxHashMap<ObjectiveId, i64> {
+        let mut out = fxhash::FxHashMap::default();
+        for (side, budget) in self.ephemeral.cfg.objective_start_points.iter() {
+            if *budget <= 0 {
+                continue;
+            }
+            let owned = || {
+                self.persisted
+                    .objectives
+                    .into_iter()
+                    .filter(move |(_, o)| o.owner() == *side)
+            };
+            let total: i64 = owned().map(|(_, o)| fund_weight(o.kind()) as i64).sum();
+            if total == 0 {
+                continue;
+            }
+            for (oid, o) in owned() {
+                out.insert(*oid, *budget as i64 * fund_weight(o.kind()) as i64 / total);
+            }
+        }
+        out
+    }
+
+    /// decode one save file. both layers are checked here, the zstd frame
+    /// and the json inside it, so a candidate that returns Ok is known good
+    /// rather than merely present.
+    fn load_persisted(path: &Path) -> Result<Persisted> {
+        let file = File::open(path)
+            .map_err(|e| anyhow!("failed to open save file {:?}, {:?}", path, e))?;
+        let file = zstd::stream::Decoder::new(file)
+            .map_err(|e| anyhow!("failed to read save file {:?}, {:?}", path, e))?;
+        serde_json::from_reader(file)
+            .map_err(|e| anyhow!("failed to decode save file {:?}, {:?}", path, e))
+    }
+
+    /// every file we could fall back to if the live save is unreadable,
+    /// newest first: the timestamped rotations bg::save leaves behind on
+    /// every save, plus the temp file of a save that was interrupted before
+    /// its rename. a hard kill can leave the live save zero filled (the
+    /// rename reaches the disk, the data doesn't), and losing the whole
+    /// campaign to that is much worse than losing the last few minutes of it.
+    fn save_file_candidates(path: &Path) -> Vec<PathBuf> {
+        let candidates = || -> Result<Vec<(SystemTime, PathBuf)>> {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .ok_or_else(|| anyhow!("save file with no name"))?;
+            let dir =
+                path.parent().ok_or_else(|| anyhow!("save file has no parent dir"))?;
+            let mut candidates = vec![];
+            for file in fs::read_dir(dir)? {
+                let file = file?;
+                if !file.file_type()?.is_file() {
+                    continue;
+                }
+                let fname = file.file_name();
+                let fname = match fname.to_str() {
+                    Some(s) => s,
+                    None => continue,
+                };
+                let is_candidate = match fname.strip_prefix(name) {
+                    None => false,
+                    // the live save itself, already tried
+                    Some("") => false,
+                    Some(rest) => rest == ".tmp" || rest.parse::<i64>().is_ok(),
+                };
+                if is_candidate {
+                    candidates.push((file.metadata()?.modified()?, file.path()));
+                }
+            }
+            Ok(candidates)
+        };
+        match candidates() {
+            Err(e) => {
+                log::error!("could not list backup save files, {e:?}");
+                vec![]
+            }
+            Ok(mut candidates) => {
+                candidates.sort_by(|(a, _), (b, _)| b.cmp(a));
+                candidates.into_iter().map(|(_, path)| path).collect()
+            }
+        }
+    }
+
     pub fn load(
         miz: &Miz,
         idx: &MizIndex,
@@ -189,64 +376,301 @@ impl Db {
         cfg: Arc<Cfg>,
         path: &Path,
     ) -> Result<Self> {
-        let file = File::open(&path)
-            .map_err(|e| anyhow!("failed to open save file {:?}, {:?}", path, e))?;
-        let file = zstd::stream::Decoder::new(file)?;
-        let persisted: Persisted = serde_json::from_reader(file)
-            .map_err(|e| anyhow!("failed to decode save file {:?}, {:?}", path, e))?;
-        let mut db = Db {
-            persisted,
-            ephemeral: Ephemeral::default(),
+        let persisted = match Self::load_persisted(path) {
+            Ok(persisted) => persisted,
+            Err(e) => {
+                log::error!("the save file is unreadable, looking for a backup, {e:?}");
+                let mut recovered = None;
+                for candidate in Self::save_file_candidates(path) {
+                    match Self::load_persisted(&candidate) {
+                        Ok(persisted) => {
+                            log::error!(
+                                "resuming the campaign from backup save file {candidate:?}"
+                            );
+                            recovered = Some(persisted);
+                            break;
+                        }
+                        Err(e) => {
+                            log::warn!("backup save file is also unreadable, {e:?}")
+                        }
+                    }
+                }
+                match recovered {
+                    Some(persisted) => persisted,
+                    None => {
+                        return Err(
+                            e.context("and no backup save file could be read either")
+                        );
+                    }
+                }
+            }
         };
+        if let Some(w) = persisted.schema_warning() {
+            log::error!("!!! {w}");
+            crate::bg::fallback_log(
+                format!(
+                    "bflib: {w}
+"
+                )
+                .as_bytes(),
+            );
+        } else if persisted.schema_version < persisted::SAVE_SCHEMA_VERSION {
+            log::info!(
+                "save file is schema {}, it will be written back as schema {}",
+                persisted.schema_version,
+                persisted::SAVE_SCHEMA_VERSION
+            );
+        }
+        let mut db = Db { persisted, ephemeral: Ephemeral::default() };
         ObjectiveId::setseq(max(db.persisted.oid, ObjectiveId::seq()));
         GroupId::setseq(max(db.persisted.gid, GroupId::seq()));
         UnitId::setseq(max(db.persisted.uid, UnitId::seq()));
         db.ephemeral.set_cfg(miz, idx, cfg, to_bg)?;
+        db.load_veterans(path);
+        // Restore the capture/last-stand timers that have to outlive a
+        // restart (see Persisted::last_stand_state).
+        db.ephemeral.last_stand_state = db.persisted.last_stand_state;
+        db.ephemeral.last_owner_change = db
+            .persisted
+            .last_owner_change
+            .into_iter()
+            .map(|(oid, ts)| (*oid, *ts))
+            .collect();
+        // A save from before `funds_seeded` existed gets its empty bases
+        // topped up once; after that only a new round seeds.
+        for (side, budget) in db.ephemeral.cfg.objective_start_points.clone() {
+            if budget > 0 && !db.persisted.funds_seeded.contains(&side) {
+                db.seed_objective_points(side, budget, true);
+                db.persisted.funds_seeded.push(side);
+                db.ephemeral.dirty();
+            }
+        }
         Ok(db)
     }
 
-    pub fn maybe_snapshot(&mut self) -> Option<Persisted> {
-        if self.ephemeral.take_dirty() {
-            self.persisted.oid = ObjectiveId::seq();
-            self.persisted.gid = GroupId::seq();
-            self.persisted.uid = UnitId::seq();
-            Some(self.persisted.clone())
-        } else {
-            None
+    /// Read the veterans list (`bg::veterans_path`) and add everyone in this
+    /// save who is already past rookie mode.
+    fn load_veterans(&mut self, path: &Path) {
+        let vpath = crate::bg::veterans_path(path);
+        match fs::read(&vpath) {
+            Ok(buf) => match serde_json::from_slice::<Vec<dcso3::net::Ucid>>(&buf) {
+                Ok(v) => self.ephemeral.veterans.extend(v),
+                Err(e) => log::error!("the veterans list {vpath:?} is unreadable, {e:?}"),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => log::error!("could not read the veterans list {vpath:?}, {e:?}"),
+        }
+        let before = self.ephemeral.veterans.len();
+        for (ucid, p) in self.persisted.players() {
+            if p.sorties >= player::ROOKIE_SORTIES {
+                self.ephemeral.veterans.insert(*ucid);
+            }
+        }
+        self.ephemeral.veterans_path = Some(vpath);
+        if self.ephemeral.veterans.len() != before {
+            self.ephemeral.save_veterans();
         }
     }
 
-    pub fn ewrs(&self) -> impl Iterator<Item = (Vector3, Side, &DeployableEwr)> {
-        self.persisted.ewrs.into_iter().filter_map(|gid| {
+    /// A copy of the campaign to save, if anything changed since the last one.
+    pub fn maybe_snapshot(&mut self) -> Option<Persisted> {
+        if self.ephemeral.take_dirty() { Some(self.snapshot()) } else { None }
+    }
+
+    /// A copy of the campaign to save, unconditionally. Every save must go
+    /// through here (or `maybe_snapshot`): it copies the id sequences and the
+    /// session state that only lives in `Ephemeral` into `persisted` first. A
+    /// save of a bare `persisted.clone()` carries the sequences as they were
+    /// at the last snapshot, and after a reload new objects can be handed ids
+    /// that are already taken.
+    pub fn snapshot(&mut self) -> Persisted {
+        self.ephemeral.take_dirty();
+        self.persisted.schema_version = persisted::SAVE_SCHEMA_VERSION;
+        // Only once the mission has started the clock: before that it reads
+        // the wall clock, and a save then would record no pause at all --
+        // harmless, but the clock the load resumed is more accurate.
+        if self.ephemeral.clock.started() {
+            self.persisted.clock = Some(self.ephemeral.clock.saved(chrono::Utc::now()));
+        }
+        self.persisted.oid = ObjectiveId::seq();
+        self.persisted.gid = GroupId::seq();
+        self.persisted.uid = UnitId::seq();
+        self.persisted.last_stand_state = self.ephemeral.last_stand_state;
+        // Only the entries still inside the capture cooldown matter; the
+        // rest would just grow the save by one line per base ever flipped.
+        let cooldown = self
+            .ephemeral
+            .cfg
+            .campaign_events
+            .as_ref()
+            .map(|c| c.capture_cooldown_secs as i64)
+            .unwrap_or(120);
+        let now = self.ephemeral.now();
+        self.persisted.last_owner_change = self
+            .ephemeral
+            .last_owner_change
+            .iter()
+            .filter(|(_, ts)| (now - **ts).num_seconds() < cooldown)
+            .map(|(oid, ts)| (*oid, *ts))
+            .collect();
+        self.persisted.clone()
+    }
+
+    /// Get convoy origin/destination if a group ID belongs to an active supply convoy
+    pub fn convoy_info_for_group(
+        &self,
+        gid: &GroupId,
+    ) -> Option<(ObjectiveId, ObjectiveId)> {
+        self.ephemeral
+            .active_convoys
+            .values()
+            .find(|c| c.group_id == *gid)
+            .map(|c| (c.origin, c.destination))
+    }
+
+    /// Count active supply convoys for a given side
+    pub fn convoy_count_for_side(&self, side: dcso3::coalition::Side) -> usize {
+        self.ephemeral.active_convoys.values().filter(|c| c.side == side).count()
+    }
+
+    /// Iterate the active supply convoys belonging to a side (for F10 reports).
+    pub fn convoys_for_side(
+        &self,
+        side: dcso3::coalition::Side,
+    ) -> impl Iterator<Item = &crate::db::logistics::SupplyConvoy> {
+        self.ephemeral.active_convoys.values().filter(move |c| c.side == side)
+    }
+
+    /// True if a capture timer is currently running against this objective.
+    pub fn capture_in_progress(&self, oid: &ObjectiveId) -> bool {
+        self.ephemeral.capture_progress.contains_key(oid)
+    }
+
+    /// Objectives of `side` that enemy troops are actively attempting to capture.
+    pub fn objectives_being_captured_by(
+        &self,
+        side: dcso3::coalition::Side,
+    ) -> Vec<ObjectiveId> {
+        self.ephemeral
+            .capture_progress
+            .iter()
+            .filter_map(|(oid, (capturing_side, _, _))| {
+                if *capturing_side != side {
+                    // capturing_side is the ENEMY — oid is a friendly objective being taken
+                    let obj = self.persisted.objectives.get(oid)?;
+                    if obj.owner() == side { Some(*oid) } else { None }
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Iterate over every active radar donor:
+    /// - deployed ground EWRs (omnidirectional, from the persisted EWR set)
+    /// - AI units whose vehicle type is in `cfg.ground_radar_ewrs` (ships, SAM search radars)
+    /// - player aircraft whose vehicle type is in `cfg.airborne_ewrs`
+    pub fn radar_donors(&self) -> impl Iterator<Item = RadarDonor> + '_ {
+        // Deployed EWR groups (AWACS actions, deployed EWR deployables)
+        let deployed = self.persisted.ewrs.into_iter().filter_map(|gid| {
             let group = self.persisted.groups.get(gid)?;
-            match &group.origin {
-                DeployKind::Crate { .. }
-                | DeployKind::Objective { .. }
-                | DeployKind::ObjectiveDeprecated
-                | DeployKind::Troop { .. } => None,
+            let (ewr, side) = match &group.origin {
                 DeployKind::Action {
-                    spec:
-                        Action {
-                            kind: ActionKind::Awacs(AwacsCfg { ewr, .. }),
-                            ..
-                        },
+                    spec: Action { kind: ActionKind::Awacs(AwacsCfg { ewr, .. }), .. },
                     ..
                 }
                 | DeployKind::Deployed {
-                    spec: Deployable { ewr: Some(ewr), .. },
-                    ..
-                } => {
-                    let pos = centroid3d(
-                        group
-                            .units
-                            .into_iter()
-                            .map(|u| self.persisted.units[u].position.p.0),
-                    );
-                    Some((pos, group.side, ewr))
-                }
-                DeployKind::Action { .. } | DeployKind::Deployed { .. } => None,
-            }
-        })
+                    spec: Deployable { ewr: Some(ewr), .. }, ..
+                } => (ewr, group.side),
+                _ => return None,
+            };
+            // `get`, not `units[u]`: the chunkmap's Index panics on a missing
+            // key, and this iterator is drained inside the timed-event tick --
+            // one stale unit id in a deployed EWR group took the whole tick
+            // down with it.
+            let p = centroid3d(
+                group
+                    .units
+                    .into_iter()
+                    .filter_map(|u| self.persisted.units.get(u).map(|u| u.position.p.0)),
+            );
+            Some(RadarDonor {
+                pos: Position3 { p: dcso3::LuaVec3(p), ..Default::default() },
+                side,
+                range: ewr.range,
+                aspect_half_angle: None,
+                airborne: false,
+                sensor_type: bfprotocols::cfg::SensorType::GroundEwr,
+                pulse_doppler: false,
+                look_down_capable: false,
+                gid: Some(*gid),
+                ecm_susceptibility: 0.5,
+                scan_interval_secs: 8,
+                frequency_band: bfprotocols::cfg::RadarBand::Vhf,
+            })
+        });
+        // AI ground / naval units listed in ground_radar_ewrs
+        let ai_ground =
+            self.persisted.units.into_iter().filter(|(_, u)| !u.dead).filter_map(
+                |(_, u)| {
+                    self.ephemeral.cfg.ground_radar_ewrs.get(&u.typ).map(|ewr_cfg| {
+                        // Explicit override wins -- the aspect_half_angle
+                        // guess below is wrong for any ground SAM search
+                        // radar correctly configured omnidirectional (which
+                        // is physically accurate for most real SAM search
+                        // radars), so relying on it alone silently drops
+                        // those units out of every SAM-specific IADN
+                        // mechanic. See AirborneEwr::sensor_type_override.
+                        let sensor_type = ewr_cfg.sensor_type_override.unwrap_or(
+                            match ewr_cfg.aspect_half_angle {
+                                Some(_) => bfprotocols::cfg::SensorType::SamSearchRadar,
+                                None => bfprotocols::cfg::SensorType::NavalRadar,
+                            },
+                        );
+                        RadarDonor {
+                            pos: u.position,
+                            side: u.side,
+                            range: ewr_cfg.range,
+                            aspect_half_angle: ewr_cfg.aspect_half_angle,
+                            airborne: false,
+                            sensor_type,
+                            pulse_doppler: ewr_cfg.pulse_doppler,
+                            look_down_capable: ewr_cfg.look_down_capable,
+                            gid: Some(u.group),
+                            ecm_susceptibility: ewr_cfg.ecm_susceptibility,
+                            scan_interval_secs: ewr_cfg.scan_interval_secs,
+                            frequency_band: ewr_cfg.frequency_band,
+                        }
+                    })
+                },
+            );
+        // Player aircraft listed in airborne_ewrs
+        let airborne = self
+            .instanced_players()
+            .filter(|(_, _, inst)| inst.in_air)
+            .filter_map(|(_, player, inst)| {
+                self.ephemeral.cfg.airborne_ewrs.get(&inst.typ).map(|ewr_cfg| {
+                    let sensor_type = match ewr_cfg.aspect_half_angle {
+                        Some(_) => bfprotocols::cfg::SensorType::AirborneFighter,
+                        None => bfprotocols::cfg::SensorType::Awacs,
+                    };
+                    RadarDonor {
+                        pos: inst.position,
+                        side: player.side,
+                        range: ewr_cfg.range,
+                        aspect_half_angle: ewr_cfg.aspect_half_angle,
+                        airborne: true,
+                        sensor_type,
+                        pulse_doppler: ewr_cfg.pulse_doppler,
+                        look_down_capable: ewr_cfg.look_down_capable,
+                        gid: None,
+                        ecm_susceptibility: ewr_cfg.ecm_susceptibility,
+                        scan_interval_secs: ewr_cfg.scan_interval_secs,
+                        frequency_band: ewr_cfg.frequency_band,
+                    }
+                })
+            });
+        deployed.chain(ai_ground).chain(airborne)
     }
 
     pub fn jtacs<'a>(&'a self) -> impl Iterator<Item = JtDesc> + 'a {
@@ -255,45 +679,46 @@ impl Db {
             .into_iter()
             .filter_map(|gid| {
                 let group = self.persisted.groups.get(gid)?;
-                let pos = centroid3d(
-                    group
-                        .units
-                        .into_iter()
-                        .filter_map(|u| self.persisted.units.get(u).map(|u| u.position.p.0)),
-                );
+                let pos =
+                    centroid3d(group.units.into_iter().filter_map(|u| {
+                        self.persisted.units.get(u).map(|u| u.position.p.0)
+                    }));
                 match &group.origin {
                     DeployKind::Troop {
-                        spec:
-                            Troop {
-                                jtac: Some(jtac), ..
-                            },
-                        ..
-                    }
-                    | DeployKind::Deployed {
-                        spec:
-                            Deployable {
-                                jtac: Some(jtac), ..
-                            },
+                        spec: Troop { jtac: Some(jtac), .. },
+                        jtac: jtac_state,
                         ..
                     } => Some(JtDesc {
                         pos,
                         id: JtId::Group(*gid),
                         side: group.side,
-                        spec: *jtac,
+                        spec: jtac.clone(),
+                        state: jtac_state.clone(),
+                        air: false,
+                    }),
+                    DeployKind::Deployed {
+                        spec: Deployable { jtac: Some(jtac), .. },
+                        jtac: jtac_state,
+                        ..
+                    } => Some(JtDesc {
+                        pos,
+                        id: JtId::Group(*gid),
+                        side: group.side,
+                        spec: jtac.clone(),
+                        state: jtac_state.clone(),
                         air: false,
                     }),
                     DeployKind::Action {
                         spec:
-                            Action {
-                                kind: ActionKind::Drone(DroneCfg { jtac, .. }),
-                                ..
-                            },
+                            Action { kind: ActionKind::Drone(DroneCfg { jtac, .. }), .. },
+                        jtac: jtac_state,
                         ..
                     } => Some(JtDesc {
                         pos,
                         id: JtId::Group(*gid),
                         side: group.side,
-                        spec: *jtac,
+                        spec: jtac.clone(),
+                        state: jtac_state.clone(),
                         air: true,
                     }),
                     DeployKind::Crate { .. }
@@ -301,11 +726,13 @@ impl Db {
                     | DeployKind::Objective { .. }
                     | DeployKind::ObjectiveDeprecated
                     | DeployKind::Troop { .. }
-                    | DeployKind::Deployed { .. } => None,
+                    | DeployKind::Deployed { .. }
+                    | DeployKind::DownedPilot { .. }
+                    | DeployKind::Dismount { .. } => None,
                 }
             })
             .chain(self.instanced_players().filter_map(|(_, p, inst)| {
-                let slot = p.current_slot.as_ref().unwrap().0;
+                let slot = p.current_slot.as_ref()?.0;
                 let pos = inst.position.p.0;
                 let id = JtId::Slot(slot);
                 match self.ephemeral.cfg.airborne_jtacs.get(&inst.typ) {
@@ -313,7 +740,8 @@ impl Db {
                         pos,
                         id,
                         side: p.side,
-                        spec: *jt,
+                        spec: jt.clone(),
+                        state: None,
                         air: true,
                     }),
                     None => match self.ephemeral.cargo.get(&slot) {
@@ -325,7 +753,8 @@ impl Db {
                                         pos,
                                         id,
                                         side: p.side,
-                                        spec: *jt,
+                                        spec: jt.clone(),
+                                        state: it.jtac.clone(),
                                         air: false,
                                     });
                                 }

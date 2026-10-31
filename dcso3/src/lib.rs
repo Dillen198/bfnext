@@ -11,19 +11,21 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
+// A DLL that DCS loads must use the Lua runtime DCS already has.
+#[cfg(all(feature = "vendored-lua", not(debug_assertions)))]
+compile_error!("dcso3's vendored-lua feature is for tests, not release builds");
+
 extern crate nalgebra as na;
 use anyhow::{anyhow, bail, Result};
-use compact_str::CompactString;
 use fxhash::FxHashMap;
 use log::error;
 use mlua::{prelude::*, Value};
+pub use schemars;
 use serde_derive::{Deserialize, Serialize};
 use std::{
     backtrace::Backtrace,
-    borrow::Borrow,
     cell::RefCell,
     collections::hash_map::Entry,
-    f64,
     fmt::Debug,
     marker::PhantomData,
     ops::{Add, AddAssign, Deref, DerefMut, Sub},
@@ -31,9 +33,12 @@ use std::{
 };
 
 pub mod airbase;
+pub mod atmosphere;
 pub mod attribute;
 pub mod coalition;
 pub mod controller;
+#[cfg(test)]
+mod conversion_tests;
 pub mod coord;
 pub mod country;
 pub mod dcs;
@@ -56,128 +61,15 @@ pub mod warehouse;
 pub mod weapon;
 pub mod world;
 
-#[macro_export]
-macro_rules! atomic_id {
-    ($name:ident) => {
-        paste::paste! {
-            #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-            pub struct $name(i64);
-
-            impl From<i64> for $name {
-                fn from(x: i64) -> Self {
-                    Self(x)
-                }
-            }
-
-            impl std::str::FromStr for $name {
-                type Err = anyhow::Error;
-
-                fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-                    Ok(Self(s.parse::<i64>()?))
-                }
-            }
-
-            impl serde::Serialize for $name {
-                fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: serde::Serializer {
-                    serializer.serialize_i64(self.0)
-                }
-            }
-
-            pub struct [<$name Visitor>];
-
-            impl<'de> serde::de::Visitor<'de> for [<$name Visitor>] {
-                type Value = $name;
-
-                fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                    write!(formatter, "a i64")
-                }
-
-                fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
-                where
-                    E: serde::de::Error,
-                {
-                    $name::update_max(v);
-                    Ok($name(v))
-                }
-
-                fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
-                where
-                    E: serde::de::Error,
-                {
-                    let v = v as i64;
-                    $name::update_max(v);
-                    Ok($name(v))
-                }
-            }
-
-            impl<'de> serde::Deserialize<'de> for $name {
-                fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: serde::Deserializer<'de> {
-                    deserializer.deserialize_i64([<$name Visitor>])
-                }
-            }
-
-            static [<MAX_ $name:upper _ID>]: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
-
-            impl std::fmt::Display for $name {
-                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                    write!(f, "{}", self.0)
-                }
-            }
-
-            impl std::default::Default for $name {
-                fn default() -> Self {
-                    Self::new()
-                }
-            }
-
-            impl<'lua> mlua::FromLua<'lua> for $name {
-                fn from_lua(value: mlua::Value<'lua>, lua: &'lua mlua::Lua) -> mlua::prelude::LuaResult<Self> {
-                    let i = i64::from_lua(value, lua)?;
-                    Ok($name(i))
-                }
-            }
-
-            impl<'lua> mlua::IntoLua<'lua> for $name {
-                fn into_lua(self, lua: &'lua mlua::Lua) -> mlua::prelude::LuaResult<mlua::Value<'lua>> {
-                    self.0.into_lua(lua)
-                }
-            }
-
-            impl $name {
-                pub fn new() -> Self {
-                    Self([<MAX_ $name:upper _ID>].fetch_add(1, std::sync::atomic::Ordering::Relaxed))
-                }
-
-                fn update_max(n: i64) {
-                    const O: std::sync::atomic::Ordering = std::sync::atomic::Ordering::Relaxed;
-                    let _: Result<_, _> = [<MAX_ $name:upper _ID>].fetch_update(O, O, |cur| {
-                        if n >= cur {
-                            Some(n.wrapping_add(1))
-                        } else {
-                            None
-                        }
-                    });
-                }
-
-                pub fn inner(&self) -> i64 {
-                    self.0
-                }
-
-                pub fn setseq(i: i64) {
-                    [<MAX_ $name:upper _ID>].store(i, std::sync::atomic::Ordering::Relaxed)
-                }
-
-                pub fn seq() -> i64 {
-                    [<MAX_ $name:upper _ID>].load(std::sync::atomic::Ordering::Relaxed)
-                }
-
-                pub fn zero() -> Self {
-                    Self(0)
-                }
-            }
-        }
-    }
-}
+// The Lua-free types and macros live in dcso3-core so that programs which
+// never load into DCS can use them without linking Lua. Re-exported here
+// (and in each module, at the type's old path) so nothing downstream moves.
+pub use dcso3_core::{
+    atomic_id,
+    lua::{cvt_err, err, lua_err},
+    simple_enum, simple_enum_unknown, string_enum, wrapped_prim, String, Vector2,
+    Vector3,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Quad2 {
@@ -187,8 +79,8 @@ pub struct Quad2 {
     pub p3: LuaVec2,
 }
 
-impl<'lua> FromLua<'lua> for Quad2 {
-    fn from_lua(value: Value<'lua>, _lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for Quad2 {
+    fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
         let verts = as_tbl("Quad", None, value).map_err(lua_err)?;
         Ok(Self {
             p0: verts.raw_get(1)?,
@@ -315,6 +207,10 @@ pub struct Color {
 }
 
 impl Color {
+    pub fn new(r: f32, g: f32, b: f32, a: f32) -> Color {
+        Color { r, g, b, a }
+    }
+
     pub fn black(a: f32) -> Color {
         Color { r: 0., g: 0., b: 0., a }
     }
@@ -342,10 +238,29 @@ impl Color {
     pub fn yellow(a: f32) -> Color {
         Color { r: 0.75, g: 1., b: 0., a }
     }
+
+    /// High-contrast stand-in for `red` on F10 map overlays. Pure red sits too
+    /// close to the terrain luminance on desert maps (Syria, Sinai, PG) to be
+    /// legible; violet separates cleanly from both sand and vegetation, and
+    /// leaves red free to mean "bad" in status glyphs.
+    pub fn violet(a: f32) -> Color {
+        Color { r: 0.72, g: 0.30, b: 1., a }
+    }
+
+    /// High-contrast stand-in for `blue` on F10 map overlays. Pure blue is
+    /// nearly invisible over water and dark terrain; azure keeps the coalition
+    /// reading while staying bright enough to pick out.
+    pub fn azure(a: f32) -> Color {
+        Color { r: 0.25, g: 0.65, b: 1., a }
+    }
+
+    pub fn with_alpha(self, a: f32) -> Color {
+        Color { a, ..self }
+    }
 }
 
-impl<'lua> FromLua<'lua> for Color {
-    fn from_lua(value: Value<'lua>, _lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for Color {
+    fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("Color", None, value).map_err(lua_err)?;
         Ok(Self {
             r: tbl.raw_get(1)?,
@@ -356,8 +271,8 @@ impl<'lua> FromLua<'lua> for Color {
     }
 }
 
-impl<'lua> IntoLua<'lua> for Color {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for Color {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         let tbl = lua.create_table()?;
         tbl.set(1, self.r)?;
         tbl.set(2, self.g)?;
@@ -384,7 +299,36 @@ pub fn wrap_f<'lua, L: LuaEnv<'lua>, R: Default, F: FnOnce(L) -> Result<R>>(
     }
 }
 
-pub fn wrap<'lua, R: Default>(name: &str, res: Result<R>) -> LuaResult<R> {
+/// Like `wrap_f`, but for callbacks where the `Default` answer is the
+/// dangerous one. The auth hooks (try connect / try change slot) read an
+/// empty return as "no objection", so an error or panic in the handler
+/// used to let the player through. Here any failure produces `deny()`
+/// instead, so the hook fails closed.
+pub fn wrap_f_deny<'lua, L, R, D, F>(name: &str, lua: L, deny: D, f: F) -> LuaResult<R>
+where
+    L: LuaEnv<'lua>,
+    D: FnOnce() -> LuaResult<R>,
+    F: FnOnce(L) -> Result<R>,
+{
+    match panic::catch_unwind(AssertUnwindSafe(|| f(lua))) {
+        Ok(Ok(r)) => Ok(r),
+        Ok(Err(e)) => {
+            error!("{name}: {e:?}, denying");
+            deny()
+        }
+        Err(e) => {
+            match e.downcast_ref::<anyhow::Error>() {
+                Some(e) => {
+                    error!("{name} panicked {e:?}, denying {}", Backtrace::capture())
+                }
+                None => error!("{name} panicked {e:?}, denying {}", Backtrace::capture()),
+            }
+            deny()
+        }
+    }
+}
+
+pub fn wrap<R: Default>(name: &str, res: Result<R>) -> LuaResult<R> {
     match res {
         Ok(r) => Ok(r),
         Err(e) => {
@@ -392,10 +336,6 @@ pub fn wrap<'lua, R: Default>(name: &str, res: Result<R>) -> LuaResult<R> {
             Ok(R::default())
         }
     }
-}
-
-pub fn lua_err<E: Debug>(err: E) -> LuaError {
-    LuaError::RuntimeError(format!("{:?}", err))
 }
 
 pub trait LuaEnv<'a> {
@@ -418,7 +358,7 @@ impl<'lua> LuaEnv<'lua> for HooksLua<'lua> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct MizLua<'lua>(&'lua Lua);
+pub struct MizLua<'lua>(pub &'lua Lua);
 
 impl<'lua> LuaEnv<'lua> for MizLua<'lua> {
     fn inner(self) -> &'lua Lua {
@@ -430,7 +370,7 @@ pub fn create_root_module<H, M>(
     lua: &Lua,
     init_hooks: H,
     init_miz: M,
-) -> LuaResult<LuaTable<'_>>
+) -> LuaResult<LuaTable>
 where
     H: Fn(HooksLua) -> Result<()> + 'static,
     M: Fn(MizLua) -> Result<()> + 'static,
@@ -455,24 +395,27 @@ where
 macro_rules! wrapped_table {
     ($name:ident, $class:expr) => {
         #[derive(Clone, Serialize)]
-        pub struct $name<'lua> {
-            t: mlua::Table<'lua>,
+        pub struct $name {
+            t: mlua::Table,
+            // Owned (a reference count), not a borrow: mlua 0.10 handles
+            // carry no lifetime. Do not keep these past the DCS callback
+            // that produced them.
             #[allow(dead_code)]
             #[serde(skip)]
-            lua: &'lua Lua,
+            lua: Lua,
         }
 
-        impl<'lua> std::fmt::Debug for $name<'lua> {
+        impl std::fmt::Debug for $name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                match self.t.raw_get::<&str, Value>("id_") {
+                match self.t.raw_get::<Value>("id_") {
                     Ok(Value::Nil) => {
-                        let v = crate::value_to_json(&Value::Table(self.t.clone()));
+                        let v = $crate::value_to_json(&Value::Table(self.t.clone()));
                         write!(f, "{v}")
                     }
                     Ok(v) => {
                         let class: String = self
                             .t
-                            .get_metatable()
+                            .metatable()
                             .and_then(|mt| mt.raw_get("className_").ok())
                             .unwrap_or(String::from("unknown"));
                         write!(f, "{{ class: {}, id: {:?} }}", class, v)
@@ -482,54 +425,27 @@ macro_rules! wrapped_table {
             }
         }
 
-        impl<'lua> Deref for $name<'lua> {
-            type Target = mlua::Table<'lua>;
+        impl Deref for $name {
+            type Target = mlua::Table;
 
             fn deref(&self) -> &Self::Target {
                 &self.t
             }
         }
 
-        impl<'lua> FromLua<'lua> for $name<'lua> {
-            fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+        impl FromLua for $name {
+            fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
                 Ok(Self {
                     t: as_tbl(stringify!($name), $class, value)
-                        .map_err(crate::lua_err)?,
-                    lua,
+                        .map_err($crate::lua_err)?,
+                    lua: lua.clone(),
                 })
             }
         }
 
-        impl<'lua> IntoLua<'lua> for $name<'lua> {
-            fn into_lua(self, _lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+        impl IntoLua for $name {
+            fn into_lua(self, _lua: &Lua) -> LuaResult<Value> {
                 Ok(Value::Table(self.t))
-            }
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! simple_enum {
-    ($name:ident, $repr:ident, [$($case:ident => $num:literal),+]) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-        #[allow(non_camel_case_types)]
-        #[repr($repr)]
-        pub enum $name {
-            $($case = $num),+
-        }
-
-        impl<'lua> FromLua<'lua> for $name {
-            fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
-                Ok(match $repr::from_lua(value, lua)? {
-                    $($num => Self::$case),+,
-                    _ => return Err(cvt_err(stringify!($name)))
-                })
-            }
-        }
-
-        impl<'lua> IntoLua<'lua> for $name {
-            fn into_lua(self, _lua: &'lua Lua) -> LuaResult<Value<'lua>> {
-                Ok(Value::Integer(self as i64))
             }
         }
     };
@@ -546,8 +462,8 @@ macro_rules! bitflags_enum {
             $($case = $num),+
         }
 
-        impl<'lua> FromLua<'lua> for $name {
-            fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+        impl FromLua for $name {
+            fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
                 Ok(match $repr::from_lua(value, lua)? {
                     $($num => Self::$case),+,
                     _ => return Err(cvt_err(stringify!($name)))
@@ -555,100 +471,15 @@ macro_rules! bitflags_enum {
             }
         }
 
-        impl<'lua> IntoLua<'lua> for $name {
-            fn into_lua(self, _lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+        impl IntoLua for $name {
+            fn into_lua(self, _lua: &Lua) -> LuaResult<Value> {
                 Ok(Value::Integer(self as i64))
             }
         }
     };
 }
 
-#[macro_export]
-macro_rules! string_enum {
-    ($name:ident, $repr:ident, [$($case:ident => $str:literal),+]) => {
-        string_enum!($name, $repr, [$($case => $str),+], []);
-    };
-    ($name:ident,
-     $repr:ident,
-     [$($case:ident => $str:literal),+],
-     [$($altcase:ident => $altstr:literal),*]) => {
-        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-        #[allow(non_camel_case_types)]
-        #[repr($repr)]
-        pub enum $name {
-            $($case),+,
-            Custom(String)
-        }
-
-        impl<'lua> FromLua<'lua> for $name {
-            fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
-                let s = String::from_lua(value, lua)?;
-                Ok(match s.as_str() {
-                    $($str => Self::$case,)+
-                    $($altstr => Self::$altcase,)*
-                    _ => Self::Custom(s)
-                })
-            }
-        }
-
-        impl<'lua> IntoLua<'lua> for $name {
-            fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
-                Ok(Value::String(match self {
-                    $(Self::$case => lua.create_string($str)?),+,
-                    Self::Custom(s) => lua.create_string(s.as_str())?
-                }))
-            }
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! wrapped_prim {
-    ($name:ident, $type:ty) => {
-        wrapped_prim!($name, $type, );
-    };
-    ($name:ident, $type:ty, $($extra_derives:ident),*) => {
-        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, $($extra_derives),*)]
-        pub struct $name($type);
-
-        impl $name {
-            pub fn inner(self) -> $type {
-                self.0
-            }
-        }
-
-        impl From<$type> for $name {
-            fn from(t: $type) -> Self {
-                Self(t)
-            }
-        }
-
-        impl<'lua> FromLua<'lua> for $name {
-            fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
-                Ok(Self(FromLua::from_lua(value, lua)?))
-            }
-        }
-
-        impl<'lua> IntoLua<'lua> for $name {
-            fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
-                Ok(self.0.into_lua(lua)?)
-            }
-        }
-    };
-}
-
-pub fn cvt_err(to: &'static str) -> LuaError {
-    LuaError::FromLuaConversionError { from: "value", to, message: None }
-}
-
-pub fn err(msg: &str) -> LuaError {
-    LuaError::runtime(msg)
-}
-
-pub fn as_tbl_ref<'a: 'lua, 'lua>(
-    to: &'static str,
-    value: &'a Value<'lua>,
-) -> Result<&'a mlua::Table<'lua>> {
+pub fn as_tbl_ref<'a>(to: &'static str, value: &'a Value) -> Result<&'a mlua::Table> {
     value.as_table().ok_or_else(|| anyhow!("can't convert {:?} to {}", value, to))
 }
 
@@ -659,10 +490,10 @@ fn check_implements(tbl: &mlua::Table, class: &str) -> bool {
             None => tbl,
             Some(tbl) => tbl,
         };
-        match tbl.raw_get::<_, String>("className_") {
+        match tbl.raw_get::<String>("className_") {
             Err(_) => break false,
             Ok(s) if s.as_str() == class => break true,
-            Ok(_) => match tbl.raw_get::<_, mlua::Table>("parentClass_") {
+            Ok(_) => match tbl.raw_get::<mlua::Table>("parentClass_") {
                 Err(_) => break false,
                 Ok(t) => {
                     parent = Some(t);
@@ -672,15 +503,15 @@ fn check_implements(tbl: &mlua::Table, class: &str) -> bool {
     }
 }
 
-pub fn as_tbl<'lua>(
+pub fn as_tbl(
     to: &'static str,
     objtyp: Option<&'static str>,
-    value: Value<'lua>,
-) -> Result<mlua::Table<'lua>> {
+    value: Value,
+) -> Result<mlua::Table> {
     match value {
         Value::Table(tbl) => match objtyp {
             None => Ok(tbl),
-            Some(typ) => match tbl.get_metatable() {
+            Some(typ) => match tbl.metatable() {
                 None => bail!(
                     "to: {to}. not an object, expected object of type {} got {:?}",
                     typ,
@@ -699,38 +530,67 @@ pub fn as_tbl<'lua>(
     }
 }
 
-pub trait DeepClone<'lua>: IntoLua<'lua> + FromLua<'lua> + Clone {
-    fn deep_clone(&self, lua: &'lua Lua) -> Result<Self>;
+pub trait DeepClone: IntoLua + FromLua + Clone {
+    fn deep_clone(&self, lua: &Lua) -> Result<Self>;
 }
 
-impl<'lua, T> DeepClone<'lua> for T
+impl<T> DeepClone for T
 where
-    T: IntoLua<'lua> + FromLua<'lua> + Clone,
+    T: IntoLua + FromLua + Clone,
 {
-    fn deep_clone(&self, lua: &'lua Lua) -> Result<Self> {
-        let v = match self.clone().into_lua(lua)? {
-            Value::Boolean(b) => Value::Boolean(b),
-            Value::Error(e) => Value::Error(e),
-            Value::Function(f) => Value::Function(f),
-            Value::Integer(i) => Value::Integer(i),
-            Value::LightUserData(d) => Value::LightUserData(d),
-            Value::Nil => Value::Nil,
-            Value::Number(n) => Value::Number(n),
-            Value::String(s) => Value::String(lua.create_string(s)?),
-            Value::Table(t) => {
-                let new = lua.create_table()?;
-                new.set_metatable(t.get_metatable());
-                for r in t.pairs::<Value, Value>() {
-                    let (k, v) = r?;
-                    new.set(k.deep_clone(lua)?, v.deep_clone(lua)?)?
-                }
-                Value::Table(new)
-            }
-            Value::Thread(t) => Value::Thread(t),
-            Value::UserData(d) => Value::UserData(d),
-        };
+    fn deep_clone(&self, lua: &Lua) -> Result<Self> {
+        let mut seen = FxHashMap::default();
+        let v = deep_clone_value(lua, self.clone().into_lua(lua)?, &mut seen, 0)?;
         Ok(T::from_lua(v, lua)?)
     }
+}
+
+/// Nesting deeper than this is treated as runaway input rather than data;
+/// real DCS tables (mission, routes, tasks) are a few dozen levels at most.
+const DEEP_CLONE_MAX_DEPTH: usize = 200;
+
+/// The recursion behind `DeepClone`. `seen` maps each source table already
+/// copied to its copy, so a table reachable twice (or through a cycle) is
+/// cloned once and the copy keeps the same shape. Without it a cyclic table
+/// recursed until the stack overflowed, which takes DCS down with it.
+fn deep_clone_value(
+    lua: &Lua,
+    v: Value,
+    seen: &mut FxHashMap<usize, mlua::Table>,
+    depth: usize,
+) -> Result<Value> {
+    Ok(match v {
+        Value::String(s) => Value::String(lua.create_string(s.as_bytes())?),
+        Value::Table(t) => {
+            let addr = t.to_pointer() as usize;
+            if let Some(new) = seen.get(&addr) {
+                return Ok(Value::Table(new.clone()));
+            }
+            if depth >= DEEP_CLONE_MAX_DEPTH {
+                bail!("deep_clone: table nesting exceeds {DEEP_CLONE_MAX_DEPTH}")
+            }
+            let new = lua.create_table()?;
+            new.set_metatable(t.metatable());
+            seen.insert(addr, new.clone());
+            for r in t.pairs::<Value, Value>() {
+                let (k, v) = r?;
+                let k = deep_clone_value(lua, k, seen, depth + 1)?;
+                let v = deep_clone_value(lua, v, seen, depth + 1)?;
+                new.set(k, v)?
+            }
+            Value::Table(new)
+        }
+        v @ (Value::Boolean(_)
+        | Value::Error(_)
+        | Value::Function(_)
+        | Value::Integer(_)
+        | Value::LightUserData(_)
+        | Value::Nil
+        | Value::Number(_)
+        | Value::Thread(_)
+        | Value::UserData(_)
+        | Value::Other(_)) => v,
+    })
 }
 
 pub fn is_hooks_env(lua: &Lua) -> bool {
@@ -797,8 +657,8 @@ impl From<u8> for PathElt {
     }
 }
 
-impl<'lua> IntoLua<'lua> for &PathElt {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for &PathElt {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         Ok(match self {
             PathElt::Integer(i) => Value::Integer(*i),
             PathElt::String(s) => Value::String(lua.create_string(s.as_bytes())?),
@@ -806,8 +666,8 @@ impl<'lua> IntoLua<'lua> for &PathElt {
     }
 }
 
-impl<'lua> FromLua<'lua> for PathElt {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for PathElt {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         Ok(match value {
             Value::Integer(n) => PathElt::Integer(n),
             Value::String(_) => PathElt::String(String::from_lua(value, lua)?),
@@ -871,19 +731,19 @@ macro_rules! path {
     }}
 }
 
-pub trait DcsTableExt<'lua> {
+pub trait DcsTableExt {
     fn raw_get_path<T>(&self, path: &Path) -> Result<T>
     where
-        T: FromLua<'lua>;
+        T: FromLua;
 
     fn get_path<T>(&self, path: &Path) -> Result<T>
     where
-        T: FromLua<'lua>;
+        T: FromLua;
 }
 
-fn table_raw_get_path<'lua, T>(tbl: &mlua::Table<'lua>, path: &[PathElt]) -> Result<T>
+fn table_raw_get_path<T>(tbl: &mlua::Table, path: &[PathElt]) -> Result<T>
 where
-    T: FromLua<'lua>,
+    T: FromLua,
 {
     match path {
         [] => bail!("path not found"),
@@ -895,9 +755,9 @@ where
     }
 }
 
-fn table_get_path<'lua, T>(tbl: &mlua::Table<'lua>, path: &[PathElt]) -> Result<T>
+fn table_get_path<T>(tbl: &mlua::Table, path: &[PathElt]) -> Result<T>
 where
-    T: FromLua<'lua>,
+    T: FromLua,
 {
     match path {
         [] => bail!("path not found"),
@@ -909,23 +769,21 @@ where
     }
 }
 
-impl<'lua> DcsTableExt<'lua> for mlua::Table<'lua> {
+impl DcsTableExt for mlua::Table {
     fn raw_get_path<T>(&self, path: &Path) -> Result<T>
     where
-        T: FromLua<'lua>,
+        T: FromLua,
     {
-        table_raw_get_path(self, &**path)
+        table_raw_get_path(self, path)
     }
 
     fn get_path<T>(&self, path: &Path) -> Result<T>
     where
-        T: FromLua<'lua>,
+        T: FromLua,
     {
-        table_get_path(self, &**path)
+        table_get_path(self, path)
     }
 }
-
-pub type Vector2 = na::base::Vector2<f64>;
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
 pub struct LuaVec2(pub na::base::Vector2<f64>);
@@ -944,8 +802,8 @@ impl DerefMut for LuaVec2 {
     }
 }
 
-impl<'lua> IntoLua<'lua> for LuaVec2 {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for LuaVec2 {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         let tbl = lua.create_table()?;
         tbl.set("x", self.0.x)?;
         tbl.set("y", self.0.y)?;
@@ -953,8 +811,8 @@ impl<'lua> IntoLua<'lua> for LuaVec2 {
     }
 }
 
-impl<'lua> FromLua<'lua> for LuaVec2 {
-    fn from_lua(value: Value<'lua>, _: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for LuaVec2 {
+    fn from_lua(value: Value, _: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("Vec2", None, value).map_err(lua_err)?;
         Ok(Self(na::base::Vector2::new(tbl.raw_get("x")?, tbl.raw_get("y")?)))
     }
@@ -965,8 +823,6 @@ impl LuaVec2 {
         LuaVec2(na::base::Vector2::new(x, y))
     }
 }
-
-pub type Vector3 = na::base::Vector3<f64>;
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
 pub struct LuaVec3(pub na::base::Vector3<f64>);
@@ -985,8 +841,8 @@ impl DerefMut for LuaVec3 {
     }
 }
 
-impl<'lua> FromLua<'lua> for LuaVec3 {
-    fn from_lua(value: Value<'lua>, _: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for LuaVec3 {
+    fn from_lua(value: Value, _: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("Vec3", None, value).map_err(lua_err)?;
         Ok(Self(na::base::Vector3::new(
             tbl.raw_get("x")?,
@@ -996,8 +852,8 @@ impl<'lua> FromLua<'lua> for LuaVec3 {
     }
 }
 
-impl<'lua> IntoLua<'lua> for LuaVec3 {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for LuaVec3 {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         let tbl = lua.create_table()?;
         tbl.raw_set("x", self.0.x)?;
         tbl.raw_set("y", self.0.y)?;
@@ -1020,8 +876,8 @@ pub struct Position3 {
     pub z: LuaVec3,
 }
 
-impl<'lua> FromLua<'lua> for Position3 {
-    fn from_lua(value: Value<'lua>, _: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for Position3 {
+    fn from_lua(value: Value, _: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("Position3", None, value).map_err(lua_err)?;
         Ok(Self {
             p: tbl.raw_get("p")?,
@@ -1032,8 +888,8 @@ impl<'lua> FromLua<'lua> for Position3 {
     }
 }
 
-impl<'lua> IntoLua<'lua> for Position3 {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for Position3 {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         let tbl = lua.create_table()?;
         tbl.raw_set("p", self.p)?;
         tbl.raw_set("x", self.x)?;
@@ -1049,120 +905,50 @@ pub struct Box3 {
     pub max: LuaVec3,
 }
 
-impl<'lua> FromLua<'lua> for Box3 {
-    fn from_lua(value: Value<'lua>, _: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for Box3 {
+    fn from_lua(value: Value, _: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("Box3", None, value).map_err(lua_err)?;
         Ok(Self { min: tbl.raw_get("min")?, max: tbl.raw_get("max")? })
     }
 }
 
-#[derive(
-    Debug, Clone, Default, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
-)]
-pub struct String(CompactString);
-
-impl std::fmt::Display for String {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl Deref for String {
-    type Target = compact_str::CompactString;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for String {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl AsRef<str> for String {
-    fn as_ref(&self) -> &str {
-        self.0.as_ref()
-    }
-}
-
-impl Borrow<str> for String {
-    fn borrow(&self) -> &str {
-        self.0.borrow()
-    }
-}
-
-impl<'lua> IntoLua<'lua> for String {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
-        Ok(Value::String(lua.create_string(self.0)?))
-    }
-}
-
-impl<'lua> FromLua<'lua> for String {
-    fn from_lua(value: Value<'lua>, _: &'lua Lua) -> LuaResult<Self> {
-        use compact_str::format_compact;
-        match value {
-            Value::String(s) => Ok(Self(CompactString::from(s.to_str()?))),
-            Value::Boolean(b) => Ok(Self(format_compact!("{b}"))),
-            Value::Integer(n) => Ok(Self(format_compact!("{n}"))),
-            Value::Number(n) => Ok(Self(format_compact!("{n}"))),
-            v => Ok(Self(CompactString::from(v.to_string()?))),
-        }
-    }
-}
-
-impl From<&str> for String {
-    fn from(value: &str) -> Self {
-        Self(CompactString::from(value))
-    }
-}
-
-impl From<std::string::String> for String {
-    fn from(value: std::string::String) -> Self {
-        Self(CompactString::from(value))
-    }
-}
-
-impl From<CompactString> for String {
-    fn from(value: CompactString) -> Self {
-        Self(value)
-    }
-}
-
+/// Mission time in seconds (timer.getTime/getAbsTime, event times). f64
+/// because that is what Lua holds: an f32 only resolves ~0.06 s once a
+/// server has been up ~6 days, and abs time starts at the mission's clock
+/// time so it is large from the first frame.
 #[derive(Debug, Clone, Copy, Default, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct Time(pub f32);
+pub struct Time(pub f64);
 
-impl<'lua> IntoLua<'lua> for Time {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for Time {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         self.0.into_lua(lua)
     }
 }
 
-impl<'lua> FromLua<'lua> for Time {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
-        Ok(Self(f32::from_lua(value, lua)?))
+impl FromLua for Time {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
+        Ok(Self(f64::from_lua(value, lua)?))
     }
 }
 
-impl Add<f32> for Time {
+impl Add<f64> for Time {
     type Output = Self;
 
-    fn add(self, rhs: f32) -> Self::Output {
+    fn add(self, rhs: f64) -> Self::Output {
         Time(self.0 + rhs)
     }
 }
 
-impl AddAssign<f32> for Time {
-    fn add_assign(&mut self, rhs: f32) {
+impl AddAssign<f64> for Time {
+    fn add_assign(&mut self, rhs: f64) {
         self.0 += rhs
     }
 }
 
 impl Sub for Time {
-    type Output = f32;
+    type Output = f64;
 
-    fn sub(self, rhs: Self) -> f32 {
+    fn sub(self, rhs: Self) -> f64 {
         self.0 - rhs.0
     }
 }
@@ -1176,60 +962,91 @@ pub enum VolumeType {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Sequence<'lua, T> {
-    t: mlua::Table<'lua>,
+pub struct Sequence<T> {
+    t: mlua::Table,
     #[serde(skip)]
-    lua: &'lua Lua,
+    lua: Lua,
     ph: PhantomData<T>,
 }
 
-impl<'lua, T: FromLua<'lua> + 'lua> FromLua<'lua> for Sequence<'lua, T> {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl<T: FromLua> FromLua for Sequence<T> {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         match value {
-            Value::Table(t) => Ok(Self { t, lua, ph: PhantomData }),
-            Value::Nil => Ok(Self { t: lua.create_table()?, lua, ph: PhantomData }),
+            Value::Table(t) => Ok(Self { t, lua: lua.clone(), ph: PhantomData }),
+            Value::Nil => {
+                Ok(Self { t: lua.create_table()?, lua: lua.clone(), ph: PhantomData })
+            }
             _ => Err(cvt_err("Sequence")),
         }
     }
 }
 
-impl<'lua, T: IntoLua<'lua> + 'lua> IntoLua<'lua> for Sequence<'lua, T> {
-    fn into_lua(self, _lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl<T: IntoLua> IntoLua for Sequence<T> {
+    fn into_lua(self, _lua: &Lua) -> LuaResult<Value> {
         Ok(Value::Table(self.t))
     }
 }
 
-impl<'lua, T: FromLua<'lua> + 'lua> IntoIterator for Sequence<'lua, T> {
-    type IntoIter = mlua::TableSequence<'lua, T>;
+/// The values of a `Sequence` in order: `t[1]`, `t[2]`, ... up to the
+/// first nil, read raw (what mlua's `sequence_values` does, which in 0.10
+/// borrows the table and so cannot be returned from `into_iter`).
+pub struct SequenceIter<T> {
+    t: mlua::Table,
+    lua: Lua,
+    i: i64,
+    ph: PhantomData<T>,
+}
+
+impl<T: FromLua> Iterator for SequenceIter<T> {
     type Item = LuaResult<T>;
 
-    fn into_iter(self) -> Self::IntoIter {
-        self.t.sequence_values()
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.t.raw_get::<Value>(self.i) {
+            Err(e) => Some(Err(e)),
+            Ok(Value::Nil) => None,
+            Ok(v) => {
+                self.i += 1;
+                Some(T::from_lua(v, &self.lua))
+            }
+        }
     }
 }
 
-impl<'lua, T: FromLua<'lua> + 'lua> Sequence<'lua, T> {
+impl<T: FromLua> IntoIterator for Sequence<T> {
+    type IntoIter = SequenceIter<T>;
+    type Item = LuaResult<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        SequenceIter { t: self.t, lua: self.lua, i: 1, ph: PhantomData }
+    }
+}
+
+impl<T: FromLua> Sequence<T> {
     pub fn get(&self, i: i64) -> Result<T> {
         Ok(self.t.raw_get(i)?)
     }
 }
 
-impl<'lua, T: IntoLua<'lua> + 'lua> Sequence<'lua, T> {
+impl<T: IntoLua> Sequence<T> {
     pub fn set(&self, i: i64, t: T) -> Result<()> {
         Ok(self.t.raw_set(i, t)?)
     }
 }
 
-impl<'lua, T: FromLua<'lua> + 'lua> Sequence<'lua, T> {
-    pub fn empty(lua: &'lua Lua) -> Result<Self> {
-        Ok(Self { t: lua.create_table()?, lua: lua, ph: PhantomData })
+impl<T: FromLua> Sequence<T> {
+    pub fn empty(lua: &Lua) -> Result<Self> {
+        Ok(Self { t: lua.create_table()?, lua: lua.clone(), ph: PhantomData })
     }
 
     pub fn len(&self) -> usize {
         self.t.raw_len()
     }
 
-    pub fn into_inner(self) -> mlua::Table<'lua> {
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn into_inner(self) -> mlua::Table {
         self.t
     }
 
@@ -1248,7 +1065,7 @@ impl<'lua, T: FromLua<'lua> + 'lua> Sequence<'lua, T> {
     }
 }
 
-impl<'lua, T: FromLua<'lua> + IntoLua<'lua> + 'lua> Sequence<'lua, T> {
+impl<T: FromLua + IntoLua> Sequence<T> {
     pub fn push(&self, t: T) -> Result<()> {
         Ok(self.t.push(t)?)
     }
@@ -1278,6 +1095,7 @@ pub fn value_to_json(v: &Value) -> serde_json::Value {
             Value::String(s) => json!(s),
             Value::Function(_) => json!("<Function>"),
             Value::Thread(_) => json!("<Thread>"),
+            Value::Other(_) => json!("<Other>"),
             Value::Error(e) => json!(format!("{e}")),
             Value::Table(tbl) => {
                 let address = tbl.to_pointer() as usize;
@@ -1340,7 +1158,7 @@ pub fn rotate2d_gen<T, F: Fn(&mut T) -> &mut Vector2>(
     points: &mut [T],
     f: F,
 ) {
-    let centroid = centroid2d(points.into_iter().map(|t| *f(t)));
+    let centroid = centroid2d(points.iter_mut().map(|t| *f(t)));
     let sin = angle.sin();
     let cos = angle.cos();
     for t in points {
@@ -1376,7 +1194,7 @@ pub fn normal2(v: Vector2) -> Vector2 {
 /// Same as rotate2d, but construct and return a vec containing the rotated points
 /// in the same order as the they appear in the input slice.
 pub fn rotate2d_vec(angle: f64, points: &[Vector2]) -> Vec<Vector2> {
-    let mut points = Vec::from_iter(points.into_iter().map(|p| *p));
+    let mut points = Vec::from_iter(points.iter().copied());
     rotate2d(angle, &mut points);
     points
 }
@@ -1392,7 +1210,7 @@ pub fn degrees_to_radians(degrees: f64) -> f64 {
 /// change the heading (in radians) by the specified amount, adjusting if it rotates through 0/2 pi.
 /// e.g. `change_heading(3/2 pi, pi) -> pi / 2 not 5 / 2 pi`
 pub fn change_heading(heading: f64, change: f64) -> f64 {
-    const PI2: f64 = f64::consts::PI * 2.;
+    const PI2: f64 = std::f64::consts::PI * 2.;
     let change = if change.abs() > PI2 { change % PI2 } else { change };
     let res = heading + change;
     if res > PI2 {

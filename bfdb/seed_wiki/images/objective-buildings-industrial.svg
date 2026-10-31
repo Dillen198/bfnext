@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" width="800" height="500" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect x="0" y="0" width="800" height="500" fill="#0d1009"/>
+  <text x="30" y="34" font-size="18" font-weight="700" fill="#cdd4be">An industrial building</text>
+  <text x="30" y="54" font-size="13" fill="#7d8a6a">Illustration, not an in-game screenshot. The real ones vary; the logi: pins say which count.</text>
+  <defs><linearGradient id="stack" x1="0" x2="1"><stop offset="0" stop-color="#8a6a52"/><stop offset="1" stop-color="#4f3c2e"/></linearGradient></defs>
+  <polygon points="360.0,150.0 654.4,320.0 394.6,470.0 100.2,300.0" fill="#2b2a1f" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="204.1,250.0 481.2,410.0 394.6,460.0 117.5,300.0" fill="#3a3a33" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <path d="M366.3,80.0 L366.3,195.0 A11.0,6.4 0 0 0 388.3,195.0 L388.3,80.0 Z" fill="url(#stack)" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="377.3" cy="80.0" rx="11.0" ry="6.4" fill="#86654c" stroke="#0d1009" stroke-width="1"/>
+  <path d="M399.1,112.5 L399.1,207.5 A8.6,4.9 0 0 0 416.2,207.5 L416.2,112.5 Z" fill="url(#stack)" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="407.6" cy="112.5" rx="8.6" ry="4.9" fill="#86654c" stroke="#0d1009" stroke-width="1"/>
+  <polygon points="247.4,255.0 429.3,360.0 429.3,312.0 247.4,207.0" fill="#77624e" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="524.5,305.0 429.3,360.0 429.3,312.0 524.5,257.0" fill="#5a4a3b" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="342.7,152.0 379.1,151.0 283.8,206.0 247.4,207.0" fill="#7c7f78" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="247.4,207.0 283.8,228.0 283.8,206.0" fill="#6d5a48" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="379.1,173.0 283.8,228.0 283.8,206.0 379.1,151.0" fill="#3f5866" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="379.1,173.0 415.4,172.0 320.2,227.0 283.8,228.0" fill="#7c7f78" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="283.8,228.0 320.2,249.0 320.2,227.0" fill="#6d5a48" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="415.4,194.0 320.2,249.0 320.2,227.0 415.4,172.0" fill="#3f5866" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="415.4,194.0 451.8,193.0 356.5,248.0 320.2,249.0" fill="#7c7f78" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="320.2,249.0 356.5,270.0 356.5,248.0" fill="#6d5a48" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="451.8,215.0 356.5,270.0 356.5,248.0 451.8,193.0" fill="#3f5866" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="451.8,215.0 488.2,214.0 392.9,269.0 356.5,270.0" fill="#7c7f78" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="356.5,270.0 392.9,291.0 392.9,269.0" fill="#6d5a48" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="488.2,236.0 392.9,291.0 392.9,269.0 488.2,214.0" fill="#3f5866" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="488.2,236.0 524.5,235.0 429.3,290.0 392.9,291.0" fill="#7c7f78" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="392.9,291.0 429.3,312.0 429.3,290.0" fill="#6d5a48" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="524.5,257.0 429.3,312.0 429.3,290.0 524.5,235.0" fill="#3f5866" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="260.4,240.5 270.8,246.5 270.8,230.5 260.4,224.5" fill="#2c3a40" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="281.2,252.5 291.6,258.5 291.6,242.5 281.2,236.5" fill="#2c3a40" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="302.0,264.5 312.4,270.5 312.4,254.5 302.0,248.5" fill="#2c3a40" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="322.8,276.5 333.2,282.5 333.2,266.5 322.8,260.5" fill="#2c3a40" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="343.5,288.5 353.9,294.5 353.9,278.5 343.5,272.5" fill="#2c3a40" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="364.3,300.5 374.7,306.5 374.7,290.5 364.3,284.5" fill="#2c3a40" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="385.1,312.5 395.5,318.5 395.5,302.5 385.1,296.5" fill="#2c3a40" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="405.9,324.5 416.3,330.5 416.3,314.5 405.9,308.5" fill="#2c3a40" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="342.7,310.0 377.3,330.0 377.3,300.0 342.7,280.0" fill="#3d3a33" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="429.3,360.0 476.9,387.5 476.9,355.5 429.3,328.0" fill="#686459" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="528.9,357.5 476.9,387.5 476.9,355.5 528.9,325.5" fill="#4f4c43" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="481.2,298.0 528.9,325.5 476.9,355.5 429.3,328.0" fill="#898475" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="439.7,356.0 465.7,371.0 465.7,359.0 439.7,344.0" fill="#2c3a40" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <ellipse cx="217.1" cy="295.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="227.5" cy="301.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="244.8" cy="311.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <polygon points="211.9,291.5 239.6,307.5 239.6,303.5 211.9,287.5" fill="#30312a" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="253.5,299.5 239.6,307.5 239.6,303.5 253.5,295.5" fill="#242520" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="225.8,279.5 253.5,295.5 239.6,303.5 211.9,287.5" fill="#3f4137" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="212.8,288.0 238.8,303.0 238.8,287.0 212.8,272.0" fill="#595743" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="252.6,295.0 238.8,303.0 238.8,287.0 252.6,279.0" fill="#444233" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="226.6,264.0 252.6,279.0 238.8,287.0 212.8,272.0" fill="#767259" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="242.2,308.0 252.6,314.0 252.6,296.0 242.2,290.0" fill="#62604a" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="264.7,307.0 252.6,314.0 252.6,296.0 264.7,289.0" fill="#4a4938" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="254.3,283.0 264.7,289.0 252.6,296.0 242.2,290.0" fill="#827e61" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="263.0,298.0 252.6,304.0 252.6,298.0 263.0,292.0" fill="#2a3a44" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <ellipse cx="286.4" cy="345.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="296.8" cy="351.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="314.1" cy="361.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <polygon points="281.2,341.5 308.9,357.5 308.9,353.5 281.2,337.5" fill="#30312a" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="322.8,349.5 308.9,357.5 308.9,353.5 322.8,345.5" fill="#242520" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="295.0,329.5 322.8,345.5 308.9,353.5 281.2,337.5" fill="#3f4137" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="282.1,338.0 308.0,353.0 308.0,337.0 282.1,322.0" fill="#4a5134" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="321.9,345.0 308.0,353.0 308.0,337.0 321.9,329.0" fill="#383d28" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="295.9,314.0 321.9,329.0 308.0,337.0 282.1,322.0" fill="#616b45" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="311.5,358.0 321.9,364.0 321.9,346.0 311.5,340.0" fill="#515939" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="334.0,357.0 321.9,364.0 321.9,346.0 334.0,339.0" fill="#3d442b" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="323.6,333.0 334.0,339.0 321.9,346.0 311.5,340.0" fill="#6b764c" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="332.3,348.0 321.9,354.0 321.9,348.0 332.3,342.0" fill="#2a3a44" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <line x1="351.3" y1="195.0" x2="241.0" y2="105.0" stroke="#7d8a6a" stroke-width="1"/>
+  <circle cx="351.3" cy="195.0" r="3.5" fill="#8ec83f" stroke="#0d1009" stroke-width="1.5"/>
+  <text x="235.0" y="110.0" font-size="14" fill="#cdd4be" text-anchor="end" font-weight="600">Factory hall</text>
+  <text x="235.0" y="131.0" font-size="12.5" fill="#7d8a6a" text-anchor="end">Big works buildings, often with</text>
+  <text x="235.0" y="148.0" font-size="12.5" fill="#7d8a6a" text-anchor="end">a sawtooth roof and stacks.</text>
+  <line x1="472.6" y1="295.0" x2="584.0" y2="195.0" stroke="#7d8a6a" stroke-width="1"/>
+  <circle cx="472.6" cy="295.0" r="3.5" fill="#8ec83f" stroke="#0d1009" stroke-width="1.5"/>
+  <text x="590.0" y="200.0" font-size="14" fill="#cdd4be" font-weight="600">DCS type name contains</text>
+  <text x="590.0" y="221.0" font-size="12.5" fill="#7d8a6a">INDUSTRIAL</text>
+  <line x1="386.0" y1="435.0" x2="584.0" y2="315.0" stroke="#7d8a6a" stroke-width="1"/>
+  <circle cx="386.0" cy="435.0" r="3.5" fill="#8ec83f" stroke="#0d1009" stroke-width="1.5"/>
+  <text x="590.0" y="320.0" font-size="14" fill="#cdd4be" font-weight="600">Most common at Factories</text>
+  <text x="590.0" y="341.0" font-size="12.5" fill="#7d8a6a">Placed on real industrial sites:</text>
+  <text x="590.0" y="358.0" font-size="12.5" fill="#7d8a6a">mines, oil fields, plants.</text>
+  <text x="30.0" y="482.0" font-size="13" fill="#7d8a6a">Only the ones the base's logi: pins name count. The rest of the town does nothing.</text>
+</svg>

@@ -1,0 +1,24 @@
+{
+  "Aircraft": "OH58D",
+  "Upload": {
+    "Waypoints": false,
+    "Radios": false
+  },
+  "Waypoints": {
+    "Waypoints": []
+  },
+  "Radios": {
+    "Radio": {
+      "Presets": null,
+      "SelectedModes": null
+    }
+  },
+  "WaypointsCapture": {
+    "NavPointsMode": 0,
+    "TgtPointsMode": 0,
+    "NavPointsRangeFrom": 1,
+    "TgtPointsRangeFrom": 1
+  },
+  "Version": 2,
+  "KneeboardNotes": null
+}

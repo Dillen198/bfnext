@@ -26,6 +26,7 @@ use crate::{
 use anyhow::Result;
 use compact_str::format_compact;
 use enumflags2::{bitflags, BitFlags};
+use log::debug;
 use mlua::{prelude::*, Value, Variadic};
 use na::Vector2;
 use serde_derive::{Deserialize, Serialize};
@@ -34,6 +35,7 @@ use std::{mem, ops::Deref};
 string_enum!(PointType, u8, [
     TakeOffGround => "TakeOffGround",
     TakeOffGroundHot => "TakeOffGroundHot",
+    TakeOffParkingHot => "TakeOffParkingHot",
     TurningPoint => "Turning Point",
     TakeOffParking => "TakeOffParking",
     TakeOff => "TakeOff",
@@ -57,7 +59,13 @@ string_enum!(OrbitPattern, u8, [
 
 string_enum!(TurnMethod, u8, [
     FlyOverPoint => "Fly Over Point",
-    OffRoad => "Off Road"
+    OffRoad => "Off Road",
+    FromParkingArea => "From Parking Area",
+    FromParkingAreaHot => "From Parking Area Hot",
+    FromGroundArea => "From Ground Area",
+    FromGroundAreaHot => "From Ground Area Hot",
+    FromRunway => "From Runway",
+    Landing => "Landing"
 ]);
 
 string_enum!(Designation, u8, [
@@ -68,10 +76,7 @@ string_enum!(Designation, u8, [
     Auto => "Auto"
 ]);
 
-string_enum!(AltType, u8, [
-    BARO => "BARO",
-    RADIO => "RADIO"
-]);
+pub use dcso3_core::controller::{AltType, TacanBand};
 
 simple_enum!(FACCallsign, u8, [
     Axeman	=> 1,
@@ -111,8 +116,8 @@ pub struct AttackParams {
     pub y: Option<f64>,
 }
 
-impl<'lua> FromLua<'lua> for AttackParams {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for AttackParams {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl: LuaTable = FromLua::from_lua(value, lua)?;
         Ok(Self {
             weapon_type: tbl.raw_get("weaponType")?,
@@ -149,21 +154,9 @@ impl<'lua> FromLua<'lua> for AttackParams {
             } else {
                 None
             },
-            point: if tbl.raw_get("point")? {
-                tbl.raw_get("point")?
-            } else {
-                None
-            },
-            x: if tbl.raw_get("x")? {
-                tbl.raw_get("x")?
-            } else {
-                None
-            },
-            y: if tbl.raw_get("y")? {
-                tbl.raw_get("y")?
-            } else {
-                None
-            },
+            point: if tbl.raw_get("point")? { tbl.raw_get("point")? } else { None },
+            x: if tbl.raw_get("x")? { tbl.raw_get("x")? } else { None },
+            y: if tbl.raw_get("y")? { tbl.raw_get("y")? } else { None },
         })
     }
 }
@@ -202,8 +195,8 @@ pub struct FollowParams {
     pub last_waypoint_index: Option<i64>,
 }
 
-impl<'lua> FromLua<'lua> for FollowParams {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for FollowParams {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl: LuaTable = FromLua::from_lua(value, lua)?;
         Ok(Self {
             group: tbl.raw_get("groupId")?,
@@ -240,8 +233,8 @@ pub struct FACParams {
     pub number: Option<u8>,
 }
 
-impl<'lua> FromLua<'lua> for FACParams {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for FACParams {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl: LuaTable = FromLua::from_lua(value, lua)?;
         Ok(Self {
             weapon_type: tbl.raw_get("weaponType")?,
@@ -288,8 +281,8 @@ pub enum ActionTyp {
     Ground(VehicleFormation),
 }
 
-impl<'lua> IntoLua<'lua> for ActionTyp {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for ActionTyp {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         match self {
             ActionTyp::Air(a) => IntoLua::into_lua(a, lua),
             ActionTyp::Ground(a) => IntoLua::into_lua(a, lua),
@@ -297,8 +290,8 @@ impl<'lua> IntoLua<'lua> for ActionTyp {
     }
 }
 
-impl<'lua> FromLua<'lua> for ActionTyp {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for ActionTyp {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         match TurnMethod::from_lua(value.clone(), lua) {
             Ok(v) => Ok(Self::Air(v)),
             Err(te) => match VehicleFormation::from_lua(value, lua) {
@@ -312,7 +305,7 @@ impl<'lua> FromLua<'lua> for ActionTyp {
 }
 
 #[derive(Debug, Clone)]
-pub struct MissionPoint<'lua> {
+pub struct MissionPoint {
     pub typ: PointType,
     pub airdrome_id: Option<AirbaseId>,
     pub time_re_fu_ar: Option<i64>,
@@ -327,15 +320,15 @@ pub struct MissionPoint<'lua> {
     pub eta: Option<Time>,
     pub eta_locked: Option<bool>,
     pub name: Option<String>,
-    pub task: Box<Task<'lua>>,
+    pub task: Box<Task>,
 }
 
-impl<'lua> FromLua<'lua> for MissionPoint<'lua> {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for MissionPoint {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl: LuaTable = FromLua::from_lua(value, lua)?;
         Ok(Self {
             typ: tbl.raw_get("type")?,
-            airdrome_id: tbl.raw_get("airdromId")?,
+            airdrome_id: tbl.raw_get("airdromeId")?,
             time_re_fu_ar: tbl.raw_get("timeReFuAr")?,
             helipad: tbl.raw_get("helipadId")?,
             link_unit: tbl.raw_get("linkUnit")?,
@@ -353,11 +346,11 @@ impl<'lua> FromLua<'lua> for MissionPoint<'lua> {
     }
 }
 
-impl<'lua> IntoLua<'lua> for MissionPoint<'lua> {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for MissionPoint {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         let iter = [
             ("type", self.typ.into_lua(lua)?),
-            ("airdromId", self.airdrome_id.into_lua(lua)?),
+            ("airdromeId", self.airdrome_id.into_lua(lua)?),
             ("timeReFuAr", self.time_re_fu_ar.into_lua(lua)?),
             ("helipadId", self.helipad.into_lua(lua)?),
             ("linkUnit", self.link_unit.into_lua(lua)?),
@@ -380,16 +373,16 @@ impl<'lua> IntoLua<'lua> for MissionPoint<'lua> {
 }
 
 #[derive(Debug, Clone)]
-pub struct TaskStartCond<'lua> {
+pub struct TaskStartCond {
     pub time: Option<Time>,
-    pub user_flag: Option<Value<'lua>>,
-    pub user_flag_value: Option<Value<'lua>>,
+    pub user_flag: Option<Value>,
+    pub user_flag_value: Option<Value>,
     pub probability: Option<u8>,
     pub condition: Option<String>, // lua code
 }
 
-impl<'lua> FromLua<'lua> for TaskStartCond<'lua> {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for TaskStartCond {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl: LuaTable = FromLua::from_lua(value, lua)?;
         Ok(Self {
             time: tbl.raw_get("time")?,
@@ -401,8 +394,8 @@ impl<'lua> FromLua<'lua> for TaskStartCond<'lua> {
     }
 }
 
-impl<'lua> IntoLua<'lua> for TaskStartCond<'lua> {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for TaskStartCond {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         let iter = [
             ("time", self.time.into_lua(lua)?),
             ("userFlag", self.user_flag.into_lua(lua)?),
@@ -417,17 +410,17 @@ impl<'lua> IntoLua<'lua> for TaskStartCond<'lua> {
 }
 
 #[derive(Debug, Clone)]
-pub struct TaskStopCond<'lua> {
+pub struct TaskStopCond {
     pub time: Option<Time>,
-    pub user_flag: Option<Value<'lua>>,
-    pub user_flag_value: Option<Value<'lua>>,
+    pub user_flag: Option<Value>,
+    pub user_flag_value: Option<Value>,
     pub last_waypoint: Option<i64>,
     pub duration: Option<Time>,
     pub condition: Option<String>, // lua code
 }
 
-impl<'lua> FromLua<'lua> for TaskStopCond<'lua> {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for TaskStopCond {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl: LuaTable = FromLua::from_lua(value, lua)?;
         Ok(Self {
             time: tbl.raw_get("time")?,
@@ -440,8 +433,8 @@ impl<'lua> FromLua<'lua> for TaskStopCond<'lua> {
     }
 }
 
-impl<'lua> IntoLua<'lua> for TaskStopCond<'lua> {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for TaskStopCond {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         let iter = [
             ("time", self.time.into_lua(lua)?),
             ("userFlag", self.user_flag.into_lua(lua)?),
@@ -457,7 +450,7 @@ impl<'lua> IntoLua<'lua> for TaskStopCond<'lua> {
 }
 
 #[derive(Debug, Clone)]
-pub enum Task<'lua> {
+pub enum Task {
     AttackGroup {
         group: GroupId,
         params: AttackParams,
@@ -520,6 +513,9 @@ pub enum Task<'lua> {
         weapon_type: Option<u64>, // weapon flag(s)
         altitude: Option<f64>,
         altitude_type: Option<AltType>,
+        /// Vehicles only: relocate up to this many metres after the fire
+        /// mission (shoot and scoot, DCS `counterbattaryRadius`, 0..500).
+        counter_battery_radius: Option<f64>,
     },
     Hold,
     FACAttackGroup {
@@ -553,6 +549,19 @@ pub enum Task<'lua> {
         speed: f64,
         altitude: f64,
         last_wpt_idx: Option<i64>,
+    },
+    /// Hitch `trailer` to `tractor` (vehicles whose type can tow it: a
+    /// tractor's `canTow` saddle matches the trailer's). A trailer has no
+    /// engine of its own and stays where it is until attached.
+    AttachTrailer {
+        tractor: UnitId,
+        trailer: UnitId,
+        on_start_mission: bool,
+    },
+    /// Unhitch `tractor`'s trailer at `pos`.
+    DetachTrailer {
+        tractor: UnitId,
+        pos: LuaVec2,
     },
     EngageTargets {
         target_types: Vec<Attribute>,
@@ -589,27 +598,62 @@ pub enum Task<'lua> {
     },
     Mission {
         airborne: Option<bool>,
-        route: Vec<MissionPoint<'lua>>,
+        route: Vec<MissionPoint>,
     },
-    ComboTask(Vec<Task<'lua>>),
+    ComboTask(Vec<Task>),
     ControlledTask {
-        task: Box<Task<'lua>>,
-        condition: TaskStartCond<'lua>,
-        stop_condition: TaskStopCond<'lua>,
+        task: Box<Task>,
+        condition: TaskStartCond,
+        stop_condition: TaskStopCond,
     },
     WrappedCommand(Command),
-    WrappedOption(AiOption<'lua>),
+    WrappedOption(AiOption),
+    /// A task table this binding doesn't model, passed through untouched.
+    Raw(LuaTable),
 }
 
-impl<'lua> FromLua<'lua> for Task<'lua> {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for Task {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let root: LuaTable = FromLua::from_lua(value, lua)?;
-        let id: String = root.raw_get("id")?;
-        let params = match root.raw_get::<_, Option<LuaTable>>("params")? {
+        let id = match root.raw_get::<Option<String>>("id")? {
+            Some(id) => id,
+            None => return Ok(Self::Raw(root)),
+        };
+        let params = match root.raw_get::<Option<LuaTable>>("params")? {
             Some(tbl) => tbl,
             None => lua.create_table()?,
         };
-        match id.as_str() {
+        // Anything this binding can't decode -- a command or AI option it
+        // doesn't model yet, a param shape the Mission Editor writes that the
+        // scripting docs don't (x/y instead of `point`, a ControlledTask with
+        // only one condition, a numeric option with its checkbox off), a
+        // value added in a newer DCS -- is kept as the raw table and written
+        // back verbatim. It used to fail the whole waypoint, which is a hard
+        // error at mission init and a silently dropped waypoint at spawn.
+        match Self::decode(&root, &id, params, lua) {
+            Ok(task) => Ok(task),
+            Err(e) => {
+                debug!("keeping undecodable task {id} verbatim: {e}");
+                Ok(Self::Raw(root))
+            }
+        }
+    }
+}
+
+impl Task {
+    fn decode(root: &LuaTable, id: &str, params: LuaTable, lua: &Lua) -> LuaResult<Self> {
+        match id {
+            "Land" => Ok(Self::Land {
+                point: params.raw_get("point")?,
+                duration: if params
+                    .raw_get::<Option<bool>>("durationFlag")?
+                    .unwrap_or(false)
+                {
+                    params.raw_get("duration")?
+                } else {
+                    None
+                },
+            }),
             "AttackGroup" => Ok(Self::AttackGroup {
                 group: params.raw_get("groupId")?,
                 params: FromLua::from_lua(Value::Table(params), lua)?,
@@ -675,6 +719,7 @@ impl<'lua> FromLua<'lua> for Task<'lua> {
                 weapon_type: params.raw_get("weaponType")?,
                 altitude: params.raw_get("altitude")?,
                 altitude_type: params.raw_get("alt_type")?,
+                counter_battery_radius: params.raw_get("counterbattaryRadius")?,
             }),
             "Hold" => Ok(Self::Hold),
             "FAC_AttackGroup" => Ok(Self::FACAttackGroup {
@@ -718,6 +763,17 @@ impl<'lua> FromLua<'lua> for Task<'lua> {
                     None
                 },
             }),
+            "AttachTrailer" => Ok(Self::AttachTrailer {
+                tractor: params.raw_get("unitIdTractor")?,
+                trailer: params.raw_get("unitIdTrailer")?,
+                on_start_mission: params
+                    .raw_get::<Option<bool>>("onStartMission")?
+                    .unwrap_or(false),
+            }),
+            "DetachTrailer" => Ok(Self::DetachTrailer {
+                tractor: params.raw_get("unitIdTractor")?,
+                pos: LuaVec2(Vector2::new(params.raw_get("x")?, params.raw_get("y")?)),
+            }),
             "EngageTargets" => Ok(Self::EngageTargets {
                 target_types: params.raw_get("targetTypes")?,
                 max_dist: params.raw_get("maxDist")?,
@@ -753,7 +809,14 @@ impl<'lua> FromLua<'lua> for Task<'lua> {
             }),
             "Mission" => Ok(Self::Mission {
                 airborne: params.raw_get("airborne")?,
-                route: FromLua::from_lua(Value::Table(params), lua)?,
+                // Written as params.route.points (see into_lua); reading it
+                // from `params` itself always came back empty.
+                route: match params.raw_get::<Option<LuaTable>>("route")? {
+                    Some(route) => route
+                        .raw_get::<Option<Vec<MissionPoint>>>("points")?
+                        .unwrap_or_default(),
+                    None => vec![],
+                },
             }),
             "ComboTask" => Ok(Self::ComboTask(FromLua::from_lua(
                 Value::Table(params.raw_get("tasks")?),
@@ -766,7 +829,7 @@ impl<'lua> FromLua<'lua> for Task<'lua> {
             }),
             "WrappedAction" => {
                 let action: LuaTable = params.raw_get("action")?;
-                match action.raw_get::<_, String>("id")?.as_str() {
+                match action.raw_get::<String>("id")?.as_str() {
                     "Option" => {
                         let params: LuaTable = action.raw_get("params")?;
                         let tag: u8 = params.raw_get("name")?;
@@ -776,16 +839,20 @@ impl<'lua> FromLua<'lua> for Task<'lua> {
                     _cmd => Ok(Self::WrappedCommand(params.raw_get("action")?)),
                 }
             }
-            s => Err(err(&format_compact!("invalid action {s}"))),
+            // A task we don't model (ME routes carry plenty: WrappedAction
+            // scripts, new DCS task ids, ...). Failing here failed the whole
+            // route read, so keep it opaque and write it back verbatim.
+            _ => Ok(Self::Raw(root.clone())),
         }
     }
 }
 
-impl<'lua> IntoLua<'lua> for Task<'lua> {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for Task {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         let root = lua.create_table()?;
         let params = lua.create_table()?;
         match self {
+            Self::Raw(tbl) => return Ok(Value::Table(tbl)),
             Self::AttackGroup { group, params: atp } => {
                 root.raw_set("id", "AttackGroup")?;
                 params.raw_set("groupId", group)?;
@@ -801,21 +868,13 @@ impl<'lua> IntoLua<'lua> for Task<'lua> {
                 params.raw_set("point", point)?;
                 atp.push_tbl(&params)?;
             }
-            Self::Strafing {
-                point,
-                length,
-                params: atp,
-            } => {
+            Self::Strafing { point, length, params: atp } => {
                 root.raw_set("id", "Strafing")?;
                 params.raw_set("point", point)?;
                 params.raw_set("length", length)?;
                 atp.push_tbl(&params)?;
             }
-            Self::CarpetBombing {
-                point,
-                carpet_length,
-                params: atp,
-            } => {
+            Self::CarpetBombing { point, carpet_length, params: atp } => {
                 root.raw_set("id", "CarpetBombing")?;
                 params.raw_set("point", point)?;
                 params.raw_set("carpetLength", carpet_length)?;
@@ -826,21 +885,12 @@ impl<'lua> IntoLua<'lua> for Task<'lua> {
                 params.raw_set("point", point)?;
                 atp.push_tbl(&params)?;
             }
-            Self::BombRunway {
-                runway,
-                params: atp,
-            } => {
+            Self::BombRunway { runway, params: atp } => {
                 root.raw_set("id", "BombingRunway")?;
                 params.raw_set("runwayId", runway)?;
                 atp.push_tbl(&params)?;
             }
-            Self::Orbit {
-                pattern,
-                point,
-                point2,
-                speed,
-                altitude,
-            } => {
+            Self::Orbit { pattern, point, point2, speed, altitude } => {
                 root.raw_set("id", "Orbit")?;
                 params.raw_set("pattern", pattern)?;
                 params.raw_set("point", point)?;
@@ -865,22 +915,13 @@ impl<'lua> IntoLua<'lua> for Task<'lua> {
                 root.raw_set("id", "FollowBigFormation")?;
                 fp.push_tbl(&params)?;
             }
-            Self::Escort {
-                engagement_dist_max,
-                target_types,
-                params: fp,
-            } => {
+            Self::Escort { engagement_dist_max, target_types, params: fp } => {
                 root.raw_set("id", "Escort")?;
                 params.raw_set("engagementDistMax", engagement_dist_max)?;
                 params.raw_set("targetTypes", target_types)?;
                 fp.push_tbl(&params)?;
             }
-            Self::Embarking {
-                pos,
-                groups_for_embarking,
-                duration,
-                distribution,
-            } => {
+            Self::Embarking { pos, groups_for_embarking, duration, distribution } => {
                 root.raw_set("id", "Embarking")?;
                 params.raw_set("x", pos.x)?;
                 params.raw_set("y", pos.y)?;
@@ -899,11 +940,19 @@ impl<'lua> IntoLua<'lua> for Task<'lua> {
                 weapon_type,
                 altitude,
                 altitude_type,
+                counter_battery_radius,
             } => {
                 root.raw_set("id", "FireAtPoint")?;
+                if let Some(r) = counter_battery_radius {
+                    // DCS's own spelling.
+                    params.raw_set("counterbattaryRadius", r.clamp(0., 500.))?;
+                }
                 params.raw_set("point", point)?;
                 if let Some(radius) = radius {
+                    // The scripting docs call it `radius`, the Mission Editor
+                    // writes `zoneRadius`; send both until one is proven.
                     params.raw_set("radius", radius)?;
+                    params.raw_set("zoneRadius", radius)?;
                 }
                 if let Some(qty) = expend_qty {
                     params.raw_set("expendQtyEnabled", true)?;
@@ -950,10 +999,7 @@ impl<'lua> IntoLua<'lua> for Task<'lua> {
                     params.raw_set("zoneId", zone)?;
                 }
             }
-            Self::GoToWaypoint {
-                from_waypoint,
-                to_waypoint,
-            } => {
+            Self::GoToWaypoint { from_waypoint, to_waypoint } => {
                 root.raw_set("id", "goToWaypoint")?;
                 params.raw_set("fromWaypointIndex", from_waypoint)?;
                 params.raw_set("goToWaypointIndex", to_waypoint)?;
@@ -973,12 +1019,7 @@ impl<'lua> IntoLua<'lua> for Task<'lua> {
                     params.raw_set("lastWptIndex", wpi)?;
                 }
             }
-            Self::RecoveryTanker {
-                group,
-                speed,
-                altitude,
-                last_wpt_idx,
-            } => {
+            Self::RecoveryTanker { group, speed, altitude, last_wpt_idx } => {
                 root.raw_set("id", "RecoveryTanker")?;
                 params.raw_set("groupId", group)?;
                 params.raw_set("speed", speed)?;
@@ -988,26 +1029,32 @@ impl<'lua> IntoLua<'lua> for Task<'lua> {
                     params.raw_set("lastWptIndex", idx)?;
                 }
             }
-            Self::EngageTargets {
-                target_types,
-                max_dist,
-                priority,
-            } => {
+            Self::AttachTrailer { tractor, trailer, on_start_mission } => {
+                root.raw_set("id", "AttachTrailer")?;
+                params.raw_set("unitIdTractor", tractor)?;
+                params.raw_set("unitIdTrailer", trailer)?;
+                params.raw_set("onStartMission", on_start_mission)?;
+            }
+            Self::DetachTrailer { tractor, pos } => {
+                root.raw_set("id", "DetachTrailer")?;
+                params.raw_set("unitIdTractor", tractor)?;
+                params.raw_set("x", pos.x)?;
+                params.raw_set("y", pos.y)?;
+            }
+            Self::EngageTargets { target_types, max_dist, priority } => {
                 root.raw_set("id", "EngageTargets")?;
                 params.raw_set("targetTypes", target_types)?;
                 if let Some(d) = max_dist {
+                    // Without the flag the Mission Editor's own tasks treat
+                    // maxDist as unset, and the AI engages at any range.
+                    params.raw_set("maxDistEnabled", true)?;
                     params.raw_set("maxDist", d)?;
                 }
                 if let Some(p) = priority {
                     params.raw_set("priority", p)?;
                 }
             }
-            Self::EngageTargetsInZone {
-                point,
-                zone_radius,
-                target_types,
-                priority,
-            } => {
+            Self::EngageTargetsInZone { point, zone_radius, target_types, priority } => {
                 root.raw_set("id", "EngageTargetsInZone")?;
                 params.raw_set("point", point)?;
                 params.raw_set("zoneRadius", zone_radius)?;
@@ -1016,11 +1063,7 @@ impl<'lua> IntoLua<'lua> for Task<'lua> {
                     params.raw_set("priority", p)?;
                 }
             }
-            Self::EngageGroup {
-                group,
-                params: atp,
-                priority,
-            } => {
+            Self::EngageGroup { group, params: atp, priority } => {
                 root.raw_set("id", "EngageGroup")?;
                 params.raw_set("groupId", group)?;
                 atp.push_tbl(&params)?;
@@ -1028,11 +1071,7 @@ impl<'lua> IntoLua<'lua> for Task<'lua> {
                     params.raw_set("priority", p)?;
                 }
             }
-            Self::EngageUnit {
-                unit,
-                params: atp,
-                priority,
-            } => {
+            Self::EngageUnit { unit, params: atp, priority } => {
                 root.raw_set("id", "EngageUnit")?;
                 params.raw_set("unitId", unit)?;
                 atp.push_tbl(&params)?;
@@ -1043,11 +1082,7 @@ impl<'lua> IntoLua<'lua> for Task<'lua> {
             Self::AWACS => root.raw_set("id", "AWACS")?,
             Self::Tanker => root.raw_set("id", "Tanker")?,
             Self::EWR => root.raw_set("id", "EWR")?,
-            Self::FACEngageGroup {
-                group,
-                params: fp,
-                priority,
-            } => {
+            Self::FACEngageGroup { group, params: fp, priority } => {
                 root.raw_set("id", "FAC_EngageGroup")?;
                 params.raw_set("groupId", group)?;
                 fp.push_tbl(&params)?;
@@ -1055,10 +1090,7 @@ impl<'lua> IntoLua<'lua> for Task<'lua> {
                     params.raw_set("priority", p)?;
                 }
             }
-            Self::FAC {
-                params: fp,
-                priority,
-            } => {
+            Self::FAC { params: fp, priority } => {
                 root.raw_set("id", "FAC")?;
                 fp.push_tbl(&params)?;
                 if let Some(p) = priority {
@@ -1083,16 +1115,11 @@ impl<'lua> IntoLua<'lua> for Task<'lua> {
                 let tbl = lua.create_table()?;
                 for (i, task) in tasks.into_iter().enumerate() {
                     tbl.push(task)?;
-                    tbl.raw_get::<_, LuaTable>(i + 1)?
-                        .raw_set("number", i + 1)?;
+                    tbl.raw_get::<LuaTable>(i + 1)?.raw_set("number", i + 1)?;
                 }
                 params.raw_set("tasks", tbl)?;
             }
-            Self::ControlledTask {
-                mut task,
-                condition,
-                stop_condition,
-            } => {
+            Self::ControlledTask { mut task, condition, stop_condition } => {
                 let task = mem::replace(task.as_mut(), Task::AWACS);
                 root.raw_set("id", "ControlledTask")?;
                 params.raw_set("task", task)?;
@@ -1182,6 +1209,16 @@ pub enum Command {
         name: Option<String>,
         callsign: String,
         frequency: i64,
+        /// TACAN channel number (1-126). Only meaningful when `system` is a TACAN variant;
+        /// when set, DCS derives the beacon's actual RF frequency from this + `mode_channel`
+        /// instead of using `frequency` directly.
+        channel: Option<i64>,
+        /// TACAN channel band (X or Y). Only meaningful alongside `channel`.
+        mode_channel: Option<TacanBand>,
+        /// Air-to-air TACAN (set for beacons mounted on aircraft, e.g. tankers/AWACS).
+        aa: Option<bool>,
+        /// Whether the beacon provides bearing information.
+        bearing: Option<bool>,
     },
     DeactivateBeacon,
     ActivateICLS {
@@ -1190,6 +1227,40 @@ pub enum Command {
         name: Option<String>,
     },
     DeactivateICLS,
+    /// Activates the MiG-29 GCI (ground controlled intercept) station on the unit.
+    /// `center` is the centre of its area of responsibility as an offset in
+    /// metres from the unit (map x north, y east) -- what the Mission Editor
+    /// writes (me_action_edit_panel: "coordinates relative to the unit");
+    /// zero centres it on the station. The ME clamps |center| + radius to
+    /// 400 km.
+    ActivateGci {
+        unit: UnitId,
+        center: crate::Vector2,
+        channel: i64,
+        /// Max control radius in meters.
+        radius: u32,
+    },
+    DeactivateGci,
+    /// Radio / GNSS jammer. Only units with the `Jammer` attribute have one
+    /// (`GPS_Spoofer_Blue` / `GPS_Spoofer_Red`). `spoof_point` is the absolute
+    /// map position spoofed receivers are pushed toward and is only sent when
+    /// either GNSS mode is `Spoofing`; `band_mhz` only when radio jamming is on.
+    ActivateJammer {
+        gps: GnssJamming,
+        glonass: GnssJamming,
+        radio: RadioJamming,
+        band_mhz: Option<(f64, f64)>,
+        spoof_point: Option<crate::Vector2>,
+    },
+    DeactivateJammer,
+    /// Soviet RSBN / PRMG beacon on a unit that carries one (`rsbn_beacon`,
+    /// `prmg_gp_beacon`, `prmg_loc_beacon`). Channel 1..40.
+    ActivateRsbn {
+        channel: i64,
+        callsign: String,
+    },
+    DeactivateRsbn,
+    NoAction,
     EPLRS {
         enable: bool,
         group: Option<GroupId>,
@@ -1220,8 +1291,8 @@ pub enum Command {
     },
 }
 
-impl<'lua> IntoLua<'lua> for Command {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for Command {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         let root = lua.create_table()?;
         let params = lua.create_table()?;
         match self {
@@ -1234,32 +1305,20 @@ impl<'lua> IntoLua<'lua> for Command {
                 params.raw_set("callname", callname)?;
                 params.raw_set("number", number)?;
             }
-            Self::SetFrequency {
-                frequency,
-                modulation,
-                power,
-            } => {
+            Self::SetFrequency { frequency, modulation, power } => {
                 root.raw_set("id", "SetFrequency")?;
                 params.raw_set("frequency", frequency)?;
                 params.raw_set("modulation", modulation)?;
                 params.raw_set("power", power)?;
             }
-            Self::SetFrequencyForUnit {
-                frequency,
-                modulation,
-                power,
-                unit,
-            } => {
+            Self::SetFrequencyForUnit { frequency, modulation, power, unit } => {
                 root.raw_set("id", "SetFrequencyForUnit")?;
                 params.raw_set("frequency", frequency)?;
                 params.raw_set("modulation", modulation)?;
                 params.raw_set("power", power)?;
                 params.raw_set("unitId", unit)?;
             }
-            Self::SwitchWaypoint {
-                from_waypoint,
-                to_waypoint,
-            } => {
+            Self::SwitchWaypoint { from_waypoint, to_waypoint } => {
                 root.raw_set("id", "SwitchWaypoint")?;
                 params.raw_set("fromWaypointIndex", from_waypoint)?;
                 params.raw_set("goToWaypointIndex", to_waypoint)?;
@@ -1290,6 +1349,10 @@ impl<'lua> IntoLua<'lua> for Command {
                 name,
                 callsign,
                 frequency,
+                channel,
+                mode_channel,
+                aa,
+                bearing,
             } => {
                 root.raw_set("id", "ActivateBeacon")?;
                 params.raw_set("type", typ)?;
@@ -1299,13 +1362,21 @@ impl<'lua> IntoLua<'lua> for Command {
                 if let Some(name) = name {
                     params.raw_set("name", name)?;
                 }
+                if let Some(channel) = channel {
+                    params.raw_set("channel", channel)?;
+                }
+                if let Some(mode_channel) = mode_channel {
+                    params.raw_set("modeChannel", mode_channel)?;
+                }
+                if let Some(aa) = aa {
+                    params.raw_set("AA", aa)?;
+                }
+                if let Some(bearing) = bearing {
+                    params.raw_set("bearing", bearing)?;
+                }
             }
             Self::DeactivateBeacon => root.raw_set("id", "DeactivateBeacon")?,
-            Self::ActivateICLS {
-                channel,
-                unit,
-                name,
-            } => {
+            Self::ActivateICLS { channel, unit, name } => {
                 root.raw_set("id", "ActivateICLS")?;
                 params.raw_set("type", 131584)?;
                 params.raw_set("channel", channel)?;
@@ -1315,6 +1386,42 @@ impl<'lua> IntoLua<'lua> for Command {
                 }
             }
             Self::DeactivateICLS => root.raw_set("id", "DeactivateICLS")?,
+            Self::ActivateGci { unit, center, channel, radius } => {
+                root.raw_set("id", "ActivateGCI")?;
+                params.raw_set("unitId", unit)?;
+                params.raw_set("x", center.x)?;
+                params.raw_set("y", center.y)?;
+                params.raw_set("channel", channel)?;
+                params.raw_set("radius", radius)?;
+            }
+            Self::DeactivateGci => root.raw_set("id", "DeactivateGCI")?,
+            Self::ActivateJammer { gps, glonass, radio, band_mhz, spoof_point } => {
+                root.raw_set("id", "ActivateJammer")?;
+                params.raw_set("gpsSpoofing", gps)?;
+                params.raw_set("glonassSpoofing", glonass)?;
+                params.raw_set("radioJamming", radio)?;
+                // The ME only writes the band with radio jamming on, and the
+                // spoof point with a GNSS mode spoofing; match it.
+                if radio != RadioJamming::Off {
+                    let (start, end) = band_mhz.unwrap_or((120., 120.));
+                    params.raw_set("jammingStart", start)?;
+                    params.raw_set("jammingEnd", end)?;
+                }
+                if gps == GnssJamming::Spoofing || glonass == GnssJamming::Spoofing {
+                    if let Some(p) = spoof_point {
+                        params.raw_set("x", p.x)?;
+                        params.raw_set("y", p.y)?;
+                    }
+                }
+            }
+            Self::DeactivateJammer => root.raw_set("id", "DeactivateJammer")?,
+            Self::ActivateRsbn { channel, callsign } => {
+                root.raw_set("id", "ActivateRSBN")?;
+                params.raw_set("channel", channel)?;
+                params.raw_set("callsign", callsign)?;
+            }
+            Self::DeactivateRsbn => root.raw_set("id", "DeactivateRSBN")?,
+            Self::NoAction => root.raw_set("id", "NoAction")?,
             Self::EPLRS { enable, group } => {
                 root.raw_set("id", "EPLRS")?;
                 params.raw_set("value", enable)?;
@@ -1323,12 +1430,7 @@ impl<'lua> IntoLua<'lua> for Command {
                 }
             }
             Self::Start => root.raw_set("id", "Start")?,
-            Self::TransmitMessage {
-                duration,
-                subtitle,
-                looping,
-                file,
-            } => {
+            Self::TransmitMessage { duration, subtitle, looping, file } => {
                 root.raw_set("id", "TransmitMessage")?;
                 params.raw_set("file", file)?;
                 if let Some(d) = duration {
@@ -1341,16 +1443,14 @@ impl<'lua> IntoLua<'lua> for Command {
                     params.raw_set("loop", l)?;
                 }
             }
-            Self::StopTransmission => root.raw_set("id", "stopTransmission")?,
+            // The Mission Editor's spelling; the scripting docs' lower-case
+            // one is still accepted on read.
+            Self::StopTransmission => root.raw_set("id", "StopTransmission")?,
             Self::Smoke(on) => {
                 root.raw_set("id", "SMOKE_ON_OFF")?;
                 params.raw_set("value", on)?
             }
-            Self::ActivateLink4 {
-                unit,
-                frequency,
-                name,
-            } => {
+            Self::ActivateLink4 { unit, frequency, name } => {
                 root.raw_set("id", "ActivateLink4")?;
                 params.raw_set("unitId", unit)?;
                 params.raw_set("frequency", frequency)?;
@@ -1378,11 +1478,11 @@ impl<'lua> IntoLua<'lua> for Command {
     }
 }
 
-impl<'lua> FromLua<'lua> for Command {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for Command {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let root: LuaTable = FromLua::from_lua(value, lua)?;
         let params: LuaTable = root.raw_get("params")?;
-        match root.raw_get::<_, String>("id")?.as_str() {
+        match root.raw_get::<String>("id")?.as_str() {
             "Script" => Ok(Self::Script(params.raw_get("command")?)),
             "SetCallsign" => Ok(Self::SetCallsign {
                 callname: params.raw_get("callname")?,
@@ -1414,9 +1514,61 @@ impl<'lua> FromLua<'lua> for Command {
                 name: params.raw_get("name")?,
                 callsign: params.raw_get("callsign")?,
                 frequency: params.raw_get("frequency")?,
+                channel: params.raw_get("channel")?,
+                mode_channel: params.raw_get("modeChannel")?,
+                aa: params.raw_get("AA")?,
+                bearing: params.raw_get("bearing")?,
             }),
             "DeactivateBeacon" => Ok(Self::DeactivateBeacon),
-            "DeactivateICLS" => Ok(Self::DeactivateACLS),
+            "ActivateICLS" => Ok(Self::ActivateICLS {
+                channel: params.raw_get("channel")?,
+                unit: params.raw_get("unitId")?,
+                name: params.raw_get("name")?,
+            }),
+            "DeactivateICLS" => Ok(Self::DeactivateICLS),
+            "ActivateGCI" => Ok(Self::ActivateGci {
+                unit: params.raw_get("unitId")?,
+                center: Vector2::new(
+                    params.raw_get::<Option<f64>>("x")?.unwrap_or(0.),
+                    params.raw_get::<Option<f64>>("y")?.unwrap_or(0.),
+                ),
+                channel: params.raw_get("channel")?,
+                radius: params.raw_get("radius")?,
+            }),
+            "DeactivateGCI" => Ok(Self::DeactivateGci),
+            "ActivateJammer" => Ok(Self::ActivateJammer {
+                gps: params
+                    .raw_get::<Option<GnssJamming>>("gpsSpoofing")?
+                    .unwrap_or(GnssJamming::Off),
+                glonass: params
+                    .raw_get::<Option<GnssJamming>>("glonassSpoofing")?
+                    .unwrap_or(GnssJamming::Off),
+                radio: params
+                    .raw_get::<Option<RadioJamming>>("radioJamming")?
+                    .unwrap_or(RadioJamming::Off),
+                band_mhz: match (
+                    params.raw_get::<Option<f64>>("jammingStart")?,
+                    params.raw_get::<Option<f64>>("jammingEnd")?,
+                ) {
+                    (Some(a), Some(b)) => Some((a, b)),
+                    _ => None,
+                },
+                spoof_point: match (
+                    params.raw_get::<Option<f64>>("x")?,
+                    params.raw_get::<Option<f64>>("y")?,
+                ) {
+                    (Some(x), Some(y)) => Some(Vector2::new(x, y)),
+                    _ => None,
+                },
+            }),
+            "DeactivateJammer" => Ok(Self::DeactivateJammer),
+            "ActivateRSBN" => Ok(Self::ActivateRsbn {
+                channel: params.raw_get("channel")?,
+                callsign: params.raw_get("callsign")?,
+            }),
+            "DeactivateRSBN" => Ok(Self::DeactivateRsbn),
+            "NoAction" => Ok(Self::NoAction),
+            "SMOKE_ON_OFF" => Ok(Self::Smoke(params.raw_get("value")?)),
             "EPLRS" => Ok(Self::EPLRS {
                 enable: params.raw_get("value")?,
                 group: params.raw_get("groupId")?,
@@ -1428,7 +1580,7 @@ impl<'lua> FromLua<'lua> for Command {
                 looping: params.raw_get("loop")?,
                 file: params.raw_get("file")?,
             }),
-            "stopTransmission" => Ok(Self::StopTransmission),
+            "stopTransmission" | "StopTransmission" => Ok(Self::StopTransmission),
             "ActivateLink4" => Ok(Self::ActivateLink4 {
                 unit: params.raw_get("unitId")?,
                 frequency: params.raw_get("frequency")?,
@@ -1449,6 +1601,20 @@ impl<'lua> FromLua<'lua> for Command {
     }
 }
 
+// GPS / GLONASS mode of a `Jammer` unit (`ActivateJammer`).
+simple_enum!(GnssJamming, u8, [
+    Off => 0,
+    Jamming => 1,
+    Spoofing => 2
+]);
+
+// Radio jamming mode of a `Jammer` unit (`ActivateJammer`).
+simple_enum!(RadioJamming, u8, [
+    Off => 0,
+    Simple => 1,
+    Adaptive => 2
+]);
+
 simple_enum!(AirRoe, u8, [
     OpenFire => 2,
     OpenFireWeaponFree => 1,
@@ -1462,7 +1628,17 @@ simple_enum!(AirReactionToThreat, u8, [
     PassiveDefence => 1,
     EvadeFire => 2,
     BypassAndEscape => 3,
-    AllowAbortMission => 4
+    AllowAbortMission => 4,
+    // Jink horizontally against AAA (the ME's HOR_AAA_EVADE_FIRE).
+    HorAaaEvadeFire => 5
+]);
+
+// How AI planes come in to land (`LANDING_OPTIONS`, 36).
+simple_enum!(AirLandingOption, u8, [
+    StraightIn => 0,
+    ForcePair => 1,
+    RestrictPair => 2,
+    OverheadBreak => 3
 ]);
 
 simple_enum!(AirEcmUsing, u8, [
@@ -1506,16 +1682,16 @@ simple_enum!(AirRadarUsing, u8, [
 ]);
 
 #[derive(Debug, Clone, Serialize)]
-pub enum AirOption<'lua> {
+pub enum AirOption {
     EcmUsing(AirEcmUsing),
     FlareUsing(AirFlareUsing),
     ForcedAttack(bool),
     Formation(VehicleFormation),
     JettTanksIfEmpty(bool),
     MissileAttack(AirMissileAttack),
-    OptionRadioUsageContact(Attributes<'lua>),
-    OptionRadioUsageEngage(Attributes<'lua>),
-    OptionRadioUsageKill(Attributes<'lua>),
+    OptionRadioUsageContact(Attributes),
+    OptionRadioUsageEngage(Attributes),
+    OptionRadioUsageKill(Attributes),
     ProhibitAA(bool),
     ProhibitAB(bool),
     ProhibitAG(bool),
@@ -1528,10 +1704,19 @@ pub enum AirOption<'lua> {
     RtbOnOutOfAmmo(bool),
     Silence(bool),
     AllowFormationSideSwap(bool),
+    /// Helicopters: prefer vertical take-off and landing (32) -- confined
+    /// LZs and FARPs.
+    PreferVertical(bool),
+    /// Planes: landing pattern (36).
+    LandingOptions(AirLandingOption),
+    /// Planes: line up on the runway after taxi before the takeoff roll (37).
+    AllowLineUpRunway(bool),
+    /// Planes: break off and RTB after this many losses in the group, 1..3 (38).
+    DisengageAndRtb(u8),
 }
 
-impl<'lua> IntoLua<'lua> for AirOption<'lua> {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for AirOption {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         match self {
             Self::EcmUsing(v) => v.into_lua(lua),
             Self::FlareUsing(v) => v.into_lua(lua),
@@ -1553,12 +1738,16 @@ impl<'lua> IntoLua<'lua> for AirOption<'lua> {
             Self::RtbOnBingo(v)
             | Self::RtbOnOutOfAmmo(v)
             | Self::Silence(v)
-            | Self::AllowFormationSideSwap(v) => v.into_lua(lua),
+            | Self::AllowFormationSideSwap(v)
+            | Self::PreferVertical(v)
+            | Self::AllowLineUpRunway(v) => v.into_lua(lua),
+            Self::LandingOptions(v) => v.into_lua(lua),
+            Self::DisengageAndRtb(v) => v.into_lua(lua),
         }
     }
 }
 
-impl<'lua> AirOption<'lua> {
+impl AirOption {
     fn tag(&self) -> u8 {
         match self {
             Self::EcmUsing(_) => 13,
@@ -1582,13 +1771,47 @@ impl<'lua> AirOption<'lua> {
             Self::RtbOnOutOfAmmo(_) => 10,
             Self::Silence(_) => 7,
             Self::AllowFormationSideSwap(_) => 35,
+            Self::PreferVertical(_) => 32,
+            Self::LandingOptions(_) => 36,
+            Self::AllowLineUpRunway(_) => 37,
+            Self::DisengageAndRtb(_) => 38,
         }
     }
 
-    fn from_tag_val(lua: &'lua Lua, tag: u8, val: Value<'lua>) -> LuaResult<Self> {
-        let attr_or_none = |val: Value<'lua>| match val {
-            Value::String(s) if s.to_string_lossy().as_ref().starts_with("none") => {
-                Attributes::new(lua).map_err(|e| err(&format_compact!("{}", e)))
+    fn from_tag_val(lua: &Lua, tag: u8, val: Value) -> LuaResult<Self> {
+        // The radio usage options (21/22/23) carry a SET OF ATTRIBUTES, and DCS
+        // writes that set into the mission three different ways in the same
+        // table: a `targetTypes` array, a `noTargetTypes` array, and `value` as
+        // the selected names joined with ';' -- e.g. "Air Defence;". We are
+        // handed `value`, so a string is the ordinary case, not an error.
+        //
+        // Only the empty selection ("none") was handled, so any mission where
+        // Radio Usage Contact/Engage/Kill was actually set refused to load:
+        //   unknown option, air: expected a table, got String("Air Defence;")
+        // The message is doubly unhelpful -- the option is tried against Air,
+        // Ground and Naval in turn, so the real failure is buried among two
+        // "unknown option 21" complaints from parsers that never handled it --
+        // and it names neither the group nor the mission.
+        //
+        // An unrecognised attribute name is not fatal: `Attribute` has a
+        // `Custom` catch-all, so it round-trips unchanged.
+        let attr_or_none = |val: Value| match val {
+            Value::String(s) => {
+                let attrs =
+                    Attributes::new(lua).map_err(|e| err(&format_compact!("{}", e)))?;
+                let s = s.to_string_lossy();
+                if !s.starts_with("none") {
+                    for name in s.split(';').map(|n| n.trim()).filter(|n| !n.is_empty()) {
+                        let attr = Attribute::from_lua(
+                            Value::String(lua.create_string(name)?),
+                            lua,
+                        )?;
+                        attrs
+                            .set(attr, true)
+                            .map_err(|e| err(&format_compact!("{}", e)))?;
+                    }
+                }
+                Ok(attrs)
             }
             v => FromLua::from_lua(v, lua),
         };
@@ -1614,6 +1837,10 @@ impl<'lua> AirOption<'lua> {
             10 => Ok(Self::RtbOnOutOfAmmo(FromLua::from_lua(val, lua)?)),
             7 => Ok(Self::Silence(FromLua::from_lua(val, lua)?)),
             35 => Ok(Self::AllowFormationSideSwap(FromLua::from_lua(val, lua)?)),
+            32 => Ok(Self::PreferVertical(FromLua::from_lua(val, lua)?)),
+            36 => Ok(Self::LandingOptions(FromLua::from_lua(val, lua)?)),
+            37 => Ok(Self::AllowLineUpRunway(FromLua::from_lua(val, lua)?)),
+            38 => Ok(Self::DisengageAndRtb(FromLua::from_lua(val, lua)?)),
             e => Err(err(&format_compact!("invalid AirOption {e}"))),
         }
     }
@@ -1626,13 +1853,34 @@ simple_enum!(AlarmState, u8, [
 ]);
 
 simple_enum!(GroundRoe, u8, [
+    // The Mission Editor's default for vehicles and ships.
+    WeaponFree => 0,
     OpenFire => 2,
     ReturnFire => 3,
     WeaponHold => 4
 ]);
 
+// Which targets a ground group may engage (`RESTRICT_TARGET`, 28).
+simple_enum!(GroundRestrictTarget, u8, [
+    All => 0,
+    AirOnly => 1,
+    GroundOnly => 2
+]);
+
 #[derive(Debug, Clone, Serialize)]
 pub enum GroundOption {
+    /// AAA: lowest altitude it will fire at, metres (27).
+    AltRestrictionMin(f64),
+    /// What the group may engage (28) -- e.g. SHORAD that never gives itself
+    /// away shooting at ground targets.
+    RestrictTarget(GroundRestrictTarget),
+    /// AAA: highest altitude it will fire at, metres (29).
+    AltRestrictionMax(f64),
+    /// Spacing between vehicles in column, metres 0..100 (30).
+    ColumnInterval(f64),
+    /// Air defence: react to an inbound anti-radiation missile (31). DCS
+    /// defaults it on; false makes a site that just keeps radiating.
+    EvasionOfArm(bool),
     AcEngagementRangeRestriction(u8),
     AlarmState(AlarmState),
     DisperseOnAttack(i64),
@@ -1642,8 +1890,8 @@ pub enum GroundOption {
     AllowFormationSideSwap(bool),
 }
 
-impl<'lua> IntoLua<'lua> for GroundOption {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for GroundOption {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         match self {
             Self::AcEngagementRangeRestriction(v) => v.into_lua(lua),
             Self::AlarmState(v) => v.into_lua(lua),
@@ -1652,6 +1900,11 @@ impl<'lua> IntoLua<'lua> for GroundOption {
             Self::Formation(v) => v.into_lua(lua),
             Self::Roe(v) => v.into_lua(lua),
             Self::AllowFormationSideSwap(v) => v.into_lua(lua),
+            Self::AltRestrictionMin(v)
+            | Self::AltRestrictionMax(v)
+            | Self::ColumnInterval(v) => v.into_lua(lua),
+            Self::RestrictTarget(v) => v.into_lua(lua),
+            Self::EvasionOfArm(v) => v.into_lua(lua),
         }
     }
 }
@@ -1666,6 +1919,11 @@ impl GroundOption {
             Self::Formation(_) => 5,
             Self::Roe(_) => 0,
             Self::AllowFormationSideSwap(_) => 35,
+            Self::AltRestrictionMin(_) => 27,
+            Self::RestrictTarget(_) => 28,
+            Self::AltRestrictionMax(_) => 29,
+            Self::ColumnInterval(_) => 30,
+            Self::EvasionOfArm(_) => 31,
         }
     }
 
@@ -1676,10 +1934,13 @@ impl GroundOption {
             8 => Ok(Self::DisperseOnAttack(FromLua::from_lua(val, lua)?)),
             9 => Ok(Self::AlarmState(FromLua::from_lua(val, lua)?)),
             20 => Ok(Self::EngageAirWeapons(FromLua::from_lua(val, lua)?)),
-            24 => Ok(Self::AcEngagementRangeRestriction(FromLua::from_lua(
-                val, lua,
-            )?)),
+            24 => Ok(Self::AcEngagementRangeRestriction(FromLua::from_lua(val, lua)?)),
             35 => Ok(Self::AllowFormationSideSwap(FromLua::from_lua(val, lua)?)),
+            27 => Ok(Self::AltRestrictionMin(FromLua::from_lua(val, lua)?)),
+            28 => Ok(Self::RestrictTarget(FromLua::from_lua(val, lua)?)),
+            29 => Ok(Self::AltRestrictionMax(FromLua::from_lua(val, lua)?)),
+            30 => Ok(Self::ColumnInterval(FromLua::from_lua(val, lua)?)),
+            31 => Ok(Self::EvasionOfArm(FromLua::from_lua(val, lua)?)),
             e => Err(err(&format_compact!("unknown GroundOption {e}"))),
         }
     }
@@ -1690,8 +1951,8 @@ pub enum NavalOption {
     Roe(GroundRoe),
 }
 
-impl<'lua> IntoLua<'lua> for NavalOption {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for NavalOption {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         match self {
             Self::Roe(v) => v.into_lua(lua),
         }
@@ -1714,14 +1975,14 @@ impl NavalOption {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub enum AiOption<'lua> {
-    Air(AirOption<'lua>),
+pub enum AiOption {
+    Air(AirOption),
     Ground(GroundOption),
     Naval(NavalOption),
 }
 
-impl<'lua> IntoLua<'lua> for AiOption<'lua> {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for AiOption {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         match self {
             Self::Air(v) => v.into_lua(lua),
             Self::Ground(v) => v.into_lua(lua),
@@ -1730,7 +1991,7 @@ impl<'lua> IntoLua<'lua> for AiOption<'lua> {
     }
 }
 
-impl<'lua> AiOption<'lua> {
+impl AiOption {
     fn tag(&self) -> u8 {
         match self {
             Self::Air(v) => v.tag(),
@@ -1739,7 +2000,7 @@ impl<'lua> AiOption<'lua> {
         }
     }
 
-    fn from_tag_val(lua: &'lua Lua, tag: u8, val: Value<'lua>) -> LuaResult<Self> {
+    fn from_tag_val(lua: &Lua, tag: u8, val: Value) -> LuaResult<Self> {
         match AirOption::from_tag_val(lua, tag, val.clone()) {
             Ok(v) => Ok(Self::Air(v)),
             Err(ae) => match GroundOption::from_tag_val(lua, tag, val.clone()) {
@@ -1775,8 +2036,8 @@ pub struct DetectedTargetInfo {
     pub last_velocity: LuaVec3,
 }
 
-impl<'lua> FromLuaMulti<'lua> for DetectedTargetInfo {
-    fn from_lua_multi(mut values: LuaMultiValue<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLuaMulti for DetectedTargetInfo {
+    fn from_lua_multi(mut values: LuaMultiValue, lua: &Lua) -> LuaResult<Self> {
         let is_detected = FromLua::from_lua(
             values
                 .pop_front()
@@ -1784,9 +2045,7 @@ impl<'lua> FromLuaMulti<'lua> for DetectedTargetInfo {
             lua,
         )?;
         let is_visible = FromLua::from_lua(
-            values
-                .pop_front()
-                .ok_or_else(|| cvt_err("DetectedTargetInfo:is_visible"))?,
+            values.pop_front().ok_or_else(|| cvt_err("DetectedTargetInfo:is_visible"))?,
             lua,
         )?;
         let last_time_seen = FromLua::from_lua(
@@ -1796,9 +2055,7 @@ impl<'lua> FromLuaMulti<'lua> for DetectedTargetInfo {
             lua,
         )?;
         let type_known = FromLua::from_lua(
-            values
-                .pop_front()
-                .ok_or_else(|| cvt_err("DetectedTargetInfo:type_known"))?,
+            values.pop_front().ok_or_else(|| cvt_err("DetectedTargetInfo:type_known"))?,
             lua,
         )?;
         let distance_known = FromLua::from_lua(
@@ -1832,15 +2089,15 @@ impl<'lua> FromLuaMulti<'lua> for DetectedTargetInfo {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct DetectedTarget<'lua> {
-    pub object: Object<'lua>,
+pub struct DetectedTarget {
+    pub object: Object,
     pub is_visible: bool,
     pub type_known: bool,
     pub distance_known: bool,
 }
 
-impl<'lua> FromLua<'lua> for DetectedTarget<'lua> {
-    fn from_lua(value: Value<'lua>, _lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for DetectedTarget {
+    fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("DetectedTarget", None, value).map_err(lua_err)?;
         Ok(Self {
             object: tbl.raw_get("object")?,
@@ -1861,7 +2118,7 @@ string_enum!(AltitudeKind, u8, [
 
 wrapped_table!(Controller, Some("Controller"));
 
-impl<'lua> Controller<'lua> {
+impl Controller {
     pub fn set_task(&self, task: Task) -> Result<()> {
         Ok(self.t.call_method("setTask", task)?)
     }
@@ -1886,7 +2143,7 @@ impl<'lua> Controller<'lua> {
         Ok(self.t.call_method("setCommand", command)?)
     }
 
-    pub fn set_option(&self, option: AiOption<'lua>) -> Result<()> {
+    pub fn set_option(&self, option: AiOption) -> Result<()> {
         Ok(self.t.call_method("setOption", (option.tag(), option))?)
     }
 
@@ -1920,9 +2177,9 @@ impl<'lua> Controller<'lua> {
         methods: BitFlags<Detection>,
     ) -> Result<DetectedTargetInfo> {
         let mut args = Variadic::new();
-        args.push(object.into_lua(self.lua)?);
+        args.push(object.into_lua(&self.lua)?);
         for method in methods {
-            args.push(method.into_lua(self.lua)?);
+            args.push(method.into_lua(&self.lua)?);
         }
         Ok(self.t.call_method("isTargetDetected", args)?)
     }
@@ -1930,11 +2187,150 @@ impl<'lua> Controller<'lua> {
     pub fn get_detected_targets(
         &self,
         methods: BitFlags<Detection>,
-    ) -> Result<Sequence<'lua, DetectedTarget<'lua>>> {
+    ) -> Result<Sequence<DetectedTarget>> {
         let mut args = Variadic::new();
         for method in methods {
-            args.push(method.into_lua(self.lua)?);
+            args.push(method.into_lua(&self.lua)?);
         }
         Ok(self.t.call_method("getDetectedTargets", args)?)
+    }
+}
+
+#[cfg(test)]
+mod decode_tests {
+    use super::*;
+
+    fn eval(lua: &Lua, src: &str) -> Value {
+        lua.load(src).eval().unwrap()
+    }
+
+    #[test]
+    fn undecodable_task_is_kept_verbatim() {
+        let lua = Lua::new();
+        // A command this binding doesn't model, and a known task in the
+        // Mission Editor's x/y shape (no `point`): both used to fail the
+        // whole waypoint.
+        for src in [
+            "{ id = 'WrappedAction', params = { action = { id = 'ScriptFile', params = { file = 'ResKey_1' } } } }",
+            "{ id = 'Bombing', params = { x = 1, y = 2, weaponType = 1 } }",
+            "{ id = 'WrappedAction', params = { action = { id = 'Option', params = { name = 11, value = 2 } } } }",
+        ] {
+            let task = Task::from_lua(eval(&lua, src), &lua).unwrap();
+            let Task::Raw(tbl) = &task else { panic!("{src} decoded as {task:?}") };
+            let back = match task.clone().into_lua(&lua).unwrap() {
+                Value::Table(t) => t,
+                v => panic!("{v:?}"),
+            };
+            assert_eq!(tbl.raw_get::<String>("id").unwrap(), back.raw_get::<String>("id").unwrap());
+        }
+    }
+
+    #[test]
+    fn mission_route_is_read_back() {
+        let lua = Lua::new();
+        let src = "{ id = 'Mission', params = { airborne = true, route = { points = {
+            { type = 'Turning Point', x = 1, y = 2, alt = 100, speed = 50, task = { id = 'ComboTask', params = { tasks = {} } } },
+            { type = 'Turning Point', x = 3, y = 4, alt = 100, speed = 50, task = { id = 'ComboTask', params = { tasks = {} } } },
+        } } } }";
+        let task = Task::from_lua(eval(&lua, src), &lua).unwrap();
+        match &task {
+            Task::Mission { route, .. } => assert_eq!(route.len(), 2),
+            t => panic!("{t:?}"),
+        };
+    }
+
+    #[test]
+    fn jammer_and_new_commands_round_trip() {
+        let lua = Lua::new();
+        let cmd = Command::ActivateJammer {
+            gps: GnssJamming::Spoofing,
+            glonass: GnssJamming::Jamming,
+            radio: RadioJamming::Adaptive,
+            band_mhz: Some((225., 400.)),
+            spoof_point: Some(crate::Vector2::new(1000., 2000.)),
+        };
+        let v = cmd.into_lua(&lua).unwrap();
+        let t: LuaTable = FromLua::from_lua(v.clone(), &lua).unwrap();
+        assert_eq!(t.raw_get::<String>("id").unwrap().as_str(), "ActivateJammer");
+        let p: LuaTable = t.raw_get("params").unwrap();
+        assert_eq!(p.raw_get::<i64>("gpsSpoofing").unwrap(), 2);
+        assert_eq!(p.raw_get::<i64>("glonassSpoofing").unwrap(), 1);
+        assert_eq!(p.raw_get::<i64>("radioJamming").unwrap(), 2);
+        assert_eq!(p.raw_get::<f64>("jammingEnd").unwrap(), 400.);
+        assert_eq!(p.raw_get::<f64>("x").unwrap(), 1000.);
+        let back = Command::from_lua(v, &lua).unwrap();
+        match &back {
+            Command::ActivateJammer { band_mhz, spoof_point, .. } => {
+                assert_eq!(*band_mhz, Some((225., 400.)));
+                assert_eq!(*spoof_point, Some(crate::Vector2::new(1000., 2000.)));
+            }
+            c => panic!("{c:?}"),
+        };
+        // The Mission Editor's spelling of StopTransmission now decodes.
+        let st = eval(&lua, "{ id = 'StopTransmission', params = {} }");
+        assert!(matches!(
+            Command::from_lua(st, &lua).unwrap(),
+            Command::StopTransmission
+        ));
+    }
+
+    #[test]
+    fn trailer_tasks_round_trip() {
+        let lua = Lua::new();
+        let t = Task::AttachTrailer {
+            tractor: UnitId::from(7),
+            trailer: UnitId::from(8),
+            on_start_mission: true,
+        };
+        let v = t.into_lua(&lua).unwrap();
+        let tbl: LuaTable = FromLua::from_lua(v.clone(), &lua).unwrap();
+        assert_eq!(tbl.raw_get::<String>("id").unwrap().as_str(), "AttachTrailer");
+        let p: LuaTable = tbl.raw_get("params").unwrap();
+        assert_eq!(p.raw_get::<i64>("unitIdTractor").unwrap(), 7);
+        assert_eq!(p.raw_get::<i64>("unitIdTrailer").unwrap(), 8);
+        let back = Task::from_lua(v, &lua).unwrap();
+        assert!(matches!(back, Task::AttachTrailer { on_start_mission: true, .. }));
+        // The ME's shape for a trailer drop decodes too.
+        let src =
+            "{ id = 'DetachTrailer', params = { unitIdTractor = 7, x = 1, y = 2 } }";
+        let back = Task::from_lua(eval(&lua, src), &lua).unwrap();
+        assert!(matches!(back, Task::DetachTrailer { .. }));
+    }
+
+    #[test]
+    fn engage_targets_sends_the_range_flag() {
+        let lua = Lua::new();
+        let task = Task::EngageTargets {
+            target_types: vec![],
+            max_dist: Some(15_000.),
+            priority: None,
+        };
+        let t: LuaTable = FromLua::from_lua(task.into_lua(&lua).unwrap(), &lua).unwrap();
+        let p: LuaTable = t.raw_get("params").unwrap();
+        assert!(p.raw_get::<bool>("maxDistEnabled").unwrap());
+        assert_eq!(p.raw_get::<f64>("maxDist").unwrap(), 15_000.);
+    }
+
+    #[test]
+    fn new_options_decode() {
+        let lua = Lua::new();
+        for (tag, val) in [
+            ("31", "false"),
+            ("27", "200"),
+            ("28", "1"),
+            ("36", "3"),
+            ("38", "2"),
+            ("1", "5"),
+            ("0", "0"),
+        ] {
+            let src = format!(
+                "{{ id = 'WrappedAction', params = {{ action = {{ id = 'Option', params = {{ name = {tag}, value = {val} }} }} }} }}"
+            );
+            let task = Task::from_lua(eval(&lua, &src), &lua).unwrap();
+            match &task {
+                Task::WrappedOption(_) => (),
+                t => panic!("option {tag}={val} decoded as {t:?}"),
+            };
+        }
     }
 }

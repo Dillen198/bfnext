@@ -1,0 +1,123 @@
+/* Re-skin the peace-eye-ported /scope components to the dashboard's
+   dark OD-green military theme. Scoped to `.scope-root` so it can't leak.
+   `.theme-locked-dark` on the same element pins the dark token set even
+   when the dashboard is in light mode (a radar scope is always dark). */
+
+.scope-root {
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+.scope-root .font-mono {
+  font-family: var(--font-mono);
+}
+
+/* ── Panel surfaces (peace-eye's daisyUI grays → dark cards) ─────────── */
+.scope-root .bg-gray-200 { background-color: color-mix(in srgb, var(--bg-card) 92%, transparent); backdrop-filter: blur(8px); }
+.scope-root .bg-gray-300 { background-color: var(--bg-chrome); }
+.scope-root .bg-gray-400 { background-color: var(--bg-elevated); }
+.scope-root .bg-gray-400.bg-opacity-20,
+.scope-root .bg-opacity-20 { background-color: color-mix(in srgb, var(--bg-chrome) 55%, transparent); }
+.scope-root .bg-slate-400 { background-color: var(--bg-card); border: 1px solid var(--accent-border); }
+.scope-root [class*="bg-slate-600"] { background-color: color-mix(in srgb, var(--bg-chrome) 78%, transparent) !important; }
+.scope-root .border-gray-500 { border-color: var(--accent-border); }
+.scope-root .rounded-sm { border-radius: 2px; }
+
+/* text */
+.scope-root .text-white { color: var(--text); }
+.scope-root .text-yellow-600 { color: var(--yellow); }
+.scope-root .text-slate-300,
+.scope-root .text-slate-400 { color: var(--text-muted); }
+
+/* ── daisyUI buttons ────────────────────────────────────────────────── */
+.scope-root .btn {
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--accent-border);
+  color: var(--text-muted);
+  border-radius: 2px;
+  font-family: var(--font-display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  min-height: 0;
+  box-shadow: none;
+}
+.scope-root .btn:hover { background-color: var(--bg-hover); color: var(--accent-bright); }
+.scope-root .btn-outline { background-color: transparent; }
+.scope-root .btn-accent,
+.scope-root .btn-outline.btn-accent:hover { background-color: var(--accent-glow); border-color: color-mix(in srgb, var(--accent) 55%, transparent); color: var(--accent-bright); }
+.scope-root .btn-error { background-color: var(--red-bg); border-color: color-mix(in srgb, var(--red) 55%, transparent); color: var(--red); }
+.scope-root .btn-warning { background-color: rgba(201,162,39,0.12); border-color: color-mix(in srgb, var(--yellow) 55%, transparent); color: var(--yellow); }
+
+/* ── inputs / checkboxes ────────────────────────────────────────────── */
+.scope-root .input,
+.scope-root input[type="text"],
+.scope-root input[type="number"] {
+  background-color: var(--bg-input);
+  border: 1px solid var(--accent-border);
+  color: var(--accent-bright);
+  border-radius: 2px;
+  font-family: var(--font-mono);
+}
+.scope-root .checkbox { border-color: var(--accent-border); border-radius: 2px; }
+.scope-root .checkbox:checked { background-color: var(--accent); border-color: var(--accent); }
+
+/* ── menus (search / watch result lists) ────────────────────────────── */
+.scope-root .menu { padding: 0; }
+.scope-root .menu li > *,
+.scope-root .menu li > a { border-radius: 2px; color: var(--text); font-size: 0.8rem; }
+.scope-root .menu li > a:hover { background-color: var(--bg-hover); }
+
+/* ── tabs (settings modal) ──────────────────────────────────────────── */
+.scope-root .tab { color: var(--text-dim); }
+.scope-root .tab.tab-active { color: var(--accent-bright); border-color: var(--accent); }
+.scope-root .divider::before,
+.scope-root .divider::after { background-color: var(--border-light); }
+
+/* ── settings modal box ─────────────────────────────────────────────── */
+.scope-root .modal-box,
+.modal .modal-box {
+  background-color: var(--bg-card);
+  border: 1px solid var(--accent-border);
+  color: var(--text);
+}
+.modal .link-primary { color: var(--blue); }
+
+/* ── maplibre chrome ───────────────────────────────────────────────── */
+.scope-root .maplibregl-ctrl-attrib {
+  background: color-mix(in srgb, var(--bg-chrome) 80%, transparent);
+  color: var(--text-dim);
+}
+.scope-root .maplibregl-ctrl-attrib a { color: var(--text-muted); }
+
+/* ── collapse toggle on the ControlPanel ───────────────────────────── */
+.scope-panel-collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--accent-border);
+  border-radius: 2px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+.scope-panel-collapse:hover { color: var(--accent-bright); background: var(--bg-hover); }
+.scope-panel-reopen {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  z-index: 5;
+  padding: 4px 8px;
+  border: 1px solid var(--accent-border);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--bg-card) 92%, transparent);
+  backdrop-filter: blur(8px);
+  color: var(--text-muted);
+  font-family: var(--font-display);
+  letter-spacing: 0.1em;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+.scope-panel-reopen:hover { color: var(--accent-bright); }

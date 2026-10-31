@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 540" width="800" height="540" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6aab1f"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="800" height="540" fill="#0d1009"/>
+
+  <text x="20" y="32" font-size="18" font-weight="bold" fill="#cdd4be">A C-130 crate, from spawn to deployed unit</text>
+
+  <!-- step boxes -->
+  <rect x="20" y="60" width="140" height="130" rx="6" fill="#141910" stroke="#6aab1f"/>
+  <text x="34" y="84" font-size="13" fill="#8ec83f" font-weight="bold">1  SPAWN</text>
+  <text x="34" y="106" font-size="13" fill="#cdd4be">C-130 Cargo &gt;</text>
+  <text x="34" y="123" font-size="13" fill="#cdd4be">Crates. Inside a</text>
+  <text x="34" y="140" font-size="13" fill="#cdd4be">friendly base.</text>
+  <text x="34" y="162" font-size="13" fill="#7d8a6a">Crate appears</text>
+  <text x="34" y="179" font-size="13" fill="#7d8a6a">behind the tail.</text>
+
+  <line x1="160" y1="125" x2="176" y2="125" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+
+  <rect x="180" y="60" width="140" height="130" rx="6" fill="#141910" stroke="#262e1d"/>
+  <text x="194" y="84" font-size="13" fill="#8ec83f" font-weight="bold">2  LOAD</text>
+  <text x="194" y="106" font-size="13" fill="#cdd4be">F8 &gt; Ground</text>
+  <text x="194" y="123" font-size="13" fill="#cdd4be">Crew &gt; Cargo.</text>
+  <text x="194" y="145" font-size="13" fill="#7d8a6a">While aboard, the</text>
+  <text x="194" y="162" font-size="13" fill="#7d8a6a">engine leaves it</text>
+  <text x="194" y="179" font-size="13" fill="#7d8a6a">alone.</text>
+
+  <line x1="320" y1="125" x2="336" y2="125" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+
+  <rect x="340" y="60" width="140" height="130" rx="6" fill="#141910" stroke="#262e1d"/>
+  <text x="354" y="84" font-size="13" fill="#8ec83f" font-weight="bold">3  DELIVER</text>
+  <text x="354" y="106" font-size="13" fill="#cdd4be">Drop it out of</text>
+  <text x="354" y="123" font-size="13" fill="#cdd4be">the ramp, or land</text>
+  <text x="354" y="140" font-size="13" fill="#cdd4be">and unload it.</text>
+  <text x="354" y="162" font-size="13" fill="#7d8a6a">No drop height</text>
+  <text x="354" y="179" font-size="13" fill="#7d8a6a">is enforced.</text>
+
+  <line x1="480" y1="125" x2="496" y2="125" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+
+  <rect x="500" y="60" width="140" height="130" rx="6" fill="#141910" stroke="#262e1d"/>
+  <text x="514" y="84" font-size="13" fill="#8ec83f" font-weight="bold">4  LANDED</text>
+  <text x="514" y="106" font-size="13" fill="#cdd4be">At rest after a</text>
+  <text x="514" y="123" font-size="13" fill="#cdd4be">fall of 3 s+, or</text>
+  <text x="514" y="140" font-size="13" fill="#cdd4be">at rest 100 m+</text>
+  <text x="514" y="157" font-size="13" fill="#cdd4be">from its spawn.</text>
+  <text x="514" y="179" font-size="13" fill="#7d8a6a">Checked each tick.</text>
+
+  <line x1="640" y1="125" x2="656" y2="125" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+
+  <rect x="660" y="60" width="120" height="130" rx="6" fill="#141910" stroke="#6aab1f"/>
+  <text x="674" y="84" font-size="13" fill="#8ec83f" font-weight="bold">5  UNPACK</text>
+  <text x="674" y="106" font-size="13" fill="#cdd4be">Automatic.</text>
+  <text x="674" y="128" font-size="13" fill="#7d8a6a">Looks for the</text>
+  <text x="674" y="145" font-size="13" fill="#7d8a6a">rest of the set</text>
+  <text x="674" y="162" font-size="13" fill="#7d8a6a">within 500 m.</text>
+
+  <!-- branch -->
+  <path d="M720,190 L720,222 L130,222 L130,246" fill="none" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+  <line x1="400" y1="222" x2="400" y2="246" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+  <path d="M720,222 L670,222 L670,246" fill="none" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+
+  <rect x="20" y="250" width="220" height="120" rx="6" fill="#141910" stroke="#6aab1f"/>
+  <text x="34" y="274" font-size="14" font-weight="bold" fill="#8ec83f">Set complete</text>
+  <text x="34" y="296" font-size="13" fill="#cdd4be">The unit spawns where the</text>
+  <text x="34" y="313" font-size="13" fill="#cdd4be">crates landed. Your side</text>
+  <text x="34" y="330" font-size="13" fill="#cdd4be">reads "Airdropped &lt;unit&gt;</text>
+  <text x="34" y="347" font-size="13" fill="#cdd4be">deployed".</text>
+
+  <rect x="280" y="250" width="240" height="120" rx="6" fill="#141910" stroke="#c9a227"/>
+  <text x="294" y="274" font-size="14" font-weight="bold" fill="#c9a227">Crates missing</text>
+  <text x="294" y="296" font-size="13" fill="#cdd4be">"Crate landed, need more</text>
+  <text x="294" y="313" font-size="13" fill="#cdd4be">crates for &lt;unit&gt;", and an</text>
+  <text x="294" y="330" font-size="13" fill="#cdd4be">F10 mark "Missing: ...".</text>
+  <text x="294" y="352" font-size="13" fill="#7d8a6a">Unpacks when the rest lands.</text>
+
+  <rect x="560" y="250" width="220" height="120" rx="6" fill="#141910" stroke="#cc4444"/>
+  <text x="574" y="274" font-size="14" font-weight="bold" fill="#cc4444">Blocked</text>
+  <text x="574" y="296" font-size="13" fill="#cdd4be">Too close to a friendly</text>
+  <text x="574" y="313" font-size="13" fill="#cdd4be">base, over the limit, or</text>
+  <text x="574" y="330" font-size="13" fill="#cdd4be">short of points. Reason on</text>
+  <text x="574" y="347" font-size="13" fill="#cdd4be">an F10 mark; retried later.</text>
+
+  <!-- base supply note -->
+  <rect x="20" y="400" width="760" height="110" rx="6" fill="#141910" stroke="#262e1d"/>
+  <text x="34" y="424" font-size="14" font-weight="bold" fill="#cdd4be">Base Supply crates take the same route but do not need a set:</text>
+  <text x="34" y="448" font-size="13" fill="#cdd4be">Fuel / weapons transfer and logistics repair: credited to the nearest friendly objective when they land.</text>
+  <text x="34" y="469" font-size="13" fill="#cdd4be">Carrier repair: credited to the nearest friendly carrier group.</text>
+  <text x="34" y="490" font-size="13" fill="#cdd4be">Emergency repair: must come to rest inside the zone of the damaged friendly base.</text>
+</svg>
