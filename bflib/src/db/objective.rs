@@ -3279,7 +3279,10 @@ impl Db {
                 let mut hold_gids: Vec<GroupId> = vec![];
                 for (_, ucid, troop_origin, gid) in gids {
                     hold_gids.push(gid);
+                    // The all-zero ucid is "no player" (AI troops): no credit,
+                    // no share of the points, no "by 0000..." in the feeds.
                     if let Some(ucid) = ucid
+                        && ucid != Ucid::default()
                         && (previous_owner != new_owner || troop_origin != Some(oid))
                         && !ucids.contains(&ucid)
                     {
@@ -4659,6 +4662,7 @@ impl Db {
             for (_, ucid, gid) in &groups {
                 self.delete_group(gid).context("deleting boarding troops")?;
                 if let Some(u) = ucid
+                    && *u != dcso3::net::Ucid::default()
                     && !ucids.contains(u)
                 {
                     ucids.push(*u);

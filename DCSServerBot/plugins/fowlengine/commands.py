@@ -1015,7 +1015,8 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
             except (KeyError, TypeError, ValueError):
                 pass
             side_icon = icon({'Blue': 'side_blue', 'Red': 'side_red'}.get(side, 'unowned'))
-            by = [str(b) for b in (c.get('by') or []) if b][:2]
+            # An all-zero UCID is bfdb's "no pilot" (AI troops), not a name.
+            by = [str(b) for b in (c.get('by') or []) if b and not re.fullmatch(r"0+", str(b))][:2]
             who = f" by {discord.utils.escape_markdown(', '.join(by))}" if by else ""
             lines.append(f"{side_icon} **{name}** \u2192 {side}{who}{when}")
         return "\n".join(lines)

@@ -3599,7 +3599,9 @@ impl StatsDb {
     ) -> Result<Vec<CaptureRecord>> {
         let mut result = Vec::new();
         for r in self.captures.scan_prefix(&round)?.rev() {
-            let (_, rec) = r?;
+            let (_, mut rec) = r?;
+            // Records saved before ingest dropped the "no player" ucid.
+            rec.by.retain(|u| *u != Ucid::default());
             result.push(rec);
             if result.len() >= limit {
                 break;
@@ -6063,7 +6065,10 @@ impl StatsDb {
                     o.fuel = fuel
                 })?;
             }
-            Stat::Capture { id, by, side } => {
+            Stat::Capture { id, mut by, side } => {
+                // AI troops carry the all-zero "no player" ucid; a capture
+                // they made is credited to nobody.
+                by.retain(|u| *u != Ucid::default());
                 let objective_name = self
                     .objectives
                     .get(&(ctx.round, id))?

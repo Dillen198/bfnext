@@ -10,6 +10,7 @@ import discord
 from core import utils, Server, Status, command
 from discord import app_commands
 from discord.ext import tasks
+import re
 import time
 import asyncio
 from collections import deque
@@ -530,7 +531,8 @@ class EventsMixin:
         for e in new_events:
             obj_name = e.get('objective', 'Unknown')
             owner = e.get('side', 'Unknown')
-            by = e.get('by') or []
+            # An all-zero UCID is bfdb's "no pilot" (AI troops), not a name.
+            by = [u for u in (e.get('by') or []) if u and not re.fullmatch(r'0+', str(u))]
             if by:
                 if names is None:
                     names = await self._fetch_pilot_names(session, api_url)

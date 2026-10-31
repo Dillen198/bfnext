@@ -259,6 +259,56 @@ async fn same_operations_same_results_on_both_engines() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A capture by AI troops carries the all-zero "no player" ucid. It is
+/// credited to nobody: dropped at ingest, and from records saved before that.
+#[tokio::test(flavor = "multi_thread")]
+async fn ai_captures_credit_no_pilot() {
+    let dir = scratch("ai-capture");
+    let db = open_quiet(&dir.join("db"), Backend::Sled);
+    let inst = db.state(&InstanceId::from(crate::instance::DEFAULT_INSTANCE));
+    let mut ctx = StatCtx::default();
+    let (u1, nobody) = (ucid(1), Ucid::default());
+    let obj = ObjectiveId::from(1);
+    let stats = vec![
+        Stat::NewRound { sortie: "campaign".into() },
+        Stat::Register {
+            name: "Alpha".into(),
+            id: u1,
+            side: Side::Blue,
+            initial_points: 100,
+        },
+        Stat::Objective {
+            name: "HS42".into(),
+            id: obj,
+            pos: LLPos { latitude: 41.6, longitude: 41.6, altitude: 10. },
+            owner: Side::Red,
+            kind: ObjectiveKind::Airbase,
+        },
+        Stat::Capture { id: obj, by: smallvec::smallvec![nobody, u1], side: Side::Blue },
+    ];
+    for (i, st) in stats.into_iter().enumerate() {
+        db.add_stat(&inst, &mut ctx, t(i as i64), st).unwrap();
+    }
+    let rid = db.all_rounds().unwrap()[0].1;
+    // as an older build stored it
+    let cid = CaptureId::new(&db.db).unwrap();
+    db.captures
+        .insert(
+            &(rid, cid),
+            &CaptureRecord {
+                time: t(10),
+                objective_name: "HS42".into(),
+                side: Side::Red,
+                by: smallvec::smallvec![nobody],
+            },
+        )
+        .unwrap();
+    let by: Vec<_> =
+        db.recent_captures(rid, 10).unwrap().into_iter().map(|c| c.by.to_vec()).collect();
+    assert_eq!(by, vec![vec![], vec![u1]]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Every row `drive` leaves, of every stored type, survives a change of
 /// codec exactly, both ways: bincode rows (sled) re-encoded as MessagePack,
 /// and MessagePack rows (redb) back as bincode.
