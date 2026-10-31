@@ -4153,6 +4153,14 @@ impl Db {
                     .map(|inv| inv.stored)
                     .unwrap_or(0);
                 if base_supplies >= repair_cost {
+                    // Pay for it, as the message says and as the manual
+                    // "Repair Carrier" action does. It used to be free.
+                    if let Some(base) = self.persisted.objectives.get_mut_cow(&base_oid)
+                        && let Some(inv) =
+                            base.warehouse.equipment.get_mut_cow(MATERIEL_ITEM)
+                    {
+                        inv.debit(repair_cost);
+                    }
                     // Auto-initiate repair
                     if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid)
                         && let ObjectiveKind::CarrierGroup { repair_start_time, .. } =
