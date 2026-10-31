@@ -155,6 +155,24 @@ pub(crate) struct InstanceCfg {
     /// flags, no gore) are appended whatever this says.
     #[serde(default)]
     pub news_image_style: Option<String>,
+    /// This campaign's look and voice, by theme id. Unset is the Vector
+    /// Strike dashboard and the war diary's usual wire-service voice.
+    ///
+    /// `"redstorm"` (the 1985 Southern Flank campaign) is the only other one
+    /// today. The dashboard picks its colours, fonts and names from it
+    /// (`GET /api/instances` carries it), the diary is written twice -- a
+    /// 1985 Western wire dispatch and a Soviet front communiqué on the same
+    /// facts (`news_llm::Voice`) -- and the diary's pictures use 1985
+    /// equipment unless `news_image_setting` says otherwise. An id this bfdb
+    /// does not know reads as unset.
+    #[serde(default)]
+    pub theme: Option<String>,
+    /// What the dashboard and the Discord posts call this campaign
+    /// ("Southern Flank 1985"). Unset, it goes by the bfdb-wide campaign
+    /// name. Not `label`: that names the server in the selector, this names
+    /// the campaign on its masthead.
+    #[serde(default)]
+    pub brand_name: Option<String>,
     /// Whether this instance is part of the *public* picture. Default true.
     ///
     /// A `false` instance -- a test/staging server -- is:
@@ -214,6 +232,15 @@ fn default_true() -> bool {
     true
 }
 
+/// The theme id of the 1985 Red Storm campaign.
+pub(crate) const THEME_REDSTORM: &str = "redstorm";
+
+/// Whether a theme id names the Red Storm campaign. Case and surrounding
+/// space are forgiven: it is typed by hand into a JSON file.
+pub(crate) fn is_redstorm(theme: Option<&str>) -> bool {
+    theme.is_some_and(|t| t.trim().eq_ignore_ascii_case(THEME_REDSTORM))
+}
+
 impl InstanceCfg {
     pub(crate) fn label(&self) -> &str {
         self.label.as_deref().unwrap_or(&self.id)
@@ -231,6 +258,21 @@ impl InstanceCfg {
 
     pub(crate) fn is_range(&self) -> bool {
         self.kind == InstanceKind::Range
+    }
+
+    /// The theme id as configured, trimmed; `None` when unset or blank.
+    pub(crate) fn theme(&self) -> Option<&str> {
+        self.theme.as_deref().map(str::trim).filter(|s| !s.is_empty())
+    }
+
+    /// Whether this is the 1985 Red Storm campaign (`theme: "redstorm"`).
+    pub(crate) fn is_redstorm(&self) -> bool {
+        is_redstorm(self.theme())
+    }
+
+    /// The campaign's own name, trimmed; `None` when unset or blank.
+    pub(crate) fn brand_name(&self) -> Option<&str> {
+        self.brand_name.as_deref().map(str::trim).filter(|s| !s.is_empty())
     }
 
     /// Where a range instance's engine writes its graded results: the
@@ -392,5 +434,36 @@ impl Registry {
     /// Find the instance that owns a DCSServerBot server name.
     pub(crate) fn by_dcs_server_name(&self, name: &str) -> Option<&Arc<InstanceCfg>> {
         self.instances.iter().find(|i| i.dcs_server_name.as_deref() == Some(name))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_and_brand_are_optional() {
+        // An instances file written before themes existed still parses.
+        let old: InstanceCfg = serde_json::from_str(r#"{"id": "vs1"}"#).unwrap();
+        assert_eq!((old.theme(), old.brand_name()), (None, None));
+        assert!(!old.is_redstorm());
+
+        let rs: InstanceCfg = serde_json::from_str(
+            r#"{"id": "rsr", "theme": "redstorm", "brand_name": "Southern Flank 1985",
+                "blue_faction": "NATO", "red_faction": "the Soviet Union",
+                "blue_adjective": "NATO", "red_adjective": "Soviet"}"#,
+        )
+        .unwrap();
+        assert_eq!(rs.theme(), Some("redstorm"));
+        assert_eq!(rs.brand_name(), Some("Southern Flank 1985"));
+        assert!(rs.is_redstorm());
+
+        // Blank is unset; case and padding are forgiven.
+        let blank: InstanceCfg =
+            serde_json::from_str(r#"{"id": "x", "theme": " ", "brand_name": ""}"#)
+                .unwrap();
+        assert_eq!((blank.theme(), blank.brand_name()), (None, None));
+        assert!(is_redstorm(Some(" RedStorm ")));
+        assert!(!is_redstorm(Some("vector")) && !is_redstorm(None));
     }
 }

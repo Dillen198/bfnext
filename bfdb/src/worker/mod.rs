@@ -185,15 +185,19 @@ impl DiaryWriter {
         }
     }
 
-    /// `news_llm::write_dispatch`, here or in the worker. Blocking.
+    /// `news_llm::write_dispatch` in `voice`, here or in the worker (which is
+    /// sent the voice with the request). Blocking.
     pub(crate) fn write(
         &self,
+        voice: crate::news_llm::Voice,
         d: &crate::news::NewsDigest,
         history: &[crate::news::NewsDigest],
     ) -> anyhow::Result<crate::news_llm::Written> {
         match self {
-            DiaryWriter::Local(w) => crate::news_llm::write_dispatch(w, d, history),
-            DiaryWriter::Worker { .. } => hub::news_write(d, history),
+            DiaryWriter::Local(w) => {
+                crate::news_llm::write_dispatch(w, voice, d, history)
+            }
+            DiaryWriter::Worker { .. } => hub::news_write(voice, d, history),
         }
     }
 }

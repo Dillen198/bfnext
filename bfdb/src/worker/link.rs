@@ -6,7 +6,7 @@
 //! ([`audio_frame`]). Either side may send a request ([`Msg::Rpc`] from the
 //! worker, [`Msg::Req`] from bfdb) and gets a [`Msg::Reply`] with the same id.
 
-use crate::news::NewsDigest;
+use crate::{news::NewsDigest, news_llm::Voice};
 use serde_derive::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -98,8 +98,17 @@ pub(crate) enum Op {
     AtcTranscript { inst: String, since: i64 },
     /// `milatc::audio_wav`, base64 in the reply.
     AtcAudio { inst: String, id: u64 },
-    /// `news_llm::write_dispatch` with the worker's writer.
-    NewsWrite { digest: Box<NewsDigest>, history: Vec<NewsDigest> },
+    /// `news_llm::write_dispatch` with the worker's writer, in `voice`. The
+    /// voice defaults, so a request from an older bfdb (which sends none) is
+    /// written in the default voice; an older worker ignores it and answers
+    /// in the default voice, with no `voice` in its reply, which is how bfdb
+    /// knows (`hub::news_write`).
+    NewsWrite {
+        digest: Box<NewsDigest>,
+        history: Vec<NewsDigest>,
+        #[serde(default)]
+        voice: Voice,
+    },
     /// One picture from the worker's image provider (and its fallback).
     NewsDraw { prompt: String },
 }
@@ -354,6 +363,45 @@ mod tests {
             serde_json::to_string(&q).unwrap(),
             r#"{"t":"req","id":9,"op":{"op":"atc_transcript","inst":"r","since":5}}"#
         );
+    }
+
+    #[test]
+    fn a_news_write_without_a_voice_is_the_default_voice() {
+        let digest = r#"{"day":"2026-09-27","generated":"2026-09-27T12:00:00Z","round":1,
+            "headline":"H","items":[],"facts":{"blue_captures":0,"red_captures":0,
+            "objectives_traded":0,"air_kills":0,"ground_kills":0,"blue_held":0,
+            "red_held":0,"neutral_held":0,"changed_hands":[]},"final_":false}"#;
+        // What a bfdb from before voices sends.
+        let old = format!(
+            r#"{{"t":"req","id":4,"op":{{"op":"news_write","digest":{digest},"history":[]}}}}"#
+        );
+        match serde_json::from_str::<Msg>(&old).unwrap() {
+            Msg::Req { id: 4, op: Op::NewsWrite { voice, .. } } => {
+                assert_eq!(voice, Voice::Default)
+            }
+            other => panic!("{other:?}"),
+        }
+        // And this one names it.
+        let new = Msg::Req {
+            id: 5,
+            op: Op::NewsWrite {
+                digest: Box::new(serde_json::from_str(digest).unwrap()),
+                history: vec![],
+                voice: Voice::Soviet,
+            },
+        };
+        let s = serde_json::to_string(&new).unwrap();
+        assert!(s.contains(r#""voice":"soviet""#), "{s}");
+        match serde_json::from_str::<Msg>(&s).unwrap() {
+            Msg::Req { op: Op::NewsWrite { voice, .. }, .. } => {
+                assert_eq!(voice, Voice::Soviet)
+            }
+            other => panic!("{other:?}"),
+        }
+        // An older worker's reply carries no voice (`hub::checked_voice`).
+        let reply: crate::news_llm::Written =
+            serde_json::from_str(r#"{"headline":"H","body":["b"]}"#).unwrap();
+        assert!(reply.voice.is_none());
     }
 
     #[test]

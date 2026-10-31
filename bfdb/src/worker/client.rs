@@ -352,7 +352,7 @@ async fn answer(svc: &Services, op: Op) -> Result<serde_json::Value, RemoteErr> 
                 Err(RemoteErr::new(404, "that transmission's audio is no longer kept"))
             }
         },
-        Op::NewsWrite { digest, history } => {
+        Op::NewsWrite { digest, history, voice } => {
             let Some(w) = svc.news_writer.clone() else {
                 return Err(RemoteErr::new(
                     0,
@@ -360,7 +360,7 @@ async fn answer(svc: &Services, op: Op) -> Result<serde_json::Value, RemoteErr> 
                 ));
             };
             let r = tokio::task::spawn_blocking(move || {
-                crate::news_llm::write_dispatch(&w, &digest, &history)
+                crate::news_llm::write_dispatch(&w, voice, &digest, &history)
             })
             .await
             .map_err(|e| RemoteErr::new(0, format!("writer task died: {e}")))?;

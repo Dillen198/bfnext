@@ -818,6 +818,9 @@ fn registry_from_args(args: &Args) -> Result<Registry> {
             // works the setting out from the scenario.
             news_image_setting: None,
             news_image_style: None,
+            // A themed campaign needs the instances file.
+            theme: None,
+            brand_name: None,
             // A training range needs the instances file (`kind: "range"`).
             kind: Default::default(),
             range_jsonl: None,
@@ -858,6 +861,8 @@ fn open_db_offline(args: &Args, db_path: PathBuf) -> Result<StatsDb> {
             red_adjective: None,
             news_image_setting: None,
             news_image_style: None,
+            theme: None,
+            brand_name: None,
             kind: Default::default(),
             range_jsonl: None,
             tacview_dir: None,

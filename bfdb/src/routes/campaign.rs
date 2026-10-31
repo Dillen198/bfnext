@@ -1472,6 +1472,11 @@ pub(crate) async fn api_instances(
                 // the war diary guessed from the map.
                 "blue_label": cfg.blue_faction.as_deref().map(str::trim).filter(|s| !s.is_empty()),
                 "red_label": cfg.red_faction.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+                // The campaign's look ("redstorm"), lower-cased, and its own
+                // name for the masthead -- null where unset, which is the
+                // Vector Strike look under the bfdb-wide campaign name.
+                "theme": cfg.theme().map(str::to_ascii_lowercase),
+                "brand_name": cfg.brand_name(),
                 "dcs_server_name": cfg.dcs_server_name,
                 // false only ever reaches an admin (see the filter above) --
                 // the dashboard uses it to mark the entry as internal.

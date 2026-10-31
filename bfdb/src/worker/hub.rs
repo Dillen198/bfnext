@@ -425,15 +425,17 @@ fn blocking_request(op: Op, timeout: Duration) -> Result<serde_json::Value, Remo
     tokio::runtime::Handle::current().block_on(h.request(op, timeout))
 }
 
-/// The diary's prose from the worker's writer. A 429 there pushes this
-/// process's writer gate back just as a local one would.
+/// The diary's prose from the worker's writer, in `voice`. A 429 there
+/// pushes this process's writer gate back just as a local one would.
 pub(crate) fn news_write(
+    voice: crate::news_llm::Voice,
     d: &crate::news::NewsDigest,
     history: &[crate::news::NewsDigest],
 ) -> anyhow::Result<crate::news_llm::Written> {
-    let op = Op::NewsWrite { digest: Box::new(d.clone()), history: history.to_vec() };
+    let op =
+        Op::NewsWrite { digest: Box::new(d.clone()), history: history.to_vec(), voice };
     match blocking_request(op, Duration::from_secs(180)) {
-        Ok(v) => Ok(serde_json::from_value(v)?),
+        Ok(v) => checked_voice(voice, serde_json::from_value(v)?),
         Err(e) if e.rate_limited => {
             let backoff = crate::news_llm::note_rate_limited(
                 e.retry_secs.map(Duration::from_secs_f64),
@@ -442,6 +444,27 @@ pub(crate) fn news_write(
         }
         Err(e) => Err(anyhow::anyhow!("worker: {}", e.msg)),
     }
+}
+
+/// A worker reply against the voice asked for. A worker older than voices
+/// ignores the request's `voice` and writes the default one, saying nothing
+/// about it: fine where the default stands in for the voice (the Western
+/// wire), refused where it does not (the Soviet communiqué), so the day is
+/// filed with one voice rather than the wrong one.
+fn checked_voice(
+    asked: crate::news_llm::Voice,
+    w: crate::news_llm::Written,
+) -> anyhow::Result<crate::news_llm::Written> {
+    let got = w.voice.unwrap_or_default();
+    if got != asked && !asked.default_stands_in() {
+        anyhow::bail!(
+            "worker: it wrote the {} voice, not the {} one asked for -- it predates \
+             campaign voices; update it",
+            got.id(),
+            asked.id()
+        );
+    }
+    Ok(w)
 }
 
 /// One diary picture from the worker's provider: (bytes, who drew it).
@@ -485,6 +508,18 @@ mod tests {
         client::{self, Link},
         host::EngineHost,
     };
+
+    #[test]
+    fn an_older_workers_default_voice_is_not_filed_as_the_soviet_one() {
+        use crate::news_llm::{Voice, Written};
+        let old =
+            || Written { headline: "H".into(), body: vec!["b".into()], voice: None };
+        assert!(checked_voice(Voice::Default, old()).is_ok());
+        assert!(checked_voice(Voice::Western, old()).is_ok());
+        assert!(checked_voice(Voice::Soviet, old()).is_err());
+        let new = Written { voice: Some(Voice::Soviet), ..old() };
+        assert!(checked_voice(Voice::Soviet, new).is_ok());
+    }
 
     async fn until(mut f: impl FnMut() -> bool) {
         for _ in 0..200 {

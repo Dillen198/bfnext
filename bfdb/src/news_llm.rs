@@ -24,10 +24,11 @@
 //! a day at the top end, not one. Still small enough that a local model on the
 //! network is a perfectly sensible way to run this.
 
-use crate::news::NewsDigest;
+use crate::news::{Factions, NewsDigest};
 use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
 use std::{
+    borrow::Cow,
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -89,6 +90,17 @@ pub(crate) fn note_rate_limited(retry_after: Option<Duration>) -> Duration {
 
 fn note_success() {
     GATE.lock().unwrap_or_else(|e| e.into_inner()).rate_limited = 0;
+}
+
+/// A second call inside a slot `acquire` granted -- the other voice of a
+/// two-voice campaign, written straight after the first so the two tell the
+/// same facts. It pushes the next slot out by one more spacing, so the
+/// process still averages one call per `MIN_SPACING` on the shared quota.
+pub fn charge_extra_call() {
+    let mut g = GATE.lock().unwrap_or_else(|e| e.into_inner());
+    let now = Instant::now();
+    let from = g.next_call.filter(|t| *t > now).unwrap_or(now);
+    g.next_call = Some(from + MIN_SPACING);
 }
 
 /// The endpoint said 429. Not the day's fault, so the caller should not count
@@ -241,9 +253,193 @@ totals) last, briefly.
 Reply with JSON only, no code fence, in exactly this form:
 {\"headline\": \"...\", \"body\": [\"first paragraph\", \"second paragraph\"]}";
 
+/// The reply contract every voice shares, so the parser and the page never
+/// care which one wrote the day.
+const REPLY_FORM: &str = "\
+Reply with JSON only, no code fence, in exactly this form:
+{\"headline\": \"...\", \"body\": [\"first paragraph\", \"second paragraph\"]}";
+
+/// Who is writing the day up. A campaign's theme picks its voices
+/// ([`voices_for`]); the facts handed over are the same whatever the voice.
+///
+/// Carried over the worker link in `Op::NewsWrite` with a serde default, so a
+/// request from a bfdb that predates voices reads as [`Voice::Default`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Voice {
+    /// The diary's own: a present-day wire service's duty editor (`SYSTEM`).
+    #[default]
+    Default,
+    /// A Western wire service in 1985: the Red Storm campaign's dispatch.
+    Western,
+    /// A Soviet front communiqué in 1985: the Red Storm campaign's second
+    /// voice, spinning the same day's facts.
+    Soviet,
+}
+
+impl Voice {
+    /// The id stored with an [`crate::news::AltDispatch`] and sent over the
+    /// worker link.
+    pub fn id(self) -> &'static str {
+        match self {
+            Voice::Default => "default",
+            Voice::Western => "western",
+            Voice::Soviet => "soviet",
+        }
+    }
+
+    /// Whether prose in the default voice is an acceptable stand-in -- what
+    /// an older worker, which ignores the voice it is asked for, sends back.
+    /// A Western wire dispatch is close enough to the default one; a Soviet
+    /// communiqué is not, and is better left out than filed in the wrong
+    /// voice.
+    pub fn default_stands_in(self) -> bool {
+        !matches!(self, Voice::Soviet)
+    }
+
+    /// The system prompt, with the belligerents' names written in where the
+    /// voice depends on who is who. The default voice is `SYSTEM`, unchanged.
+    pub fn system(self, f: &Factions) -> Cow<'static, str> {
+        match self {
+            Voice::Default => Cow::Borrowed(SYSTEM),
+            Voice::Western => Cow::Owned(western_1985(f)),
+            Voice::Soviet => Cow::Owned(soviet_1985(f)),
+        }
+    }
+}
+
+/// A campaign's voices: the main dispatch's, and the second one's when the
+/// theme tells each day from both sides. Unthemed is exactly the diary as it
+/// always was.
+pub fn voices_for(theme: Option<&str>) -> (Voice, Option<Voice>) {
+    if crate::instance::is_redstorm(theme) {
+        (Voice::Western, Some(Voice::Soviet))
+    } else {
+        (Voice::Default, None)
+    }
+}
+
+/// Which side is the Soviet one: whichever is named for it, else Red (the
+/// Red Storm campaign's own arrangement).
+fn soviet_side(f: &Factions) -> (&'static str, &'static str) {
+    let soviet = |side: &str| {
+        let s = format!("{} {}", f.name(side), f.adj(side)).to_lowercase();
+        ["soviet", "ussr", "warsaw pact"].iter().any(|w| s.contains(w))
+    };
+    if soviet("Blue") && !soviet("Red") {
+        ("Blue", "Red")
+    } else {
+        ("Red", "Blue")
+    }
+}
+
+/// The 1985 ground note both period voices need: the brief names countries
+/// by today's borders, which in 1985 were Soviet republics.
+const GROUND_1985: &str = "\
+The brief names the theatre and the countries whose ground is in play by \
+present-day borders. In 1985 Georgia, Armenia, Azerbaijan and the Russian \
+Caucasus were all inside the Soviet Union: write 'Soviet Georgia', the region or \
+simply the place name, and never treat them as independent states. Name ground \
+only from the brief's list, and only as places.";
+
+/// The things a 1985 voice must never reach for.
+const NO_ANACHRONISM: &str = "\
+THE YEAR IS 1985. Nothing that did not exist then: no drones, no GPS or \
+satellite navigation, no mobile phones, no internet, email or social media, no \
+present-day terms, organisations or events.";
+
+/// The Red Storm campaign's main dispatch: a Western wire service in 1985.
+fn western_1985(f: &Factions) -> String {
+    let (s, w) = soviet_side(f);
+    let (west, west_adj, sov, sov_adj) = (f.name(w), f.adj(w), f.name(s), f.adj(s));
+    format!(
+        "\
+You are the duty editor of a Western wire service in 1985, filing one short \
+dispatch a day on the war between {west} and {sov} on NATO's southern flank. The \
+war is a persistent multiplayer DCS World campaign fought over a fixed set of \
+objectives — airbases, forward operating bases, logistics hubs, naval bases and \
+SAM sites. Call the sides {west} and {sov} (adjectives: {west_adj}, {sov_adj}) — \
+'{sov_adj} forces', '{west_adj} aircraft' — and never 'Blue' or 'Red'. The pilots \
+named in the brief are real people flying in it. {GROUND_1985}
+
+Rules, in order of priority:
+
+1. NEVER INVENT A FACT. Every number, place name, pilot name and claim in your \
+dispatch must come from the SITUATION block you are given. If it is not there, \
+it did not happen and you do not mention it. In particular: no human casualties, \
+no civilians, no politics or diplomacy, no weather, no quotes, no named \
+commanders or units beyond those given, no equipment types beyond those given. \
+A country is never an actor; only the two sides act.
+2. You may draw the inference a desk would draw from the facts you have — that a \
+position at 18% strength is unlikely to hold — but write it as assessment, not \
+as reported fact.
+3. VARY. You are shown the previous dispatches. Do not reuse their opening, \
+their structure or their phrasing. If the last one led on the loss figures, lead \
+on something else.
+4. {NO_ANACHRONISM} Write as a wire reporter of that year would: 'Soviet forces', \
+'NATO aircraft', 'air-defence sites', 'sorties', 'the front'.
+5. Register: plain, factual, unexcited wire-service prose of the period. British \
+spelling. Short sentences. No purple prose, no exclamation marks, no rhetorical \
+questions, no addressing the reader, no closing moral. Do not editorialise about \
+who deserves to win.
+6. Shape: a headline of at most nine words, upper case, no full stop, reflecting \
+the single most important item — followed by two to four paragraphs of 40 to 90 \
+words. Lead with what changed. Put the standing figures (holdings, running \
+totals) last, briefly.
+
+{REPLY_FORM}"
+    )
+}
+
+/// The Red Storm campaign's second voice: the Soviet front communiqué. It
+/// spins; it may not invent.
+fn soviet_1985(f: &Factions) -> String {
+    let (s, w) = soviet_side(f);
+    let (west, west_adj, sov, sov_adj) = (f.name(w), f.adj(w), f.name(s), f.adj(s));
+    format!(
+        "\
+You are the press office of the {sov_adj} high command in 1985, issuing the \
+official daily communiqué on the war against {west} on the southern front, \
+rendered in English. The war is a persistent multiplayer DCS World campaign \
+fought over a fixed set of objectives — airbases, forward operating bases, \
+logistics hubs, naval bases and SAM sites. Your side is {sov} ({sov_adj}); the \
+enemy is {west} ({west_adj}), which you call 'the aggressor'. Never write 'Blue' \
+or 'Red'. The pilots named in the brief are real people flying in it. \
+{GROUND_1985}
+
+Rules, in order of priority:
+
+1. NEVER INVENT AN EVENT. Every capture, loss, place, pilot and number you \
+mention must come from the SITUATION block. You choose which facts to stress, \
+which to pass over and how to describe them; you may not add an event, a place, \
+a figure, a name or a claim that is not there. No casualty figures, no \
+civilians, no quotes, no named commanders or units beyond those given, no \
+equipment types beyond those given. A country is never an actor.
+2. SPIN THE SAME FACTS. Lead with {sov_adj} successes and the aggressor's \
+losses. Mention {sov_adj} losses briefly, late and in minimising terms — \
+'repositioned', 'withdrew to prepared positions', 'losses were sustained' — or \
+leave them out; never state the opposite of a fact in the brief. Ground {sov} \
+took is 'liberated'; ground it lost is left 'temporarily'. If the day went badly, \
+say less, not something false.
+3. VARY. You are shown the previous communiqués. Do not reuse their opening, \
+their structure or their phrasing.
+4. {NO_ANACHRONISM}
+5. Register: the official {sov_adj} communiqué of the period — formal, \
+collective and triumphant: 'our airmen', 'the heroic defenders', 'the \
+aggressor's aircraft'. No exclamation marks, no rhetorical questions, no \
+addressing the reader. A pilot named in the brief may be named; credit {sov_adj} \
+pilots warmly and never mock or insult any pilot.
+6. Shape: a headline of at most nine words, upper case, no full stop, reflecting \
+the item most favourable to {sov} — followed by two to four paragraphs of 40 to \
+90 words.
+
+{REPLY_FORM}"
+    )
+}
+
 /// Build the day's brief — the analysis's conclusions, the standing numbers,
 /// and what has already been filed.
-fn user_prompt(d: &NewsDigest, history: &[NewsDigest]) -> String {
+fn user_prompt(d: &NewsDigest, history: &[NewsDigest], voice: Voice) -> String {
     let f = &d.facts;
     let mut s = String::new();
     s.push_str(&format!("DAY {} OF THE CAMPAIGN — {}\n\n", f.campaign_day, d.day));
@@ -342,6 +538,25 @@ fn user_prompt(d: &NewsDigest, history: &[NewsDigest]) -> String {
             "\nThis is the first dispatch of the war. There is no previous coverage to \
              refer back to; report the opening disposition and the day's fighting.\n",
         );
+    } else if voice == Voice::Soviet {
+        // The second voice varies against its own earlier days, not the main
+        // dispatch's. Days filed before it existed have none to show.
+        let prev: Vec<_> = history
+            .iter()
+            .filter_map(|p| p.alt.as_ref().map(|a| (&p.day, a)))
+            .take(5)
+            .collect();
+        if !prev.is_empty() {
+            s.push_str(
+                "\nPREVIOUSLY ISSUED — do not repeat their wording or structure:\n",
+            );
+            for (day, a) in prev {
+                s.push_str(&format!("[{day}] {}\n", a.headline));
+                if let Some(first) = a.body.first() {
+                    s.push_str(&format!("    {first}\n"));
+                }
+            }
+        }
     } else {
         s.push_str("\nPREVIOUSLY FILED — do not repeat their wording or structure:\n");
         for p in history.iter().take(5) {
@@ -363,13 +578,26 @@ fn extract_json(raw: &str) -> Result<Written> {
     if end <= start {
         bail!("malformed JSON in reply");
     }
-    Ok(serde_json::from_str(&raw[start..=end])?)
+    // Only the two fields the contract asks for: anything else a model adds
+    // is ignored rather than read into `voice`.
+    #[derive(Deserialize)]
+    struct Reply {
+        headline: String,
+        body: Vec<String>,
+    }
+    let r: Reply = serde_json::from_str(&raw[start..=end])?;
+    Ok(Written { headline: r.headline, body: r.body, voice: None })
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Written {
     pub headline: String,
     pub body: Vec<String>,
+    /// The voice it was written in. Set by `write_dispatch`, and so present
+    /// in a worker's reply from this version on; an older worker's reply has
+    /// none, which is how bfdb tells that the voice it asked for was ignored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice: Option<Voice>,
 }
 
 #[derive(Deserialize)]
@@ -470,19 +698,21 @@ pub fn chat(
     Ok(raw)
 }
 
-/// Write the dispatch. Blocking on purpose — the caller already runs inside
-/// `block_in_place`, and this happens a handful of times a day.
+/// Write the dispatch in `voice`. Blocking on purpose — the caller already
+/// runs inside `block_in_place`, and this happens a handful of times a day.
 pub fn write_dispatch(
     cfg: &WriterCfg,
+    voice: Voice,
     digest: &NewsDigest,
     history: &[NewsDigest],
 ) -> Result<Written> {
-    let prompt = user_prompt(digest, history);
+    let prompt = user_prompt(digest, history, voice);
+    let system = voice.system(&digest.factions);
     // Generous on purpose. This runs on a timer in the background and nothing
     // waits on it, while a local model on a CPU-only box can take minutes to
     // produce a few hundred tokens -- a tight timeout here would fail exactly
     // the setup that is most attractive for this job.
-    let (raw, finish) = chat(cfg, SYSTEM, &prompt, 1200, 0.9)?;
+    let (raw, finish) = chat(cfg, &system, &prompt, 1200, 0.9)?;
 
     let mut w = extract_json(&raw).map_err(|e| {
         anyhow!(
@@ -502,6 +732,7 @@ pub fn write_dispatch(
     if w.headline.is_empty() {
         bail!("writer returned an empty headline");
     }
+    w.voice = Some(voice);
     Ok(w)
 }
 
@@ -523,6 +754,75 @@ mod tests {
         let raw = "Here you go:\n```json\n{\"headline\":\"GORI FALLS\",\"body\":[\"a\"]}\n```\n";
         let w = extract_json(raw).unwrap();
         assert_eq!(w.headline, "GORI FALLS");
+    }
+
+    #[test]
+    fn the_theme_picks_the_voices() {
+        // Unthemed: one voice, and its prompt is the diary's own, unchanged.
+        assert_eq!(voices_for(None), (Voice::Default, None));
+        assert_eq!(voices_for(Some("vector")), (Voice::Default, None));
+        let f = Factions::new(
+            Some("NATO"),
+            Some("the Soviet Union"),
+            Some("NATO"),
+            Some("Soviet"),
+        );
+        assert!(matches!(Voice::Default.system(&f), Cow::Borrowed(s) if s == SYSTEM));
+
+        // Red Storm: the 1985 Western wire first, the Soviet communiqué second.
+        assert_eq!(voices_for(Some("redstorm")), (Voice::Western, Some(Voice::Soviet)));
+        let west = Voice::Western.system(&f);
+        assert!(west.contains("Western wire service in 1985"), "{west}");
+        assert!(west.contains("between NATO and the Soviet Union"), "{west}");
+        assert!(west.contains("no drones") && west.contains("GPS"), "{west}");
+        let sov = Voice::Soviet.system(&f);
+        assert!(sov.contains("communiqué") && sov.contains("'the aggressor'"), "{sov}");
+        assert!(
+            sov.contains("the war against NATO") && sov.contains("Soviet high command")
+        );
+        assert!(sov.contains("NEVER INVENT AN EVENT"), "{sov}");
+        // Both keep the reply contract the parser reads.
+        for p in [&west, &sov] {
+            assert!(p.ends_with(REPLY_FORM), "{p}");
+        }
+        // Who is Soviet follows the names, not the colour.
+        let flipped =
+            Factions::new(Some("Soviet Union"), Some("NATO"), Some("Soviet"), None);
+        assert!(Voice::Soviet.system(&flipped).contains("the war against NATO"));
+
+        // The ids the page and the worker link use.
+        assert_eq!(serde_json::to_string(&Voice::Soviet).unwrap(), "\"soviet\"");
+        assert_eq!(Voice::Soviet.id(), "soviet");
+        assert!(Voice::Western.default_stands_in() && !Voice::Soviet.default_stands_in());
+    }
+
+    #[test]
+    fn the_second_voice_varies_against_its_own_days() {
+        let mut d: NewsDigest = serde_json::from_str(
+            r#"{"day":"1985-08-02","generated":"1985-08-02T12:00:00Z","round":1,
+            "headline":"KUTAISI FALLS","body":["Soviet forces took Kutaisi."],
+            "items":[],"facts":{"blue_captures":0,"red_captures":1,"objectives_traded":0,
+            "air_kills":0,"ground_kills":0,"blue_held":1,"red_held":2,"neutral_held":0,
+            "changed_hands":["Kutaisi"]},"final_":true}"#,
+        )
+        .unwrap();
+        d.alt = Some(crate::news::AltDispatch {
+            voice: "soviet".into(),
+            headline: "KUTAISI LIBERATED".into(),
+            body: vec!["Our forces liberated Kutaisi.".into()],
+            written_by: "m".into(),
+        });
+        let today = NewsDigest { day: "1985-08-03".into(), alt: None, ..d.clone() };
+        let hist = vec![d];
+        let sov = user_prompt(&today, &hist, Voice::Soviet);
+        assert!(
+            sov.contains("KUTAISI LIBERATED") && !sov.contains("KUTAISI FALLS"),
+            "{sov}"
+        );
+        let west = user_prompt(&today, &hist, Voice::Western);
+        assert!(west.contains("KUTAISI FALLS") && !west.contains("LIBERATED"), "{west}");
+        // The default voice's brief is exactly what it was.
+        assert_eq!(user_prompt(&today, &hist, Voice::Default), west);
     }
 
     #[test]

@@ -429,6 +429,9 @@ pub enum Era {
     Modern,
     /// 1944.
     Ww2,
+    /// The 1985 Cold War gone hot: NATO against the Soviet Union (the
+    /// `redstorm` theme).
+    ColdWar1985,
     /// An operator-written setting: no period kit is assumed, only what the
     /// story itself names.
     Custom,
@@ -616,8 +619,9 @@ fn land_for(theatre: &str, rgw: bool) -> &'static Land {
 
 /// Where and when the war is, in words an image model can draw. Per instance:
 /// an explicit `news_image_setting` wins (and then no period equipment is
-/// assumed); then the scenario's own name (the 2008 Caucasus campaign is
-/// RGW2008), then the theatre the objectives sit in.
+/// assumed); then the campaign's theme (`redstorm` is 1985); then the
+/// scenario's own name (the 2008 Caucasus campaign is RGW2008), then the
+/// theatre the objectives sit in.
 pub fn campaign_setting(cfg: &InstanceCfg, theatre: &str) -> Setting {
     let hay = [
         Some(cfg.id.as_str()),
@@ -636,6 +640,21 @@ pub fn campaign_setting(cfg: &InstanceCfg, theatre: &str) -> Setting {
         cfg.news_image_setting.as_deref().map(str::trim).filter(|s| !s.is_empty())
     {
         return Setting { text: clip(s, SETTING_CHARS), era: Era::Custom, land };
+    }
+    if cfg.is_redstorm() {
+        let text = match theatre {
+            "Caucasus" | "" => "1985, the Cold War turned hot on NATO's southern flank: the \
+                 Soviet Caucasus and the Black Sea coast, green valleys, collective farms, \
+                 stone villages and the mountains behind"
+                .to_string(),
+            t => format!(
+                "1985, the Cold War turned hot: a war between NATO and the Soviet Union in \
+                 the {t} region"
+            ),
+        };
+        // Its ground is the Caucasus of the day; the 2008 cues are as true
+        // of 1985 farmland and mountain roads.
+        return Setting { text, era: Era::ColdWar1985, land: land_for(theatre, false) };
     }
     let (text, era) = if rgw {
         (
@@ -868,6 +887,69 @@ const KIT_WW2_AXIS: Kit = Kit {
     ship: &["E-boat"],
 };
 
+const KIT_NATO_1985: Kit = Kit {
+    tank: &["M1 Abrams tank", "M60A3 Patton tank", "Leopard 1 tank"],
+    ifv: &[
+        "M113 armoured personnel carrier",
+        "M2 Bradley fighting vehicle",
+        "Marder infantry fighting vehicle",
+    ],
+    truck: &["M35 army truck", "M813 army truck"],
+    jet: &[
+        "A-10A Thunderbolt II attack jet",
+        "F-4E Phantom II fighter-bomber",
+        "F-111 strike bomber",
+    ],
+    fighter: &["F-15C Eagle", "F-14A Tomcat", "F-4E Phantom II"],
+    thelo: &["UH-1H Huey helicopter", "UH-60A Black Hawk helicopter"],
+    ahelo: &["AH-1S Cobra helicopter", "AH-64A Apache helicopter"],
+    sam: &[
+        "Hawk missile launcher",
+        "Chaparral missile vehicle",
+        "Nike Hercules missile launcher",
+    ],
+    arty: &["M109 self-propelled howitzer", "M110 self-propelled howitzer"],
+    ship: &[
+        "Ticonderoga-class cruiser",
+        "Oliver Hazard Perry-class frigate",
+        "Spruance-class destroyer",
+    ],
+};
+
+const KIT_SOVIET_1985: Kit = Kit {
+    tank: &["T-72A tank", "T-80B tank", "T-64 tank"],
+    ifv: &[
+        "BMP-1 infantry fighting vehicle",
+        "BMP-2 infantry fighting vehicle",
+        "BTR-70 armoured personnel carrier",
+    ],
+    truck: &["Ural-375 army truck", "ZIL-131 army truck"],
+    jet: &[
+        "Su-25 attack jet",
+        "Su-24 strike bomber",
+        "Tu-22M3 bomber",
+        "MiG-27 fighter-bomber",
+    ],
+    fighter: &["MiG-23 fighter", "MiG-29 fighter", "Su-27 fighter"],
+    thelo: &["Mi-8 transport helicopter"],
+    ahelo: &["Mi-24 helicopter gunship"],
+    sam: &[
+        "Kub (SA-6) missile launcher",
+        "Osa (SA-8) missile vehicle",
+        "S-75 (SA-2) missile launcher",
+    ],
+    arty: &[
+        "BM-21 Grad rocket launcher",
+        "2S1 Gvozdika self-propelled howitzer",
+        "2S3 Akatsiya self-propelled howitzer",
+    ],
+    ship: &[
+        "Slava-class missile cruiser",
+        "Krivak-class frigate",
+        "Kashin-class destroyer",
+    ],
+};
+
 const KIT_GENERIC: Kit = Kit {
     tank: &["main battle tank"],
     ifv: &["armoured personnel carrier", "infantry fighting vehicle"],
@@ -925,6 +1007,15 @@ fn kit_for(era: Era, side: &str, f: &Factions) -> &'static Kit {
                 &KIT_WW2_AXIS
             } else {
                 &KIT_WW2_ALLIED
+            }
+        }
+        Era::ColdWar1985 => {
+            if any(&["soviet", "ussr", "warsaw", "russia"]) {
+                &KIT_SOVIET_1985
+            } else if any(&["nato", "united states", "america", "turkey"]) || blue {
+                &KIT_NATO_1985
+            } else {
+                &KIT_SOVIET_1985
             }
         }
         Era::Custom => &KIT_GENERIC,
@@ -1688,8 +1779,11 @@ pub fn plan_scene(d: &NewsDigest, instance: &str, setting: &Setting) -> ScenePla
     if kind == SceneKind::Capture && place.as_deref().is_some_and(looks_like_airfield) {
         kind = SceneKind::CaptureAirfield;
     }
-    // A carrier is a present-day story; anywhere else it is a sea story.
-    if kind == SceneKind::Carrier && !matches!(setting.era, Era::Modern | Era::Custom) {
+    // A carrier is a present-day or 1985 story; anywhere else it is a sea
+    // story.
+    if kind == SceneKind::Carrier
+        && !matches!(setting.era, Era::Modern | Era::ColdWar1985 | Era::Custom)
+    {
         kind = SceneKind::Naval;
     }
 
@@ -1873,8 +1967,29 @@ fn era_clause(era: Era) -> &'static str {
         }
         Era::Modern => " All military equipment is real, in-service hardware, exactly as it really looks.",
         Era::Ww2 => " All equipment is authentic 1944 hardware.",
+        Era::ColdWar1985 => {
+            " All military equipment, uniforms and vehicles are authentic 1985 NATO and Soviet \
+             hardware, exactly as they really looked then: 1980s camouflage, steel helmets, no \
+             modern gear."
+        }
         Era::Custom => "",
     }
+}
+
+/// The look an instance's pictures are drawn in: its own `news_image_style`,
+/// else the box-wide `--news-image-style` -- except in a 1985 campaign, whose
+/// period film look (in `build_prompt`) stands unless the instance itself
+/// says otherwise. The box-wide look was written for the present-day wars.
+fn picture_style<'a>(
+    inst: &'a InstanceCfg,
+    setting: &Setting,
+    global: Option<&'a str>,
+) -> Option<&'a str> {
+    inst.news_image_style.as_deref().or(if setting.era == Era::ColdWar1985 {
+        None
+    } else {
+        global
+    })
 }
 
 /// The prompt for one dispatch: a planned scene (subject, camera, light),
@@ -1924,6 +2039,16 @@ pub fn build_prompt(
         style.map(str::trim).filter(|s| !s.is_empty()).map(|s| clip(s, STYLE_CHARS));
     let look = match &style {
         Some(s) => format!("Style: {s}"),
+        // A 1985 war is pictured the way the agencies shot it then.
+        None if setting.era == Era::ColdWar1985 => format!(
+            "Style: unstaged 1985 news agency photograph, photojournalism, shot on a 35mm film \
+             camera with a {}, Kodachrome or Tri-X film, film grain, slightly faded period colour, \
+             muted colours, natural light, real-world scale and detail. Avoid: 3D render, CGI, \
+             video game graphics, illustration, painting, concept art, toy-like or \
+             miniature-looking vehicles, oversaturated colour, digital sharpness, modern \
+             equipment, invented or fantasy vehicles.",
+            plan.lens
+        ),
         None => format!(
             "Style: unstaged news wire photograph, photojournalism, shot on a {}, natural light, \
              film grain, muted colours, real-world scale and detail. Avoid: 3D render, CGI, video game \
@@ -2473,9 +2598,9 @@ pub fn illustrate(
         meta.gave_up = false;
         meta.next_try = None;
     }
-    let style = inst.news_image_style.as_deref().or(cfg.style.as_deref());
-    let prompt =
-        build_prompt(d, &inst.id, &campaign_setting(inst, &d.facts.theatre), style);
+    let setting = campaign_setting(inst, &d.facts.theatre);
+    let style = picture_style(inst, &setting, cfg.style.as_deref());
+    let prompt = build_prompt(d, &inst.id, &setting, style);
     match generate_with_fallback(cfg, &prompt) {
         Ok((bytes, drawn_by)) => {
             count_call(db, &inst.id, &today)?;
@@ -2704,6 +2829,7 @@ mod tests {
             factions: Default::default(),
             facts_hash: 0,
             final_: true,
+            alt: None,
         }
     }
 
@@ -2736,6 +2862,7 @@ mod tests {
             factions,
             facts_hash: 0,
             final_: true,
+            alt: None,
         }
     }
 
@@ -2908,6 +3035,63 @@ mod tests {
                 "{t}"
             );
         }
+    }
+
+    #[test]
+    fn the_redstorm_theme_is_1985() {
+        let rs = inst(serde_json::json!({
+            "id": "rsr", "theme": "redstorm",
+            "blue_faction": "NATO", "red_faction": "the Soviet Union",
+            "blue_adjective": "NATO", "red_adjective": "Soviet",
+        }));
+        let s = campaign_setting(&rs, "Caucasus");
+        assert_eq!(s.era, Era::ColdWar1985);
+        assert!(s.text.contains("1985") && !s.text.contains("present-day"), "{}", s.text);
+        // The theme beats a scenario name that reads like RGW2008...
+        let named = inst(serde_json::json!({
+            "id": "rsr", "theme": "redstorm", "engine_config": "C:\\x\\RGW2008_CFG",
+        }));
+        assert_eq!(campaign_setting(&named, "Caucasus").era, Era::ColdWar1985);
+        // ...but an operator-written setting still beats the theme.
+        let over = inst(serde_json::json!({
+            "id": "rsr", "theme": "redstorm", "news_image_setting": "Norway, winter 1985",
+        }));
+        let o = campaign_setting(&over, "Caucasus");
+        assert_eq!((o.text.as_str(), o.era), ("Norway, winter 1985", Era::Custom));
+        // No theme, no change.
+        assert_eq!(rgw().era, Era::Georgia2008);
+
+        // Each side gets its 1985 kit.
+        let f = Factions::new(
+            Some("NATO"),
+            Some("the Soviet Union"),
+            Some("NATO"),
+            Some("Soviet"),
+        );
+        assert!(kit_for(Era::ColdWar1985, "Blue", &f).fighter.contains(&"F-14A Tomcat"));
+        assert!(kit_for(Era::ColdWar1985, "Red", &f).fighter.contains(&"MiG-23 fighter"));
+
+        // The prompt: period clause, period look, and the rules all the same.
+        let d = capture("1985-08-03", "Kutaisi", "Red", f, "Caucasus");
+        let p = build_prompt(&d, "rsr", &s, None);
+        assert!(p.contains("authentic 1985 NATO and Soviet"), "{p}");
+        assert!(
+            p.contains("1985 news agency photograph") && p.contains("film grain"),
+            "{p}"
+        );
+        assert!(p.contains("No gore") && p.ends_with(RULES), "{p}");
+        // A style override replaces the look, never the rules.
+        let p = build_prompt(&d, "rsr", &s, Some("Charcoal sketch."));
+        assert!(p.contains("Charcoal sketch.") && !p.contains("Kodachrome"), "{p}");
+        assert!(p.ends_with(RULES), "{p}");
+        // The box-wide style is for the present-day wars; the instance's own
+        // still wins.
+        assert_eq!(picture_style(&rs, &s, Some("Drone footage.")), None);
+        assert_eq!(picture_style(&over, &o, Some("G")), Some("G"));
+        let own = inst(serde_json::json!({
+            "id": "rsr", "theme": "redstorm", "news_image_style": "Mine.",
+        }));
+        assert_eq!(picture_style(&own, &s, Some("G")), Some("Mine."));
     }
 
     #[test]

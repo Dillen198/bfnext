@@ -44,6 +44,28 @@
       "//public": "false = a test/staging server: hidden from the selector for non-admins, and its rounds are excluded from the all-time leaderboard and pilot profiles. Defaults to true.",
       "public": false,
       "dcs_server_name": "[VS] Vector Strike #2 | Training"
+    },
+    {
+      "//": "A campaign with its own look and news voice: Red Storm Rising, 1985, NATO against the Soviet Union on the Caucasus map.",
+      "id": "rsr",
+      "label": "Southern Flank 1985",
+      "base": "/local/fowl/rsr",
+      "sortie": null,
+      "stats_jsonl": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.redstorm\\Logs\\stats.jsonl",
+      "stats_dir": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.redstorm\\Logs\\stats",
+      "engine_config": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.redstorm\\RSR_CFG",
+      "export_port": 42003,
+      "srs_url": "http://127.0.0.1:5004",
+      "dcs_server_name": "[VS] Southern Flank 1985",
+      "//theme": "The dashboard look, the war diary's voices and its picture era. \"redstorm\" is the only theme so far: a 1985 palette, a Western wire dispatch plus a Soviet front communique on the same facts, and 1985 equipment in the pictures. Omit for the Vector Strike look.",
+      "theme": "redstorm",
+      "//brand_name": "What the dashboard masthead and the Discord posts call this campaign. Omit to use the bfdb-wide campaign name.",
+      "brand_name": "Southern Flank 1985",
+      "//blue_faction": "The sides as the war diary names them; both voices use these. *_adjective is the form before a noun ('Soviet forces').",
+      "blue_faction": "NATO",
+      "red_faction": "the Soviet Union",
+      "blue_adjective": "NATO",
+      "red_adjective": "Soviet"
     }
   ]
 }

@@ -212,6 +212,27 @@ pub struct NewsDigest {
     pub facts_hash: u64,
     /// False while the day is still running and the digest is being refreshed.
     pub final_: bool,
+    /// The same day told by the other side, for a themed campaign that has
+    /// two voices (`news_llm::voices_for`): on `redstorm`, the Soviet front
+    /// communiqué beside the Western wire dispatch in `headline`/`body`.
+    /// Written with the main dispatch and only then, so the two always tell
+    /// the same facts; `None` everywhere else, and when its call failed.
+    #[serde(default)]
+    pub alt: Option<AltDispatch>,
+}
+
+/// The second voice's version of a day (see [`NewsDigest::alt`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AltDispatch {
+    /// Which voice wrote it: `"soviet"`.
+    pub voice: String,
+    /// Upper case, like the main headline.
+    pub headline: String,
+    /// One string per paragraph.
+    pub body: Vec<String>,
+    /// The model that wrote it.
+    pub written_by: String,
 }
 
 impl NewsDigest {
@@ -1652,5 +1673,48 @@ pub fn build(
         factions: factions.clone(),
         facts_hash,
         final_: day < Utc::now().date_naive(),
+        alt: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_digest_filed_before_the_second_voice_still_reads() {
+        // A `news_json` row from before `alt` existed: no `alt` key at all.
+        let old = r#"{"day":"2026-09-27","generated":"2026-09-27T12:00:00Z","round":3,
+            "headline":"GORI FALLS","body":["Gori fell."],"written_by":"m",
+            "items":[],"facts":{"blue_captures":0,"red_captures":1,"objectives_traded":0,
+            "air_kills":0,"ground_kills":0,"blue_held":1,"red_held":2,"neutral_held":0,
+            "changed_hands":["Gori"]},"facts_hash":7,"final_":true}"#;
+        let d: NewsDigest = serde_json::from_str(old).unwrap();
+        assert!(d.alt.is_none());
+        assert_eq!(d.headline, "GORI FALLS");
+
+        // And a second voice round-trips in the shape the dashboard reads.
+        let mut d = d;
+        d.alt = Some(AltDispatch {
+            voice: "soviet".into(),
+            headline: "GORI LIBERATED".into(),
+            body: vec!["Units of the Southern Front liberated Gori.".into()],
+            written_by: "m".into(),
+        });
+        let v = serde_json::to_value(&d).unwrap();
+        assert_eq!(
+            v["alt"],
+            serde_json::json!({
+                "voice": "soviet",
+                "headline": "GORI LIBERATED",
+                "body": ["Units of the Southern Front liberated Gori."],
+                "written_by": "m",
+            })
+        );
+        let back: NewsDigest = serde_json::from_value(v).unwrap();
+        assert_eq!(back.alt, d.alt);
+        // A partial alt (written by some later version) still loads.
+        let a: AltDispatch = serde_json::from_str(r#"{"headline":"X"}"#).unwrap();
+        assert_eq!((a.headline.as_str(), a.body.len()), ("X", 0));
+    }
 }

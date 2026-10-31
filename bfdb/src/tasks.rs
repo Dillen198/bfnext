@@ -101,6 +101,10 @@ pub(crate) async fn news_generator(
                 inst.cfg.blue_adjective.as_deref(),
                 inst.cfg.red_adjective.as_deref(),
             );
+            // The voices the day is written in: the diary's own, or for a
+            // themed campaign its period voice and a second one telling the
+            // same day from the other side (`NewsDigest::alt`).
+            let (voice, alt_voice) = news_llm::voices_for(inst.cfg.theme());
             let today = Utc::now().date_naive();
             let first = round.start.date_naive().min(today);
             // Only go back as far as the history the module will ever read.
@@ -159,6 +163,7 @@ pub(crate) async fn news_generator(
                         digest.body = prev.body.clone();
                         digest.written_by = prev.written_by.clone();
                         digest.generated = prev.generated;
+                        digest.alt = prev.alt.clone();
                     } else if let Some(w) = &writer {
                         let now = std::time::Instant::now();
                         let resting =
@@ -179,12 +184,19 @@ pub(crate) async fn news_generator(
                                 continue;
                             }
                         } else {
-                            match w.write(&digest, &hist) {
+                            match w.write(voice, &digest, &hist) {
                                 Ok(out) => {
                                     day_backoff.remove(&key);
                                     digest.headline = out.headline;
                                     digest.body = out.body;
                                     digest.written_by = w.model().to_string();
+                                    // The second voice only ever with the
+                                    // first, so both tell the same facts.
+                                    if let Some(v) = alt_voice {
+                                        digest.alt = write_alt(
+                                            w, v, &digest, &hist, &inst.id, &key,
+                                        );
+                                    }
                                 }
                                 Err(e) => {
                                     if e.downcast_ref::<news_llm::RateLimited>().is_some()
@@ -222,6 +234,7 @@ pub(crate) async fn news_generator(
                                         digest.body = prev.body.clone();
                                         digest.written_by = prev.written_by.clone();
                                         digest.generated = prev.generated;
+                                        digest.alt = prev.alt.clone();
                                     }
                                 }
                             }
@@ -251,6 +264,43 @@ pub(crate) async fn news_generator(
             Err(e) => log::warn!("[{inst_id}] news: generation failed: {e}"),
         }
         first_pass = false;
+    }
+}
+
+/// The second voice's version of a day the first has just been written for,
+/// in the same writer slot (charged to the gate as one more call). A failure
+/// costs only the second voice: the day is filed with the main dispatch and
+/// no `alt`, and the next rewrite of the main one tries again.
+fn write_alt(
+    w: &crate::worker::DiaryWriter,
+    voice: news_llm::Voice,
+    digest: &news::NewsDigest,
+    hist: &[news::NewsDigest],
+    inst: &str,
+    key: &str,
+) -> Option<news::AltDispatch> {
+    news_llm::charge_extra_call();
+    match w.write(voice, digest, hist) {
+        Ok(out) => Some(news::AltDispatch {
+            voice: voice.id().to_string(),
+            headline: out.headline,
+            body: out.body,
+            written_by: w.model().to_string(),
+        }),
+        Err(e) => {
+            if e.downcast_ref::<news_llm::RateLimited>().is_some() {
+                log::info!(
+                    "[{inst}] news: {} voice for {key}: {e}; filed with the main dispatch only",
+                    voice.id()
+                );
+            } else {
+                log::warn!(
+                    "[{inst}] news: {} voice failed for {key}, filed with the main dispatch only: {e}",
+                    voice.id()
+                );
+            }
+            None
+        }
     }
 }
 

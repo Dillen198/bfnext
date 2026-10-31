@@ -64,7 +64,19 @@ See [`instances.sample.json`](../instances.sample.json) for a commented copy.
       "export_port": 42002,
       "srs_url": "http://127.0.0.1:5003",
       "gci_config": "C:\\...\\DCS.vectorstrike_2\\gci.json",
-      "dcs_server_name": "[VS] Vector Strike #2 | Training" }
+      "dcs_server_name": "[VS] Vector Strike #2 | Training" },
+    { "id": "rsr", "label": "Southern Flank 1985",
+      "base": "/local/fowl/rsr",
+      "stats_jsonl": "C:\\...\\DCS.redstorm\\Logs\\stats.jsonl",
+      "stats_dir":   "C:\\...\\DCS.redstorm\\Logs\\stats",
+      "engine_config": "C:\\...\\DCS.redstorm\\RSR_CFG",
+      "export_port": 42003,
+      "srs_url": "http://127.0.0.1:5004",
+      "dcs_server_name": "[VS] Southern Flank 1985",
+      "theme": "redstorm",
+      "brand_name": "Southern Flank 1985",
+      "blue_faction": "NATO", "red_faction": "the Soviet Union",
+      "blue_adjective": "NATO", "red_adjective": "Soviet" }
   ]
 }
 ```
@@ -89,6 +101,30 @@ the upgrade — resolve to the default instance, so point `"default"` at the
 server that has been running all along and its rounds, kills and pilot stats
 stay exactly where they are. The `id` itself can be anything; it is the
 `"default"` key that decides, not the literal string `default`.
+
+### A campaign with its own look: `theme` and `brand_name`
+
+The third entry above is the Red Storm Rising campaign (1985, NATO against the
+Soviet Union on the Caucasus map). Two keys make it its own campaign rather than
+one more Vector Strike server:
+
+| Key | Unset | Set |
+|---|---|---|
+| `theme` | the Vector Strike look, and the war diary's usual present-day wire voice | `"redstorm"` is the only theme today. The dashboard takes its colours, fonts and names from it; the war diary is written twice a day, as a 1985 Western wire dispatch and as a Soviet front communiqué spinning the same facts; and the diary's pictures use 1985 equipment, uniforms and film |
+| `brand_name` | the bfdb-wide campaign name | what the dashboard masthead and the Discord posts call this campaign. `label` still names the server in the selector |
+
+The faction keys (`blue_faction`, `red_faction`, `blue_adjective`,
+`red_adjective`) name the sides in the diary, and both voices use them: set them
+for a themed campaign, as the diary would otherwise name the sides after the
+present-day countries their ground is in. An instance's `news_image_setting`
+still overrides the theme's 1985 picture setting.
+
+The second voice costs one more model call each time a day is written, taken in
+the same writer slot and charged to the shared rate limit. If that call fails
+the day is filed with the Western dispatch alone and the next rewrite tries
+again. With `--worker-mode external`, update the worker with bfdb: an older
+worker writes the default voice whatever it is asked for, and its Soviet
+communiqué is refused rather than filed.
 
 ---
 
@@ -308,9 +344,17 @@ sortie currently publishing:
       "sortie": "ODFv2", "active_round": { "id": 42, "scenario": "ODFv2", "start": "..." },
       "dcs_server_name": "[VS] Vector Strike #1" },
     { "id": "vs2", "label": "Vector Strike #2", "default": false, "live": true,
-      "sortie": null, "active_round": null, "dcs_server_name": "[VS] Vector Strike #2 | Training" }
+      "sortie": null, "active_round": null, "dcs_server_name": "[VS] Vector Strike #2 | Training" },
+    { "id": "rsr", "label": "Southern Flank 1985", "default": false, "live": true,
+      "sortie": "RSR", "active_round": null,
+      "blue_label": "NATO", "red_label": "the Soviet Union",
+      "theme": "redstorm", "brand_name": "Southern Flank 1985",
+      "dcs_server_name": "[VS] Southern Flank 1985" }
   ] }
 ```
+
+`theme` (lower case) and `brand_name` are `null` on an instance that sets
+neither, like `blue_label` / `red_label`.
 
 `"sortie": null` on a `"live": true` instance means bfdb has a netidx base for it
 but nothing is publishing under that base — that server is down, or its engine
