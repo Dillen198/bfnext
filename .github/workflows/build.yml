@@ -144,7 +144,8 @@ jobs:
         run: cargo test --locked --manifest-path bfmanager/src-tauri/Cargo.toml
 
   # The web apps: bfweb (dashboard + Manager UI), bfsite (public site, embedded
-  # in bfdb), bfwiki and bfrange-web. Each step uses --if-present, so an app
+  # in bfdb), bfwiki, bfrange-web and bfrsr-web (the Red Storm Rising
+  # dashboard; it reads bfweb/public's map imagery and models). Each step uses --if-present, so an app
   # without a typecheck/lint/test script just skips it. Node 22: Vite 8 wants
   # 20.19 or newer. Install scripts are skipped, as in the release builds.
   frontend:
@@ -152,7 +153,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [bfweb, bfsite, bfwiki, bfrange-web]
+        app: [bfweb, bfsite, bfwiki, bfrange-web, bfrsr-web]
     defaults:
       run:
         working-directory: ${{ matrix.app }}

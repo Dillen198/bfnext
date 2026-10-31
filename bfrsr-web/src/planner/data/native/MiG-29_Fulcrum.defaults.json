@@ -1,0 +1,432 @@
+{
+  "Program_1": {
+    "ADF": {
+      "Channel_1_Inner": {
+        "freq": 303,
+        "modulation": 1
+      },
+      "Channel_1_Outer": {
+        "freq": 625,
+        "modulation": 1
+      },
+      "Channel_2_Inner": {
+        "freq": 1065,
+        "modulation": 1
+      },
+      "Channel_2_Outer": {
+        "freq": 525,
+        "modulation": 1
+      },
+      "Channel_3_Inner": {
+        "freq": 995,
+        "modulation": 1
+      },
+      "Channel_3_Outer": {
+        "freq": 489,
+        "modulation": 1
+      },
+      "Channel_4_Inner": {
+        "freq": 490,
+        "modulation": 1
+      },
+      "Channel_4_Outer": {
+        "freq": 870,
+        "modulation": 1
+      }
+    },
+    "Airdromes": [],
+    "CMDS": {
+      "LW_indices": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "idxFlareBurstCountI": 1,
+      "idxFlareBurstCountII": 1,
+      "idxFlareBurstInterval": 1,
+      "idxFlareSalvoCountAir": 1,
+      "idxFlareSalvoCountZrk": 1,
+      "idxFlareSalvoInterval": 1
+    },
+    "Points": [],
+    "RSBN": [],
+    "Radio": {
+      "Channel_0": {
+        "freq": 124,
+        "modulation": 1
+      },
+      "Channel_1": {
+        "freq": 264,
+        "modulation": 1
+      },
+      "Channel_10": {
+        "freq": 259,
+        "modulation": 1
+      },
+      "Channel_11": {
+        "freq": 268,
+        "modulation": 1
+      },
+      "Channel_12": {
+        "freq": 269,
+        "modulation": 1
+      },
+      "Channel_13": {
+        "freq": 260,
+        "modulation": 1
+      },
+      "Channel_14": {
+        "freq": 263,
+        "modulation": 1
+      },
+      "Channel_15": {
+        "freq": 261,
+        "modulation": 1
+      },
+      "Channel_16": {
+        "freq": 267,
+        "modulation": 1
+      },
+      "Channel_17": {
+        "freq": 258,
+        "modulation": 1
+      },
+      "Channel_18": {
+        "freq": 253,
+        "modulation": 1
+      },
+      "Channel_19": {
+        "freq": 266,
+        "modulation": 1
+      },
+      "Channel_2": {
+        "freq": 265,
+        "modulation": 1
+      },
+      "Channel_3": {
+        "freq": 256,
+        "modulation": 1
+      },
+      "Channel_4": {
+        "freq": 254,
+        "modulation": 1
+      },
+      "Channel_5": {
+        "freq": 250,
+        "modulation": 1
+      },
+      "Channel_6": {
+        "freq": 270,
+        "modulation": 1
+      },
+      "Channel_7": {
+        "freq": 257,
+        "modulation": 1
+      },
+      "Channel_8": {
+        "freq": 255,
+        "modulation": 1
+      },
+      "Channel_9": {
+        "freq": 262,
+        "modulation": 1
+      }
+    },
+    "Route": [],
+    "TargetPoint": [],
+    "Waypoints": [],
+    "WeaponSettings": []
+  },
+  "Program_2": {
+    "ADF": {
+      "Channel_1_Inner": {
+        "freq": 303,
+        "modulation": 1
+      },
+      "Channel_1_Outer": {
+        "freq": 625,
+        "modulation": 1
+      },
+      "Channel_2_Inner": {
+        "freq": 1065,
+        "modulation": 1
+      },
+      "Channel_2_Outer": {
+        "freq": 525,
+        "modulation": 1
+      },
+      "Channel_3_Inner": {
+        "freq": 995,
+        "modulation": 1
+      },
+      "Channel_3_Outer": {
+        "freq": 489,
+        "modulation": 1
+      },
+      "Channel_4_Inner": {
+        "freq": 490,
+        "modulation": 1
+      },
+      "Channel_4_Outer": {
+        "freq": 870,
+        "modulation": 1
+      }
+    },
+    "Airdromes": [],
+    "CMDS": {
+      "LW_indices": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "idxFlareBurstCountI": 1,
+      "idxFlareBurstCountII": 1,
+      "idxFlareBurstInterval": 1,
+      "idxFlareSalvoCountAir": 1,
+      "idxFlareSalvoCountZrk": 1,
+      "idxFlareSalvoInterval": 1
+    },
+    "Points": [],
+    "RSBN": [],
+    "Radio": {
+      "Channel_0": {
+        "freq": 124,
+        "modulation": 1
+      },
+      "Channel_1": {
+        "freq": 264,
+        "modulation": 1
+      },
+      "Channel_10": {
+        "freq": 259,
+        "modulation": 1
+      },
+      "Channel_11": {
+        "freq": 268,
+        "modulation": 1
+      },
+      "Channel_12": {
+        "freq": 269,
+        "modulation": 1
+      },
+      "Channel_13": {
+        "freq": 260,
+        "modulation": 1
+      },
+      "Channel_14": {
+        "freq": 263,
+        "modulation": 1
+      },
+      "Channel_15": {
+        "freq": 261,
+        "modulation": 1
+      },
+      "Channel_16": {
+        "freq": 267,
+        "modulation": 1
+      },
+      "Channel_17": {
+        "freq": 258,
+        "modulation": 1
+      },
+      "Channel_18": {
+        "freq": 253,
+        "modulation": 1
+      },
+      "Channel_19": {
+        "freq": 266,
+        "modulation": 1
+      },
+      "Channel_2": {
+        "freq": 265,
+        "modulation": 1
+      },
+      "Channel_3": {
+        "freq": 256,
+        "modulation": 1
+      },
+      "Channel_4": {
+        "freq": 254,
+        "modulation": 1
+      },
+      "Channel_5": {
+        "freq": 250,
+        "modulation": 1
+      },
+      "Channel_6": {
+        "freq": 270,
+        "modulation": 1
+      },
+      "Channel_7": {
+        "freq": 257,
+        "modulation": 1
+      },
+      "Channel_8": {
+        "freq": 255,
+        "modulation": 1
+      },
+      "Channel_9": {
+        "freq": 262,
+        "modulation": 1
+      }
+    },
+    "Route": [],
+    "TargetPoint": [],
+    "Waypoints": [],
+    "WeaponSettings": []
+  },
+  "Program_3": {
+    "ADF": {
+      "Channel_1_Inner": {
+        "freq": 303,
+        "modulation": 1
+      },
+      "Channel_1_Outer": {
+        "freq": 625,
+        "modulation": 1
+      },
+      "Channel_2_Inner": {
+        "freq": 1065,
+        "modulation": 1
+      },
+      "Channel_2_Outer": {
+        "freq": 525,
+        "modulation": 1
+      },
+      "Channel_3_Inner": {
+        "freq": 995,
+        "modulation": 1
+      },
+      "Channel_3_Outer": {
+        "freq": 489,
+        "modulation": 1
+      },
+      "Channel_4_Inner": {
+        "freq": 490,
+        "modulation": 1
+      },
+      "Channel_4_Outer": {
+        "freq": 870,
+        "modulation": 1
+      }
+    },
+    "Airdromes": [],
+    "CMDS": {
+      "LW_indices": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "idxFlareBurstCountI": 1,
+      "idxFlareBurstCountII": 1,
+      "idxFlareBurstInterval": 1,
+      "idxFlareSalvoCountAir": 1,
+      "idxFlareSalvoCountZrk": 1,
+      "idxFlareSalvoInterval": 1
+    },
+    "Points": [],
+    "RSBN": [],
+    "Radio": {
+      "Channel_0": {
+        "freq": 124,
+        "modulation": 1
+      },
+      "Channel_1": {
+        "freq": 264,
+        "modulation": 1
+      },
+      "Channel_10": {
+        "freq": 259,
+        "modulation": 1
+      },
+      "Channel_11": {
+        "freq": 268,
+        "modulation": 1
+      },
+      "Channel_12": {
+        "freq": 269,
+        "modulation": 1
+      },
+      "Channel_13": {
+        "freq": 260,
+        "modulation": 1
+      },
+      "Channel_14": {
+        "freq": 263,
+        "modulation": 1
+      },
+      "Channel_15": {
+        "freq": 261,
+        "modulation": 1
+      },
+      "Channel_16": {
+        "freq": 267,
+        "modulation": 1
+      },
+      "Channel_17": {
+        "freq": 258,
+        "modulation": 1
+      },
+      "Channel_18": {
+        "freq": 253,
+        "modulation": 1
+      },
+      "Channel_19": {
+        "freq": 266,
+        "modulation": 1
+      },
+      "Channel_2": {
+        "freq": 265,
+        "modulation": 1
+      },
+      "Channel_3": {
+        "freq": 256,
+        "modulation": 1
+      },
+      "Channel_4": {
+        "freq": 254,
+        "modulation": 1
+      },
+      "Channel_5": {
+        "freq": 250,
+        "modulation": 1
+      },
+      "Channel_6": {
+        "freq": 270,
+        "modulation": 1
+      },
+      "Channel_7": {
+        "freq": 257,
+        "modulation": 1
+      },
+      "Channel_8": {
+        "freq": 255,
+        "modulation": 1
+      },
+      "Channel_9": {
+        "freq": 262,
+        "modulation": 1
+      }
+    },
+    "Route": [],
+    "TargetPoint": [],
+    "Waypoints": [],
+    "WeaponSettings": []
+  },
+  "SelectedProgram": "Program_1",
+  "mirror_ADF": true,
+  "mirror_NAV": true,
+  "mirror_Radio": true,
+  "name": "",
+  "terrain": "",
+  "type": "MiG-29 Fulcrum"
+}

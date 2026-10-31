@@ -1,0 +1,55 @@
+/* The cartridge workspace: fills the screen, page list beside the page, map beside both. */
+.dtc-overlay {
+  position: fixed; inset: 0; z-index: 1000; display: flex;
+  background: rgba(0, 0, 0, 0.6);
+}
+.dtc-panel {
+  width: 100%; height: 100%; display: flex; flex-direction: column;
+  /* --bg-card is see-through; the window covers the page, so lay it on --bg. */
+  background: linear-gradient(var(--bg-card), var(--bg-card)), var(--bg); overflow: hidden;
+}
+.dtc-head { display: flex; gap: 12px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.dtc-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 260px minmax(0, 1fr) minmax(360px, 45%); }
+.dtc-side { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+.dtc-pages { flex: 1; overflow-y: auto; padding: 4px 8px 12px; }
+.dtc-main { overflow-y: auto; padding: 16px 20px 24px; min-width: 0; }
+/* Folded map: a slim strip with the button to bring it back. */
+.dtc-body.dtc-map-closed { grid-template-columns: 260px minmax(0, 1fr) 36px; }
+.dtc-mapcol-closed { padding: 8px 2px; align-items: center; }
+.dtc-mapcol { border-left: 1px solid var(--border); padding: 10px 12px 12px; background: var(--bg-elevated); display: flex; flex-direction: column; min-height: 0; }
+/* "Load into the jet": one button under everything; it opens the download steps. */
+.dtc-foot {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 16px;
+  border-top: 1px solid var(--border); background: var(--bg-elevated);
+}
+.dtc-foot-steps { border-top: 1px solid var(--border); padding: 12px 16px; max-height: 42vh; overflow-y: auto; background: var(--bg-card); }
+.dtc-page-btn {
+  display: flex; width: 100%; align-items: center; gap: 8px; padding: 7px 8px; border: none; border-radius: 5px;
+  background: transparent; color: var(--text); cursor: pointer; text-align: left; font-size: 0.74rem;
+}
+.dtc-page-btn:hover { background: var(--bg-elevated); }
+.dtc-page-btn[aria-current='page'] { background: var(--accent-glow, rgba(106, 171, 31, 0.15)); box-shadow: inset 3px 0 0 var(--accent); }
+.dtc-method {
+  flex: 1 1 220px; text-align: left; padding: 8px 12px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--bg-elevated); color: var(--text);
+}
+.dtc-method[aria-pressed='true'] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.dtc-page-select { display: none; }
+
+@media (max-width: 1100px) {
+  .dtc-body { grid-template-columns: 240px 1fr; }
+  .dtc-mapcol { grid-column: 1 / -1; border-left: none; border-top: 1px solid var(--border); height: 380px; }
+  .dtc-body.dtc-map-closed { grid-template-columns: 240px 1fr; }
+  .dtc-mapcol-closed { height: auto; }
+  .dtc-mapcol-closed button { writing-mode: horizontal-tb !important; }
+  .dtc-body { overflow-y: auto; }
+  .dtc-main { overflow-y: visible; }
+}
+@media (max-width: 760px) {
+  .dtc-body { display: block; overflow-y: auto; }
+  .dtc-side { border-right: none; border-bottom: 1px solid var(--border); }
+  .dtc-pages { display: none; }
+  .dtc-page-select { display: block; margin: 0 8px 8px; }
+  .dtc-main { padding: 12px; }
+  .dtc-mapcol { height: 320px; }
+}

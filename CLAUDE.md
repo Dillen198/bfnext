@@ -71,7 +71,7 @@ CI (`.github/workflows/build.yml`) runs these jobs on every push and PR:
 | `check` | Windows | `cargo check` + `cargo test --workspace --locked` (about 450 Rust tests), `cargo check` of bftools |
 | `rust-lint` | Windows | `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings`. Blocking: the tree is clean, and style lints the code does not follow are allowed (with reasons) in `[workspace.lints.clippy]` |
 | `manager` | Windows | `cargo test` for `bfmanager/src-tauri` (own Cargo.lock), after staging a placeholder `bfmanager/dist` and the bundled resources |
-| `frontend` | Ubuntu | bfweb, bfsite, bfwiki, bfrange-web: `npm ci --ignore-scripts`, then `typecheck`/`lint`/`test`/`build` (each `--if-present`), Node 22 |
+| `frontend` | Ubuntu | bfweb, bfsite, bfwiki, bfrange-web, bfrsr-web: `npm ci --ignore-scripts`, then `typecheck`/`lint`/`test`/`build` (each `--if-present`), Node 22 |
 | `bot` | Windows | `compileall` over `DCSServerBot/`, then pytest in `DCSServerBot/tests` |
 
 Locally:
@@ -215,6 +215,7 @@ The root `Cargo.toml` workspace has 11 members: `dcso3`, `dcso3-core`,
 | `bfsite/` | Public Vector Strike website (React + Vite), embedded in bfdb |
 | `bfwiki/` | Player wiki (React + Vite); content lives in bfdb, seeded from `bfdb/seed_wiki/` |
 | `bfrange-web/` | Training range dashboard (React + Vite) |
+| `bfrsr-web/` | Red Storm Rising campaign dashboard (React + Vite): started from bfweb and redesigned for the 1985 campaign; serves bfweb's `public/images` and `public/models` instead of copying them |
 | `bfmanager/` | Fowl Engine Manager: Tauri installer, Windows service and auto-updater for a server box |
 | `DCSServerBot/plugins/fowlengine/` | DCSServerBot plugin: Discord status, alerts, ops commands, binary staging and auto-update. The cog is `commands.py` plus `cog_*.py` mixins (layout in its README). Related extensions are in `DCSServerBot/extensions/`; optional pip deps in `DCSServerBot/requirements-plugins.txt` |
 | `user-guide/` | Player guide (mdBook) |

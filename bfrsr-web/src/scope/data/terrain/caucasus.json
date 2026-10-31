@@ -1,0 +1,183 @@
+{
+  "name": "Caucasus",
+  "center": [
+    43.38489296707326,
+    41.41790010403996
+  ],
+  "airports": [
+    {
+      "name": "Anapa-Vityazevo",
+      "position": [
+        45.00494808462572,
+        37.347824883057264
+      ],
+      "heli": false
+    },
+    {
+      "name": "Krasnodar-Center",
+      "position": [
+        45.08694993323883,
+        38.93998462664841
+      ],
+      "heli": false
+    },
+    {
+      "name": "Novorossiysk",
+      "position": [
+        44.668096137080234,
+        37.77825782083347
+      ],
+      "heli": false
+    },
+    {
+      "name": "Krymsk",
+      "position": [
+        44.967936547120345,
+        37.99503027440302
+      ],
+      "heli": false
+    },
+    {
+      "name": "Maykop-Khanskaya",
+      "position": [
+        44.68128522066239,
+        40.03525433454863
+      ],
+      "heli": false
+    },
+    {
+      "name": "Gelendzhik",
+      "position": [
+        44.57290078412837,
+        38.01161441703993
+      ],
+      "heli": false
+    },
+    {
+      "name": "Sochi-Adler",
+      "position": [
+        43.44435414193648,
+        39.94107634483107
+      ],
+      "heli": false
+    },
+    {
+      "name": "Krasnodar-Pashkovsky",
+      "position": [
+        45.038008231690085,
+        39.18813523994311
+      ],
+      "heli": false
+    },
+    {
+      "name": "Sukhumi-Babushara",
+      "position": [
+        42.861092340265365,
+        41.12499865194556
+      ],
+      "heli": false
+    },
+    {
+      "name": "Gudauta",
+      "position": [
+        43.11432708460394,
+        40.56974107594901
+      ],
+      "heli": false
+    },
+    {
+      "name": "Batumi",
+      "position": [
+        41.609596846220164,
+        41.600236917191026
+      ],
+      "heli": false
+    },
+    {
+      "name": "Senaki-Kolkhi",
+      "position": [
+        42.24084895478287,
+        42.04801424154565
+      ],
+      "heli": false
+    },
+    {
+      "name": "Kobuleti",
+      "position": [
+        41.92991907051353,
+        41.86327450631786
+      ],
+      "heli": false
+    },
+    {
+      "name": "Kutaisi",
+      "position": [
+        42.17761582785753,
+        42.4812921998831
+      ],
+      "heli": false
+    },
+    {
+      "name": "Mineralnye Vody",
+      "position": [
+        44.22785260373172,
+        43.081191738056
+      ],
+      "heli": false
+    },
+    {
+      "name": "Nalchik",
+      "position": [
+        43.51400171101553,
+        43.636451295437
+      ],
+      "heli": false
+    },
+    {
+      "name": "Mozdok",
+      "position": [
+        43.791710641829035,
+        44.60583882218555
+      ],
+      "heli": false
+    },
+    {
+      "name": "Tbilisi-Lochini",
+      "position": [
+        41.667033663862604,
+        44.95628806021182
+      ],
+      "heli": false
+    },
+    {
+      "name": "Soganlug",
+      "position": [
+        41.64954245145595,
+        44.93835774294117
+      ],
+      "heli": false
+    },
+    {
+      "name": "Vaziani",
+      "position": [
+        41.62902590368214,
+        45.02723084928328
+      ],
+      "heli": false
+    },
+    {
+      "name": "Beslan",
+      "position": [
+        43.2057061282357,
+        44.60580814258725
+      ],
+      "heli": false
+    }
+  ],
+  "projection": {
+    "centralMeridian": 33,
+    "falseEasting": -99516.9999999732,
+    "falseNorthing": -4998114.999999984,
+    "scaleFactor": 0.9996
+  }
+}
