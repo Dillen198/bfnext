@@ -23,6 +23,7 @@ from .icons import IconSet, icon, render as render_icons
 from . import rangefeed
 from . import mapsnap
 from . import serverinfo
+from . import branding
 from .common import (ENGINE_LOG_RECONNECT_SECS, NO_PINGS, SHUTDOWN_REQUEST_FILE, STATUS_MAP_FILE, bfdb_admin_get,
                      bfdb_login, srv_params, srv_path)
 from .views import StagedApplyView
@@ -134,6 +135,9 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
                 self.log.error(f"Failed to load Fowl Engine state: {ex}")
         # rendered instances.json, cached by (path, mtime) -- see _instances_list
         self._instances_cache = None
+        # api_url -> (fetched epoch, /api/instances rows): bfdb's own `theme`
+        # and `brand_name` per instance, for the embed branding (_branding)
+        self._bfdb_instance_rows = {}
         self._range_fail_counts = {}     # server name -> consecutive feed/status failures
         self._range_warned = set()       # (server name, reason) already logged once
         self._bfdb_down = {}             # api_url -> when it was first found unreachable
@@ -889,7 +893,7 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
                     embed_color = discord.Color.gold()
 
                 embed = self._vs_embed("Campaign Status", color=embed_color,
-                                       url=f"{dash}/map" if dash else None)
+                                       url=f"{dash}/map" if dash else None, server=server)
 
                 active_round = stats.get('active_round')
                 if active_round:
@@ -1123,7 +1127,7 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
         filled = round((pct / 100.0) * width)
         return "█" * filled + "░" * (width - filled)
 
-    def _build_perf_embed(self, brand_name: str, data: dict) -> discord.Embed:
+    def _build_perf_embed(self, brand_name: str, data: dict, server=None) -> discord.Embed:
         hw = data.get('hardware') or {}
 
         cpu_pct = hw.get('cpu_usage_pct', 0.0)
@@ -1140,7 +1144,7 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
             discord.Color.orange() if worst_pct >= 75 else discord.Color.green()
         )
 
-        embed = self._vs_embed("Server Performance", color=color)
+        embed = self._vs_embed("Server Performance", color=color, server=server)
 
         embed.add_field(
             name=f"{icon('cpu')} CPU",
@@ -1358,8 +1362,8 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
                     self.log.error(f"FowlEngine: /api/admin/perf returned {status}")
                     continue
 
-                brand_name = config.get('brand_name', 'Fowl Engine')
-                embed = self._build_perf_embed(brand_name, data)
+                brand_name = self._branding(server, config)['brand_name']
+                embed = self._build_perf_embed(brand_name, data, server=server)
 
                 channel_id = int(config['perf_channel'])
                 channel = self.bot.get_channel(channel_id)
@@ -1444,7 +1448,7 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
         # `server` is optional: with one DCS server there is nothing to choose,
         # and with several the frequencies are usually per-server.
         title = f"GCI / AWACS - {server.name}" if server else "GCI / AWACS"
-        embed = self._vs_embed(title, color=discord.Color.teal())
+        embed = self._vs_embed(title, color=discord.Color.teal(), server=server)
         embed.description = "\n".join(self._gci_freq_lines(server))
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -1581,7 +1585,8 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
         title = "Comms, Rules & Links"
         if sum(1 for s in self.bot.servers.values() if (self.get_config(s) or {}).get('server_info_channel')) > 1:
             title += f" — {server.name}"
-        embed = self._vs_embed(title, color=discord.Color.green() if up else discord.Color.dark_grey())
+        embed = self._vs_embed(title, color=discord.Color.green() if up else discord.Color.dark_grey(),
+                               server=server)
         embed.add_field(name=f"{icon('air')} GCI / AWACS", value="\n".join(self._gci_freq_lines(server)), inline=False)
         plan = facts.get('comms_plan')
         hint = "full plan in the wiki" if wiki else ""
@@ -1757,11 +1762,13 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
             return
 
         api_url = config.get("api_url", "http://localhost:8880")
-        brand_name = config.get('brand_name', 'Fowl Engine')
         # A Discord join isn't tied to a DCS server, so with several of them
         # behind one bfdb the briefing needs to name which one it's about.
         # Unset -> bfdb's default instance, i.e. the old single-server result.
-        sp = srv_params(config.get('welcome_server'))
+        # The welcome then carries that server's branding too.
+        welcome_server = config.get('welcome_server') or None
+        brand_name = self._branding(welcome_server)['brand_name']
+        sp = srv_params(welcome_server)
         stats, objs = {}, []
         try:
             import aiohttp
@@ -1775,7 +1782,7 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
         except Exception as ex:
             self.log.error(f"FowlEngine: failed to fetch briefing data for welcome message: {type(ex).__name__}: {ex or '(no message)'}")
 
-        embed = self._vs_embed(f"Welcome to {brand_name}", color=discord.Color.gold())
+        embed = self._vs_embed(f"Welcome to {brand_name}", color=discord.Color.gold(), server=welcome_server)
 
         active_round = stats.get('active_round')
         if active_round:
@@ -1818,21 +1825,82 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
 
     # ── shared embed builder ────────────────────────────────────────────────
 
+    # ── per-instance branding ───────────────────────────────────────────────
+
+    def _bfdb_instance_row(self, server_name: str | None, iid: str | None, api_url: str | None) -> dict:
+        """This server's row of bfdb's /api/instances, from the last fetch
+        (_refresh_bfdb_instances), or {}."""
+        cached = self._bfdb_instance_rows.get((api_url or '').rstrip('/'))
+        rows = cached[1] if cached else []
+        for key, val in (('id', iid), ('dcs_server_name', server_name)):
+            if val:
+                for r in rows:
+                    if isinstance(r, dict) and r.get(key) == val:
+                        return r
+        return {}
+
+    async def _refresh_bfdb_instances(self, http, api_url: str, data=None) -> None:
+        """Keep the /api/instances rows behind _branding fresh (every
+        branding.REFRESH_SECS at most). `data` is a reply the caller already has.
+        Best effort: on failure the last rows (or none) stay."""
+        key = (api_url or '').rstrip('/')
+        if data is None:
+            cached = self._bfdb_instance_rows.get(key)
+            if cached and time.time() - cached[0] < branding.REFRESH_SECS:
+                return
+            try:
+                async with http.get(f"{key}/api/instances", timeout=10) as resp:
+                    if resp.status != 200:
+                        return
+                    data = await resp.json(content_type=None)
+            except asyncio.CancelledError:
+                raise
+            except Exception as ex:
+                self.log.debug(f"FowlEngine: /api/instances for branding: {type(ex).__name__}: {ex}")
+                return
+        rows = data.get('instances') if isinstance(data, dict) else data
+        if isinstance(rows, list):
+            self._bfdb_instance_rows[key] = (time.time(), rows)
+
+    def _branding(self, server=None, config: dict | None = None) -> dict:
+        """branding.resolve for one DCS server (a Server or its name), or the
+        global branding with none. The instance is its instances.json /
+        bfdb.instances entry with bfdb's /api/instances row over it."""
+        name = server if isinstance(server, str) else getattr(server, 'name', None)
+        if isinstance(server, str):
+            server = self.bot.servers.get(server)
+        if config is None:
+            config = (self.get_config(server) if server is not None else self.get_config()) or {}
+        if not name:
+            return branding.resolve(config)
+        try:
+            local = rangefeed.find_instance(self._instances_list(), name) or {}
+            row = self._bfdb_instance_row(name, local.get('id'), config.get('api_url', 'http://localhost:8880'))
+            inst = {**local, **{k: v for k, v in row.items() if v is not None}}
+        except Exception as ex:  # branding must never stop a post
+            self.log.debug(f"FowlEngine: branding lookup for {name} failed: {ex}")
+            inst = {}
+        return branding.resolve(config, inst, name)
+
+    # ── shared embed builder ────────────────────────────────────────────────
+
     def _vs_embed(self, title: str, *, color: discord.Color | None = None,
-                  url: str | None = None) -> discord.Embed:
-        """Every FowlEngine embed goes through here for consistent Vector
-        Strike branding: brand author line + logo, timestamped footer. The
+                  url: str | None = None, server=None) -> discord.Embed:
+        """Every FowlEngine embed goes through here for consistent branding:
+        brand author line + logo, timestamped footer. With `server` (a Server
+        or its name) the brand is that server's instance's (_branding: the
+        Red Storm campaign posts as itself), without it the global one. The
         logo is pulled from the dashboard origin so it survives message edits
         (no attachment needed)."""
-        cfg = self.get_config() or {}
-        brand = cfg.get('brand_name', 'Fowl Engine')
+        srv = self.bot.servers.get(server) if isinstance(server, str) else server
+        cfg = (self.get_config(srv) if srv is not None else self.get_config()) or {}
+        b = self._branding(server, cfg)
         dash = (cfg.get('dashboard_url') or '').rstrip('/')
-        logo = f"{dash}/vs-vectorstrike_hd-white.png" if dash else None
-        embed = discord.Embed(title=title, color=color or discord.Color.from_str('#c8102e'))
+        embed = discord.Embed(title=title, color=color or discord.Color(b['colour_int']))
         if url:
             embed.url = url
-        embed.set_author(name=brand, icon_url=logo, url=dash or None)
-        embed.set_footer(text=brand, icon_url=logo)
+        embed.set_author(name=b['brand_name'], icon_url=b['logo_url'], url=dash or None)
+        embed.set_footer(text=b['brand_name'], icon_url=b['logo_url'])
         embed.timestamp = discord.utils.utcnow()
         return embed
 

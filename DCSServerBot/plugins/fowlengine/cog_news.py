@@ -72,6 +72,10 @@ class NewsMixin:
         if state != prev:
             self.news_feed_state[server.name] = state
             self.save_state()
+        if to_post:
+            # the paper's name: "War Diary", or the instance's own (Red Storm)
+            await self._refresh_bfdb_instances(http, api_url)
+            brand = self._branding(server, config)
         for day in to_post:
             # Recorded BEFORE posting: a Discord hiccup halfway must never make
             # the next poll post the same dispatch again.
@@ -79,7 +83,7 @@ class NewsMixin:
             self.news_feed_state[server.name] = state
             self.save_state()
             png, ctype = await self._fetch_news_image(http, api_url, day)
-            embed = self._embed_from_dict(newsfeed.build_embed(day, config.get("dashboard_url"), iid))
+            embed = self._embed_from_dict(newsfeed.build_embed(day, config.get("dashboard_url"), iid, brand))
             try:
                 if png:
                     fname = newsfeed.attachment_name(day, ctype)

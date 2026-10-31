@@ -799,6 +799,11 @@ class Procman:
                 # the scenario / the default war-photo style.
                 "news_image_setting": inst.get("news_image_setting") or None,
                 "news_image_style": inst.get("news_image_style") or None,
+                # The campaign's look: the dashboard theme ("redstorm") and
+                # the name its masthead and the Discord posts carry. Unset ->
+                # the Vector Strike look and the bfdb-wide name.
+                "theme": inst.get("theme") or None,
+                "brand_name": inst.get("brand_name") or None,
                 # "campaign" (bflib) or "range" (bfrange). A range instance's
                 # graded results come from range_jsonl (bfrange's
                 # Logs/range.jsonl); its stats_jsonl still carries the

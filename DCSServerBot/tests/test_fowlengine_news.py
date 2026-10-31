@@ -22,6 +22,10 @@ _spec = importlib.util.spec_from_file_location("fe_newsfeed", PLUGIN / "newsfeed
 nf = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(nf)
 
+_bspec = importlib.util.spec_from_file_location("fe_branding", PLUGIN / "branding.py")
+br = importlib.util.module_from_spec(_bspec)
+_bspec.loader.exec_module(br)
+
 log = logging.getLogger("test-news")
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 64
@@ -168,7 +172,7 @@ def test_only_bfdbs_own_image_route_is_followed():
 # ---- cog_news.py _post_news_for, against fakes -----------------------------------
 
 
-def _posting_cog(channel, *, iid="vs1"):
+def _posting_cog(channel, *, iid="vs1", instance=None):
     """cog_news.py's _post_news_for + _fetch_news_image on a stand-in cog. The
     module itself needs discord and DCSServerBot, so the two methods are
     lifted out of its source."""
@@ -211,6 +215,13 @@ def _posting_cog(channel, *, iid="vs1"):
     cog._channel_for = lambda config, key, name: channel if config.get(key) else None
     cog._instance_id = lambda server: iid
     cog._embed_from_dict = embed_from_dict
+    cog.refreshed = []
+
+    async def refresh(http, api_url, data=None):
+        cog.refreshed.append(api_url)
+
+    cog._refresh_bfdb_instances = refresh
+    cog._branding = lambda server, config: br.resolve(config, instance, server.name)
     cog.saves, cog.clock = saves, clock
     return cog
 
@@ -289,6 +300,29 @@ def test_posts_new_dispatch_once_with_the_picture_attached():
     for _ in range(3):
         asyncio.run(cog2._post_news_for(http, SERVER, CONFIG))
     assert len(ch.sent) == 1
+
+
+def test_a_red_storm_instance_posts_under_its_own_paper():
+    ch, http = _Channel(), _Http()
+    cog = _posting_cog(ch, iid="rs1", instance={"id": "rs1", "theme": "redstorm"})
+    alt = {"voice": "soviet", "headline": "Guards Tank Army Holds the Line at Kars",
+           "body": ["Long communique text."], "written_by": "m"}
+    http.data = news(day("2026-09-27", body=["Wire copy."]) | {"alt": alt})
+    asyncio.run(cog._post_news_for(http, SERVER, CONFIG))
+    (embed, _, _), = ch.sent
+    assert embed.d["description"].endswith("[Read more in The Allied Dispatch](https://dash.example/news?instance=rs1)")
+    assert embed.d["fields"] == [{"name": "Front Bulletin", "value": alt["headline"], "inline": False}]
+    assert "Long communique" not in str(embed.d)
+    assert cog.refreshed == ["http://127.0.0.1:8880"]
+
+
+def test_nothing_to_post_asks_bfdb_for_no_branding():
+    ch, http = _Channel(), _Http()
+    cog = _posting_cog(ch)
+    cog.news_feed_state = {SERVER.name: {"posted": ["5:2026-09-27"], "seen": {}}}
+    http.data = news(day("2026-09-27"))
+    asyncio.run(cog._post_news_for(http, SERVER, CONFIG))
+    assert ch.sent == [] and cog.refreshed == []
 
 
 def test_recorded_before_sending_so_a_discord_error_never_reposts():

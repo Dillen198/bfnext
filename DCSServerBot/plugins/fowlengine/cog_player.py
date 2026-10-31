@@ -61,7 +61,7 @@ class PlayerCommandsMixin:
         owner = o.get('owner', 'Unknown')
         health = o.get('health', 0)
         color = {"Blue": discord.Color.blue(), "Red": discord.Color.red()}.get(owner, discord.Color.light_grey())
-        embed = self._vs_embed(f"{icon('target')} {o.get('name', 'Unknown')}", color=color)
+        embed = self._vs_embed(f"{icon('target')} {o.get('name', 'Unknown')}", color=color, server=server)
         embed.add_field(name="Owner", value=owner, inline=True)
         embed.add_field(name="Health", value=f"{health}%", inline=True)
         if o.get('kind'):
@@ -386,8 +386,8 @@ class PlayerCommandsMixin:
                 
             view = CommanderTerminalView(api_url, admin_username, admin_password, airbases,
                                          dynamic_types, objectives=objs, server_name=server.name)
-            embed = self._vs_embed(f"{config.get('brand_name', 'Fowl Engine')} Commander Terminal",
-                                   color=discord.Color.dark_red())
+            embed = self._vs_embed(f"{self._branding(server, config)['brand_name']} Commander Terminal",
+                                   color=discord.Color.dark_red(), server=server)
             embed.description = f"Order logistics (top) or set objective priority (bottom).\nServer: **{server.name}**"
             await interaction.followup.send(embed=embed, view=view)
         except Exception as ex:

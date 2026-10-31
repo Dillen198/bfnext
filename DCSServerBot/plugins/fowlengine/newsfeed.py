@@ -29,7 +29,7 @@ from urllib.parse import quote
 __all__ = [
     "NEWS_POLL_SECS", "FETCH_LIMIT", "IMAGE_WAIT_SECS", "POSTED_KEEP", "IMAGE_MAX_BYTES",
     "dispatch_id", "filed_days", "plan", "mark_posted", "build_embed", "image_path",
-    "attachment_name", "diary_url",
+    "attachment_name", "diary_url", "alt_headline", "ALT_FIELD_NAME",
 ]
 
 # How often the feed looks for a newly filed dispatch. A day is filed once, a
@@ -51,6 +51,9 @@ _FOOTER_MAX = 2048
 # The dispatch's own text is cut here, leaving room for the "Read more" link.
 _STORY_MAX = 3600
 _COLOR = 0x8A6D3B  # newsprint / khaki
+# The other voice's headline, one short field under the dispatch.
+ALT_FIELD_NAME = "Front Bulletin"
+_ALT_MAX = 256
 
 
 def dispatch_id(day: dict) -> str | None:
@@ -127,18 +130,34 @@ def diary_url(dashboard_url: str | None, instance_id: str | None) -> str | None:
     return url
 
 
+def alt_headline(day: dict) -> str | None:
+    """The headline of the day's other voice (`alt`: on a Red Storm instance,
+    the Soviet front communiqué on the same events), or None."""
+    alt = day.get("alt") if isinstance(day, dict) else None
+    h = alt.get("headline") if isinstance(alt, dict) else None
+    return h.strip() if isinstance(h, str) and h.strip() else None
+
+
 def build_embed(day: dict, dashboard_url: str | None = None,
-                instance_id: str | None = None) -> dict:
+                instance_id: str | None = None, branding: dict | None = None) -> dict:
     """An embed dict (clipped to Discord's limits) for one dispatch: the
     headline, the dispatch text (or the analysis's sentences when bfdb had no
-    writer), a link to the full diary, and the day in the footer."""
-    body = [p for p in (day.get("body") or []) if isinstance(p, str) and p.strip()]
+    writer), a link to the full diary, and the day in the footer.
+
+    `branding` (branding.resolve) names the paper: the title when there is no
+    headline, and the "Read more in ..." link. Without it, the War Diary. A
+    day with an `alt` voice gets that version's headline as one short field,
+    never its body."""
+    branding = branding or {}
+    diary = branding.get("diary_title") or "War Diary"
+    link_text = branding.get("diary_link_text") or f"Read more in the {diary}"
+    body =[p for p in (day.get("body") or []) if isinstance(p, str) and p.strip()]
     if not body:
         body = [it.get("text", "") for it in (day.get("items") or [])[:5]
                 if isinstance(it, dict) and it.get("text")]
     story = _clip("\n\n".join(body), _STORY_MAX)
     link = diary_url(dashboard_url, instance_id)
-    desc = story + (f"\n\n[Read more in the War Diary]({link})" if link else "")
+    desc = story + (f"\n\n[{link_text}]({link})" if link else "")
     facts = day.get("facts") or {}
     bits = []
     if facts.get("campaign_day"):
@@ -147,11 +166,14 @@ def build_embed(day: dict, dashboard_url: str | None = None,
     if facts.get("theatre"):
         bits.append(facts["theatre"])
     out = {
-        "title": _clip(day.get("headline") or "War Diary", _TITLE_MAX),
+        "title": _clip(day.get("headline") or diary, _TITLE_MAX),
         "description": _clip(desc, _DESC_MAX),
         "color": _COLOR,
         "footer": _clip(" · ".join(b for b in bits if b), _FOOTER_MAX),
     }
+    alt = alt_headline(day)
+    if alt:
+        out["fields"] = [{"name": ALT_FIELD_NAME, "value": _clip(alt, _ALT_MAX), "inline": False}]
     if link:
         out["url"] = link
     return out

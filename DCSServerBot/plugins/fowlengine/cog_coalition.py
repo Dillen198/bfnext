@@ -6,6 +6,7 @@ from the engine's own registrations (coalition and commander).
 Moved out of commands.py unchanged. A mixin: it holds no state of its own and
 relies on what FowlEngine.__init__ sets up; discord.py collects its commands,
 groups, loops and listeners through the MRO."""
+import functools
 import discord
 from core import utils, Server, Status, command
 from discord import app_commands
@@ -136,7 +137,7 @@ class CoalitionMixin:
         embed = build_briefing_embed(
             report,
             icons=self.icons,
-            embed_factory=self._vs_embed,
+            embed_factory=functools.partial(self._vs_embed, server=server),
             dashboard_url=config.get("dashboard_url") or "",
             # Only label the instance when there is more than one, otherwise
             # every title carries a server name nobody needs.
@@ -481,7 +482,7 @@ class CoalitionMixin:
             await interaction.followup.send(f"Error: {ex}")
             return
         embed = build_briefing_embed(
-            report, icons=self.icons, embed_factory=self._vs_embed,
+            report, icons=self.icons, embed_factory=functools.partial(self._vs_embed, server=server),
             dashboard_url=config.get("dashboard_url") or "",
             instance_label=server.name if len(self.bot.servers) > 1 else "")
         await interaction.followup.send(embed=embed)

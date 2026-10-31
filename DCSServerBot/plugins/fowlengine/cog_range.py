@@ -125,7 +125,7 @@ class RangeMixin:
             live, self._range_site(config), running=running, error=err,
             label=server.name if len(self._range_servers()) > 1 else "")
         color = discord.Colour(d["color"]) if d.get("color") is not None else None
-        base = self._vs_embed(d["title"], color=color, url=d.get("url"))
+        base = self._vs_embed(d["title"], color=color, url=d.get("url"), server=server)
         return self._embed_from_dict({k: v for k, v in d.items() if k != "title"}, base=base)
 
     async def _upsert_embed(self, ids: dict, key: str, channel, embed: discord.Embed,

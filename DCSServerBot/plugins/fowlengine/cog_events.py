@@ -90,7 +90,7 @@ class EventsMixin:
         if not config.get('use_faction_threads', True) or not isinstance(main_channel, discord.TextChannel):
             return {"Blue": main_channel, "Red": main_channel, "Neutral": main_channel}
 
-        brand_name = config.get('brand_name', 'Fowl Engine')
+        brand_name = self._branding(server_name, config)['brand_name']
         ids = self.faction_thread_ids.setdefault(server_name, {})
         result = {}
         changed = False
@@ -132,6 +132,9 @@ class EventsMixin:
         comparing new-round data against whatever owner/health/cursor was last
         seen in the round that just ended, so a reset can silently suppress the
         alerts for the objectives/kills that carried over unchanged."""
+        # bfdb's per-instance theme / brand_name for the embed branding;
+        # best effort, at most every few minutes.
+        await self._refresh_bfdb_instances(session, api_url)
         async with session.get(f"{api_url}/api/stats", params=srv_params(server_name), timeout=10) as resp:
             if resp.status != 200:
                 return
@@ -183,6 +186,7 @@ class EventsMixin:
             if resp.status != 200:
                 return
             instances = await resp.json(content_type=None)
+        await self._refresh_bfdb_instances(session, api_url, data=instances)
         row = roundresult.find_instance(instances, iid, server_name)
         lr = (row or {}).get("last_round")
         if not lr or lr.get("id") is None:
@@ -258,7 +262,7 @@ class EventsMixin:
         if not channel:
             return
         embed = self._vs_embed(f"Round {self._round_number.get(server_name) or rid} has started",
-                               color=discord.Color.gold())
+                               color=discord.Color.gold(), server=server_name)
         embed.description = "\n".join(self._rotation_lines(server_name)) + \
             "\n\nVote on what comes next with `/fe_rotation_vote`."
         try:
@@ -275,7 +279,7 @@ class EventsMixin:
             await interaction.response.send_message(
                 f"No rotation is configured for {server.name}.", ephemeral=True)
             return
-        embed = self._vs_embed(f"Theatre rotation -- {server.name}", color=discord.Color.gold())
+        embed = self._vs_embed(f"Theatre rotation -- {server.name}", color=discord.Color.gold(), server=server)
         embed.description = "\n".join(lines)
         await interaction.response.send_message(embed=embed)
 
@@ -716,7 +720,8 @@ class EventsMixin:
         body = "\n".join(line[:110] for line in body.splitlines())
         if len(body) > 3800:
             body = body[-3800:]
-        embed = self._vs_embed(f"Live Engine Log — {server_name}", color=discord.Color.dark_gray())
+        embed = self._vs_embed(f"Live Engine Log — {server_name}", color=discord.Color.dark_gray(),
+                               server=server_name)
         embed.description = f"```{body}```"
         await self._upsert_embed(self.tail_msg_ids, server_name, channel, embed, "engine log tail")
 

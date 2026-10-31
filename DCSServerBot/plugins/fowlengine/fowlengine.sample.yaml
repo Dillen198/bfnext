@@ -8,6 +8,33 @@ DEFAULT:
   # The brand name to show in Discord Embeds (e.g. "Vector Strike", "Desert Fury", "Fowl Engine").
   brand_name: "Vector Strike"
 
+  # (Optional) Per-instance branding. One bfdb can run campaigns that should
+  # not look alike: each block below is keyed by the bfdb instance id (or the
+  # DCS server name) and replaces, for that server's posts only, the brand
+  # name, the logo in the embed's author line and footer, the accent colour
+  # and the newspaper the war diary posts are filed under. Every field is
+  # optional; a field left out comes from the instance's bfdb `theme`
+  # ("redstorm" has its own defaults, the same as the example below), then
+  # from the values above. Without a block and without a theme nothing
+  # changes. bfdb's own per-instance `brand_name` (instances.json) also
+  # beats the theme, but not a block here.
+  #   logo            a path on dashboard_url, or a full https:// URL. Discord
+  #                   shows no SVG icons: an .svg path is posted as the .png
+  #                   beside it, so the dashboard must serve that PNG.
+  #   colour          "#rrggbb", the accent of embeds without a colour of
+  #                   their own (status colours stay as they are)
+  #   diary_title     the paper (default "War Diary"); the news post's link
+  #                   then reads "Read more in the <diary_title>" (one "the"
+  #                   if the title has its own), unless
+  #   diary_link_text is set
+  # branding:
+  #   redstorm:                               # bfdb instance id
+  #     brand_name: "Southern Flank 1985"
+  #     logo: "/redstorm/emblem.png"
+  #     colour: "#b3261e"
+  #     diary_title: "The Allied Dispatch"
+  #     # diary_link_text: "Read the Dispatch"
+
   # ---------------------------------------------
   # Channel Configurations
   # ---------------------------------------------
@@ -383,6 +410,11 @@ DEFAULT:
     #     # bfdb.news_image_style.
     #     # news_image_setting: "a present-day war in Syria and the Levant"
     #     # news_image_style: ""
+    #     # The campaign's look on the dashboard and in Discord: theme
+    #     # "redstorm" (1985 Southern Flank) or unset (Vector Strike), and
+    #     # the campaign's own name. See `branding:` near the top of this file.
+    #     # theme: redstorm
+    #     # brand_name: "Southern Flank 1985"
     #   - id: vs2
     #     label: "Vector Strike #2"
     #     dcs_server_name: "[VS] Vector Strike #2 | Training"
