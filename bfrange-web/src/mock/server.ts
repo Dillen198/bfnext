@@ -106,6 +106,18 @@ function buildHistory(): RangeRecord[] {
     const p = PILOTS.find(p => p.kinds.some(([k]) => k === kind))
     if (p) out.push(recordOfKind(kind, p, new Rng(300 + i), REF - (30 + i) * 60_000))
   })
+  // The same for the duel ladder: only an engagement against another pilot,
+  // not aborted, counts, and on some days the history has none.
+  const isDuel = (r: RangeRecord) => r.result.kind === 'engagement' && !!r.result.opponent && r.result.outcome !== 'abort'
+  if (!out.some(isDuel)) {
+    for (let seed = 400; seed < 500; seed++) {
+      const r = recordOfKind('engagement', pilotByName('Viper'), new Rng(seed), REF - 50 * 60_000)
+      if (isDuel(r)) {
+        out.push(r)
+        break
+      }
+    }
+  }
   return out
 }
 
