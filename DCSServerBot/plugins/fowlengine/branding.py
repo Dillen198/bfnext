@@ -43,11 +43,14 @@ THEMES = {
         "logo": "/redstorm/emblem.png",
         "colour": "#b3261e",
         "diary_title": "The Allied Dispatch",
+        # The campaign has its own dashboard (bfrsr-web): links and the logo
+        # path go there, not to the Vector Strike one.
+        "dashboard_url": "https://redstorm.vectorstrike.org",
     },
 }
 
 # What an override block may set. `color` is accepted for `colour`.
-FIELDS = ("brand_name", "logo", "colour", "diary_title", "diary_link_text")
+FIELDS = ("brand_name", "logo", "colour", "diary_title", "diary_link_text", "dashboard_url")
 
 _HEX = re.compile(r"^#?([0-9a-fA-F]{6})$")
 _SVG = re.compile(r"\.svg(?=$|[?#])", re.IGNORECASE)
@@ -114,7 +117,9 @@ def resolve(config: dict | None, instance: dict | None = None, server_name: str 
     it -- or None for an embed tied to no server.
 
     Returns {brand_name, logo_url, colour, colour_int, diary_title,
-    diary_link_text, theme}."""
+    diary_link_text, dashboard_url, theme}. `dashboard_url` is where this
+    campaign's links point: an override or the theme's own dashboard, else
+    the plugin's `dashboard_url`."""
     config = config or {}
     instance = instance if isinstance(instance, dict) else {}
     iid = _s(instance.get("id"))
@@ -137,12 +142,14 @@ def resolve(config: dict | None, instance: dict | None = None, server_name: str 
     # "the The Allied Dispatch" -- a title that brings its own article keeps it
     if diary.lower().startswith("the ") and not _s(over.get("diary_link_text")):
         link_text = f"Read more in {diary}"
+    dashboard = pick("dashboard_url") or _s(config.get("dashboard_url"))
     return {
         "brand_name": brand,
-        "logo_url": logo_url(pick("logo") or DEFAULT_LOGO, config.get("dashboard_url")),
+        "logo_url": logo_url(pick("logo") or DEFAULT_LOGO, dashboard),
         "colour": colour,
         "colour_int": colour_int(colour),
         "diary_title": diary,
         "diary_link_text": link_text,
+        "dashboard_url": dashboard,
         "theme": theme,
     }

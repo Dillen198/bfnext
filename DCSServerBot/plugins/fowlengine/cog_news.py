@@ -83,7 +83,7 @@ class NewsMixin:
             self.news_feed_state[server.name] = state
             self.save_state()
             png, ctype = await self._fetch_news_image(http, api_url, day)
-            embed = self._embed_from_dict(newsfeed.build_embed(day, config.get("dashboard_url"), iid, brand))
+            embed = self._embed_from_dict(newsfeed.build_embed(day, brand.get("dashboard_url") or config.get("dashboard_url"), iid, brand))
             try:
                 if png:
                     fname = newsfeed.attachment_name(day, ctype)

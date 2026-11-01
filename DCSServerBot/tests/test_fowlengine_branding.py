@@ -39,8 +39,10 @@ TODAY = {
     "colour_int": 0xC8102E,
     "diary_title": "War Diary",
     "diary_link_text": "Read more in the War Diary",
+    "dashboard_url": DASH,
     "theme": None,
 }
+RS_DASH = "https://redstorm.vectorstrike.org"
 
 
 # ---- branding.resolve: override > bfdb brand_name > theme > global ---------------------
@@ -59,7 +61,9 @@ def test_brand_name_falls_back_like_before():
 def test_theme_defaults_apply_when_bfdb_reports_the_theme():
     b = br.resolve(CONFIG, RED_STORM)
     assert b["brand_name"] == "Southern Flank 1985"
-    assert b["logo_url"] == "https://dash.example/redstorm/emblem.png"
+    # the campaign's own dashboard, for the logo and for every link
+    assert b["dashboard_url"] == RS_DASH
+    assert b["logo_url"] == RS_DASH + "/redstorm/emblem.png"
     assert b["colour"] == "#b3261e" and b["colour_int"] == 0xB3261E
     assert b["diary_title"] == "The Allied Dispatch"
     assert b["diary_link_text"] == "Read more in The Allied Dispatch"   # no "the The"
@@ -78,7 +82,16 @@ def test_override_beats_theme_field_by_field():
     assert b["colour"] == "#123456"                                    # `color` works too
     # the rest still come from the theme
     assert b["diary_title"] == "The Allied Dispatch"
-    assert b["logo_url"] == "https://dash.example/redstorm/emblem.png"
+    assert b["logo_url"] == RS_DASH + "/redstorm/emblem.png"
+
+
+def test_an_override_can_point_links_at_another_dashboard():
+    cfg = {**CONFIG, "branding": {"rs1": {"dashboard_url": "https://bfrsr-web.vercel.app"}}}
+    b = br.resolve(cfg, RED_STORM)
+    assert b["dashboard_url"] == "https://bfrsr-web.vercel.app"
+    assert b["logo_url"] == "https://bfrsr-web.vercel.app/redstorm/emblem.png"
+    # without a theme or an override, links stay on the plugin's dashboard
+    assert br.resolve(CONFIG, {"id": "vs1"})["dashboard_url"] == DASH
 
 
 def test_override_beats_global_without_a_theme_and_is_keyed_by_id_or_server_name():
@@ -89,7 +102,7 @@ def test_override_beats_global_without_a_theme_and_is_keyed_by_id_or_server_name
         b = br.resolve(cfg, {"id": "vs2", "dcs_server_name": "[VS] Server 2"})
         assert b == {"brand_name": "Desert Fury", "logo_url": "https://cdn.example/df.png",
                      "colour": "#0a0b0c", "colour_int": 0x0A0B0C, "diary_title": "Desert Times",
-                     "diary_link_text": "More from the front", "theme": None}
+                     "diary_link_text": "More from the front", "dashboard_url": DASH, "theme": None}
     # another instance's block is not this one's
     cfg = {**CONFIG, "branding": {"vs2": block}}
     assert br.resolve(cfg, {"id": "vs1"}) == TODAY

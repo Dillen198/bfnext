@@ -310,7 +310,8 @@ def test_a_red_storm_instance_posts_under_its_own_paper():
     http.data = news(day("2026-09-27", body=["Wire copy."]) | {"alt": alt})
     asyncio.run(cog._post_news_for(http, SERVER, CONFIG))
     (embed, _, _), = ch.sent
-    assert embed.d["description"].endswith("[Read more in The Allied Dispatch](https://dash.example/news?instance=rs1)")
+    # the campaign's own dashboard, not the plugin's
+    assert embed.d["description"].endswith("[Read more in The Allied Dispatch](https://redstorm.vectorstrike.org/news?instance=rs1)")
     assert embed.d["fields"] == [{"name": "Front Bulletin", "value": alt["headline"], "inline": False}]
     assert "Long communique" not in str(embed.d)
     assert cog.refreshed == ["http://127.0.0.1:8880"]

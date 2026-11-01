@@ -18,6 +18,9 @@ DEFAULT:
   # from the values above. Without a block and without a theme nothing
   # changes. bfdb's own per-instance `brand_name` (instances.json) also
   # beats the theme, but not a block here.
+  #   dashboard_url   the campaign's own dashboard: links in its posts and a
+  #                   path `logo` go there (theme "redstorm" defaults to
+  #                   https://redstorm.vectorstrike.org); else the one above
   #   logo            a path on dashboard_url, or a full https:// URL. Discord
   #                   shows no SVG icons: an .svg path is posted as the .png
   #                   beside it, so the dashboard must serve that PNG.
@@ -33,6 +36,7 @@ DEFAULT:
   #     logo: "/redstorm/emblem.png"
   #     colour: "#b3261e"
   #     diary_title: "The Allied Dispatch"
+  #     dashboard_url: "https://redstorm.vectorstrike.org"
   #     # diary_link_text: "Read the Dispatch"
 
   # ---------------------------------------------

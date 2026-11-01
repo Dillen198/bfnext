@@ -862,7 +862,8 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
                 import aiohttp
                 config = self.get_config(server) or {}
                 api_url = config.get("api_url", "http://localhost:8880")
-                dash = (config.get("dashboard_url") or "").rstrip("/")
+                # this campaign's own dashboard (Red Storm has one)
+                dash = (self._branding(server, config).get("dashboard_url") or "").rstrip("/")
                 async with aiohttp.ClientSession() as session:
                     sp = srv_params(server.name)
                     async with session.get(f"{api_url}/api/stats", params=sp, timeout=10) as resp:
@@ -1599,7 +1600,7 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
             embed.add_field(name=f"{icon('rules')} Rules", value="\n".join(rules)[:serverinfo.FIELD_LIMIT],
                             inline=False)
         links = []
-        dash = (config.get('dashboard_url') or "").rstrip('/')
+        dash = (self._branding(server, config).get('dashboard_url') or "").rstrip('/')
         if dash:
             # /map is the fog-of-war tacmap: a visitor who isn't signed in
             # gets a "not signed in" card, so say so up front.
@@ -1895,7 +1896,7 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
         srv = self.bot.servers.get(server) if isinstance(server, str) else server
         cfg = (self.get_config(srv) if srv is not None else self.get_config()) or {}
         b = self._branding(server, cfg)
-        dash = (cfg.get('dashboard_url') or '').rstrip('/')
+        dash = (b.get('dashboard_url') or '').rstrip('/')
         embed = discord.Embed(title=title, color=color or discord.Color(b['colour_int']))
         if url:
             embed.url = url
