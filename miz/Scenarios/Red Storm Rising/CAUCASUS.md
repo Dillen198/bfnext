@@ -160,10 +160,17 @@ players and the AI change (ENGINE.md 3):
   production and transport, emptied by use and by strikes.
 - **Orders of battle.** AI aircraft come from base stock, so losses are
   permanent until replaced. When Red's MiG-29s are gone, the MiG-21s fly.
+  A flight launches only from a field that holds its airframes, survivors
+  go back into stock when they land or are retired, and the Backfire
+  regiment comes back through production, ferry flights or the
+  `backfire_reserve` story event (`ai_air_stock`, E6). Every AI type has to
+  be in the warehouse production, or exempt, or it never flies.
 - **Will to fight**, per side. Losses, lost ground and empty fuel tanks
   lower it; successes raise it.
 - **Posture.** Each side's AI goes on the offensive, holds or falls back
-  from its own state, not on a timer.
+  from its own state, not on a timer: the map, its will, the fuel in its
+  network (under 30% it holds whatever the map says) and its fighters
+  against what its radars see (`smart_commander.hq.posture`, E7).
 - **Story events** (ENGINE.md 3.4). When a player's action crosses a line
   (Tuapse refinery destroyed, carrier hit, Senaki taken, six Backfires shot
   down), an event fires: the news reports it and names who did it, and its
@@ -186,7 +193,9 @@ What players will typically see, though no run is the same:
   E5's will model, or `MapOwned` until then).
 - `max_round_days`: draw.
 
-Until E5 exists, `MapOwned` and `max_round_days` end the round.
+E5 is built (top-level `war_will`, ENGINE.md 4); `MapOwned` and `max_round_days` still apply alongside it.
+Story events (E5b) are built too; the Southern Flank's are in [story.sample.json](story.sample.json).
+Orders of battle (E6) are built: top-level `ai_air_stock`; each side's airframes and losses are at `/api/oob`.
 
 ---
 
@@ -255,23 +264,40 @@ likely, and most set off a story event when they happen.
 - **Empty-side protection:** captures against a side with nobody in a slot
   take longer (`population_scaling`).
 
-### 5.3 What is missing (E4)
+### 5.3 The AI fills the gap (E4, done)
 
-All of the above looks at a side's **own** players only. A side with
-nobody in it runs at full strength whether the other side has one pilot or
-thirty, so one player is swamped and thirty walk through it.
+Before E4 all of the above looked at a side's **own** players only: a side
+with nobody in it ran at full strength whether the other side had one pilot
+or thirty.
 
-E4 makes each AI's strength a function of **both** head counts: it fills
-the gap between its side and the other, with a floor so a side is never
-helpless and a ceiling so the AI never outnumbers the humans it is facing
-by too much. One shared rule drives the HQ, the AI packages and the ground
-AI's attack rate, and the dashboard shows each side's state ("Red: AI-led,
-2 pilots").
+With the top-level `ai_fill` block on, each side's AI pressure is
 
-**Empty-side protection** also needs a look: a side with no players but a
-full AI is not really undefended. With E4 in, `population_scaling` should
-count AI strength, or be turned down, so a lone player can still take
-ground.
+`own-side fade x (floor + (1 - floor) x min(enemy pilots / full_at_enemy, 1))`
+
+The own-side fade is the HQ's `gap_fill` curve above; `floor` (0.35) is
+what a side runs against nobody, `full_at_enemy` (8) is where the other
+side's pilots call for all of it. Enemy pilots are counted **in a slot**.
+With the defaults:
+
+| Blue v Red | Blue's AI | Red's AI |
+|---|---|---|
+| 1 v 0 | 0.35 | 0.43 |
+| 8 v 0 | 0.24 | 1.0 |
+| 10 v 8 | 0.57 | 0.68 |
+| 20 v 3 | 0.15 | 0.95 |
+
+One rule drives the HQ (candidate scores, spend per pass, new operations
+per pass), the AI packages (fewer up, further apart) and the ground AI
+(waves of attacks spaced `think_secs / pressure` apart). Per-system
+switches: `hq`, `packages`, `ground_ai`, `protection`. The HQ dashboard
+gets each side's pilots, enemy pilots and pressure (`HqView.ai_fill`) for
+"Red: AI-led, 2 pilots".
+
+**Empty-side protection** counts the AI as a defender: a side short of
+players is undefended (slower captures) only while the other side has
+nobody in a slot either, so a lone player takes ground at normal speed.
+With nobody online the empty-server pauses (`run_when_empty`,
+`pause_when_empty`) still hold.
 
 ---
 
@@ -332,3 +358,5 @@ USSR plus CJTF Red.
 3. **E4 matching:** how close the AI should keep a lone pilot's fight. For
    example, the AI side flies about one flight per human enemy pilot, never
    fewer than one and never more than the full HQ.
+   Built as two knobs, `ai_fill.floor` (0.35) and `ai_fill.full_at_enemy`
+   (8): tune them after the one-pilot test (5.3).

@@ -190,12 +190,12 @@ Sizes: **S** = a day or two, **M** = about a week, **L** = several weeks.
 | # | Work | Size | Status |
 |---|---|---|---|
 | E1 | Carrier auto-repair charges what it says | S | **Done** (`bflib/src/db/objective.rs`, `check_carrier_auto_repair`), not yet tested in DCS |
-| E3 | HQ plans anti-ship strikes on carrier groups | S-M | |
-| E4 | AI fills the gap between the two sides' head counts: one rule for the HQ, AI packages and the ground AI's attack rate; empty-side protection counts AI strength (CAUCASUS.md 5.3) | S-M | |
-| E5 | War will (3.2), with its end of round | M | Needs owner OK on the inputs |
-| E5b | Story events (3.4): triggers on actions and state, effects on the war, news that credits the players | M-L | After E5 |
-| E6 | Real orders of battle for AI aircraft (3.1) | M-L | Design above |
-| E7 | Posture from will, fuel and air strength (3.3) | S | After E5 |
+| E3 | HQ plans anti-ship strikes on carrier groups | S-M | **Done** (`OpKind::AntiShip`: `bflib/src/hq/planner.rs` `anti_ship`, needs a `Strike` action with the `AntiShip` mission; `hq.costs.anti_ship`, `hq.limits.anti_ship`, `hq.anti_ship_range_m`), not yet tested in DCS |
+| E4 | AI fills the gap between the two sides' head counts: one rule for the HQ, AI packages and the ground AI's attack rate; empty-side protection counts AI strength (CAUCASUS.md 5.3) | S-M | **Done** (top-level `ai_fill`: own-side fade x `floor + (1 - floor) * min(enemy pilots / full_at_enemy, 1)`, `bfprotocols/src/cfg/ai_fill.rs`, applied in `bflib/src/ai_fill.rs` to the HQ, packages, ground AI attacks and `population_scaling`; shown as `HqView.ai_fill`), not yet tested in DCS |
+| E5 | War will (3.2), with its end of round | M | **Done** (top-level `war_will`, `bfprotocols/src/cfg/war_will.rs`; state, weights and the terms rule in `bflib/src/db/will.rs`, fed by unit deaths, captures, objective health, formations and a slow tick for fuel and recovery; the round end sits in `check_victory`; `Stat::WarWill` to bfdb, `/api/stats.will`; `HqView.will` and the HQ picture's `will` for E7), not yet tested in DCS |
+| E5b | Story events (3.4): triggers on actions and state, effects on the war, news that credits the players | M-L | **Done** (top-level `story`, `bfprotocols/src/cfg/story.rs`; triggers, credit and effects in `bflib/src/db/story.rs`, fed by deaths, captures, supply routes lost and the slow tick; `Stat::StoryEvent` to bfdb, `/api/stats.story`, the news leads with them; Southern Flank sample in `story.sample.json`), not yet tested in DCS |
+| E6 | Real orders of battle for AI aircraft (3.1) | M-L | **Done** (top-level `ai_air_stock`, `bfprotocols/src/cfg/ai_air_stock.rs`; draw, landing, retirement and losses in `bflib/src/db/air_stock.rs`, the launch in `add_and_spawn_ai_air_from`, the HQ's rosters filtered by stock in `hq::planner::available`; story `StockBelow` / `ReinforceAirframes`; `Stat::AirOrderOfBattle` to bfdb, `/api/oob`), not yet tested in DCS |
+| E7 | Posture from will, fuel and air strength (3.3) | S | **Done** (`smart_commander.hq.posture`, `HqPostureCfg`; `will`, `fuel` and `air` in `bflib/src/hq/strategy.rs` add to the posture score, force defensive under `fuel_low_pct`, thin out the ground AI's attack waves at critical fuel and weight ops through `Plan.strain`: costly kinds at low will, SEAD and forward CAP down and CAP over own bases and SAMs up when the side's fighters (its stock, E6) are few against what its radars hold; each input is a line in the plan's reasons and a posture change is announced), not yet tested in DCS |
 | E8 | Per-type combat strength (item 4) | S-M | |
 | E9 | Crossings: bridges and tunnels as objectives (item 3) | M | |
 | E10 | Sealift convoys and more than one carrier group (item 2) | M + M | |

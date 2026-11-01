@@ -14,6 +14,7 @@ campaign to build is Southern Flank on the Caucasus ([CAUCASUS.md](CAUCASUS.md))
 | [CAUCASUS.md](CAUCASUS.md) | **First campaign: "Southern Flank" on the Caucasus.** NATO beachhead at Batumi, the Rioni front, the fuel war over the mountain passes; one PvP server where the AI fills in for missing players; a story set off by players' actions |
 | [ENGINE.md](ENGINE.md) | **Engine readiness.** The dynamic war model (real AI orders of battle, will to fight, posture from the side's own state) and the AI fill-in, as an ordered work list |
 | [DASHBOARD.md](DASHBOARD.md) | **The Red Storm dashboard.** The existing dashboard with a 1985 theme per instance, news in two voices (Western wire and Soviet communiqué), and new pages for will to fight, story events, fuel and orders of battle |
+| [DEPLOY.md](DEPLOY.md) | **Switch-over runbook.** Retire the 2008 Caucasus server and run Southern Flank in its place on the same box: archive, files, bfdb instance, bot config, DNS, checks, rollback |
 
 When it is built, each campaign gets its own folder here, laid out like
 `../Vector Strike/`: `base.miz`, `warehouse.miz`, a weapons template, and a
