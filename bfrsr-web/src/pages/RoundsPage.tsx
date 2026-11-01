@@ -19,7 +19,7 @@ import { Award } from '@icons'
 
 const BLUE = 'var(--blue)'
 const RED = 'var(--red)'
-const NEUTRAL = '#64748b'
+const NEUTRAL = 'var(--text-dim)'
 
 const label: React.CSSProperties = {
   fontSize: '0.58rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase',
@@ -41,6 +41,11 @@ const result = (r: Pick<Round, 'active' | 'winner'>, live = 'IN PROGRESS') =>
     : r.winner === 'Blue' ? `${campaign.blueLabel.toUpperCase()} WON`
     : r.winner === 'Red' ? `${campaign.redLabel.toUpperCase()} WON`
     : 'NO WINNER'
+/** The result as the ink stamp on the report: NATO in blue ink, Soviet in red. */
+function ResultStamp({ r, size }: { r: Pick<Round, 'active' | 'winner'>; size?: 'lg' | 'sm' }) {
+  const ink = r.active ? ' stamp--green' : r.winner === 'Blue' ? ' stamp--blue' : r.winner === 'Red' ? '' : ' stamp--dim'
+  return <span className={`stamp${ink}${size ? ` stamp--${size}` : ''}`}>{result(r, size === 'sm' ? 'Live' : 'In progress')}</span>
+}
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })
 
 function bucketLabel(iso: string, secs: number): string {
@@ -52,8 +57,8 @@ function bucketLabel(iso: string, secs: number): string {
 function Card({ title, note, children, pad = true }: { title: string; note?: React.ReactNode; children: React.ReactNode; pad?: boolean }) {
   return (
     <div className="vs-card p-0" style={{ minWidth: 0 }}>
-      <div className="flex items-center gap-2 px-4 pt-3.5 pb-2.5" style={{ borderBottom: '1px solid var(--border)' }}>
-        <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>{title}</span>
+      <div className="rsr-panel-head flex items-center gap-2 px-4 py-2.5">
+        <span className="rsr-panel-title" style={{ fontSize: '0.66rem' }}>{title}</span>
         {note && <span className="ml-auto" style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>{note}</span>}
       </div>
       <div className={pad ? 'p-4' : undefined}>{children}</div>
@@ -161,7 +166,7 @@ function Exchange({ rep }: { rep: RoundReport }) {
           <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} minTickGap={28} />
           <YAxis tick={axisTick} axisLine={false} tickLine={false} allowDecimals={false} width={40} tickFormatter={(v: number) => String(Math.abs(v))} />
           <ReferenceLine y={0} stroke="var(--border-light)" />
-          <Tooltip cursor={{ fill: 'rgba(148,163,184,0.08)' }} content={<ExchangeTip />} />
+          <Tooltip cursor={{ fill: 'var(--accent-glow)' }} content={<ExchangeTip />} />
           <Bar dataKey="blue" stackId="k" fill={BLUE} maxBarSize={24} radius={[4, 4, 0, 0]} isAnimationActive={false} />
           <Bar dataKey="red" stackId="k" fill={RED} maxBarSize={24} radius={[0, 0, 4, 4]} isAnimationActive={false} />
         </BarChart>
@@ -182,7 +187,7 @@ function Contested({ rep }: { rep: RoundReport }) {
           {rep.contested.map(c => (
             <React.Fragment key={c.name}>
               <span style={{ fontSize: '0.68rem', color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.name}>{c.name}</span>
-              <div style={{ height: 8, background: 'rgba(148,163,184,0.12)', borderRadius: 2 }}>
+              <div style={{ height: 8, background: 'var(--bg-elevated)', borderRadius: 2 }}>
                 <div style={{ width: `${(c.captures / max) * 100}%`, height: '100%', background: 'var(--accent)', borderRadius: '0 4px 4px 0' }} />
               </div>
               <span className="font-mono" style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>{c.captures}</span>
@@ -197,7 +202,7 @@ function Contested({ rep }: { rep: RoundReport }) {
 function Pilots({ s }: { s: RoundSummary }) {
   const mvp = s.top[0]
   const th: React.CSSProperties = { ...label, padding: '5px 8px', textAlign: 'right', fontWeight: 600, borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }
-  const td: React.CSSProperties = { padding: '5px 8px', fontSize: '0.68rem', color: 'var(--text-muted)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', borderBottom: '1px solid rgba(42,42,42,0.5)' }
+  const td: React.CSSProperties = { padding: '5px 8px', fontSize: '0.68rem', color: 'var(--text-muted)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', borderBottom: '1px solid var(--border)' }
   return (
     <Card title="Who carried it" note="kills, captures and logistics all count" pad={false}>
       {mvp && (
@@ -211,7 +216,7 @@ function Pilots({ s }: { s: RoundSummary }) {
           <div className="flex flex-wrap gap-4 ml-auto">
             {([['A/A', mvp.air_kills], ['A/G', mvp.ground_kills], ['Captures', mvp.captures], ['Logistics', mvp.logistics], ['Flight time', fmtHours(mvp.hours)]] as const).map(([n, v]) => (
               <div key={n}>
-                <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text)' }}>{v}</div>
+                <div className="rsr-fig" style={{ fontSize: '1.5rem' }}>{v}</div>
                 <div style={label}>{n}</div>
               </div>
             ))}
@@ -287,10 +292,8 @@ function Report({ round }: { round: Round }) {
             </div>
           </div>
           <div className="ml-auto" style={{ textAlign: 'right' }}>
-            <div style={label}>Result</div>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', letterSpacing: '0.08em', color: round.active ? 'var(--accent-bright)' : sideColor(round.winner) }}>
-              {result(round)}
-            </div>
+            <div style={{ ...label, marginBottom: 6 }}>Result</div>
+            <ResultStamp r={round} size="lg" />
           </div>
         </div>
         {tiles.length > 0 && (
@@ -298,7 +301,7 @@ function Report({ round }: { round: Round }) {
             {tiles.map(([n, v]) => (
               <div key={n} style={{ padding: '10px 16px', borderRight: '1px solid var(--border)' }}>
                 <div style={label}>{n}</div>
-                <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text)', marginTop: 2 }}>{v}</div>
+                <div className="rsr-fig" style={{ fontSize: '1.7rem', marginTop: 4 }}>{v}</div>
               </div>
             ))}
           </div>
@@ -309,7 +312,7 @@ function Report({ round }: { round: Round }) {
               <div key={n} style={{ padding: '10px 16px', borderRight: '1px solid var(--border)', minWidth: 0 }}>
                 <div style={label}>{n}</div>
                 <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.name}</div>
-                <div className="font-mono" style={{ fontSize: '0.62rem', color: 'var(--text-muted)' }}>{l.value} {unit}</div>
+                <div className="font-mono" style={{ fontSize: '0.62rem', color: 'var(--text-muted)' }}><span className="rsr-fig" style={{ fontSize: '1rem' }}>{l.value}</span> {unit}</div>
               </div>
             ))}
           </div>
@@ -350,14 +353,16 @@ export default function RoundsPage() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <PageHeader art="flanker" title="ROUNDS" sub={`${rounds.length} round${rounds.length === 1 ? '' : 's'} on this server`} icon={Award} />
+      <PageHeader art="flanker" title="AFTER-ACTION REPORTS" file="After-action reports"
+        stamp={<span className="stamp stamp--dim">Filed</span>}
+        sub={`${rounds.length} round${rounds.length === 1 ? '' : 's'} of the campaign on file`} icon={Award} />
       <div className="flex-1 overflow-auto p-4">
         <QueryState isLoading={q.isLoading} isError={q.isError} error={q.error} isEmpty={rounds.length === 0} what="rounds" onRetry={q.refetch} />
         {selected && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start' }}>
             {/* Round list: a column beside the report on wide screens, above it on narrow ones. */}
             <div className="vs-card p-0" style={{ flex: '1 1 240px', maxWidth: 300 }}>
-              <div className="px-4 pt-3.5 pb-2.5" style={{ borderBottom: '1px solid var(--border)', ...label, fontSize: '0.65rem' }}>All rounds</div>
+              <div className="rsr-panel-head px-4 py-2.5"><span className="rsr-panel-title" style={{ fontSize: '0.66rem' }}>All rounds</span></div>
               <div style={{ maxHeight: 520, overflowY: 'auto' }}>
                 {rounds.map(r => {
                   const on = r.id === selected.id
@@ -371,7 +376,7 @@ export default function RoundsPage() {
                       }}>
                       <div className="flex items-center gap-2">
                         <span style={{ fontSize: '0.72rem', color: 'var(--text)', fontWeight: 600 }}>Round {roundNo(r)}</span>
-                        <span className="ml-auto" style={{ fontSize: '0.58rem', letterSpacing: '0.1em', color: r.active ? 'var(--accent-bright)' : sideColor(r.winner) }}>
+                        <span className="ml-auto" style={{ fontSize: '0.58rem', fontWeight: 700, letterSpacing: '0.1em', color: r.active ? 'var(--accent)' : sideColor(r.winner) }}>
                           {result(r, 'LIVE')}
                         </span>
                       </div>

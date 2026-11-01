@@ -489,7 +489,7 @@ export default function KneeboardTab({ briefing: b }: { briefing: Briefing }) {
                 : n.objective,
             },
             { key: 'kind', label: 'Type', value: n => n.kind, w: 2 },
-            { key: 'aids', label: 'Aids', value: n => navaidCells(n), color: '#facc15', w: 5 },
+            { key: 'aids', label: 'Aids', value: n => navaidCells(n), color: 'var(--yellow)', w: 5 },
             { key: 'pos', label: 'Position', value: n => n.lat, render: n => fmtCoord(n.lat, n.lon), color: 'var(--text-muted)', w: 3 },
           ]}
         />
@@ -503,7 +503,7 @@ export default function KneeboardTab({ briefing: b }: { briefing: Briefing }) {
           columns={[
             { key: 'label', label: 'Station', value: r => r.label, w: 4 },
             { key: 'kind', label: 'Type', value: r => r.kind, w: 2 },
-            { key: 'freq', label: 'Freq MHz', align: 'right', value: r => r.freq_mhz ?? 0, render: r => r.freq_mhz != null ? r.freq_mhz.toFixed(3) : '—', color: '#facc15', w: 2 },
+            { key: 'freq', label: 'Freq MHz', align: 'right', value: r => r.freq_mhz ?? 0, render: r => r.freq_mhz != null ? r.freq_mhz.toFixed(3) : '—', color: 'var(--yellow)', w: 2 },
             { key: 'note', label: 'TACAN / Note', value: r => r.tacan ?? r.extra ?? '', render: r => r.tacan ?? r.extra ?? '—', color: 'var(--text-muted)', w: 5 },
           ]}
         />
@@ -518,7 +518,7 @@ export default function KneeboardTab({ briefing: b }: { briefing: Briefing }) {
             { key: 'group', label: 'Battery', value: a => a.group, w: 3 },
             { key: 'typ', label: 'Type', value: a => a.typ, w: 4 },
             { key: 'min', label: 'Min', align: 'right', value: a => a.min_range_m, render: a => `${(a.min_range_m / 1000).toFixed(1)}km`, w: 1.4 },
-            { key: 'max', label: 'Max', align: 'right', value: a => a.max_range_m, render: a => `${(a.max_range_m / 1000).toFixed(1)}km`, color: '#facc15', w: 1.4 },
+            { key: 'max', label: 'Max', align: 'right', value: a => a.max_range_m, render: a => `${(a.max_range_m / 1000).toFixed(1)}km`, color: 'var(--yellow)', w: 1.4 },
             { key: 'guns', label: 'Guns', align: 'right', value: a => a.alive, w: 1 },
             { key: 'pos', label: 'Position', value: a => a.lat, render: a => fmtCoord(a.lat, a.lon), color: 'var(--text-muted)', w: 3 },
           ]}
@@ -535,7 +535,7 @@ export default function KneeboardTab({ briefing: b }: { briefing: Briefing }) {
             { key: 'cost', label: 'Cost', align: 'right', value: d => d.cost, w: 1.3 },
             { key: 'crates', label: 'Crates', align: 'right', value: d => d.crates_required, w: 1.3 },
             { key: 'limit', label: 'Limit', align: 'right', value: d => d.limit, w: 1.3 },
-            { key: 'out', label: 'Out', align: 'right', value: d => d.deployed, render: d => <span style={{ color: d.deployed >= d.limit ? '#f87171' : '#facc15' }}>{d.deployed}</span>, w: 1 },
+            { key: 'out', label: 'Out', align: 'right', value: d => d.deployed, render: d => <span style={{ color: d.deployed >= d.limit ? 'var(--red)' : 'var(--yellow)' }}>{d.deployed}</span>, w: 1 },
             { key: 'tags', label: 'Tags', value: d => d.tags.join(' '), render: d => d.tags.join(' ') || '—', color: 'var(--text-muted)', w: 2.5 },
           ]}
         />
@@ -549,7 +549,7 @@ export default function KneeboardTab({ briefing: b }: { briefing: Briefing }) {
           empty="No enemy SAM radars detected in play."
           columns={[
             { key: 'typ', label: 'SAM / Radar Type', value: t => t.typ, w: 5 },
-            { key: 'harm', label: 'HARM', value: t => t.harm_code ?? '', render: t => <span style={{ fontWeight: 700, color: t.harm_code ? '#f87171' : 'var(--text-dim)' }}>{t.harm_code ?? '—'}</span>, w: 1.4 },
+            { key: 'harm', label: 'HARM', value: t => t.harm_code ?? '', render: t => <span style={{ fontWeight: 700, color: t.harm_code ? 'var(--red)' : 'var(--text-dim)' }}>{t.harm_code ?? '—'}</span>, w: 1.4 },
             { key: 'band', label: 'Band', value: t => t.band ?? '', render: t => t.band ?? '—', w: 1.4 },
             { key: 'range', label: 'Range', align: 'right', value: t => t.max_range_km ?? 0, render: t => t.max_range_km != null ? `${t.max_range_km.toFixed(0)}km` : '—', w: 1.5 },
             { key: 'count', label: 'Seen', align: 'right', value: t => t.count, w: 1 },

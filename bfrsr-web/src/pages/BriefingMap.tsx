@@ -12,6 +12,7 @@ import {
 } from '../api'
 import { useTheme } from '@shared/web/theme'
 import { Explosion } from '@icons'
+import { campaign } from '../config/campaign'
 
 // Inline raster style off the Esri canvas tiles — a hosted vector style is
 // blocked by the dashboard's prod CSP and renders black. Same style the tactical
@@ -45,11 +46,11 @@ const mapStyleFor = (theme: string) => ({
   ],
 })
 
-// Same palette the F10 map uses (bflib/src/mapcolor.rs): pure red is
-// unreadable over desert terrain, so Red is violet and Blue is azure. Keeping
-// the two maps in step matters more than matching DCS's stock colours.
+// The sides as the plot (F2) draws them: NATO steel blue, Soviet red, in the
+// pair for the current theme (config/redstorm.ts). The main campaign's map
+// used azure and violet to match its F10 palette; this one is the 1985 room.
 const OWNER_COLOR = (owner: string) =>
-  owner === 'Blue' ? '#40a6ff' : owner === 'Red' ? '#b84dff' : '#ffffff'
+  owner === 'Blue' ? campaign.blueColor : owner === 'Red' ? campaign.redColor : '#ffffff'
 
 /** Status buckets, identical to the engine's: >66 good, 33-66 warn, else bad. */
 const BUCKET = (v: number) => (v > 66 ? '#33d94f' : v > 33 ? '#ffb300' : '#f22a2a')
@@ -217,9 +218,9 @@ export default function BriefingMap({ report, selectedTaskId, onSelectTask }: Pr
               'match',
               ['get', 'kind'],
               'blue',
-              '#4a8fd4',
+              campaign.blueColor,
               'red',
-              '#cc4444',
+              campaign.redColor,
               theme === 'light' ? '#555' : '#ccc',
             ] as never,
             'line-width': ['match', ['get', 'kind'], 'mid', 2, 1.5] as never,

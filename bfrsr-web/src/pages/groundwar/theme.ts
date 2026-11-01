@@ -6,9 +6,11 @@ import type { GroundRole } from '../../api'
 
 export type Side = 'Blue' | 'Red'
 
-export const SIDE_COLOR = { Blue: '#4a8fd4', Red: '#cc4444', Neutral: '#8a8f80' } as const
+// NATO steel blue and Soviet red, the dashboard's side pair (config/redstorm.ts)
+// at the depth a filled symbol needs on imagery.
+export const SIDE_COLOR = { Blue: '#5f88b0', Red: '#c33d30', Neutral: '#8a8f80' } as const
 /** Side colours lifted for small things on dark imagery (vehicles, players). */
-export const SIDE_BRIGHT = { Blue: '#7db8ff', Red: '#ff6b5e', Neutral: '#b9bca9' } as const
+export const SIDE_BRIGHT = { Blue: '#8db4d9', Red: '#f0685a', Neutral: '#b9bca9' } as const
 
 /** Chinagraph yellow: selection, orders, anything the viewer is about to do. */
 export const PENCIL = '#ffd23f'

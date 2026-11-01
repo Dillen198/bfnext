@@ -3,6 +3,7 @@ import QueryState from '../components/QueryState'
 import { useQuery } from '@tanstack/react-query'
 import { api, type Briefing, type SituationReport } from '../api'
 import PageHeader from '../components/PageHeader'
+import { campaign } from '../config/campaign'
 import { useAuth } from '../context/AuthContext'
 import KneeboardTab, { buildPdf } from './KneeboardTab'
 import { mockBriefing, mockSituation } from './briefingMocks'
@@ -70,17 +71,14 @@ export default function BriefingPage() {
   const tabBtn = (id: Tab, label: string, badge?: string) => (
     <button
       key={id}
+      type="button"
+      className="rsr-key"
+      aria-pressed={tab === id}
       onClick={() => setTab(id)}
-      style={{
-        padding: '5px 14px', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.08em',
-        border: 'none', cursor: 'pointer', textTransform: 'uppercase',
-        background: tab === id ? 'var(--accent)' : 'var(--bg-elevated)',
-        color: tab === id ? '#0b0f08' : 'var(--text-dim)',
-      }}
     >
       {label}
       {badge && (
-        <span style={{ marginLeft: 6, fontFamily: 'var(--font-mono)', fontWeight: 800, opacity: 0.85 }}>
+        <span style={{ color: tab === id ? undefined : 'var(--red)', fontWeight: 800 }}>
           {badge}
         </span>
       )}
@@ -93,7 +91,7 @@ export default function BriefingPage() {
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
       <PageHeader art="apache"
         icon={BriefingIcon}
-        title="BRIEFING"
+        title="MISSION BRIEFING"
         stamp={<span className="stamp">Eyes only</span>}
         sub={
           tab === 'situation'
@@ -108,32 +106,27 @@ export default function BriefingPage() {
         }
         right={
           <div className="briefing-header-controls" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <div className="briefing-tabgroup" style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+            <div className="briefing-tabgroup rsr-seg" role="group" aria-label="Briefing section">
               {tabBtn('situation', 'Situation', critical > 0 ? `${critical}!` : undefined)}
               {tabBtn('kneeboard', 'Kneeboard')}
               {tabBtn('planner', 'Planner')}
             </div>
             {canSwitch ? (
-              <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+              <div className="rsr-seg" role="group" aria-label="Side">
                 {(['Blue', 'Red'] as Side[]).map(s => (
                   <button
                     key={s}
+                    type="button"
+                    className={`rsr-key rsr-key--${s === 'Blue' ? 'blue' : 'red'}`}
+                    aria-pressed={side === s}
                     onClick={() => setAdminSide(s)}
-                    style={{
-                      padding: '4px 12px', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.06em',
-                      border: 'none', cursor: 'pointer',
-                      background: side === s ? (s === 'Blue' ? '#1d4ed8' : '#b91c1c') : 'var(--bg-elevated)',
-                      color: side === s ? '#fff' : 'var(--text-dim)',
-                    }}
-                  >{s.toUpperCase()}</button>
+                  >{s === 'Blue' ? campaign.blueLabel : campaign.redLabel}</button>
                 ))}
               </div>
             ) : (
-              <span className="briefing-side-badge" style={{
-                padding: '4px 12px', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.06em',
-                borderRadius: 4, background: side === 'Blue' ? '#1d4ed8' : '#b91c1c', color: '#fff',
-                display: 'inline-flex', alignItems: 'center',
-              }}>{side.toUpperCase()}</span>
+              <span className={`briefing-side-badge rsr-side-tag rsr-side-tag--${side === 'Blue' ? 'blue' : 'red'}`}>
+                {side === 'Blue' ? campaign.blueLabel : campaign.redLabel}
+              </span>
             )}
             <button
               onClick={() => refetchSit()}

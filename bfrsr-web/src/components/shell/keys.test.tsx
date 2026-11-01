@@ -44,7 +44,7 @@ describe('the MORE menu', () => {
   it('holds the rest of the pages, admin only for admins', () => {
     const labels = (u: Parameters<typeof moreGroups>[0]) =>
       moreGroups(u, {}).flatMap(g => g.items.map(i => i.label))
-    expect(labels(pilot)).toEqual(expect.arrayContaining(['Recon intel', 'Ground command', 'Personnel files', 'My file', 'Squadrons', 'Rounds', 'Replay', 'About']))
+    expect(labels(pilot)).toEqual(expect.arrayContaining(['Recon intel', 'Ground command', 'Order of battle', 'Personnel files', 'My file', 'Squadrons', 'Rounds', 'Replay', 'About']))
     expect(labels(pilot)).not.toContain('Admin')
     expect(labels({ ...pilot, is_admin: true })).toEqual(expect.arrayContaining(['Admin', 'Config', 'Server ops']))
   })

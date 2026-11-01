@@ -17,13 +17,13 @@ import { OUTCOME } from '../lib/sortie'
 import { fmtDuration } from '../lib/format'
 import { PlayCircle } from '@icons'
 
-const AIR = '#60a5fa'
-const GROUND = '#f97316'
-const DEPLOY = '#22c55e'
-const DEATH = '#ef4444'
+const AIR = 'var(--blue)'
+const GROUND = 'var(--orange)'
+const DEPLOY = 'var(--green)'
+const DEATH = 'var(--red)'
 
 const sideColor = (side: string | null | undefined) =>
-  side === 'Blue' ? '#3b82f6' : side === 'Red' ? '#ef4444' : '#64748b'
+  side === 'Blue' ? 'var(--blue)' : side === 'Red' ? 'var(--red)' : 'var(--text-dim)'
 
 /** Seconds since takeoff as "T+1:04:09" / "T+4:09". */
 function fmtElapsed(secs: number): string {
@@ -96,7 +96,7 @@ function Timeline({ d, evs }: { d: Detail; evs: Ev[] }) {
   return (
     <div role="img" aria-label="Sortie timeline" style={{ position: 'relative', height: 48, margin: '0 8px' }}>
       {/* Flight bar: the whole axis dim, the flown part lit. */}
-      <div style={{ position: 'absolute', left: 0, right: 0, top: LANE - 1, height: 2, background: '#334155' }} />
+      <div style={{ position: 'absolute', left: 0, right: 0, top: LANE - 1, height: 2, background: 'var(--border-light)' }} />
       <div style={{ position: 'absolute', left: 0, width: pct(flown), top: LANE - 1, height: 2, background: 'var(--accent)', opacity: 0.6 }} />
       <span style={{ ...at(0), width: 8, height: 8, borderRadius: 4, background: 'var(--accent)' }} title="Takeoff" />
       {d.duration_secs > 0 && (
@@ -105,7 +105,7 @@ function Timeline({ d, evs }: { d: Detail; evs: Ev[] }) {
       )}
       {ticks.map((t, i) => (
         <span key={i} className="font-mono" style={{
-          position: 'absolute', left: pct(t), top: LANE + 9, fontSize: '0.56rem', color: '#64748b', whiteSpace: 'nowrap',
+          position: 'absolute', left: pct(t), top: LANE + 9, fontSize: '0.56rem', color: 'var(--text-dim)', whiteSpace: 'nowrap',
           transform: i === 0 ? 'none' : i === ticks.length - 1 ? 'translateX(-100%)' : 'translateX(-50%)',
         }}>
           {fmtElapsed(t)}
@@ -163,8 +163,8 @@ function Weapons({ d }: { d: Detail }) {
             <span style={{ fontSize: '0.66rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
               title={w.weapon}>{w.weapon}</span>
             {/* Shots (track), hits (fill) */}
-            <div style={{ position: 'relative', height: 8, background: 'rgba(148,163,184,0.12)', borderRadius: 2 }}>
-              <div style={{ position: 'absolute', inset: 0, width: `${(w.shots / max) * 100}%`, background: 'rgba(148,163,184,0.35)', borderRadius: 2 }} />
+            <div style={{ position: 'relative', height: 8, background: 'var(--bg-elevated)', borderRadius: 2 }}>
+              <div style={{ position: 'absolute', inset: 0, width: `${(w.shots / max) * 100}%`, background: 'var(--text-dim)', borderRadius: 2 }} />
               <div style={{ position: 'absolute', inset: 0, width: `${(w.hits / max) * 100}%`, background: 'var(--accent)', borderRadius: 2 }} />
             </div>
             <span className="font-mono" style={{ fontSize: '0.62rem', color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
@@ -191,7 +191,7 @@ function EventList({ evs, takeoff }: { evs: Ev[]; takeoff: string }) {
             const tag = e.kind === 'kill' ? (e.air ? 'A/A KILL' : 'A/G KILL') : e.kind === 'deploy' ? 'DEPLOY' : 'LOSS'
             return (
               <React.Fragment key={i}>
-                <span className="font-mono" style={{ fontSize: '0.62rem', color: '#64748b', whiteSpace: 'nowrap' }}
+                <span className="font-mono" style={{ fontSize: '0.62rem', color: 'var(--text-dim)', whiteSpace: 'nowrap' }}
                   title={fmtClock(new Date(t0 + e.t * 1000).toISOString())}>
                   {fmtElapsed(e.t)}
                 </span>

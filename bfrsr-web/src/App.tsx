@@ -36,6 +36,7 @@ const HqPage           = lazy(() => import('./pages/HqPage'))
 const ReplayListPage   = lazy(() => import('./replay/ReplayListPage'))
 const RoundsPage       = lazy(() => import('./pages/RoundsPage'))
 const SquadronsPage    = lazy(() => import('./pages/SquadronsPage'))
+const OobPage          = lazy(() => import('./pages/OobPage'))
 const ReplayPage       = lazy(() => import('./replay/ReplayPage'))
 const LocalReplayPage  = lazy(() => import('./replay/LocalReplayPage'))
 
@@ -124,6 +125,7 @@ export default function App() {
                 <Route path="replay" element={<ReplayListPage />} />
                 <Route path="rounds" element={<RoundsPage />} />
                 <Route path="squadrons" element={<SquadronsPage />} />
+                <Route path="oob" element={<OobPage />} />
                 <Route path="replay/file" element={<LocalReplayPage />} />
                 <Route path="replay/:rec" element={<ReplayPage />} />
               <Route path="intel" element={<RequireCoalition what="recon intel"><IntelPage /></RequireCoalition>} />

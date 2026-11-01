@@ -32,7 +32,7 @@ import { BattlefieldLayers } from './groundwar/layers'
 import { styleFor, type MapLook } from './groundwar/mapStyles'
 import { BattleLabel, DestMarker, EnemyMarker, FormationMarker, ObjectiveMarker } from './groundwar/markers'
 import { installVehicleImages } from './groundwar/sprites'
-import { NEAR_ZOOM, reducedMotion, type Side } from './groundwar/theme'
+import { NEAR_ZOOM, SIDE_COLOR, reducedMotion, type Side } from './groundwar/theme'
 import { useGroundFeed } from './groundwar/useGroundFeed'
 import { visibleNames } from './groundwar/declutter'
 import { AssetCard, AssetLines, AssetMarker, EnemyAirMarker, LayerToggles, type AssetNote } from './groundwar/command'
@@ -454,7 +454,7 @@ export default function TacMapPage(): ReactElement {
   const noGroundWar = feed.reason === 'disabled'
 
   return (
-    <div className={`theme-locked-dark gw-root tm-root${near ? ' gw-near' : ''}${far ? ' gw-far' : ''}`} style={{ ['--own' as string]: side === 'Blue' ? '#4a8fd4' : '#cc4444' }}>
+    <div className={`theme-locked-dark gw-root tm-root${near ? ' gw-near' : ''}${far ? ' gw-far' : ''}`} style={{ ['--own' as string]: SIDE_COLOR[side] }}>
       <Map
         ref={mapRef}
         mapStyle={mapStyle}

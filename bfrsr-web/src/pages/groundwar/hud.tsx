@@ -15,6 +15,7 @@ import { OBJ_ICON, natoSymbol, shortName, vehicleSpriteUrl } from './sprites'
 import { ROLES, ROLE_LABEL, SIDE_COLOR, other, type Side } from './theme'
 import type { Link } from './useGroundFeed'
 import { pressable } from '@shared/web/a11y'
+import { campaign } from '../../config/campaign'
 
 // ── Bits ─────────────────────────────────────────────────────────────────
 
@@ -112,13 +113,13 @@ export function TopHud({
     polling: ['POLL 5S', '#e8c547'],
     offline: ['OFFLINE', '#ff5b45'],
     connecting: ['LINKING', '#9a9a90'],
-    mock: ['MOCK', '#b48cff'],
+    mock: ['MOCK', '#ffb000'],
   }
   const [lt, lc] = linkTxt[link]
   return (
     <header className="gw-hud" style={{ ['--own' as string]: SIDE_COLOR[side] }}>
       <div className="gw-hud-id">
-        <span className="gw-hud-side">{side === 'Blue' ? 'BLUE FORCES' : 'RED FORCES'}</span>
+        <span className="gw-hud-side">{(side === 'Blue' ? campaign.blueLabel : campaign.redLabel).toUpperCase()} FORCES</span>
         <span className="gw-hud-title">{title}</span>
       </div>
       <div className="gw-hud-stats">

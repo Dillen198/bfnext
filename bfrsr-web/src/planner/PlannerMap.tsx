@@ -5,9 +5,10 @@ import { useTheme } from '@shared/web/theme'
 import { mapStyleFor } from '../lib/mapStyle'
 import type { SituationReport } from '../api'
 import type { PlanWaypoint } from './types'
+import { campaign } from '../config/campaign'
 
 const OWNER_COLOR = (owner: string) =>
-  owner === 'Blue' ? '#40a6ff' : owner === 'Red' ? '#b84dff' : '#ffffff'
+  owner === 'Blue' ? campaign.blueColor : owner === 'Red' ? campaign.redColor : '#ffffff'
 const ROUTE = '#facc15'
 const TARGET = '#f04747'
 

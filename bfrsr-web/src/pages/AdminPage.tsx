@@ -56,16 +56,16 @@ function CardHeader({ icon, label, badge }: { icon: React.ReactNode; label: stri
 // ── colour helpers ────────────────────────────────────────────────────────────
 
 const METRIC_COLORS: Record<string, string> = {
-  frame: '#6aab1f', timed_events: '#8ec83f', slow_timed: '#ef4444',
-  dcs_events: '#4a8fd4', spawn: '#c9a227', despawn: '#f97316',
-  logistics: '#06b6d4', logistics_deliver: '#0891b2', frontline: '#a855f7',
-  unit_positions: '#84cc16', ewr_tracks: '#fb923c', snapshot: '#94a3b8',
+  frame: '#6aab1f', timed_events: '#8ec83f', slow_timed: 'var(--red)',
+  dcs_events: 'var(--blue)', spawn: '#c9a227', despawn: 'var(--orange)',
+  logistics: 'var(--map-green)', logistics_deliver: 'var(--blue-dim)', frontline: 'var(--red-dim)',
+  unit_positions: '#84cc16', ewr_tracks: 'var(--orange)', snapshot: 'var(--text-muted)',
 }
 
 function perfColor(p99: number) {
-  if (p99 > 10_000) return '#ef4444'
-  if (p99 > 2_000) return '#f97316'
-  if (p99 > 500) return '#f59e0b'
+  if (p99 > 10_000) return 'var(--red)'
+  if (p99 > 2_000) return 'var(--orange)'
+  if (p99 > 500) return 'var(--accent)'
   return 'var(--text-muted)'
 }
 
@@ -202,10 +202,10 @@ function PerfPanel({ title, icon, rows, time, available }: {
 const LOG_MAX = 1000
 
 const LEVEL_COLOR: Record<string, string> = {
-  ERROR: '#ef4444',
-  WARN:  '#f59e0b',
+  ERROR: 'var(--red)',
+  WARN:  'var(--accent)',
   INFO:  'var(--accent)',
-  DEBUG: '#4a8fd4',
+  DEBUG: 'var(--blue)',
   TRACE: 'var(--text-dim)',
 }
 
@@ -269,7 +269,7 @@ function LogAnalyzer() {
 
   // bfdb down: the stream is not coming back by itself any time soon, say so.
   const offline = useOffline().offline && wsStatus !== 'open'
-  const statusCol = wsStatus === 'open' ? 'var(--accent)' : wsStatus === 'connecting' && !offline ? '#f59e0b' : '#ef4444'
+  const statusCol = wsStatus === 'open' ? 'var(--accent)' : wsStatus === 'connecting' && !offline ? 'var(--accent)' : 'var(--red)'
   const statusLabel = wsStatus === 'open' ? 'LIVE' : offline ? 'SERVER OFFLINE' : wsStatus === 'connecting' ? 'CONNECTING' : wsStatus === 'closed' ? 'CLOSED' : 'ERROR'
 
   return (
@@ -293,7 +293,7 @@ function LogAnalyzer() {
               fontSize: '0.58rem', padding: '2px 7px', borderRadius: 2, cursor: 'pointer',
               fontFamily: 'var(--font-mono)', letterSpacing: '0.08em',
               background: filter === lv ? (LEVEL_COLOR[lv] ?? 'var(--accent)') : 'transparent',
-              color:      filter === lv ? (lv === 'ALL' ? '#000' : '#fff') : (LEVEL_COLOR[lv] ?? 'var(--text-dim)'),
+              color:      filter === lv ? 'var(--on-accent)' : (LEVEL_COLOR[lv] ?? 'var(--text-dim)'),
               border:     `1px solid ${filter === lv ? (LEVEL_COLOR[lv] ?? 'var(--accent)') : 'var(--border)'}`,
             }}>{lv}</button>
           ))}
@@ -317,7 +317,7 @@ function LogAnalyzer() {
           <button
             onClick={() => { setAutoScroll(true); bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }}
             title="Scroll to bottom / enable auto-scroll"
-            style={{ background: autoScroll ? 'var(--accent)' : 'transparent', border: `1px solid ${autoScroll ? 'var(--accent)' : 'var(--border)'}`, color: autoScroll ? '#000' : 'var(--text-dim)', borderRadius: 2, cursor: 'pointer', padding: '2px 5px', display: 'flex', alignItems: 'center' }}>
+            style={{ background: autoScroll ? 'var(--accent)' : 'transparent', border: `1px solid ${autoScroll ? 'var(--accent)' : 'var(--border)'}`, color: autoScroll ? 'var(--on-accent)' : 'var(--text-dim)', borderRadius: 2, cursor: 'pointer', padding: '2px 5px', display: 'flex', alignItems: 'center' }}>
             <ChevronsDown size={10} />
           </button>
           <button onClick={() => setLines([])}
@@ -340,7 +340,7 @@ function LogAnalyzer() {
             <div key={i} style={{ display: 'flex', gap: 8, padding: '1px 10px', background: bg, borderBottom: '1px solid rgba(255,255,255,0.018)', alignItems: 'baseline' }}>
               <span style={{ color: 'var(--text-dim)', flexShrink: 0, userSelect: 'none' }}>{time}</span>
               <span style={{ color: lc, flexShrink: 0, width: 38, textAlign: 'right', fontWeight: 700 }}>{l.level}</span>
-              <span style={{ color: '#4a8fd4', flexShrink: 0, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={l.target}>{l.target}</span>
+              <span style={{ color: 'var(--blue)', flexShrink: 0, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={l.target}>{l.target}</span>
               <span style={{ color: 'var(--text)', whiteSpace: 'pre-wrap', wordBreak: 'break-all', flex: 1 }}>{l.msg}</span>
             </div>
           )
@@ -419,7 +419,7 @@ function EngineLogAnalyzer() {
 
   // bfdb down: the stream is not coming back by itself any time soon, say so.
   const offline = useOffline().offline && wsStatus !== 'open'
-  const statusCol = wsStatus === 'open' ? 'var(--accent)' : wsStatus === 'connecting' && !offline ? '#f59e0b' : '#ef4444'
+  const statusCol = wsStatus === 'open' ? 'var(--accent)' : wsStatus === 'connecting' && !offline ? 'var(--accent)' : 'var(--red)'
   const statusLabel = wsStatus === 'open' ? 'LIVE' : offline ? 'SERVER OFFLINE' : wsStatus === 'connecting' ? 'CONNECTING' : wsStatus === 'closed' ? 'CLOSED' : 'ERROR'
 
   return (
@@ -441,7 +441,7 @@ function EngineLogAnalyzer() {
               fontSize: '0.58rem', padding: '2px 7px', borderRadius: 2, cursor: 'pointer',
               fontFamily: 'var(--font-mono)', letterSpacing: '0.08em',
               background: filter === lv ? (LEVEL_COLOR[lv] ?? 'var(--accent)') : 'transparent',
-              color:      filter === lv ? (lv === 'ALL' ? '#000' : '#fff') : (LEVEL_COLOR[lv] ?? 'var(--text-dim)'),
+              color:      filter === lv ? 'var(--on-accent)' : (LEVEL_COLOR[lv] ?? 'var(--text-dim)'),
               border:     `1px solid ${filter === lv ? (LEVEL_COLOR[lv] ?? 'var(--accent)') : 'var(--border)'}`,
             }}>{lv}</button>
           ))}
@@ -463,7 +463,7 @@ function EngineLogAnalyzer() {
           <button
             onClick={() => { setAutoScroll(true); bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }}
             title="Scroll to bottom / enable auto-scroll"
-            style={{ background: autoScroll ? 'var(--accent)' : 'transparent', border: `1px solid ${autoScroll ? 'var(--accent)' : 'var(--border)'}`, color: autoScroll ? '#000' : 'var(--text-dim)', borderRadius: 2, cursor: 'pointer', padding: '2px 5px', display: 'flex', alignItems: 'center' }}>
+            style={{ background: autoScroll ? 'var(--accent)' : 'transparent', border: `1px solid ${autoScroll ? 'var(--accent)' : 'var(--border)'}`, color: autoScroll ? 'var(--on-accent)' : 'var(--text-dim)', borderRadius: 2, cursor: 'pointer', padding: '2px 5px', display: 'flex', alignItems: 'center' }}>
             <ChevronsDown size={10} />
           </button>
           <button onClick={() => setLines([])}
@@ -564,7 +564,7 @@ function EngineErrorFeed({ lines }: { lines: string[] }) {
   return (
     <div className="vs-card">
       <CardHeader
-        icon={<Alert size={13} style={{ color: '#ef4444' }} />}
+        icon={<Alert size={13} style={{ color: 'var(--red)' }} />}
         label="Engine Errors & Warnings"
         badge={<span style={{ ...MONO, fontSize: '0.65rem', color: 'var(--text-muted)' }}>{lines.length}</span>}
       />
@@ -617,7 +617,7 @@ function GciTranscriptPanel() {
 
   // bfdb down: the stream is not coming back by itself any time soon, say so.
   const offline = useOffline().offline && wsStatus !== 'open'
-  const statusCol = wsStatus === 'open' ? 'var(--accent)' : wsStatus === 'connecting' && !offline ? '#f59e0b' : '#ef4444'
+  const statusCol = wsStatus === 'open' ? 'var(--accent)' : wsStatus === 'connecting' && !offline ? 'var(--accent)' : 'var(--red)'
   const statusLabel = wsStatus === 'open' ? 'LIVE' : offline ? 'SERVER OFFLINE' : wsStatus === 'connecting' ? 'CONNECTING' : wsStatus === 'closed' ? 'CLOSED' : 'ERROR'
 
   return (
@@ -638,7 +638,7 @@ function GciTranscriptPanel() {
         {calls.map((c, i) => (
           <div key={i} style={{ display: 'flex', gap: 8, padding: '1px 0' }}>
             <span style={{ opacity: 0.4, flexShrink: 0 }}>{new Date(c.time).toLocaleTimeString()}</span>
-            <span style={{ color: c.side === 'red' ? '#ef4444' : '#4a8fd4', flexShrink: 0, fontWeight: 600 }}>
+            <span style={{ color: c.side === 'red' ? 'var(--red)' : 'var(--blue)', flexShrink: 0, fontWeight: 600 }}>
               {c.side === 'red' ? 'RED' : 'BLU'}
             </span>
             <span>{c.text}</span>
@@ -694,7 +694,7 @@ function ServerControlPanel() {
     }
   }
 
-  const statusColor = botStatus?.status === 'running' ? 'var(--accent)' : botStatus?.status === 'paused' ? '#f59e0b' : 'var(--text-dim)'
+  const statusColor = botStatus?.status === 'running' ? 'var(--accent)' : botStatus?.status === 'paused' ? 'var(--accent)' : 'var(--text-dim)'
   const confirmAction = confirmKey ? BOT_ACTIONS.find(a => a.key === confirmKey) : undefined
 
   return (
@@ -723,7 +723,7 @@ function ServerControlPanel() {
                 style={{
                   display: 'flex', alignItems: 'center', gap: 6,
                   fontSize: '0.68rem', letterSpacing: '0.06em',
-                  color: a.danger ? '#ef4444' : 'var(--text)',
+                  color: a.danger ? 'var(--red)' : 'var(--text)',
                   background: 'none', border: `1px solid ${a.danger ? 'rgba(239,68,68,0.4)' : 'var(--border)'}`,
                   padding: '0.4rem 0.9rem', borderRadius: 3,
                   cursor: busy !== null ? 'not-allowed' : 'pointer', opacity: busy !== null ? 0.6 : 1,
@@ -735,9 +735,9 @@ function ServerControlPanel() {
           </div>
           {confirmAction && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0.6rem 0.8rem', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 3 }}>
-              <span style={{ fontSize: '0.68rem', color: '#ef4444', flex: 1 }}>{confirmAction.confirmText}</span>
+              <span style={{ fontSize: '0.68rem', color: 'var(--red)', flex: 1 }}>{confirmAction.confirmText}</span>
               <button onClick={() => run(confirmAction)}
-                style={{ fontSize: '0.65rem', color: '#fff', background: '#ef4444', border: 'none', padding: '0.3rem 0.8rem', borderRadius: 3, cursor: 'pointer' }}>
+                style={{ fontSize: '0.65rem', color: 'var(--on-accent)', background: 'var(--red)', border: 'none', padding: '0.3rem 0.8rem', borderRadius: 3, cursor: 'pointer' }}>
                 Confirm
               </button>
               <button onClick={() => setConfirmKey(null)}
@@ -747,7 +747,7 @@ function ServerControlPanel() {
             </div>
           )}
           {result && (
-            <div style={{ fontSize: '0.68rem', color: result.ok ? 'var(--accent)' : '#ef4444' }}>
+            <div style={{ fontSize: '0.68rem', color: result.ok ? 'var(--accent)' : 'var(--red)' }}>
               {result.ok ? '✓ ' : '✗ '}{result.message}
             </div>
           )}
@@ -846,7 +846,7 @@ export default function AdminPage() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <PageHeader art="apache" icon={Admin} title="ADMIN PANEL" sub="Server management — restricted access" />
+      <PageHeader art="apache" icon={Admin} title="ADMIN PANEL" file="Admin" stamp={<span className="stamp">Restricted</span>} sub="Server management — restricted access" />
 
       <div className="flex-1 overflow-auto p-4 space-y-4">
 
@@ -916,7 +916,7 @@ export default function AdminPage() {
           <div role="presentation" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                onClick={e => { if (e.target === e.currentTarget) setKickInfo(null) }}>
             <div role="dialog" aria-modal="true" aria-label="Kick player" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 3, padding: '1.5rem', minWidth: 380, maxWidth: 480 }}>
-              <div style={{ ...DIM, marginBottom: '0.75rem', color: '#f59e0b' }}>Kick Player</div>
+              <div style={{ ...DIM, marginBottom: '0.75rem', color: 'var(--accent)' }}>Kick Player</div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text)', marginBottom: '0.5rem' }}>
                 Run this command in the DCS server F10 admin chat:
               </div>
@@ -949,7 +949,7 @@ export default function AdminPage() {
           <div role="presentation" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                onClick={e => { if (e.target === e.currentTarget) setBanTarget(null) }}>
             <div role="dialog" aria-modal="true" aria-label="Ban player" style={{ background: 'var(--bg-elevated)', border: '1px solid rgba(239,68,68,0.4)', borderRadius: 3, padding: '1.5rem', minWidth: 380, maxWidth: 480 }}>
-              <div style={{ ...DIM, marginBottom: '0.75rem', color: '#ef4444' }}>Ban Player</div>
+              <div style={{ ...DIM, marginBottom: '0.75rem', color: 'var(--red)' }}>Ban Player</div>
               <div style={{ fontSize: '0.72rem', color: 'var(--text)', marginBottom: '1rem' }}>
                 <span style={{ ...MONO, color: 'var(--accent)' }}>{banTarget.name}</span>
               </div>
@@ -982,7 +982,7 @@ export default function AdminPage() {
                   Cancel
                 </button>
                 <button onClick={handleBan}
-                  style={{ fontSize: '0.68rem', color: '#fff', background: '#ef4444', border: 'none', padding: '0.4rem 1rem', borderRadius: 2, cursor: 'pointer' }}>
+                  style={{ fontSize: '0.68rem', color: 'var(--on-accent)', background: 'var(--red)', border: 'none', padding: '0.4rem 1rem', borderRadius: 2, cursor: 'pointer' }}>
                   Ban
                 </button>
               </div>
@@ -993,7 +993,7 @@ export default function AdminPage() {
         {/* ── Banned players ── */}
         <div className="vs-card">
           <CardHeader
-            icon={<Ban size={13} style={{ color: '#ef4444' }} />}
+            icon={<Ban size={13} style={{ color: 'var(--red)' }} />}
             label="Banned Players"
             badge={<span style={{ ...MONO, fontSize: '0.65rem', color: 'var(--text-muted)' }}>{banned.length}</span>}
           />
@@ -1079,7 +1079,7 @@ export default function AdminPage() {
                         </div>
                       </td>
                       <td style={{ ...CELL, ...MONO, fontSize: '0.67rem' }}>{s.discord_id}</td>
-                      <td style={CELL}>{s.is_admin && <Shield size={11} style={{ color: '#f59e0b' }} />}</td>
+                      <td style={CELL}>{s.is_admin && <Shield size={11} style={{ color: 'var(--accent)' }} />}</td>
                       <td style={{ ...CELL, ...MONO, fontSize: '0.62rem' }}>{new Date(s.expires).toLocaleString()}</td>
                     </tr>
                   ))}
@@ -1100,7 +1100,7 @@ export default function AdminPage() {
                   <button key={t} onClick={() => setPerfTab(t)}
                     style={{ fontSize: '0.58rem', letterSpacing: '0.08em', padding: '2px 8px', borderRadius: 2, cursor: 'pointer', textTransform: 'uppercase',
                       background: perfTab === t ? 'var(--accent)' : 'none',
-                      color: perfTab === t ? '#000' : 'var(--text-dim)',
+                      color: perfTab === t ? 'var(--on-accent)' : 'var(--text-dim)',
                       border: `1px solid ${perfTab === t ? 'var(--accent)' : 'var(--border)'}` }}>
                     {t === 'charts' ? 'Charts' : t === 'table-engine' ? 'Engine' : 'API'}
                   </button>
@@ -1166,7 +1166,7 @@ export default function AdminPage() {
             </div>
             <div className="flex flex-col items-end gap-2 flex-shrink-0">
               {livesResult && <div style={{ fontSize: '0.65rem', color: 'var(--accent)', letterSpacing: '0.06em' }}>✓ {livesResult}</div>}
-              {livesError && <div style={{ fontSize: '0.65rem', color: '#ef4444', letterSpacing: '0.06em', maxWidth: 260, textAlign: 'right' }}>{livesError}</div>}
+              {livesError && <div style={{ fontSize: '0.65rem', color: 'var(--red)', letterSpacing: '0.06em', maxWidth: 260, textAlign: 'right' }}>{livesError}</div>}
               {!livesConfirm ? (
                 <button onClick={() => { setLivesConfirm(true); setLivesResult(null); setLivesError(null) }}
                   className="flex items-center gap-1.5"
@@ -1180,7 +1180,7 @@ export default function AdminPage() {
                     <button onClick={() => setLivesConfirm(false)}
                       style={{ fontSize: '0.65rem', color: 'var(--text-dim)', background: 'none', border: '1px solid var(--border)', padding: '0.3rem 0.8rem', borderRadius: 3, cursor: 'pointer' }}>Cancel</button>
                     <button onClick={handleResetLives} disabled={livesLoading}
-                      style={{ fontSize: '0.65rem', color: '#000', background: 'var(--accent)', border: 'none', padding: '0.3rem 0.8rem', borderRadius: 3, cursor: livesLoading ? 'not-allowed' : 'pointer', opacity: livesLoading ? 0.7 : 1 }}>
+                      style={{ fontSize: '0.65rem', color: 'var(--on-accent)', background: 'var(--accent)', border: 'none', padding: '0.3rem 0.8rem', borderRadius: 3, cursor: livesLoading ? 'not-allowed' : 'pointer', opacity: livesLoading ? 0.7 : 1 }}>
                       {livesLoading ? 'Resetting…' : 'YES, RESET LIVES'}
                     </button>
                   </div>
@@ -1193,7 +1193,7 @@ export default function AdminPage() {
         {/* ── Danger zone ── */}
         <div className="vs-card" style={{ border: '1px solid rgba(239,68,68,0.25)' }}>
           <CardHeader
-            icon={<Alert size={13} style={{ color: '#ef4444' }} />}
+            icon={<Alert size={13} style={{ color: 'var(--red)' }} />}
             label="Danger Zone"
           />
           <div className="p-4 flex items-start justify-between gap-6">
@@ -1209,17 +1209,17 @@ export default function AdminPage() {
               {!resetConfirm ? (
                 <button onClick={() => { setResetConfirm(true); setResetDone(false) }}
                   className="flex items-center gap-1.5"
-                  style={{ fontSize: '0.68rem', color: '#ef4444', background: 'none', border: '1px solid rgba(239,68,68,0.4)', padding: '0.4rem 0.9rem', borderRadius: 3, cursor: 'pointer', letterSpacing: '0.08em' }}>
+                  style={{ fontSize: '0.68rem', color: 'var(--red)', background: 'none', border: '1px solid rgba(239,68,68,0.4)', padding: '0.4rem 0.9rem', borderRadius: 3, cursor: 'pointer', letterSpacing: '0.08em' }}>
                   <RotateCcw size={11} /> RESET DATABASE
                 </button>
               ) : (
                 <div className="flex flex-col items-end gap-1.5">
-                  <div style={{ fontSize: '0.62rem', color: '#ef4444', letterSpacing: '0.06em' }}>This cannot be undone. Are you sure?</div>
+                  <div style={{ fontSize: '0.62rem', color: 'var(--red)', letterSpacing: '0.06em' }}>This cannot be undone. Are you sure?</div>
                   <div className="flex gap-2">
                     <button onClick={() => setResetConfirm(false)}
                       style={{ fontSize: '0.65rem', color: 'var(--text-dim)', background: 'none', border: '1px solid var(--border)', padding: '0.3rem 0.8rem', borderRadius: 3, cursor: 'pointer' }}>Cancel</button>
                     <button onClick={handleReset} disabled={resetLoading}
-                      style={{ fontSize: '0.65rem', color: '#fff', background: '#ef4444', border: 'none', padding: '0.3rem 0.8rem', borderRadius: 3, cursor: resetLoading ? 'not-allowed' : 'pointer', opacity: resetLoading ? 0.7 : 1 }}>
+                      style={{ fontSize: '0.65rem', color: 'var(--on-accent)', background: 'var(--red)', border: 'none', padding: '0.3rem 0.8rem', borderRadius: 3, cursor: resetLoading ? 'not-allowed' : 'pointer', opacity: resetLoading ? 0.7 : 1 }}>
                       {resetLoading ? 'Resetting…' : 'YES, RESET'}
                     </button>
                   </div>
@@ -1259,7 +1259,7 @@ function RedlinePanel({ sessions }: { sessions: { time: string; metrics: PerfRow
 
   return (
     <div style={{ marginTop: '1rem' }}>
-      <div style={{ ...DIM, fontSize: '0.6rem', marginBottom: '0.75rem', color: '#f59e0b' }}>
+      <div style={{ ...DIM, fontSize: '0.6rem', marginBottom: '0.75rem', color: 'var(--accent)' }}>
         ⚠ Top Hotspots — worst p99 across all recorded sessions
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>

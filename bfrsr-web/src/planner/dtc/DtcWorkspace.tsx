@@ -397,7 +397,7 @@ function Chip({ tone, children }: { tone: 'info' | 'accent'; children: React.Rea
   return (
     <span style={{
       fontSize: '0.56rem', fontWeight: 700, padding: '1px 5px', borderRadius: 8, letterSpacing: '0.03em',
-      background: tone === 'accent' ? 'var(--accent)' : 'rgba(64,166,255,0.18)', color: tone === 'accent' ? '#0b0f08' : '#7cc4ff',
+      background: tone === 'accent' ? 'var(--accent)' : 'var(--blue-bg)', color: tone === 'accent' ? 'var(--on-accent)' : 'var(--blue)',
     }}>{children}</span>
   )
 }

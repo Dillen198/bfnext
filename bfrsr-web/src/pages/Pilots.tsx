@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useCallback } from 'react'
+import { BRAND } from '../config/redstorm'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import QueryState from '../components/QueryState'
 import { kd, sl, fmtHours, fmtDuration } from '../lib/format'
@@ -173,7 +174,7 @@ function FlightLog({ ucid, sorties, breakdown, replays }: { ucid: string; sortie
   const totalPages = Math.ceil(sorted.length / PER_PAGE)
   const page_sorties = sorted.slice(page * PER_PAGE, (page + 1) * PER_PAGE)
 
-  const cell: React.CSSProperties = { padding: '5px 10px', fontSize: '0.67rem', color: 'var(--text-muted)', borderBottom: '1px solid rgba(42,42,42,0.5)' }
+  const cell: React.CSSProperties = { padding: '5px 10px', fontSize: '0.67rem', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }
 
   return (
     <div className="vs-card">
@@ -189,14 +190,14 @@ function FlightLog({ ucid, sorties, breakdown, replays }: { ucid: string; sortie
         {totalPages > 1 && (
           <div className="flex items-center gap-1 ml-2">
             <button aria-label="Previous page" className="vs-touch-target" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
-              style={{ background: 'none', border: 'none', color: page === 0 ? '#333' : 'var(--text-dim)', cursor: page === 0 ? 'default' : 'pointer', padding: 0 }}>
+              style={{ background: 'none', border: 'none', color: page === 0 ? 'var(--border-light)' : 'var(--text-dim)', cursor: page === 0 ? 'default' : 'pointer', padding: 0 }}>
               <ChevronLeft size={12} />
             </button>
             <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', fontFamily: 'monospace' }}>
               {page + 1} / {totalPages}
             </span>
             <button aria-label="Next page" className="vs-touch-target" onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page === totalPages - 1}
-              style={{ background: 'none', border: 'none', color: page === totalPages - 1 ? '#333' : 'var(--text-dim)', cursor: page === totalPages - 1 ? 'default' : 'pointer', padding: 0 }}>
+              style={{ background: 'none', border: 'none', color: page === totalPages - 1 ? 'var(--border-light)' : 'var(--text-dim)', cursor: page === totalPages - 1 ? 'default' : 'pointer', padding: 0 }}>
               <ChevronRight size={12} />
             </button>
           </div>
@@ -233,21 +234,21 @@ function FlightLog({ ucid, sorties, breakdown, replays }: { ucid: string; sortie
                 aria-expanded={id === undefined ? undefined : isOpen}
                 title={id === undefined ? undefined : isOpen ? 'Hide sortie details' : 'Show sortie details'}
                 style={{
-                  background: isOpen ? 'rgba(96,165,250,0.08)' : i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.12)',
+                  background: isOpen ? 'var(--accent-glow)' : i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.12)',
                   cursor: id === undefined ? undefined : 'pointer',
                 }}>
-                <td style={{ ...cell, fontFamily: 'monospace', color: '#64748b' }}>{fmtDate(s.takeoff)}</td>
-                <td style={{ ...cell, color: '#60a5fa' }}>{s.aircraft}</td>
-                <td style={{ ...cell, color: '#94a3b8' }}>{ridToScenario[s.round_id] ?? `Round ${roundNum(s.round_id)}`}</td>
+                <td style={{ ...cell, fontFamily: 'monospace', color: 'var(--text-dim)' }}>{fmtDate(s.takeoff)}</td>
+                <td style={{ ...cell, color: 'var(--blue)' }}>{s.aircraft}</td>
+                <td style={{ ...cell, color: 'var(--text-muted)' }}>{ridToScenario[s.round_id] ?? `Round ${roundNum(s.round_id)}`}</td>
                 <td style={{ ...cell, fontFamily: 'monospace' }}>{fmtTime(s.takeoff)}</td>
                 <td style={{ ...cell, fontFamily: 'monospace' }}>{s.land ? fmtTime(s.land) : '—'}</td>
-                <td style={{ ...cell, fontFamily: 'monospace', color: s.duration_secs > 0 ? 'var(--text)' : '#64748b' }}>{fmtDuration(s.duration_secs)}</td>
+                <td style={{ ...cell, fontFamily: 'monospace', color: s.duration_secs > 0 ? 'var(--text)' : 'var(--text-dim)' }}>{fmtDuration(s.duration_secs)}</td>
                 <td style={{ ...cell, fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
                   {s.air_kills === undefined ? '—' : (
                     <>
-                      <span style={{ color: s.air_kills ? '#60a5fa' : '#475569' }} title="Air-to-air">{s.air_kills}</span>
-                      <span style={{ color: '#475569' }}> / </span>
-                      <span style={{ color: s.ground_kills ? '#f97316' : '#475569' }} title="Air-to-ground">{s.ground_kills ?? 0}</span>
+                      <span style={{ color: s.air_kills ? 'var(--blue)' : 'var(--text-dim)' }} title="Air-to-air">{s.air_kills}</span>
+                      <span style={{ color: 'var(--text-dim)' }}> / </span>
+                      <span style={{ color: s.ground_kills ? 'var(--orange)' : 'var(--text-dim)' }} title="Air-to-ground">{s.ground_kills ?? 0}</span>
                     </>
                   )}
                 </td>
@@ -328,12 +329,12 @@ function KillLog({ kills, allPilots, breakdown }: {
     return arr
   }, [kills, sort])
 
-  const victimSideColor = (side: string) => side === 'Blue' ? '#3b82f6' : side === 'Red' ? '#ef4444' : '#64748b'
+  const victimSideColor = (side: string) => side === 'Blue' ? 'var(--blue)' : side === 'Red' ? 'var(--red)' : 'var(--text-dim)'
 
   const totalPages = Math.ceil(sorted.length / PER_PAGE)
   const page_kills = sorted.slice(page * PER_PAGE, (page + 1) * PER_PAGE)
 
-  const cell: React.CSSProperties = { padding: '5px 10px', fontSize: '0.67rem', color: 'var(--text-muted)', borderBottom: '1px solid rgba(42,42,42,0.5)' }
+  const cell: React.CSSProperties = { padding: '5px 10px', fontSize: '0.67rem', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }
 
   return (
     <div className="vs-card">
@@ -348,14 +349,14 @@ function KillLog({ kills, allPilots, breakdown }: {
         {totalPages > 1 && (
           <div className="flex items-center gap-1 ml-2">
             <button aria-label="Previous page" className="vs-touch-target" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
-              style={{ background: 'none', border: 'none', color: page === 0 ? '#333' : 'var(--text-dim)', cursor: page === 0 ? 'default' : 'pointer', padding: 0 }}>
+              style={{ background: 'none', border: 'none', color: page === 0 ? 'var(--border-light)' : 'var(--text-dim)', cursor: page === 0 ? 'default' : 'pointer', padding: 0 }}>
               <ChevronLeft size={12} />
             </button>
             <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', fontFamily: 'monospace' }}>
               {page + 1} / {totalPages}
             </span>
             <button aria-label="Next page" className="vs-touch-target" onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page === totalPages - 1}
-              style={{ background: 'none', border: 'none', color: page === totalPages - 1 ? '#333' : 'var(--text-dim)', cursor: page === totalPages - 1 ? 'default' : 'pointer', padding: 0 }}>
+              style={{ background: 'none', border: 'none', color: page === totalPages - 1 ? 'var(--border-light)' : 'var(--text-dim)', cursor: page === totalPages - 1 ? 'default' : 'pointer', padding: 0 }}>
               <ChevronRight size={12} />
             </button>
           </div>
@@ -381,7 +382,7 @@ function KillLog({ kills, allPilots, breakdown }: {
               const victimName = k.victim_ucid ? (ucidToName[k.victim_ucid] ?? 'Unknown') : null
               return (
                 <tr key={i} style={{ background: i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.12)' }}>
-                  <td style={{ ...cell, fontFamily: 'monospace', color: '#64748b', whiteSpace: 'nowrap' }}>
+                  <td style={{ ...cell, fontFamily: 'monospace', color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
                     {fmtDate(k.time)} {fmtTime(k.time)}
                   </td>
                   <td style={{ ...cell }}>
@@ -391,21 +392,21 @@ function KillLog({ kills, allPilots, breakdown }: {
                   </td>
                   <td style={cell}>
                     {victimName ? (
-                      <span style={{ color: '#f59e0b', fontWeight: 600 }}>{victimName}</span>
+                      <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{victimName}</span>
                     ) : (
-                      <span style={{ color: '#475569' }}>AI / env</span>
+                      <span style={{ color: 'var(--text-dim)' }}>AI / env</span>
                     )}
                   </td>
-                  <td style={{ ...cell, color: '#60a5fa', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
+                  <td style={{ ...cell, color: 'var(--blue)', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
                     {k.killer_airframe ? (
                       <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                         <Aircraft size={9} style={{ opacity: 0.6 }} />
                         {k.killer_airframe}
                       </span>
-                    ) : <span style={{ color: '#374151' }}>—</span>}
+                    ) : <span style={{ color: 'var(--text-dim)' }}>—</span>}
                   </td>
-                  <td style={{ ...cell, color: '#fbbf24', fontFamily: 'monospace' }}>{k.weapon ?? <span style={{ color: '#374151' }}>—</span>}</td>
-                  <td style={{ ...cell, color: '#475569' }}>{ridToScenario[k.round_id] ?? `Round ${roundNum(k.round_id)}`}</td>
+                  <td style={{ ...cell, color: 'var(--yellow)', fontFamily: 'monospace' }}>{k.weapon ?? <span style={{ color: 'var(--text-dim)' }}>—</span>}</td>
+                  <td style={{ ...cell, color: 'var(--text-dim)' }}>{ridToScenario[k.round_id] ?? `Round ${roundNum(k.round_id)}`}</td>
                 </tr>
               )
             })}
@@ -442,12 +443,12 @@ function DeployLog({ deploys, total }: { deploys: PilotDeploy[]; total: number }
   const totalPages = Math.ceil(sorted.length / PER_PAGE)
   const page_deploys = sorted.slice(page * PER_PAGE, (page + 1) * PER_PAGE)
 
-  const cell: React.CSSProperties = { padding: '5px 10px', fontSize: '0.67rem', color: 'var(--text-muted)', borderBottom: '1px solid rgba(42,42,42,0.5)' }
+  const cell: React.CSSProperties = { padding: '5px 10px', fontSize: '0.67rem', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }
 
   const methodBadge = (method: string | null) => {
-    if (method === 'AirDrop') return <span style={{ color: '#60a5fa', fontSize: '0.62rem', letterSpacing: '0.06em' }}>▼ Air Drop</span>
-    if (method === 'ManualUnpack') return <span style={{ color: '#f59e0b', fontSize: '0.62rem', letterSpacing: '0.06em' }}>✋ Manual Unpack</span>
-    return <span style={{ color: '#475569' }}>—</span>
+    if (method === 'AirDrop') return <span style={{ color: 'var(--blue)', fontSize: '0.62rem', letterSpacing: '0.06em' }}>▼ Air Drop</span>
+    if (method === 'ManualUnpack') return <span style={{ color: 'var(--accent)', fontSize: '0.62rem', letterSpacing: '0.06em' }}>✋ Manual Unpack</span>
+    return <span style={{ color: 'var(--text-dim)' }}>—</span>
   }
 
   return (
@@ -464,14 +465,14 @@ function DeployLog({ deploys, total }: { deploys: PilotDeploy[]; total: number }
         {totalPages > 1 && (
           <div className="flex items-center gap-1 ml-2">
             <button aria-label="Previous page" className="vs-touch-target" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
-              style={{ background: 'none', border: 'none', color: page === 0 ? '#333' : 'var(--text-dim)', cursor: page === 0 ? 'default' : 'pointer', padding: 0 }}>
+              style={{ background: 'none', border: 'none', color: page === 0 ? 'var(--border-light)' : 'var(--text-dim)', cursor: page === 0 ? 'default' : 'pointer', padding: 0 }}>
               <ChevronLeft size={12} />
             </button>
             <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', fontFamily: 'monospace' }}>
               {page + 1} / {totalPages}
             </span>
             <button aria-label="Next page" className="vs-touch-target" onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page === totalPages - 1}
-              style={{ background: 'none', border: 'none', color: page === totalPages - 1 ? '#333' : 'var(--text-dim)', cursor: page === totalPages - 1 ? 'default' : 'pointer', padding: 0 }}>
+              style={{ background: 'none', border: 'none', color: page === totalPages - 1 ? 'var(--border-light)' : 'var(--text-dim)', cursor: page === totalPages - 1 ? 'default' : 'pointer', padding: 0 }}>
               <ChevronRight size={12} />
             </button>
           </div>
@@ -495,12 +496,12 @@ function DeployLog({ deploys, total }: { deploys: PilotDeploy[]; total: number }
           <tbody>
             {page_deploys.map((d, i) => (
               <tr key={i} style={{ background: i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.12)' }}>
-                <td style={{ ...cell, fontFamily: 'monospace', color: '#64748b', whiteSpace: 'nowrap' }}>
+                <td style={{ ...cell, fontFamily: 'monospace', color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
                   {fmtDate(d.time)} {fmtTime(d.time)}
                 </td>
                 <td style={{ ...cell, color: 'var(--text)' }}>{d.deployable}</td>
-                <td style={{ ...cell, color: '#60a5fa', fontFamily: 'monospace' }}>
-                  {d.aircraft ?? <span style={{ color: '#374151' }}>—</span>}
+                <td style={{ ...cell, color: 'var(--blue)', fontFamily: 'monospace' }}>
+                  {d.aircraft ?? <span style={{ color: 'var(--text-dim)' }}>—</span>}
                 </td>
                 <td style={cell}>{methodBadge(d.method)}</td>
               </tr>
@@ -561,13 +562,13 @@ function PilotCardView({ pilot, p }: { pilot: Pilot; p: PilotProgression }) {
             LEVEL {p.level} · {p.xp.toLocaleString()} XP · {badges} ACHIEVEMENT{badges === 1 ? '' : 'S'}
           </div>
         </div>
-        <span className="ml-auto" style={{ fontSize: '0.55rem', letterSpacing: '0.24em', color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>VECTOR STRIKE</span>
+        <span className="ml-auto" style={{ fontSize: '0.55rem', letterSpacing: '0.24em', color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>{BRAND.name.toUpperCase()}</span>
       </div>
       <div style={{ height: 1, background: 'var(--border-light)', margin: '12px 0 10px' }} />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(84px, 1fr))', gap: '10px 12px' }}>
         {stats.map(([name, value]) => (
           <div key={name}>
-            <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap' }}>{value}</div>
+            <div className="rsr-fig" style={{ fontSize: '1.45rem', whiteSpace: 'nowrap' }}>{value}</div>
             <div style={{ fontSize: '0.55rem', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-dim)', marginTop: 1 }}>{name}</div>
           </div>
         ))}
@@ -632,10 +633,10 @@ function ProgressionCard({ p, dim, ucid, pilot }: { p: PilotProgression; dim: Re
 function TheaterCard({ td }: { td: TheaterBreakdown }) {
   const roundNum = useRoundNo()
   const kd_val = kd(td.air_kills, td.ground_kills, td.deaths)
-  const kd_color = td.deaths === 0 ? '#22c55e' : parseFloat(kd_val) >= 5 ? '#22c55e' : parseFloat(kd_val) >= 2 ? '#f59e0b' : '#ef4444'
+  const kd_color = td.deaths === 0 ? 'var(--green)' : parseFloat(kd_val) >= 5 ? 'var(--green)' : parseFloat(kd_val) >= 2 ? 'var(--accent)' : 'var(--red)'
   const dim: React.CSSProperties = { fontSize: '0.58rem', color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase' }
   const statRow = (label: string, value: string | number, highlight?: string) => (
-    <div className="flex justify-between items-center" style={{ padding: '3px 0', borderBottom: '1px solid rgba(42,42,42,0.4)' }}>
+    <div className="flex justify-between items-center" style={{ padding: '3px 0', borderBottom: '1px solid var(--border)' }}>
       <span style={dim}>{label}</span>
       <span style={{ fontSize: '0.7rem', color: highlight ?? 'var(--text-muted)', fontFamily: 'monospace', fontWeight: 600 }}>{value}</span>
     </div>
@@ -653,14 +654,14 @@ function TheaterCard({ td }: { td: TheaterBreakdown }) {
         </div>
       </div>
       <div className="px-3 py-2">
-        {statRow('A/A Kills', td.air_kills, '#3b82f6')}
-        {statRow('A/G Kills', td.ground_kills, '#f97316')}
+        {statRow('A/A Kills', td.air_kills, 'var(--blue)')}
+        {statRow('A/G Kills', td.ground_kills, 'var(--orange)')}
         {statRow('Total Kills', td.air_kills + td.ground_kills, 'var(--text)')}
         {statRow('AA K/D', td.deaths > 0 ? (td.air_kills / td.deaths).toFixed(2) : td.air_kills > 0 ? '∞' : '0.00')}
         {statRow('AG K/D', td.deaths > 0 ? (td.ground_kills / td.deaths).toFixed(2) : td.ground_kills > 0 ? '∞' : '0.00')}
         {statRow('K/D Ratio', kd_val, kd_color)}
-        {statRow('Deaths', td.deaths, td.deaths > 0 ? '#ef4444' : 'var(--text-dim)')}
-        {statRow('Captures', td.captures, td.captures > 0 ? '#eab308' : undefined)}
+        {statRow('Deaths', td.deaths, td.deaths > 0 ? 'var(--red)' : 'var(--text-dim)')}
+        {statRow('Captures', td.captures, td.captures > 0 ? 'var(--yellow)' : undefined)}
         {statRow('Hours', fmtHours(td.hours))}
       </div>
     </div>
@@ -792,7 +793,7 @@ export default function Pilots() {
                         padding: '0.5rem 0.75rem', cursor: 'pointer',
                         display: 'flex', alignItems: 'center', gap: '0.75rem',
                       }}
-                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(77,124,15,0.07)')}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'var(--accent-glow)')}
                       onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                     >
                       <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)', fontFamily: 'monospace', width: 20, textAlign: 'right' }}>
@@ -817,14 +818,14 @@ export default function Pilots() {
 
         {/* ── Link account banner ── */}
         {user && !user.ucid && (
-          <div className="vs-card px-4 py-3 flex items-center gap-3" style={{ borderColor: '#5865F2', background: 'rgba(88,101,242,0.05)' }}>
-            <Link size={14} style={{ color: '#5865F2', flexShrink: 0 }} />
+          <div className="vs-card px-4 py-3 flex items-center gap-3" style={{ borderColor: 'var(--accent)', background: 'var(--accent-glow)' }}>
+            <Link size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
             <div style={{ flex: 1, fontSize: '0.7rem', color: 'var(--text-muted)' }}>
               Not linked yet — run <code style={{ color: 'var(--text)' }}>/linkme</code> in Discord for a token, then <code style={{ color: 'var(--text)' }}>-linkme &lt;token&gt;</code> in DCS chat to see your profile highlighted.
             </div>
             <button
               onClick={() => queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })}
-              style={{ fontSize: '0.65rem', color: '#5865F2', background: 'none', border: '1px solid #5865F2', padding: '2px 10px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.08em', fontFamily: 'var(--font-display)' }}
+              style={{ fontSize: '0.65rem', color: 'var(--accent)', background: 'none', border: '1px solid var(--accent)', padding: '2px 10px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.08em', fontFamily: 'var(--font-display)' }}
             >
               CHECK AGAIN
             </button>
@@ -850,7 +851,7 @@ export default function Pilots() {
 
               {/* ── Pilot name card ── */}
               <div className="vs-card px-4 py-3 flex items-center gap-3">
-                <div style={{ width: 32, height: 32, background: 'rgba(77,124,15,0.12)', border: '1px solid rgba(77,124,15,0.25)', borderRadius: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <div style={{ width: 32, height: 32, background: 'var(--accent-glow)', border: '1px solid var(--accent-border)', borderRadius: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   <PilotIcon size={14} style={{ color: 'var(--accent)' }} />
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -884,7 +885,7 @@ export default function Pilots() {
                   <AircraftImage type={mostFlown} />
                   <div className="px-4 py-3">
                     <div style={dim}>Most Flown Airframe</div>
-                    <div style={{ fontSize: '1.15rem', color: '#60a5fa', fontWeight: 700, letterSpacing: '0.05em', marginTop: 2 }}>{mostFlown}</div>
+                    <div style={{ fontSize: '1.15rem', color: 'var(--text)', fontWeight: 700, letterSpacing: '0.05em', marginTop: 2 }}>{mostFlown}</div>
                   </div>
                 </div>
               )}
@@ -897,19 +898,19 @@ export default function Pilots() {
                 </div>
                 <div className="px-4 py-1">
                   {[
-                    { label: 'A/A Victories', value: pilot.air_kills, color: '#60a5fa' },
-                    { label: 'A/G Victories', value: pilot.ground_kills, color: '#f97316' },
-                    { label: 'V/L Ratio', value: kd(pilot.air_kills, pilot.ground_kills, pilot.deaths), color: '#22c55e' },
-                    { label: 'S/L Ratio', value: sl(totalSorties, totalLandings), color: '#a78bfa' },
-                    { label: 'Flight Time', value: fmtHours(pilot.hours), color: 'var(--text)' },
-                    { label: 'Current Streak', value: curStreakVal, color: '#22c55e' },
-                    { label: 'Best Streak', value: bestStreakVal, color: '#f59e0b' },
-                    { label: 'Best A/A (round)', value: bestAA, color: '#60a5fa' },
-                    { label: 'Best A/G (round)', value: bestAG, color: '#f97316' },
+                    { label: 'A/A Victories', value: pilot.air_kills },
+                    { label: 'A/G Victories', value: pilot.ground_kills },
+                    { label: 'V/L Ratio', value: kd(pilot.air_kills, pilot.ground_kills, pilot.deaths) },
+                    { label: 'S/L Ratio', value: sl(totalSorties, totalLandings) },
+                    { label: 'Flight Time', value: fmtHours(pilot.hours) },
+                    { label: 'Current Streak', value: curStreakVal },
+                    { label: 'Best Streak', value: bestStreakVal },
+                    { label: 'Best A/A (round)', value: bestAA },
+                    { label: 'Best A/G (round)', value: bestAG },
                   ].map(s => (
-                    <div key={s.label} className="flex justify-between items-center" style={{ padding: '0.5rem 0', borderBottom: '1px solid rgba(42,42,42,0.5)' }}>
+                    <div key={s.label} className="flex justify-between items-center" style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--border)' }}>
                       <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.08em' }}>{s.label}</span>
-                      <span style={{ fontSize: '0.85rem', fontWeight: 700, color: s.color, fontFamily: 'monospace' }}>{s.value}</span>
+                      <span className="rsr-fig" style={{ fontSize: '1.3rem' }}>{s.value}</span>
                     </div>
                   ))}
                 </div>

@@ -21,22 +21,26 @@ import {
 } from '@icons'
 import { rankFor, nextRankAt } from '../ranks'
 import { pressable } from '@shared/web/a11y'
+import { campaign } from '../config/campaign'
 
 type SortKey = keyof Omit<Pilot, 'ucid' | 'name'> | 'kd' | 'score' | 'logistics'
 
-const COLS: { key: SortKey; label: string; color?: string; title?: string; width?: number }[] = [
-  { key: 'air_kills',        label: 'A/A',     color: '#60a5fa',  title: 'Air-to-air kills',    width: 52 },
-  { key: 'ground_kills',     label: 'A/G',     color: '#fb923c',  title: 'Air-to-ground kills', width: 60 },
-  { key: 'logistics',        label: 'Logi',    color: '#34d399',  title: 'Logistics (repairs + supply transfers + troops + FARPs + deployments)', width: 56 },
-  { key: 'kd',               label: 'K/D',     color: '#4ade80',  title: 'Kill / Death ratio', width: 52 },
-  { key: 'deaths',           label: 'Deaths',  color: '#f87171',  title: 'Deaths',             width: 56 },
-  { key: 'captures',         label: 'Cap',     color: '#fbbf24',  title: 'Objective captures', width: 44 },
-  { key: 'hours',            label: 'Hours',   color: '#a78bfa',  title: 'Flight hours',       width: 56 },
-  { key: 'score',            label: 'Score',   color: '#22d3ee',  title: 'Combined efficiency score', width: 60 },
+// The figures are read off the board in one colour, amber phosphor (typed
+// black on paper): the column being ranked on is lit, the rest are muted.
+// Only losses carry a colour of their own.
+const COLS: { key: SortKey; label: string; loss?: boolean; title?: string; width?: number }[] = [
+  { key: 'air_kills',        label: 'A/A',     title: 'Air-to-air kills',    width: 52 },
+  { key: 'ground_kills',     label: 'A/G',     title: 'Air-to-ground kills', width: 60 },
+  { key: 'logistics',        label: 'Logi',    title: 'Logistics (repairs + supply transfers + troops + FARPs + deployments)', width: 56 },
+  { key: 'kd',               label: 'K/D',     title: 'Kill / Death ratio', width: 52 },
+  { key: 'deaths',           label: 'Deaths',  loss: true, title: 'Deaths', width: 56 },
+  { key: 'captures',         label: 'Cap',     title: 'Objective captures', width: 44 },
+  { key: 'hours',            label: 'Hours',   title: 'Flight hours',       width: 56 },
+  { key: 'score',            label: 'Score',   title: 'Combined efficiency score', width: 60 },
   { key: 'repairs',          label: 'Rep',     title: 'Repairs',                               width: 40 },
   { key: 'supply_transfers', label: 'Sup',     title: 'Supply transfers',                      width: 40 },
   { key: 'deploys',          label: 'Dep',     title: 'Deployments',                           width: 40 },
-  { key: 'donated_points',   label: 'Pts',     color: '#22d3ee',  title: 'Points donated',     width: 44 },
+  { key: 'donated_points',   label: 'Pts',     title: 'Points donated',     width: 44 },
 ]
 
 function computeKd(p: Pilot): number {
@@ -64,7 +68,13 @@ function fmtVal(col: SortKey, p: Pilot): string {
   return typeof v === 'number' ? v.toLocaleString() : String(v ?? 0)
 }
 
-const MEDAL_COLOR = ['#fbbf24', '#94a3b8', '#d97706']
+// Brass, steel and bronze: the board's medal ribbons.
+const MEDAL_COLOR = ['var(--brass)', 'var(--text-muted)', 'var(--orange)']
+
+/** NATO steel blue / Soviet red for a pilot's side, else the dim body colour. */
+function sideInk(side: string | null | undefined): string {
+  return side === 'Blue' ? 'var(--blue)' : side === 'Red' ? 'var(--red)' : 'var(--text-dim)'
+}
 
 /** Podium badge for a 0-indexed placing: three stripes for first, one for third. */
 function RankBadge({ rank, size }: { rank: number; size: number }) {
@@ -76,26 +86,22 @@ const MEDAL_CLASS = ['rank-gold', 'rank-silver', 'rank-bronze']
 
 // Four leaderboard views: Overall (score), Air-to-Air, Air-to-Ground, Logistics.
 // Selecting a tab drives both the podium ranking and the table's default sort.
-const TABS: { key: SortKey; label: string; color: string; icon: IconComponent }[] = [
-  { key: 'score',       label: 'Overall',     color: '#22d3ee', icon: Rankings },
-  { key: 'air_kills',   label: 'A/A',         color: '#60a5fa', icon: Intercept },
-  { key: 'ground_kills',label: 'A/G',         color: '#fb923c', icon: Cas },
-  { key: 'logistics',   label: 'Logistics',   color: '#34d399', icon: Logistics },
+const TABS: { key: SortKey; label: string; icon: IconComponent }[] = [
+  { key: 'score',       label: 'Overall',     icon: Rankings },
+  { key: 'air_kills',   label: 'A/A',         icon: Intercept },
+  { key: 'ground_kills',label: 'A/G',         icon: Cas },
+  { key: 'logistics',   label: 'Logistics',   icon: Logistics },
 ]
 
 function Seg<T extends string>({ name, value, options, onChange }: {
   name: string; value: T; options: readonly (readonly [T, string])[]; onChange: (v: T) => void
 }) {
   return (
-    <div role="group" aria-label={name} className="flex overflow-hidden" style={{ border: '1px solid var(--border)', borderRadius: 2 }}>
+    <div role="group" aria-label={name} className="rsr-seg">
       {options.map(([v, label]) => (
         <button key={v} type="button" aria-pressed={value === v} onClick={() => onChange(v)}
-          style={{
-            fontFamily: 'var(--font-display)', fontSize: '0.75rem', letterSpacing: '0.1em', padding: '0.3rem 0.7rem',
-            background: value === v ? 'var(--accent-glow)' : 'transparent', color: value === v ? 'var(--accent-bright)' : 'var(--text-muted)',
-            border: 'none', cursor: 'pointer', whiteSpace: 'nowrap',
-          }}>
-          {label.toUpperCase()}
+          className={`rsr-key${v === 'Blue' ? ' rsr-key--blue' : v === 'Red' ? ' rsr-key--red' : ''}`}>
+          {label}
         </button>
       ))}
     </div>
@@ -109,7 +115,7 @@ function SquadronTable({ q, onOpen }: { q: UseQueryResult<Squadron[]>; onOpen: (
   const rows = [...(q.data ?? [])].sort((a, b) => b.xp - a.xp)
   return (
     <div className="vs-card overflow-hidden">
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <table className="vs-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead><tr>
           <th style={{ ...thS, width: 40 }}>#</th><th style={thS}>Squadron</th>
           <th style={{ ...thS, textAlign: 'right' }}>Members</th><th style={{ ...thS, textAlign: 'right' }}>XP</th>
@@ -123,7 +129,7 @@ function SquadronTable({ q, onOpen }: { q: UseQueryResult<Squadron[]>; onOpen: (
               <td style={{ ...tdS, color: 'var(--text-dim)' }}>{i + 1}</td>
               <td style={tdS}><span style={{ color: 'var(--accent-bright)', fontWeight: 700 }}>[{sq.tag}]</span> <span style={{ color: 'var(--text)' }}>{sq.name}</span></td>
               <td style={{ ...tdS, textAlign: 'right' }}>{sq.member_count}</td>
-              <td style={{ ...tdS, textAlign: 'right', color: 'var(--text)', fontWeight: 700 }}>{sq.xp.toLocaleString()}</td>
+              <td style={{ ...tdS, textAlign: 'right' }}><span className="rsr-fig" style={{ fontSize: '1.15rem' }}>{sq.xp.toLocaleString()}</span></td>
               <td style={{ ...tdS, textAlign: 'right' }}>{sq.member_count ? Math.round(sq.xp / sq.member_count).toLocaleString() : '—'}</td>
             </tr>
           ))}
@@ -138,7 +144,7 @@ function XpTable({ q, onOpen }: { q: UseQueryResult<XpRow[]>; onOpen: (ucid: str
   const max = Math.max(1, ...rows.map(r => r.xp))
   return (
     <div className="vs-card overflow-hidden">
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <table className="vs-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead><tr>
           <th style={{ ...thS, width: 40 }}>#</th><th style={thS}>Pilot</th>
           <th style={{ ...thS, textAlign: 'right', width: 70 }}>Level</th><th style={{ ...thS, width: '40%' }}>XP</th>
@@ -153,10 +159,10 @@ function XpTable({ q, onOpen }: { q: UseQueryResult<XpRow[]>; onOpen: (ucid: str
               <td style={{ ...tdS, textAlign: 'right' }}>{r.level}</td>
               <td style={tdS}>
                 <div className="flex items-center gap-2">
-                  <div style={{ flex: 1, height: 8, background: 'rgba(148,163,184,0.1)', borderRadius: 2 }}>
-                    <div style={{ width: `${(r.xp / max) * 100}%`, height: '100%', background: 'var(--accent)', borderRadius: '0 4px 4px 0' }} />
+                  <div style={{ flex: 1, height: 8, background: 'var(--bg-elevated)', boxShadow: 'inset 0 0 0 1px var(--border)' }}>
+                    <div style={{ width: `${(r.xp / max) * 100}%`, height: '100%', background: 'var(--accent)' }} />
                   </div>
-                  <span className="font-mono-vs" style={{ minWidth: 64, textAlign: 'right' }}>{r.xp.toLocaleString()}</span>
+                  <span className="rsr-fig" style={{ minWidth: 64, textAlign: 'right', fontSize: '1.15rem' }}>{r.xp.toLocaleString()}</span>
                 </div>
               </td>
             </tr>
@@ -257,23 +263,8 @@ export default function Leaderboard() {
           {TABS.map(t => {
             const active = view === 'pilots' && tab === t.key
             return (
-              <button key={t.key} className="vs-tab" onClick={() => selectTab(t.key)}
-                style={{
-                  padding: '6px 16px', borderRadius: 6, cursor: 'pointer',
-                  fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em',
-                  textTransform: 'uppercase', transition: 'all 0.12s',
-                  // Solid accent when selected, matching .vs-btn and the
-                  // Situation/Kneeboard tabs on the briefing -- this strip was
-                  // the only place tinting itself per category (cyan here,
-                  // orange there), which read as a different app. The per-tab
-                  // colour still keys the stat columns below, where it is
-                  // doing real work telling the metrics apart.
-                  background: active ? 'var(--accent)' : 'var(--bg-card)',
-                  border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
-                  color: active ? '#0a0d07' : 'var(--text-dim)',
-                  display: 'flex', alignItems: 'center', gap: 7,
-                }}
-              >
+              <button key={t.key} type="button" className="vs-tab rsr-key" aria-pressed={active} onClick={() => selectTab(t.key)}
+                style={{ padding: '6px 14px', gap: 7 }}>
                 <t.icon size={13} strokeWidth={1.75} />
                 {t.label}
               </button>
@@ -282,14 +273,8 @@ export default function Leaderboard() {
           {([['squadrons', 'Squadrons', Award], ['xp', 'XP', Rankings]] as const).map(([v, label, Icon]) => {
             const active = view === v
             return (
-              <button key={v} className="vs-tab" onClick={() => setView(v)}
-                style={{
-                  padding: '6px 16px', borderRadius: 6, cursor: 'pointer', fontSize: '0.72rem', fontWeight: 700,
-                  letterSpacing: '0.05em', textTransform: 'uppercase', transition: 'all 0.12s',
-                  background: active ? 'var(--accent)' : 'var(--bg-card)',
-                  border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
-                  color: active ? '#0a0d07' : 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 7,
-                }}>
+              <button key={v} type="button" className="vs-tab rsr-key" aria-pressed={active} onClick={() => setView(v)}
+                style={{ padding: '6px 14px', gap: 7 }}>
                 <Icon size={13} strokeWidth={1.75} />{label}
               </button>
             )
@@ -299,7 +284,7 @@ export default function Leaderboard() {
               <Seg name="Period" value={period} onChange={setPeriod}
                 options={[['all', 'All time'], ['round', roundId != null ? `Round ${roundNum}` : 'This round']] as const} />
               <Seg name="Side" value={sideF} onChange={setSideF}
-                options={[['All', 'Both sides'], ['Blue', 'Blue'], ['Red', 'Red']] as const} />
+                options={[['All', 'Both sides'], ['Blue', campaign.blueLabel], ['Red', campaign.redLabel]] as const} />
             </div>
           )}
         </div>
@@ -319,14 +304,11 @@ export default function Leaderboard() {
               return (
                 <div key={p.ucid}
                   {...pressable(() => navigate(`/pilots?ucid=${encodeURIComponent(p.ucid)}`))}
+                  className="vs-card"
                   style={{
-                    background: 'var(--bg-card)', border: `1px solid ${mc}22`,
-                    borderTop: `3px solid ${mc}`, borderRadius: 8, padding: '16px 20px',
-                    cursor: 'pointer', transition: 'box-shadow 0.15s',
-                    display: 'flex', flexDirection: 'column', gap: 8, position: 'relative',
+                    borderTop: `3px solid ${mc}`, padding: '16px 20px', cursor: 'pointer',
+                    display: 'flex', flexDirection: 'column', gap: 10, position: 'relative',
                   }}
-                  onMouseEnter={e => (e.currentTarget.style.boxShadow = `0 4px 24px ${mc}18`)}
-                  onMouseLeave={e => (e.currentTarget.style.boxShadow = 'none')}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <RankBadge rank={i} size={26} />
@@ -338,6 +320,11 @@ export default function Leaderboard() {
                       <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text)', lineHeight: 1.2, marginTop: 2 }}>
                         {p.name}
                       </div>
+                      {p.side && (
+                        <div style={{ fontSize: '0.58rem', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: sideInk(p.side), marginTop: 2 }}>
+                          {p.side === 'Blue' ? campaign.blueLabel : campaign.redLabel}
+                        </div>
+                      )}
                       <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 4 }}>
                         <PRankIcon size={13} strokeWidth={1.5} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
                         <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', letterSpacing: '0.08em' }}>
@@ -348,15 +335,15 @@ export default function Leaderboard() {
                   </div>
                   <div className="podium-stats" style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
                     {[
-                      { label: 'A2A',   value: p.air_kills,              color: '#60a5fa' },
-                      { label: 'A2G',   value: p.ground_kills,           color: '#fb923c' },
-                      { label: 'Logi',  value: computeLogistics(p),      color: '#34d399' },
-                      { label: 'K/D',   value: fmtKd(p),                 color: '#4ade80' },
-                      { label: 'Hours', value: `${p.hours.toFixed(1)}h`, color: '#a78bfa' },
-                      { label: 'Score', value: score,                    color: '#22d3ee' },
+                      { label: 'A2A',   value: p.air_kills },
+                      { label: 'A2G',   value: p.ground_kills },
+                      { label: 'Logi',  value: computeLogistics(p) },
+                      { label: 'K/D',   value: fmtKd(p) },
+                      { label: 'Hours', value: `${p.hours.toFixed(1)}h` },
+                      { label: 'Score', value: score, lit: true },
                     ].map(s => (
                       <div key={s.label}>
-                        <div className="font-mono-vs" style={{ fontSize: '0.95rem', fontWeight: 700, color: s.color, lineHeight: 1 }}>
+                        <div className={`rsr-fig${s.lit ? '' : ' rsr-fig--dim'}`} style={{ fontSize: s.lit ? '1.6rem' : '1.3rem' }}>
                           {s.value}
                         </div>
                         <div style={{ fontSize: '0.58rem', color: 'var(--text-dim)', marginTop: 2, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
@@ -372,12 +359,11 @@ export default function Leaderboard() {
         )}
 
         {/* ── Score formula ── */}
-        <div style={{
-          background: 'var(--bg-card)', border: '1px solid var(--border)',
-          borderRadius: 6, padding: '10px 16px',
+        <div className="vs-card" style={{
+          padding: '10px 16px',
           display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
         }}>
-          <Award size={13} style={{ color: '#22d3ee', flexShrink: 0 }} />
+          <Award size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
           <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600 }}>Score:</span>
           <span className="font-mono-vs" style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
             Air×3 + Ground×2 + Cap×5 + FARP×4 + Deploy×2 + Repair + Supply + Troop×0.5 + Action − Death×2
@@ -385,13 +371,13 @@ export default function Leaderboard() {
         </div>
 
         {/* ── Main table (scrolls internally, not the whole page) ── */}
-        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 'none' }}>
+        <div className="vs-card" style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 'none' }}>
           {/* Its own scroll, tall enough for a page of pilots: squeezed into
               what the podium left over it showed three rows. */}
           <div style={{ overflow: 'auto', maxHeight: 'max(440px, calc(100vh - 260px))' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <table className="vs-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
-                <tr style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, zIndex: 1 }}>
+                <tr style={{ background: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, zIndex: 1 }}>
                   <th style={{ padding: '10px 14px', textAlign: 'left', width: 36, fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 700 }}>#</th>
                   <th style={{ padding: '10px 14px', textAlign: 'left', fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 700 }}>Pilot</th>
                   {COLS.map(c => (
@@ -401,7 +387,7 @@ export default function Leaderboard() {
                         width: c.width, fontSize: '0.62rem', fontWeight: 700,
                         letterSpacing: '0.1em', textTransform: 'uppercase',
                         cursor: 'pointer', userSelect: 'none', transition: 'color 0.12s',
-                        color: sort === c.key ? (c.color ?? 'var(--accent)') : 'var(--text-dim)',
+                        color: sort === c.key ? 'var(--accent)' : 'var(--text-dim)',
                       }}
                     >
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
@@ -442,11 +428,11 @@ export default function Leaderboard() {
                       <td style={{ padding: '9px 14px', minWidth: 180 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           <div style={{
-                            width: 30, height: 30, borderRadius: 6, flexShrink: 0,
-                            background: isTop3 ? `${MEDAL_COLOR[medalIdx]}18` : 'var(--bg-elevated)',
-                            border: `1px solid ${isTop3 ? MEDAL_COLOR[medalIdx] + '33' : 'var(--border)'}`,
+                            width: 30, height: 30, borderRadius: 2, flexShrink: 0,
+                            background: 'var(--bg-elevated)',
+                            border: `1px solid ${isTop3 ? MEDAL_COLOR[medalIdx] : 'var(--border)'}`,
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            color: isTop3 ? MEDAL_COLOR[medalIdx] : 'var(--text-dim)',
+                            color: isTop3 ? MEDAL_COLOR[medalIdx] : sideInk(p.side),
                           }}
                           title={`${rank.title}${nextAt !== null ? ` — ${nextAt - Math.round(computeScore(p))} score to next rank` : ' — top of the ladder'}`}>
                             <RankIcon size={18} strokeWidth={1.5} />
@@ -467,13 +453,16 @@ export default function Leaderboard() {
                       </td>
                       {COLS.map(c => (
                         <td key={c.key} style={{ padding: '9px 10px', textAlign: 'right' }}>
-                          <span className="font-mono-vs" style={{
-                            fontSize: '0.78rem', fontWeight: 600,
-                            color: sort === c.key ? (c.color ?? 'var(--accent)') : (c.color ?? 'var(--text-muted)'),
-                            opacity: sort === c.key ? 1 : 0.65,
-                          }}>
-                            {fmtVal(c.key, p)}
-                          </span>
+                          {sort === c.key ? (
+                            <span className="rsr-fig" style={{ fontSize: '1.2rem' }}>{fmtVal(c.key, p)}</span>
+                          ) : (
+                            <span className="font-mono-vs" style={{
+                              fontSize: '0.78rem', fontWeight: 600,
+                              color: c.loss ? 'var(--red)' : 'var(--text-muted)',
+                            }}>
+                              {fmtVal(c.key, p)}
+                            </span>
+                          )}
                         </td>
                       ))}
                     </tr>

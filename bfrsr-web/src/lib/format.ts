@@ -96,7 +96,7 @@ export type TargetClass = 'AIR' | 'HELO' | 'NAVAL' | 'ARMOR' | 'AD' | 'VEH' | 'I
 export function classifyTargetClass(targetType: string | null | undefined): TargetClass {
   const t = (targetType ?? '').toLowerCase()
   if (!t) return 'GND'
-  if (/\bmi-\d|\buh-\d|\bah-\d|\bch-\d|\bka-\d|sa-?342|heli|huey|apache|blackhawk|chinook|hind|\bhip\b|havoc|hokum|seahawk|lynx|gazelle|rotary/.test(t)) return 'HELO'
+  if (/\bmi-\d|\buh-\d|\bsh-\d|\bah-\d|\bch-\d|\bka-\d|sa-?342|heli|huey|apache|blackhawk|chinook|hind|\bhip\b|havoc|hokum|seahawk|lynx|gazelle|rotary/.test(t)) return 'HELO'
   if (/\bf-?1[4-8]|\bfa-?18|\bf\/a-?18|\bmig-\d|\bsu-\d|\ba-10\b|\bav-8|tornado|rafale|gripen|mirage|harrier|phantom|hornet|viper|eagle|flanker|fulcrum|frogfoot|aircraft|plane|\bjet\b|fighter|bomber|transport|tanker|awacs/.test(t)) return 'AIR'
   if (/ship|naval|carrier|frigate|cruiser|destroyer|corvette|\bcvn/.test(t)) return 'NAVAL'
   if (/\bsa-\d|\bsam\b|patriot|radar|\baaa\b|s-300|s-400|\bbuk\b|\btor\b|\bosa\b|shilka|tunguska|pantsir|roland|rapier|\bhq-\d/.test(t)) return 'AD'

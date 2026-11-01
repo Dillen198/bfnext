@@ -25,7 +25,7 @@ import Panel from '../components/Panel'
 import BriefingMap from './BriefingMap'
 
 const URGENCY_COLOR = (u: Urgency) =>
-  u === 'critical' ? '#f04747' : u === 'high' ? '#f0a030' : '#8ec83f'
+  u === 'critical' ? 'var(--red)' : u === 'high' ? 'var(--orange)' : 'var(--green)'
 
 const KIND_ICON: Record<Task['kind'], IconComponent> = {
   defend: Defend,
@@ -54,7 +54,7 @@ function Bar({ value, warn }: { value: number; warn?: boolean }) {
       <span
         style={{
           display: 'block', height: '100%', width: `${Math.max(0, Math.min(100, value))}%`,
-          background: warn || value < 25 ? '#f04747' : value < 60 ? '#f0a030' : '#8ec83f',
+          background: warn || value < 25 ? 'var(--red)' : value < 60 ? 'var(--orange)' : 'var(--green)',
         }}
       />
     </span>
@@ -82,7 +82,7 @@ function TaskRow({
       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
         <span
           style={{
-            ...mono, minWidth: 17, height: 17, borderRadius: 3, background: color, color: '#0b0f08',
+            ...mono, minWidth: 17, height: 17, borderRadius: 3, background: color, color: 'var(--on-accent)',
             fontSize: '0.6rem', fontWeight: 800, display: 'inline-flex',
             alignItems: 'center', justifyContent: 'center',
           }}
@@ -125,7 +125,7 @@ function TaskRow({
 
 function HotspotRow({ h, side: ourSide }: { h: Hotspot; side: Side }) {
   const color = URGENCY_COLOR(h.risk)
-  const side = h.owner === 'Blue' ? '#4a8fd4' : h.owner === 'Red' ? '#cc4444' : '#8a8a6a'
+  const side = h.owner === 'Blue' ? 'var(--blue)' : h.owner === 'Red' ? 'var(--red)' : 'var(--text-dim)'
   // Same two-tier rule the briefing map uses: a running enemy capture timer
   // is the loud case, plain `threatened` is hostiles in the area.
   const beingTaken = !!h.capture_progress && h.capture_progress[0] !== ourSide
@@ -140,7 +140,7 @@ function HotspotRow({ h, side: ourSide }: { h: Hotspot; side: Side }) {
             title={beingTaken ? 'Under attack - enemy capture in progress' : 'Under attack'}
             style={{
               display: 'inline-flex', flexShrink: 0,
-              color: beingTaken ? '#f04747' : '#f0a030',
+              color: beingTaken ? 'var(--red)' : 'var(--orange)',
             }}
           >
             <Explosion size={13} />
@@ -149,12 +149,12 @@ function HotspotRow({ h, side: ourSide }: { h: Hotspot; side: Side }) {
         <span style={{ fontSize: '0.73rem', fontWeight: 700 }}>{h.objective}</span>
         <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)' }}>{h.kind}</span>
         {h.capture_progress && (
-          <span style={{ ...mono, fontSize: '0.62rem', color: '#f04747', fontWeight: 700 }}>
+          <span style={{ ...mono, fontSize: '0.62rem', color: 'var(--red)', fontWeight: 700 }}>
             {h.capture_progress[0].toUpperCase()} TIMER {h.capture_progress[1]}s / ~{h.capture_progress[2]}s
           </span>
         )}
         {h.captureable && !h.capture_progress && (
-          <span style={{ ...mono, fontSize: '0.62rem', color: '#f0a030', fontWeight: 700 }}>CAPTURABLE</span>
+          <span style={{ ...mono, fontSize: '0.62rem', color: 'var(--orange)', fontWeight: 700 }}>CAPTURABLE</span>
         )}
         {h.in_capture_hold && (
           <span style={{ ...mono, fontSize: '0.62rem', color: 'var(--text-dim)' }}>CONSOLIDATING</span>
@@ -205,8 +205,8 @@ export default function SituationTab({ report }: { report: SituationReport }) {
           <div
             style={{
               marginTop: 8, padding: '6px 10px', borderRadius: 4,
-              background: '#f0474722', border: '1px solid #f0474766',
-              color: '#f87171', fontSize: '0.72rem', fontWeight: 700,
+              background: 'var(--red-bg)', border: '1px solid var(--red)',
+              color: 'var(--red)', fontSize: '0.72rem', fontWeight: 700,
             }}
           >
             <Alert size={12} style={{ verticalAlign: -2, marginRight: 5 }} />
@@ -215,8 +215,8 @@ export default function SituationTab({ report }: { report: SituationReport }) {
         )}
         <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginTop: 11 }}>
           {stat('Territory', `${p.territory_pct.toFixed(0)}%`)}
-          {stat('Yours', `${p.friendly_objectives} (${p.friendly_primary}P)`, '#4a8fd4')}
-          {stat('Enemy', `${p.enemy_objectives} (${p.enemy_primary}P)`, '#cc4444')}
+          {stat('Yours', `${p.friendly_objectives} (${p.friendly_primary}P)`, 'var(--blue)')}
+          {stat('Enemy', `${p.enemy_objectives} (${p.enemy_primary}P)`, 'var(--red)')}
           {stat('Neutral', p.neutral_objectives)}
           {stat('Treasury', `${p.treasury} pts`)}
           {stat('Pilots', `${p.players_friendly} v ${p.players_enemy}`)}
@@ -269,8 +269,8 @@ export default function SituationTab({ report }: { report: SituationReport }) {
               fontSize: '0.6rem', color: 'var(--text-dim)', lineHeight: 1.7, pointerEvents: 'none',
             }}
           >
-            <div><span style={{ color: '#4a8fd4' }}>●</span> blue · <span style={{ color: '#cc4444' }}>●</span> red · hollow = damaged</div>
-            <div><span style={{ color: '#f04747' }}>◌</span> known SAM ring (your intel) · <span style={{ color: '#facc15' }}>▲</span> hub</div>
+            <div><span style={{ color: 'var(--blue)' }}>●</span> blue · <span style={{ color: 'var(--red)' }}>●</span> red · hollow = damaged</div>
+            <div><span style={{ color: 'var(--red)' }}>◌</span> known SAM ring (your intel) · <span style={{ color: 'var(--yellow)' }}>▲</span> hub</div>
             <div>numbered pins = tasking, click to expand</div>
           </div>
         </div>
@@ -306,11 +306,11 @@ export default function SituationTab({ report }: { report: SituationReport }) {
             title="Air Picture"
             icon={Aircraft}
             count={a.radar_blind ? 'BLIND' : `${a.hostile_tracks} hostile`}
-            iconColor={a.radar_blind ? '#f04747' : undefined}
+            iconColor={a.radar_blind ? 'var(--red)' : undefined}
           >
             <div style={{ padding: '9px 13px', fontSize: '0.71rem', lineHeight: 1.6 }}>
               {a.radar_blind ? (
-                <span style={{ color: '#f87171' }}>
+                <span style={{ color: 'var(--red)' }}>
                   Your radar net is reporting nothing — that is <strong>blind</strong>, not clear. Assume
                   hostile air is up and unobserved.
                 </span>
@@ -334,7 +334,7 @@ export default function SituationTab({ report }: { report: SituationReport }) {
             </div>
           </Panel>
 
-          <Panel title="Known Air Defence" icon={Sam} count={report.threats.length} iconColor="#f04747">
+          <Panel title="Known Air Defence" icon={Sam} count={report.threats.length} iconColor="var(--red)">
             {report.threats.length === 0 ? (
               <div style={dim}>
                 Nothing held — no recon, SF, JTAC or ELINT contact on enemy air defence. Every strike you
@@ -365,7 +365,7 @@ export default function SituationTab({ report }: { report: SituationReport }) {
                 l.hubs.map((h) => (
                   <div key={h.objective} style={{ fontSize: '0.7rem', marginBottom: 5 }}>
                     <span style={{ fontWeight: 700 }}>{h.objective}</span>
-                    {h.threatened && <span style={{ color: '#f87171', marginLeft: 6, fontSize: '0.62rem', fontWeight: 700 }}>THREAT</span>}
+                    {h.threatened && <span style={{ color: 'var(--red)', marginLeft: 6, fontSize: '0.62rem', fontWeight: 700 }}>THREAT</span>}
                     <div style={{ ...mono, fontSize: '0.63rem', color: 'var(--text-dim)', marginTop: 2 }}>
                       supply <Bar value={h.supply} /> {h.supply}% · fuel <Bar value={h.fuel} /> {h.fuel}% · feeding {h.feeding}
                     </div>
@@ -416,7 +416,7 @@ export default function SituationTab({ report }: { report: SituationReport }) {
                       <td style={{ ...mono, padding: '5px 10px', fontSize: '0.68rem', color: 'var(--text-dim)', borderBottom: '1px solid var(--border)' }}>
                         {c.preset ?? '—'}
                       </td>
-                      <td style={{ ...mono, padding: '5px 10px', fontSize: '0.7rem', color: '#facc15', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
+                      <td style={{ ...mono, padding: '5px 10px', fontSize: '0.7rem', color: 'var(--yellow)', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
                         {c.freq_mhz.toFixed(3)}
                       </td>
                       <td style={{ ...mono, padding: '5px 10px', fontSize: '0.66rem', color: 'var(--text-dim)', borderBottom: '1px solid var(--border)' }}>
@@ -425,7 +425,7 @@ export default function SituationTab({ report }: { report: SituationReport }) {
                       <td style={{ padding: '5px 10px', fontSize: '0.7rem', borderBottom: '1px solid var(--border)' }}>
                         {c.label}
                         {c.live && (
-                          <span style={{ ...mono, color: '#8ec83f', fontSize: '0.58rem', fontWeight: 800, marginLeft: 6 }}>
+                          <span style={{ ...mono, color: 'var(--green)', fontSize: '0.58rem', fontWeight: 800, marginLeft: 6 }}>
                             UP
                           </span>
                         )}
@@ -460,7 +460,7 @@ export default function SituationTab({ report }: { report: SituationReport }) {
               report.support.map((s, i) => (
                 <div key={i} style={{ padding: '6px 13px', borderBottom: '1px solid var(--border)', fontSize: '0.7rem' }}>
                   <span style={{ fontWeight: 700 }}>{s.label}</span>
-                  <span style={{ ...mono, color: '#facc15', marginLeft: 8 }}>
+                  <span style={{ ...mono, color: 'var(--yellow)', marginLeft: 8 }}>
                     {s.freq_mhz != null ? s.freq_mhz.toFixed(3) : '—'}
                   </span>
                   {s.tacan && <span style={{ ...mono, color: 'var(--text-dim)', marginLeft: 8 }}>{s.tacan}</span>}
@@ -481,7 +481,7 @@ export default function SituationTab({ report }: { report: SituationReport }) {
                   key={i}
                   style={{
                     padding: '5px 13px', borderBottom: '1px solid var(--border)', fontSize: '0.69rem',
-                    color: e.good === true ? '#8ec83f' : e.good === false ? '#f87171' : 'var(--text-muted)',
+                    color: e.good === true ? 'var(--green)' : e.good === false ? 'var(--red)' : 'var(--text-muted)',
                   }}
                 >
                   <span style={{ ...mono, fontSize: '0.62rem', color: 'var(--text-dim)', marginRight: 7 }}>

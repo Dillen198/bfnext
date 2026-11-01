@@ -18,7 +18,9 @@ interface Series {
   fmt: (v: number, u: Units) => string
 }
 
-const PALETTE = ['#b6f04a', '#4fd1e8', '#ffb547', '#ff6b8a', '#b48cff', '#7dff9b', '#ffe26b', '#ff8f4f']
+// The console's inks: amber, steel, phosphor green, red, brass, map green,
+// chinagraph yellow, orange.
+const PALETTE = ['#ffb000', '#8db4d9', '#4be37f', '#f0685a', '#c9a24a', '#7fa86a', '#e8c34a', '#ec8f45']
 
 function stateAt(s: Seg, i: number) { return sampleSeg(s, s.t[i]) }
 

@@ -8,13 +8,13 @@ import { changesUnder, labelOf, playerHelp, type Ctx } from './core'
 import { liftToTop, moveTo, renumber, SWITCH_LABELS, THREAT_KINDS, threatRows, type ThreatKind, type ThreatRow } from './threats'
 
 const KIND_COLOUR: Record<ThreatKind, string> = {
-  SAM: '#f04747', AAA: '#f0a030', Aircraft: '#40a6ff', Missiles: '#c77dff', 'EWR & AWACS': '#2ec4b6', Ships: '#7cc4ff', Other: '#9aa3ad',
+  SAM: 'var(--red)', AAA: 'var(--orange)', Aircraft: 'var(--accent)', Missiles: 'var(--yellow)', 'EWR & AWACS': 'var(--brass)', Ships: 'var(--blue)', Other: 'var(--text-dim)',
 }
 
 const btn: CSSProperties = { padding: '2px 5px', fontSize: '0.62rem', lineHeight: 1 }
 const chip = (on: boolean): CSSProperties => ({
   padding: '3px 9px', borderRadius: 12, fontSize: '0.64rem', cursor: 'pointer',
-  border: `1px solid ${on ? 'var(--accent)' : 'var(--border)'}`, background: on ? 'var(--accent-glow, rgba(106,171,31,0.15))' : 'transparent', color: 'var(--text)',
+  border: `1px solid ${on ? 'var(--accent)' : 'var(--border)'}`, background: on ? 'var(--accent-glow)' : 'transparent', color: 'var(--text)',
 })
 
 /** Apply several changes in one go (a reorder touches many priorities). */

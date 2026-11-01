@@ -16,8 +16,8 @@ import { fmtHours } from '../lib/format'
 import { OUTCOME, outcomeOf } from '../lib/sortie'
 import { Activity } from '@icons'
 
-const AIR = '#3b82f6'
-const GROUND = '#ea580c'
+const AIR = 'var(--blue)'
+const GROUND = 'var(--orange)'
 const DAY_MS = 86_400_000
 
 const RANGES = [
@@ -149,7 +149,7 @@ function OutcomeMix({ sorties }: { sorties: PilotSortie[] }) {
 // ── Activity heatmap ──────────────────────────────────────────────────────────
 
 // Sequential, one hue: the accent at rising strength. Index 0 is "no flying".
-const HEAT = ['var(--border)', 'rgba(106,171,31,0.28)', 'rgba(106,171,31,0.5)', 'rgba(106,171,31,0.75)', 'rgba(106,171,31,1)']
+const HEAT = ['var(--border)', 'color-mix(in srgb, var(--accent) 30%, transparent)', 'color-mix(in srgb, var(--accent) 52%, transparent)', 'color-mix(in srgb, var(--accent) 76%, transparent)', 'var(--accent)']
 
 // Below this a cell stops reading as a day; on a narrow card the heatmap shows
 // fewer, more recent weeks instead of shrinking further.
@@ -265,7 +265,7 @@ function HoursPerWeek({ weeks }: { weeks: Week[] }) {
           <CartesianGrid vertical={false} stroke="var(--border)" />
           <XAxis dataKey="label" tick={axisTick} axisLine={{ stroke: 'var(--border-light)' }} tickLine={false} minTickGap={16} />
           <YAxis tick={axisTick} axisLine={false} tickLine={false} allowDecimals={false} width={40} />
-          <Tooltip cursor={{ fill: 'rgba(148,163,184,0.08)' }}
+          <Tooltip cursor={{ fill: 'var(--accent-glow)' }}
             content={<ChartTip unit={(k, v) => k === 'hours' ? fmtHours(v) : String(v)} />} />
           <Bar dataKey="hours" name="flown" fill="var(--accent)" maxBarSize={24} radius={[4, 4, 0, 0]} />
         </BarChart>

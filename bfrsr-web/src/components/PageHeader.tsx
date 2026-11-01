@@ -15,6 +15,8 @@ interface Props {
   art?: WireframeName
   /** A rubber stamp beside the title ("RESTRICTED", "CONFIRMED"). */
   stamp?: ReactNode
+  /** The file's name, for pages no function key opens (the MORE menu's). */
+  file?: string
 }
 
 /**
@@ -22,7 +24,7 @@ interface Props {
  * it and the file's name above a stencilled title, a typed line under it.
  * Folder-coloured on paper, a label plate on the consoles.
  */
-export default function PageHeader({ title, sub, right, icon: Icon, stamp }: Props) {
+export default function PageHeader({ title, sub, right, icon: Icon, stamp, file }: Props) {
   const { pathname } = useLocation()
   const key = keyFor(pathname)
   return (
@@ -36,7 +38,7 @@ export default function PageHeader({ title, sub, right, icon: Icon, stamp }: Pro
         <div style={{ minWidth: 0 }}>
           <div className="page-header-file">
             {key && <span className="rsr-fkey-code">{key.code}</span>}
-            <span>File · {key ? key.file : 'Southern Flank 1985'}</span>
+            <span>File · {key ? key.file : file ?? 'Southern Flank 1985'}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', rowGap: 4 }}>
             <h1 className="page-header-title">{title}</h1>

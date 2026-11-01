@@ -29,7 +29,7 @@ import { BattlefieldLayers } from './groundwar/layers'
 import { styleFor, type MapLook } from './groundwar/mapStyles'
 import { BattleLabel, DestMarker, EnemyMarker, FormationMarker, ObjectiveMarker } from './groundwar/markers'
 import { installVehicleImages } from './groundwar/sprites'
-import { NEAR_ZOOM, reducedMotion, type Side } from './groundwar/theme'
+import { NEAR_ZOOM, SIDE_COLOR, reducedMotion, type Side } from './groundwar/theme'
 import { useGroundFeed } from './groundwar/useGroundFeed'
 import { createGroundwarMock } from './groundwarMock'
 import { createCommandMock } from './commandMock'
@@ -840,7 +840,7 @@ export default function GroundWarPage(): ReactElement {
   const onBattle = (b: GroundBattle) => (mode !== 'none' ? applyMode(hoverObj.current) : flyTo(b.pos, 12.5))
 
   return (
-    <div className={`gw-root gw-mode-${mode}${near ? ' gw-near' : ''}${far ? ' gw-far' : ''}`} style={{ ['--own' as string]: side === 'Blue' ? '#4a8fd4' : '#cc4444' }}>
+    <div className={`gw-root gw-mode-${mode}${near ? ' gw-near' : ''}${far ? ' gw-far' : ''}`} style={{ ['--own' as string]: SIDE_COLOR[side] }}>
       <Map
         ref={mapRef}
         mapStyle={mapStyle}

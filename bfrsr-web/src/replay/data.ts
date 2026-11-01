@@ -592,12 +592,15 @@ export function shotsOf(meta: RecMeta): Shot[] {
 
 // ── presentation helpers ───────────────────────────────────────────────
 
+/** Side colours for the replay's panels (DOM only): the theme's NATO steel
+ *  blue and Soviet red, so they keep their contrast on paper too. The map
+ *  canvas draws with overlay.ts's fixed pair. */
 export const SIDE_HEX: Record<string, string> = {
-  Blue: '#4a8fd4',
-  Red: '#d24b4b',
+  Blue: 'var(--blue)',
+  Red: 'var(--red)',
 }
 export function sideHex(c?: string | null): string {
-  return (c && SIDE_HEX[c]) || '#c9a227'
+  return (c && SIDE_HEX[c]) || 'var(--brass)'
 }
 
 export function isAir(k: Kind) { return k === 'air' || k === 'helo' }

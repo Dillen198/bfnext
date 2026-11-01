@@ -41,6 +41,8 @@
   --accent-glow:   rgba(255,176,0,0.10);
   --accent-border: rgba(255,176,0,0.36);
   --border-accent: #ffb000;
+  /* Type on a lit key or a filled side colour (accent, --blue, --red). */
+  --on-accent:     #14100a;
 
   /* NATO steel blue; Soviet red. */
   --blue:          #8db4d9;
@@ -116,6 +118,7 @@
   --accent-glow:   rgba(138,75,0,0.08);
   --accent-border: rgba(138,75,0,0.40);
   --border-accent: #8a4b00;
+  --on-accent:     #fffdf6;
 
   --blue:          #24507c;
   --blue-dim:      #1c3f62;
@@ -175,6 +178,7 @@
   --accent-bright: #86f5a8;
   --accent-glow:   rgba(75,227,127,0.10);
   --accent-border: rgba(75,227,127,0.32);
+  --on-accent:     #03130a;
   --blue:          #8db4d9;
   --red:           #f0685a;
   --green:         #4be37f;
@@ -1263,12 +1267,18 @@ body {
 @media (max-width: 767px), (pointer: coarse) {
   .lb-tabs {
     display: grid !important;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .lb-tabs > .vs-tab {
     width: 100%;
+    min-width: 0;
     justify-content: center;
+    letter-spacing: 0.06em;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
   }
+  /* The period and side switches take a row of their own. */
+  .lb-tabs > div { grid-column: 1 / -1; margin-left: 0 !important; }
   /* The search field is fixed at 180px inline, which left it stopping short
      of the header it sits in. */
   .lb-search {

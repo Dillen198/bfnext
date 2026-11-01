@@ -7,10 +7,11 @@ import { useMemo } from 'react'
 import { Layer, Marker, Source } from 'react-map-gl/maplibre'
 import { useQuery } from '@tanstack/react-query'
 import { api, type Frontlines, type GroundContact } from '../../api'
+import { campaign } from '../../config/campaign'
 import { airPick, contactPick, objectivePick, taskPick, threatPick, type Intel, type LayerKey, type Pick, type PickKind } from './picks'
 
 
-const OWNER = (o: string) => (o === 'Blue' ? '#40a6ff' : o === 'Red' ? '#b84dff' : '#d8d8d8')
+const OWNER = (o: string) => (o === 'Blue' ? campaign.blueColor : o === 'Red' ? campaign.redColor : '#d8d8d8')
 const URGENCY = (u: string) => (u === 'critical' ? '#f04747' : u === 'high' ? '#f0a030' : '#8ec83f')
 /** One letter per ground class, on a red square: hostile ground. */
 const CLASS_LETTER: Record<GroundContact['class'], string> = {
@@ -148,8 +149,8 @@ export default function IntelLayers({ intel, side, on, picked, onPick }: {
 
       {on.bullseye && bull && (
         <Marker latitude={bull.lat} longitude={bull.lon}>
-          <div title="Bullseye" style={{ width: 22, height: 22, borderRadius: '50%', border: '2px solid #40a6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-            <div style={{ width: 8, height: 8, borderRadius: '50%', border: '2px solid #40a6ff' }} />
+          <div title="Bullseye" style={{ width: 22, height: 22, borderRadius: '50%', border: '2px solid #8db4d9', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', border: '2px solid #8db4d9' }} />
           </div>
         </Marker>
       )}

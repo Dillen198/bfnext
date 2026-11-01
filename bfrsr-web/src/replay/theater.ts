@@ -62,7 +62,7 @@ export interface Projected { idx: number; x: number; y: number }
 const R_EARTH = 6_371_000
 const EARTH_C = 40_075_016.686
 const DEG = Math.PI / 180
-const FOCUS_HEX = '#b6f04a'
+const FOCUS_HEX = '#4be37f'
 
 /** The attitude to draw. DCS writes a bomb's attitude once, at release, and
  *  many missiles' only now and then, so a weapon in flight points along its

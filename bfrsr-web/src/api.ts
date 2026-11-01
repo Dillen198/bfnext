@@ -266,7 +266,7 @@ export type HqLine = 'air' | 'fires' | 'logistics' | 'troops' | 'ground'
 export type HqOpKind =
   | 'cap' | 'strike' | 'sead' | 'recon' | 'artillery' | 'missile_strike' | 'ambush'
   | 'convoy' | 'helo_supply' | 'helo_troops' | 'reinforce'
-  | 'bomber' | 'awacs' | 'tanker' | 'naval_strike' | 'air_repair'
+  | 'bomber' | 'awacs' | 'tanker' | 'naval_strike' | 'air_repair' | 'anti_ship'
 export type HqRequestKind =
   | 'cas' | 'cap' | 'sead' | 'recon' | 'fires' | 'supply' | 'troops' | 'tanker' | 'awacs'
 
@@ -324,12 +324,26 @@ export interface HqObjective {
   inbound: boolean
 }
 export interface HqContact { pos: LatLon; class: string; count: number; near: string; near_km: number; age_mins: number }
+/** How hard a side's AI fights, from both sides' pilots in a slot (`ai_fill`). */
+export interface HqAiFill {
+  pilots: number
+  enemy_pilots: number
+  /** What the other side's pilots call for, 0..1. */
+  enemy_match: number
+  /** AI packages' and ground AI's pressure, 0..1. */
+  pressure: number
+  /** The HQ's pressure (gap_factor), 0..1. */
+  hq_pressure: number
+  /** The side's own pilots don't hold its AI back: "AI-led". */
+  ai_led: boolean
+}
+
 export interface HqView {
   side: 'Blue' | 'Red'
   enabled: boolean
   paused: boolean
   posture: HqPosture | null
-  source: 'rules' | 'strategist' | 'human' | ''
+  source: 'rules' | 'story' | 'strategist' | 'human' | ''
   main_effort: HqObjRef | null
   defend: HqObjRef[]
   supply_priority: HqObjRef[]
@@ -345,6 +359,10 @@ export interface HqView {
   treasury: number
   reserve: number
   gap_factor: number
+  /** PvP AI fill-in (`ai_fill`); absent or null when it is off. */
+  ai_fill?: HqAiFill | null
+  /** The side's will to fight, 0-100 (`war_will`); absent or null when it is off. */
+  will?: number | null
   available: Partial<Record<HqOpKind, number>>
   ops: HqOp[]
   requests: HqRequest[]
@@ -1063,13 +1081,16 @@ export interface Stats {
   blue_online: number
   red_online: number
   /**
-   * Each side's will to fight (ENGINE.md 3.2, work item E5). bfdb does not
-   * send it yet; the SITUATION board shows "awaiting traffic" until it does.
+   * Each side's will to fight (ENGINE.md 3.2, work item E5): the engine's
+   * latest `Stat::WarWill` for the active round. Null with `war_will` off,
+   * or before the engine has sent one; the SITUATION board shows "awaiting
+   * traffic" until then.
    */
   will?: WarWill | null
   /**
    * Story events that have fired this round, oldest first (ENGINE.md 3.4,
-   * E5b). Not sent yet either.
+   * E5b). An event with `repeat` can fire more than once, so `id` is not
+   * unique in the list. Null with `story` off.
    */
   story?: StoryEvent[] | null
 }
@@ -1083,7 +1104,8 @@ export interface SideWill {
 
 /** The biggest recent cause of a swing: "Tuapse refinery burning", -6. */
 export interface WillCause {
-  side: 'Blue' | 'Red'
+  /** bfdb prints the engine's coalition: "Neutral" is possible. */
+  side: 'Blue' | 'Red' | 'Neutral'
   text: string
   delta: number
   time?: string | null
@@ -1106,9 +1128,31 @@ export interface StoryEvent {
   text?: string | null
   /** Pilots or units credited with setting it off. */
   caused_by?: string[] | null
-  side?: 'Blue' | 'Red' | null
+  /** The side the event concerns; "Neutral" is possible. */
+  side?: 'Blue' | 'Red' | 'Neutral' | null
   /** What it changed, one line each ("Red fuel output -40%"). */
   effects?: string[] | null
+}
+
+/** One aircraft type in a side's order of battle (`/api/oob`, ENGINE.md 3.1, E6). */
+export interface OobEntry {
+  /** DCS type name, e.g. "Tu-22M3". */
+  type: string
+  /** Airframes in the side's warehouses; null when the caller may not see
+   *  this side's stock (not their coalition, not logged in). */
+  stock: number | null
+  /** Lost this round: player aircraft and AI aircraft drawn from stock. */
+  lost: number
+  /** An unlimited-aircraft base of the side holds it (never runs out). */
+  unlimited: boolean
+}
+
+/** Both sides' air orders of battle for a round (`ai_air_stock`). Empty
+ *  lists while the engine has sent none. */
+export interface OrderOfBattle {
+  round: number | null
+  blue: OobEntry[]
+  red: OobEntry[]
 }
 
 export interface MapUnit {
@@ -2434,6 +2478,8 @@ export const api = {
   pilotKills: (ucid: string) => get<PilotKill[]>(`/pilot/${ucid}/kills`),
   pilotDeploys: (ucid: string) => get<PilotDeploy[]>(`/pilot/${ucid}/deploys`),
   stats: () => get<Stats>('/stats'),
+  /** Each side's airframes by type and losses this round (`ai_air_stock`). */
+  oob: (round?: number) => get<OrderOfBattle>('/oob' + (round != null ? '?round=' + round : '')),
   /** Build identity of the bfdb serving this dashboard. Not instance-scoped. */
   version: () => get<BuildInfo>('/version'),
   /** Probes the engine, so it is slower than most calls -- poll it, do not

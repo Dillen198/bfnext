@@ -57,7 +57,9 @@ export default function ReplayListPage() {
     <div className="flex flex-col flex-1 overflow-hidden">
       <PageHeader
         icon={PlayCircle}
-        title="FLIGHT REPLAY"
+        title="GUN CAMERA FILM"
+        file="Replay"
+        stamp={<span className="stamp stamp--dim">Archive</span>}
         sub="Every sortie, replayed in 3D or on the map in the browser. No Tacview needed."
       />
       <div className="flex-1 overflow-auto p-4" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

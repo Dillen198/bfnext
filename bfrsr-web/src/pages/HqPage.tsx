@@ -26,9 +26,11 @@ import { useTheme } from '@shared/web/theme'
 import { mapStyleFor } from '../lib/mapStyle'
 import { hqMock, hqMockCommand } from './hqMock'
 import { pressable } from '@shared/web/a11y'
+import { campaign } from '../config/campaign'
+import AiFillBanner, { aiFillLines } from '../components/AiFillBanner'
 
-const SIDE_COLOR = { Blue: '#4a8fd4', Red: '#cc4444', Neutral: '#8a8f80' } as const
-const EFFORT = '#ff8c1a'
+const SIDE_COLOR = { Blue: 'var(--blue)', Red: 'var(--red)', Neutral: 'var(--text-dim)' } as const
+const EFFORT = 'var(--accent)'
 const LINES: HqLine[] = ['air', 'fires', 'logistics', 'troops', 'ground']
 
 const OP_LABEL: Record<HqOpKind, string> = {
@@ -48,6 +50,7 @@ const OP_LABEL: Record<HqOpKind, string> = {
   tanker: 'TANKER',
   naval_strike: 'NAVAL STRIKE',
   air_repair: 'AIR REPAIR',
+  anti_ship: 'ANTI-SHIP',
 }
 const REQUESTS: { kind: HqRequestKind; label: string; friendly: boolean }[] = [
   { kind: 'cas', label: 'CAS', friendly: false },
@@ -62,6 +65,7 @@ const REQUESTS: { kind: HqRequestKind; label: string; friendly: boolean }[] = [
 ]
 const SOURCE_TEXT: Record<string, string> = {
   rules: "HQ's own assessment",
+  story: 'Story event orders',
   strategist: "Strategist's directive",
   human: 'Human orders',
   '': '—',
@@ -77,6 +81,7 @@ function minsAgo(iso: string): string {
   const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60_000))
   return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${m % 60}m`
 }
+const pct = (x: number) => Math.round(Math.max(0, Math.min(1, x)) * 100)
 function minsLeft(iso: string): string {
   const m = Math.max(0, Math.round((Date.parse(iso) - Date.now()) / 60_000))
   return `${m} min`
@@ -91,6 +96,7 @@ const panel: CSSProperties = {
 const label: CSSProperties = {
   fontFamily: 'var(--font-mono)',
   fontSize: '0.62rem',
+  fontWeight: 700,
   letterSpacing: '0.14em',
   color: 'var(--text-dim)',
 }
@@ -98,20 +104,10 @@ const select: CSSProperties = {
   flex: 1, minWidth: 0, background: 'var(--bg-input)', color: 'var(--text)',
   border: '1px solid var(--border-light)', fontSize: '0.72rem', padding: '3px 4px',
 }
-function btn(color: string, disabled = false, on = false): CSSProperties {
-  return {
-    background: on ? color : 'transparent',
-    border: `1px solid ${color}`,
-    color: on ? '#000' : color,
-    fontFamily: 'var(--font-mono)',
-    fontSize: '0.66rem',
-    letterSpacing: '0.08em',
-    padding: '4px 8px',
-    borderRadius: 2,
-    cursor: disabled ? 'not-allowed' : 'pointer',
-    opacity: disabled ? 0.4 : 1,
-  }
-}
+/** A console key; `side` lights it in that side's colour when pressed. */
+const keyCls = (side?: 'Blue' | 'Red') => `rsr-key${side ? ` rsr-key--${side.toLowerCase()}` : ''}`
+/** An unlit key's legend in a colour (a lit key takes the theme's own). */
+const ink = (color: string): CSSProperties => ({ color, padding: '4px 8px' })
 
 function Badge({ color, children }: { color: string; children: string }) {
   return (
@@ -130,10 +126,10 @@ function Weights({ w, color }: { w: Partial<Record<HqLine, number>>; color: stri
         return (
           <div key={l} style={{ display: 'contents' }}>
             <span style={{ ...label, fontSize: '0.58rem' }}>{l.toUpperCase()}</span>
-            <div style={{ height: 4, background: 'rgba(0,0,0,0.45)', borderRadius: 1, overflow: 'hidden' }}>
+            <div style={{ height: 5, background: 'var(--bg-input)', border: '1px solid var(--border)', overflow: 'hidden' }}>
               <div style={{ width: `${Math.min(100, (v / 2.5) * 100)}%`, height: '100%', background: v > 1.05 ? color : v < 0.95 ? 'var(--text-dim)' : 'var(--text-muted)' }} />
             </div>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', color: 'var(--text-muted)', textAlign: 'right' }}>{v.toFixed(1)}</span>
+            <span className="rsr-fig" style={{ fontSize: '0.95rem', textAlign: 'right' }}>{v.toFixed(1)}</span>
           </div>
         )
       })}
@@ -213,10 +209,11 @@ export default function HqPage(): ReactElement {
     }, {}),
   )
   const busy = command.isPending
+  const fill = v.ai_fill ?? null
 
   return (
-    <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
-      <div style={{ flex: 1, position: 'relative', minWidth: 0 }}>
+    <div className="hq-page">
+      <div className="hq-map">
         {initialView && (
           <Map
             ref={mapRef}
@@ -235,8 +232,8 @@ export default function HqPage(): ReactElement {
             {v.picture.enemy_sams.map((c, i) => (
               <Marker key={`s${i}`} latitude={c.pos[0]} longitude={c.pos[1]} anchor="center">
                 <div title={`Known air defence x${c.count}, ${c.age_mins} min old`} style={{
-                  fontFamily: 'var(--font-mono)', fontSize: 8, color: theirs, border: `1px solid ${theirs}`,
-                  padding: '0 3px', borderRadius: 2, background: 'rgba(0,0,0,0.55)',
+                  fontFamily: 'var(--font-mono)', fontSize: 8, fontWeight: 700, color: theirs, border: `1px solid ${theirs}`,
+                  padding: '0 3px', borderRadius: 2, background: 'var(--bg-card-solid)',
                 }}>SAM</div>
               </Marker>
             ))}
@@ -246,7 +243,7 @@ export default function HqPage(): ReactElement {
                   {ops.map((op) => (
                     <div key={op.id} style={{
                       fontFamily: 'var(--font-mono)', fontSize: 8, fontWeight: 700, letterSpacing: '0.06em',
-                      color: '#000', background: ours, padding: '1px 4px', borderRadius: 2, whiteSpace: 'nowrap',
+                      color: 'var(--on-accent)', background: ours, padding: '1px 4px', borderRadius: 2, whiteSpace: 'nowrap',
                     }}>{OP_LABEL[op.kind]}</div>
                   ))}
                 </div>
@@ -257,15 +254,12 @@ export default function HqPage(): ReactElement {
         <style>{`@keyframes hqPulse { 0%,100% { transform: scale(1); opacity: .9 } 50% { transform: scale(1.35); opacity: .35 } }`}</style>
       </div>
 
-      <aside style={{
-        width: 380, flexShrink: 0, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 8,
-        background: 'var(--bg-chrome)', borderLeft: '1px solid var(--border)',
-      }}>
-        <div style={{ ...panel, borderColor: ours }}>
+      <aside className="hq-desk" aria-label="Front HQ">
+        <div style={{ ...panel, borderColor: ours, borderTopWidth: 3 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.35rem', letterSpacing: '0.12em' }}>FRONT HQ</div>
-            <span style={{ marginLeft: 'auto', color: ours, fontFamily: 'var(--font-mono)', fontSize: '0.7rem', letterSpacing: '0.12em' }}>
-              {side.toUpperCase()}
+            <span className={`rsr-side-tag rsr-side-tag--${side.toLowerCase()}`} style={{ marginLeft: 'auto' }}>
+              {side === 'Blue' ? campaign.blueLabel : campaign.redLabel}
             </span>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
@@ -275,15 +269,30 @@ export default function HqPage(): ReactElement {
             <Badge color="var(--text-dim)">{`NEXT PASS ${v.next_think_secs}s`}</Badge>
           </div>
           {adminPick && (
-            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+            <div className="rsr-seg" style={{ marginTop: 8 }} role="group" aria-label="Side to view">
               {(['Blue', 'Red'] as const).map((s) => (
-                <button key={s} style={btn(SIDE_COLOR[s])} onClick={() => setViewSide(s)}>
-                  {viewSide === s ? '● ' : ''}VIEW {s.toUpperCase()}
+                <button key={s} type="button" className={keyCls(s)} aria-pressed={viewSide === s} onClick={() => setViewSide(s)}>
+                  VIEW {(s === 'Blue' ? campaign.blueLabel : campaign.redLabel).toUpperCase()}
                 </button>
               ))}
             </div>
           )}
         </div>
+
+        {fill && (
+          <div style={panel}>
+            <div style={label}>AI SHARE</div>
+            <div style={{ marginTop: 6 }}><AiFillBanner lines={aiFillLines([v])} /></div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginTop: 8 }}>
+              <Stat k="AI PACKAGES" v={`${pct(fill.pressure)}%`} />
+              <Stat k="HQ" v={`${pct(fill.hq_pressure)}%`} />
+              <Stat k="ENEMY MATCH" v={`${pct(fill.enemy_match)}%`} />
+            </div>
+            <div style={{ fontSize: '0.66rem', color: 'var(--text-dim)', marginTop: 6 }}>
+              The AI fights to match the other side's pilots, and steps back as this side's own pilots take slots.
+            </div>
+          </div>
+        )}
 
         {result && (
           <div {...pressable(() => setResult(null), 'Dismiss')} style={{ ...panel, cursor: 'pointer', borderColor: result.ok ? 'var(--accent)' : 'var(--red)', fontSize: '0.74rem' }}>
@@ -370,13 +379,14 @@ export default function HqPage(): ReactElement {
               </span>
               <span style={label}>{minsAgo(op.started)}</span>
               {op.status === 'active' && v.can_command && (
-                <button style={btn('var(--red)', busy)} disabled={busy} onClick={() => send({ kind: 'cancel_op', op: op.id })}>✕</button>
+                <button type="button" className="rsr-key" style={ink('var(--red)')} disabled={busy} aria-label={`Cancel ${OP_LABEL[op.kind]} on ${op.target_name}`}
+                  onClick={() => send({ kind: 'cancel_op', op: op.id })}>✕</button>
               )}
             </div>
           ))}
         </div>
 
-        <RequestPanel v={v} ours={ours} busy={busy} onSend={send} />
+        <RequestPanel v={v} busy={busy} onSend={send} />
 
         {v.can_command ? (
           <CommandPanel key={v.side} v={v} ours={ours} busy={busy} onSend={send} />
@@ -423,7 +433,7 @@ function Stat({ k, v }: { k: string; v: string }) {
   return (
     <div>
       <div style={{ ...label, fontSize: '0.55rem' }}>{k}</div>
-      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.86rem' }}>{v}</div>
+      <div className="rsr-fig" style={{ fontSize: '1.35rem' }}>{v}</div>
     </div>
   )
 }
@@ -443,15 +453,15 @@ function ObjMark({ o, ours, theirs, effort, defend, supply }: {
         }} />
       )}
       <div style={{
-        width: 11, height: 11, transform: 'rotate(45deg)', background: color, border: '1px solid #000',
+        width: 11, height: 11, transform: 'rotate(45deg)', background: color, border: '1px solid var(--bg-input)',
         boxShadow: defend ? `0 0 0 2px ${ours}` : o.capturable && o.owner === 'enemy' ? `0 0 0 2px ${EFFORT}` : undefined,
       }} />
       <div style={{
         marginTop: 3, fontFamily: 'var(--font-mono)', fontSize: 9, whiteSpace: 'nowrap',
-        color: '#e8eadf', textShadow: '0 0 3px #000, 0 0 2px #000',
+        color: 'var(--text)', textShadow: '0 0 3px var(--bg), 0 0 2px var(--bg)',
       }}>{o.name}</div>
       {tags.length > 0 && (
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, fontWeight: 700, color: effort ? EFFORT : ours, textShadow: '0 0 3px #000' }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, fontWeight: 700, color: effort ? EFFORT : ours, textShadow: '0 0 3px var(--bg), 0 0 2px var(--bg)' }}>
           {tags.join(' · ')}
         </div>
       )}
@@ -459,7 +469,7 @@ function ObjMark({ o, ours, theirs, effort, defend, supply }: {
   )
 }
 
-function RequestPanel({ v, ours, busy, onSend }: { v: HqView; ours: string; busy: boolean; onSend: (c: HqCommand) => void }) {
+function RequestPanel({ v, busy, onSend }: { v: HqView; busy: boolean; onSend: (c: HqCommand) => void }) {
   const [kind, setKind] = useState<HqRequestKind>('cas')
   const [target, setTarget] = useState<string>('')
   const friendly = REQUESTS.find((r) => r.kind === kind)?.friendly ?? false
@@ -473,9 +483,9 @@ function RequestPanel({ v, ours, busy, onSend }: { v: HqView; ours: string; busy
       <div style={label}>SUPPORT REQUESTS</div>
       {v.can_request ? (
         <>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+          <div className="hq-keys" style={{ marginTop: 6 }} role="group" aria-label="Kind of support">
             {REQUESTS.map((r) => (
-              <button key={r.kind} style={btn(ours, false, kind === r.kind)} onClick={() => { setKind(r.kind); setTarget('') }}>{r.label}</button>
+              <button key={r.kind} type="button" className={keyCls(v.side)} aria-pressed={kind === r.kind} onClick={() => { setKind(r.kind); setTarget('') }}>{r.label}</button>
             ))}
           </div>
           <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
@@ -483,7 +493,7 @@ function RequestPanel({ v, ours, busy, onSend }: { v: HqView; ours: string; busy
               <option value="">{friendly ? 'Friendly objective…' : 'Enemy objective…'}</option>
               {choices.map((o) => <option key={o.id} value={o.id}>{o.name} ({o.front_km.toFixed(0)} km from the front)</option>)}
             </select>
-            <button style={btn(ours, busy || !target)} disabled={busy || !target}
+            <button type="button" className="rsr-key" style={ink('var(--accent)')} disabled={busy || !target}
               onClick={() => onSend({ kind: 'request', request: kind, objective: Number(target) })}>ASK HQ</button>
           </div>
         </>
@@ -502,7 +512,7 @@ function RequestPanel({ v, ours, busy, onSend }: { v: HqView; ours: string; busy
           </span>
           <span style={label}>{minsAgo(r.created)}</span>
           {r.status === 'open' && (v.can_request || v.can_command) && (
-            <button style={btn('var(--text-dim)', busy)} disabled={busy} title="Withdraw"
+            <button type="button" className="rsr-key" style={ink('var(--text-dim)')} disabled={busy} title="Withdraw" aria-label={`Withdraw request ${r.id}`}
               onClick={() => onSend({ kind: 'cancel_request', request_id: r.id })}>✕</button>
           )}
         </div>
@@ -536,9 +546,10 @@ function CommandPanel({ v, ours, busy, onSend }: { v: HqView; ours: string; busy
   return (
     <div style={{ ...panel, borderColor: ours }}>
       <div style={label}>TAKE COMMAND</div>
-      <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
+      <div className="rsr-seg" style={{ marginTop: 6 }} role="group" aria-label="Posture">
         {(['offensive', 'balanced', 'defensive'] as const).map((p) => (
-          <button key={p} style={btn(ours, false, posture === p)} onClick={() => setPosture(posture === p ? null : p)}>{p.toUpperCase()}</button>
+          <button key={p} type="button" className={keyCls(v.side)} style={{ padding: '4px 8px' }} aria-pressed={posture === p}
+            onClick={() => setPosture(posture === p ? null : p)}>{p.toUpperCase()}</button>
         ))}
       </div>
       <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
@@ -554,11 +565,12 @@ function CommandPanel({ v, ours, busy, onSend }: { v: HqView; ours: string; busy
         </select>
       </div>
       <div style={{ ...label, marginTop: 8 }}>OPERATIONS THE HQ MAY RUN</div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+      <div className="hq-keys" style={{ marginTop: 4 }} role="group" aria-label="Operations the HQ may run">
         {kinds.map((k) => {
           const off = disabled.includes(k)
           return (
-            <button key={k} style={btn(off ? 'var(--text-dim)' : ours, false, !off)} title={`${v.available[k]} treasury`}
+            <button key={k} type="button" className={keyCls(v.side)} aria-pressed={!off} title={`${v.available[k]} treasury`}
+              style={off ? { textDecoration: 'line-through' } : undefined}
               onClick={() => setDisabled(off ? disabled.filter((d) => d !== k) : [...disabled, k])}>
               {OP_LABEL[k]}
             </button>
@@ -572,12 +584,12 @@ function CommandPanel({ v, ours, busy, onSend }: { v: HqView; ours: string; busy
         </select>
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-        <button style={btn(ours, busy)} disabled={busy} onClick={() => order(false)}>ISSUE ORDERS</button>
-        <button style={btn('var(--yellow)', busy)} disabled={busy} onClick={() => order(!v.paused)}>
+        <button type="button" className="rsr-key" style={ink('var(--accent)')} disabled={busy} onClick={() => order(false)}>ISSUE ORDERS</button>
+        <button type="button" className="rsr-key" style={ink('var(--yellow)')} disabled={busy} onClick={() => order(!v.paused)}>
           {v.paused ? 'RESUME PLANNING' : 'PAUSE PLANNING'}
         </button>
         {v.override && (
-          <button style={btn('var(--text-dim)', busy)} disabled={busy} onClick={() => onSend({ kind: 'clear_override' })}>HAND BACK TO HQ</button>
+          <button type="button" className="rsr-key" style={ink('var(--text-muted)')} disabled={busy} onClick={() => onSend({ kind: 'clear_override' })}>HAND BACK TO HQ</button>
         )}
       </div>
       <div style={{ fontSize: '0.66rem', color: 'var(--text-dim)', marginTop: 6 }}>

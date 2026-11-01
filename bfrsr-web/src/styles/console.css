@@ -230,6 +230,7 @@ body { font-size: 13px; }
   --yellow: #735400;
   --orange: #8f430a;
   --accent: #8a4b00;
+  --on-accent: #fffdf6;
   --accent-glow: rgba(138,75,0,0.08);
   --accent-border: rgba(138,75,0,0.40);
   --border: #cbc2aa;
@@ -526,6 +527,7 @@ body { font-size: 13px; }
   --accent-bright: #ffc845;
   --accent-border: rgba(255,176,0,0.36);
   --accent-glow: rgba(255,176,0,0.10);
+  --on-accent: #14100a;
   --blue: #8db4d9;
   --red: #f0685a;
   --yellow: #e8c34a;
@@ -1055,6 +1057,183 @@ body { font-size: 13px; }
    personnel files) carry a stamp in the header's right corner. */
 .page-header-stamp { margin-left: 12px; }
 
+/* Console keys: page tabs and switches (period, side, view) as push-keys.
+   A row of them sits in a .rsr-seg bezel; a lone one is a .rsr-key. The
+   pressed key is lit amber; a side key lights in its side's colour. On
+   paper the pressed key is inked in solid. */
+.rsr-seg {
+  display: inline-flex;
+  flex-shrink: 0;
+  max-width: 100%;
+  border: 1px solid #050607;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px var(--border);
+  overflow: hidden;
+}
+.rsr-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid #050607;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #2b3137 0%, #22272c 60%, #1d2125 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1.3;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.rsr-seg > .rsr-key { border: none; border-right: 1px solid #050607; border-radius: 0; }
+.rsr-seg > .rsr-key:last-child { border-right: none; }
+.rsr-key:hover { color: var(--text); }
+.rsr-key:disabled { opacity: 0.5; cursor: default; }
+.rsr-key[aria-pressed="true"],
+.rsr-key.active {
+  --lit: var(--accent);
+  color: var(--lit);
+  background: linear-gradient(180deg, #1c1a14 0%, #15130e 100%);
+  box-shadow: inset 0 2px 0 var(--lit), inset 0 0 12px rgba(0,0,0,0.6);
+  text-shadow: 0 0 6px var(--accent-glow);
+}
+.rsr-key--blue[aria-pressed="true"], .rsr-key--blue.active { --lit: var(--blue); }
+.rsr-key--red[aria-pressed="true"],  .rsr-key--red.active  { --lit: var(--red); }
+:root[data-theme="light"] .rsr-key {
+  background: var(--bg-card-solid);
+  border-color: var(--border-light);
+  box-shadow: none;
+  color: var(--text-muted);
+}
+:root[data-theme="light"] .rsr-seg { border-color: var(--border-light); box-shadow: none; }
+:root[data-theme="light"] .rsr-seg > .rsr-key { border-right-color: var(--border-light); }
+:root[data-theme="light"] .rsr-key:hover { color: var(--text); background: var(--bg-hover); }
+:root[data-theme="light"] .rsr-key[aria-pressed="true"],
+:root[data-theme="light"] .rsr-key.active {
+  background: var(--lit);
+  color: var(--on-accent);
+  box-shadow: none;
+  text-shadow: none;
+}
+
+/* A figure read off the console: amber phosphor in VT323, typed on paper. */
+.rsr-fig {
+  font-family: var(--font-crt);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  color: var(--amber);
+  text-shadow: 0 0 5px var(--amber-glow);
+}
+.rsr-fig--blue { color: var(--blue); text-shadow: 0 0 5px var(--blue-bg); }
+.rsr-fig--red  { color: var(--red); text-shadow: 0 0 5px var(--red-bg); }
+.rsr-fig--dim  { color: var(--text-muted); text-shadow: none; }
+:root[data-theme="light"] .rsr-fig { text-shadow: none; }
+
+/* A side tag: the side's name on its own colour, as on a status board. */
+.rsr-side-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.rsr-side-tag--blue { color: var(--blue); background: var(--blue-bg); }
+.rsr-side-tag--red  { color: var(--red); background: var(--red-bg); }
+
+/* A typed form line: label in small capitals, the entry after it. Used by
+   the debrief, the rounds report and the squadron files. */
+.rsr-form-label {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* The AI share (components/AiFillBanner): per side, its pilots and how hard
+   its AI is fighting. On Front HQ a strip; on the home a line under the
+   CRT bank's counters. */
+.ai-fill { display: flex; flex-direction: column; gap: 5px; }
+.ai-fill-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.ai-fill-tag { padding: 1px 7px; font-size: 0.6rem; min-width: 64px; justify-content: center; }
+.ai-fill-num { font-size: 1.2rem; vertical-align: -2px; }
+.ai-fill-led + .ai-fill-item::before,
+.ai-fill-item + .ai-fill-item::before { content: '·'; margin-right: 8px; opacity: 0.7; }
+.ai-fill-led {
+  padding: 0 5px;
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  color: var(--accent);
+  font-size: 0.58rem;
+}
+.ai-fill--compact {
+  grid-column: 1 / -1;
+  gap: 3px;
+  margin-top: 4px;
+  padding: 6px 8px 2px;
+  border-top: 1px dashed currentColor;
+}
+.crt .ai-fill--compact { border-top-color: var(--crt-ink); }
+.crt .ai-fill-line { color: var(--crt-ink); }
+.ai-fill--compact .ai-fill-line { font-size: 0.6rem; gap: 2px 8px; }
+.ai-fill--compact .ai-fill-num { font-size: 1.05rem; }
+
+/* FRONT HQ (pages/HqPage): the plot beside the HQ's desk. On a phone the
+   desk goes under a shorter plot and the page scrolls. */
+.hq-page { display: flex; height: 100%; min-height: 0; }
+.hq-map { flex: 1; position: relative; min-width: 0; }
+.hq-desk {
+  width: 380px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-chrome);
+  border-left: 1px solid var(--border);
+}
+.hq-label {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.hq-keys { display: flex; flex-wrap: wrap; gap: 4px; }
+.hq-keys .rsr-key { padding: 4px 8px; }
+@media (max-width: 860px) {
+  .hq-page { flex-direction: column; overflow-y: auto; }
+  .hq-map { flex: none; height: 42vh; min-height: 240px; }
+  .hq-desk { flex: none; width: auto; overflow: visible; border-left: none; border-top: 1px solid var(--border); }
+}
+
 /* ═══════════════════════════════════════════════════════════════
    6. THE PLOT AND THE SCOPE
    The plot page (/map) and the GCI scope stay dark, as radar scopes:
@@ -1078,3 +1257,110 @@ body { font-size: 13px; }
     repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 3px),
     radial-gradient(ellipse 125% 95% at 50% 45%, transparent 55%, rgba(0, 0, 0, 0.6) 100%);
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   7. THE ORDER OF BATTLE
+   Each side's regiment roll: an airframe per line, the strength read
+   off in phosphor, losses in red, a strength bar under it. A side's
+   stock the viewer may not see is blacked out and stamped. Consoles in
+   the dark room, typed returns on paper.
+   ═══════════════════════════════════════════════════════════════ */
+.oob-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: 12px; }
+.oob-total {
+  display: grid;
+  grid-template-columns: auto repeat(3, max-content);
+  justify-content: start;
+  align-items: center;
+  gap: 10px 22px;
+  padding: 10px 14px;
+}
+/* A phone: the side's tag over a row of three figures. */
+@media (max-width: 480px) {
+  .oob-total { grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 10px; align-items: end; }
+  .oob-total > .rsr-side-tag { grid-column: 1 / -1; justify-self: start; }
+  .oob-total-fig .rsr-fig { font-size: 1.8rem; }
+}
+.oob-total-fig { display: flex; flex-direction: column; gap: 3px; }
+.oob-total-fig .rsr-fig { font-size: 2.1rem; }
+.oob-label {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.oob-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 16px; align-items: start; }
+.oob-roll { --side: var(--accent); min-width: 0; border-top: 3px solid var(--side); }
+.oob-roll--blue { --side: var(--blue); }
+.oob-roll--red  { --side: var(--red); }
+.oob-role {
+  padding: 8px 14px 4px;
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+.oob-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 4.6rem 3.4rem;
+  column-gap: 10px;
+  row-gap: 5px;
+  align-items: center;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.oob-row:last-child { border-bottom: none; }
+.oob-row--head { padding-top: 6px; padding-bottom: 6px; }
+.oob-row--head > span:nth-child(n+2) { text-align: right; }
+.oob-type {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.oob-type > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oob-num { text-align: right; font-size: 1.45rem; }
+.oob-unl {
+  flex-shrink: 0;
+  padding: 0 4px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  font-size: 0.54rem;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+}
+.oob-classified { justify-self: end; }
+.oob-bar {
+  grid-column: 1 / -1;
+  display: flex;
+  height: 5px;
+  background: rgba(0,0,0,0.35);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.6);
+}
+.oob-bar-stock { background: var(--side); }
+.oob-bar-lost { background: repeating-linear-gradient(45deg, var(--red) 0 2px, transparent 2px 4px); }
+.oob-bar--unl .oob-bar-stock { background: repeating-linear-gradient(90deg, var(--side) 0 6px, transparent 6px 8px); }
+/* Blacked out, as a censor's marker does it. */
+.oob-bar--redacted { background: #050607; box-shadow: none; }
+:root[data-theme="light"] .oob-row { border-bottom-style: dashed; border-bottom-color: var(--border-light); }
+:root[data-theme="light"] .oob-bar { background: transparent; box-shadow: inset 0 0 0 1px var(--border-light); }
+:root[data-theme="light"] .oob-bar--redacted { background: #1d1b17; box-shadow: none; }
+
+/* The SITUATION board's losses line, read off the order of battle. */
+.sit-losses {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  text-decoration: none;
+}
+.sit-losses .rsr-fig { font-size: 1.35rem; margin-left: 4px; }
+.sit-losses-go { margin-left: auto; font-weight: 700; color: var(--accent); }
+.sit-losses:hover .sit-losses-go { text-decoration: underline; }
+:root[data-theme="light"] .oob-roll { border-top: 3px solid var(--side); }

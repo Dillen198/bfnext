@@ -64,6 +64,9 @@ export function moreGroups(user: Viewer, links: { wikiUrl?: string; donationUrl?
       items: [
         { to: '/intel', label: 'Recon intel', locked: coalitionLock('/intel', user) },
         { to: '/command', label: 'Ground command', locked: coalitionLock('/command', user) },
+        // Public: losses are reported to all; each side's stock is
+        // classified by bfdb, not by the menu.
+        { to: '/oob', label: 'Order of battle' },
       ],
     },
     {

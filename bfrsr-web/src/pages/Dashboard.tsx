@@ -5,9 +5,11 @@
 // will to fight and the front line; on the right the latest dispatch as a
 // clipping, the teletype roll of engagements and the war so far.
 //
-// Will to fight and story events are drawn now, but the server does not send
-// them yet (ENGINE.md E5, E5b): those panels say "awaiting traffic" until
-// `stats.will` / `stats.story` arrive. Nothing on this page is invented.
+// Will to fight and story events come with `/api/stats` (`stats.will`,
+// `stats.story`, ENGINE.md E5, E5b); with those features off, or before the
+// engine has reported, the panels say "awaiting traffic". The losses line
+// under the forces is the order of battle's (`/api/oob`, E6). Nothing on
+// this page is invented.
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -15,14 +17,16 @@ import { Link, useNavigate } from 'react-router-dom'
 import { Alert, RefreshCw } from '@icons'
 import {
   API_ROOT, api,
-  type Frontlines, type Kill, type NewsDay, type Objective, type OnlinePilot, type Pilot, type PilotName,
+  type Frontlines, type Kill, type NewsDay, type Objective, type OnlinePilot, type OrderOfBattle, type Pilot, type PilotName,
   type Stats, type StoryEvent, type WarWill,
 } from '../api'
 import { campaign } from '../config/campaign'
 import { BRAND } from '../config/redstorm'
 import TacMap from '../components/TacMap'
+import AiFillBanner, { useAiFillLines } from '../components/AiFillBanner'
 import ObjectiveDrawer from '../components/ObjectiveDrawer'
 import { attentionList, TONE, type Attention } from '../lib/objectives'
+import { oobEmpty, oobTotals, useOrderOfBattle } from '../lib/oob'
 import { ResponsiveContainer, AreaChart, Area, YAxis } from 'recharts'
 import { classifyTargetClass, fmtTimeZ, windDir, visStr, cloudStr } from '../lib/format'
 import { useRound } from '../context/RoundContext'
@@ -106,6 +110,8 @@ function ForcesBank({ online, objectives, atRisk, lastHour, stats }: {
   const blueDelta = useDelta(blueObj)
   const redDelta = useDelta(redObj)
   const pct = (n: number) => `${total > 0 ? Math.round(n / total * 100) : 0}% of ground`
+  // Only for a viewer with a side (or an admin), and only when the engine sends it.
+  const aiFill = useAiFillLines()
   return (
     <div className="crt sit-forces">
       <Counter label={`${campaign.blueLabel} on net`} value={blue} tone="blue" sub={`${up('Blue')} airborne`} />
@@ -116,7 +122,26 @@ function ForcesBank({ online, objectives, atRisk, lastHour, stats }: {
       <Counter label="Kills · last hour" value={lastHour.all} sub={`${lastHour.blue} by ${campaign.blueLabel} · ${lastHour.red} by ${campaign.redLabel}`} />
       <Counter label="Aircrew on file" value={stats?.total_pilots ?? '—'} sub={`${stats?.blue_registered ?? 0} ${campaign.blueLabel} · ${stats?.red_registered ?? 0} ${campaign.redLabel}`} />
       <Counter label="Objectives" value={total} sub={`${total - blueObj - redObj} neutral`} />
+      <AiFillBanner lines={aiFill} compact />
     </div>
+  )
+}
+
+// ── Losses: the order of battle's totals ─────────────────────────────────────
+
+/** Each side's aircraft lost this round, off the order of battle, linking to
+ *  it. Nothing while the engine sends none (`ai_air_stock` off). */
+export function LossesStrip({ oob }: { oob: OrderOfBattle | undefined }) {
+  if (oobEmpty(oob)) return null
+  const blue = oobTotals(oob!.blue).lost
+  const red = oobTotals(oob!.red).lost
+  return (
+    <Link to="/oob" className="crt sit-metar sit-losses" aria-label={`Losses this round: ${campaign.blueLabel} ${blue}, ${campaign.redLabel} ${red}. Order of battle`}>
+      <span>LOSSES · THIS ROUND</span>
+      <span style={{ color: 'var(--blue)' }}>{campaign.blueLabel.toUpperCase()}<b className="rsr-fig rsr-fig--blue" data-testid="losses-blue">{blue}</b></span>
+      <span style={{ color: 'var(--red)' }}>{campaign.redLabel.toUpperCase()}<b className="rsr-fig rsr-fig--red" data-testid="losses-red">{red}</b></span>
+      <span className="sit-losses-go">ORDER OF BATTLE →</span>
+    </Link>
   )
 }
 
@@ -253,8 +278,10 @@ export function WarSoFar({ story }: { story: StoryEvent[] | null | undefined }) 
   }
   return (
     <div className="vs-card">
-      {[...story].reverse().slice(0, 8).map(e => (
-        <div key={e.id} className="story-item">
+      {/* An event with `repeat` fires more than once a round: its id is
+          not a key on its own. */}
+      {[...story].reverse().slice(0, 8).map((e, i) => (
+        <div key={`${e.id}@${e.time}#${i}`} className="story-item">
           <span className="story-time">{fmtTimeZ(e.time)}</span>
           <div style={{ minWidth: 0 }}>
             <div className="story-title" style={{ color: sideColor(e.side) === 'var(--text-dim)' ? 'var(--text)' : sideColor(e.side) }}>{e.title}</div>
@@ -449,6 +476,7 @@ export default function Dashboard() {
   const { data: captures = [] } = useQuery({ queryKey: ['capture-events', selectedRound], queryFn: () => api.captureEvents(selectedRound, 200), refetchInterval: 60_000 })
   const { data: rounds = [] } = useQuery({ queryKey: ['rounds'], queryFn: () => api.rounds(), refetchInterval: 5 * 60_000 })
   const { data: news, error: newsErr } = useQuery({ queryKey: ['news'], queryFn: () => api.news(5), refetchInterval: 5 * 60_000 })
+  const { data: oob } = useOrderOfBattle(selectedRound)
   const [drawer, setDrawer] = useState<string | null>(null)
 
   const nameMap = useMemo(() => {
@@ -525,6 +553,7 @@ export default function Dashboard() {
         <div className="sit-col sit-left">
           <BoardHead>Forces</BoardHead>
           <ForcesBank online={online} objectives={objectives} atRisk={atRisk} lastHour={lastHour} stats={stats} />
+          <LossesStrip oob={oob} />
           <BoardHead>Holdings</BoardHead>
           <Holdings objectives={objectives} roundId={roundId} />
           <BoardHead>Will to fight</BoardHead>

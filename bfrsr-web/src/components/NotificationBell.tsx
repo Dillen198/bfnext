@@ -87,7 +87,7 @@ export default function NotificationBell() {
             aria-hidden="true"
             style={{
               position: 'absolute', top: -5, right: -5, minWidth: 16, height: 16, padding: '0 4px',
-              boxSizing: 'border-box', borderRadius: 8, background: 'var(--accent)', color: '#000',
+              boxSizing: 'border-box', borderRadius: 8, background: 'var(--accent)', color: 'var(--on-accent)',
               fontSize: '0.58rem', fontWeight: 700, lineHeight: '16px', textAlign: 'center',
               fontFamily: 'var(--font-mono)',
             }}

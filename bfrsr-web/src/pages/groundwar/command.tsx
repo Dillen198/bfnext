@@ -240,6 +240,7 @@ const OP_LABEL: Partial<Record<HqOpKind, string>> = {
   cap: 'CAP', strike: 'STRIKE', sead: 'SEAD', recon: 'RECON', artillery: 'ARTILLERY', missile_strike: 'MISSILES',
   ambush: 'AMBUSH', convoy: 'CONVOY', helo_supply: 'HELO SUPPLY', helo_troops: 'HELO TROOPS', reinforce: 'REINFORCE',
   bomber: 'BOMBER', awacs: 'AWACS', tanker: 'TANKER', naval_strike: 'NAVAL STRIKE', air_repair: 'AIR REPAIR',
+  anti_ship: 'ANTI-SHIP',
 }
 
 const CATEGORY_ORDER = ['Air', 'Fires', 'Ground', 'Naval', 'Logistics', 'Intel']

@@ -298,7 +298,7 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [], route = 
             onDragEnd={e => place(p.segs, e.lngLat.lat, e.lngLat.lng, getAt(ctx.value, p.segs) as JsonObject)}
             onClick={e => e.originalEvent.stopPropagation()}>
             <div title={`${p.label}${p.editable ? ' (drag to move)' : ''}`} style={{
-              padding: '1px 5px', borderRadius: 3, background: '#40a6ff', color: '#04121f', fontSize: 10, fontWeight: 800,
+              padding: '1px 5px', borderRadius: 3, background: '#8db4d9', color: '#04121f', fontSize: 10, fontWeight: 800,
               border: '1px solid #04121f', cursor: p.editable ? 'move' : 'default', whiteSpace: 'nowrap',
             }}>{p.label}</div>
           </Marker>
@@ -381,7 +381,7 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [], route = 
         </label>
       )}
       <div style={{ position: 'absolute', left: 8, bottom: 8, padding: '4px 8px', borderRadius: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', fontSize: '0.62rem', color: 'var(--text-dim)', pointerEvents: 'none' }}>
-        {selecting ? <>{boxCorner ? 'Click the opposite corner of the area.' : 'Click one corner of the area to pick from, then the opposite one. Or click things one by one.'}</> : full ? <span style={{ color: '#f0a030' }}>{full}</span> : drawing ? hint(drawing, sel, flag, !!corner, drawn) : route ? <>Click the map to add waypoint <b style={{ color: 'var(--text)' }}>{plan.waypoints.length + 1}</b>. Drag a waypoint to move it, right-click to delete it.</> : slot && !add ? <>Click the map to place <b style={{ color: 'var(--text)' }}>{slot.label}</b>. Red outline: release zone; drag ◆ the launch point or ○ the heading handle.</> : add ? <>Click the map to add a point to <b style={{ color: 'var(--text)' }}>{add.label}</b>. Drag a blue marker to move it.</> : <><span style={{ color: '#facc15' }}>●</span> your route · <span style={{ color: '#40a6ff' }}>■</span> this page · <span style={{ color: '#9aa3ad' }}>●</span> other cartridge points and lines</>}
+        {selecting ? <>{boxCorner ? 'Click the opposite corner of the area.' : 'Click one corner of the area to pick from, then the opposite one. Or click things one by one.'}</> : full ? <span style={{ color: '#f0a030' }}>{full}</span> : drawing ? hint(drawing, sel, flag, !!corner, drawn) : route ? <>Click the map to add waypoint <b style={{ color: 'var(--text)' }}>{plan.waypoints.length + 1}</b>. Drag a waypoint to move it, right-click to delete it.</> : slot && !add ? <>Click the map to place <b style={{ color: 'var(--text)' }}>{slot.label}</b>. Red outline: release zone; drag ◆ the launch point or ○ the heading handle.</> : add ? <>Click the map to add a point to <b style={{ color: 'var(--text)' }}>{add.label}</b>. Drag a blue marker to move it.</> : <><span style={{ color: '#facc15' }}>●</span> your route · <span style={{ color: '#8db4d9' }}>■</span> this page · <span style={{ color: '#9aa3ad' }}>●</span> other cartridge points and lines</>}
       </div>
     </div>
   )
@@ -395,7 +395,7 @@ const panel = {
 } as const
 
 /** One colour per line, the same in the toolbar and on the map. */
-const PALETTE = ['#f472b6', '#34d399', '#fbbf24', '#a78bfa', '#f87171', '#60a5fa', '#fb923c', '#2dd4bf']
+const PALETTE = ['#ffb000', '#7fc06a', '#e8c34a', '#8db4d9', '#f0685a', '#c9a24a', '#ec8f45', '#dde0db']
 const lineColour = (sh: { index: number }) => PALETTE[sh.index % PALETTE.length]
 
 function hint(list: ShapeList, sel: number | null, flag: number, cornerSet: boolean, drawn: { index: number; name: string; pts: unknown[] }[]) {

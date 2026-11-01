@@ -30,6 +30,7 @@ export const hqMock: HqView = {
   treasury: 4820,
   reserve: 300,
   gap_factor: 0.82,
+  ai_fill: { pilots: 5, enemy_pilots: 0, enemy_match: 0.6, pressure: 0.35, hq_pressure: 0.82, ai_led: false },
   available: { bomber: 350, awacs: 200, tanker: 150, cap: 250, strike: 300, sead: 300, recon: 120, artillery: 150, convoy: 80, helo_supply: 120, helo_troops: 180, reinforce: 250 },
   ops: [
     { id: 41, kind: 'helo_troops', line: 'troops', target: 12, target_name: 'Gori', pos: [41.98, 44.11], started: ago(4), cost: 180, status: 'active', detail: 'helo starting up', request: null, support: [] },

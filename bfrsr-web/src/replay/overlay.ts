@@ -9,12 +9,13 @@ import { isWeapon, type Kind, type State } from './data'
 
 export type SideKey = 'blue' | 'red' | 'other'
 
-/** Tacview's palette, slightly muted for the dark map. */
+/** On the map canvas: the sides as the plot draws them on dark imagery
+ *  (steel blue, Soviet red); phosphor green for the followed aircraft. */
 export const SIDE_COLOR: Record<SideKey | 'focus' | 'target', string> = {
-  blue: '#3d9bff',
-  red: '#ff4747',
+  blue: '#8db4d9',
+  red: '#f0685a',
   other: '#e2c044',
-  focus: '#b6f04a',
+  focus: '#4be37f',
   target: '#ffffff',
 }
 

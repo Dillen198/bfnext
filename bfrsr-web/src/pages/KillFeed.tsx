@@ -16,6 +16,7 @@ import {
 } from '@icons'
 import { useRound } from '../context/RoundContext'
 import { useTableSort, SortTh } from '../components/SortableTh'
+import { campaign } from '../config/campaign'
 
 type KillCol = 'time' | 'category' | 'killer' | 'airframe' | 'weapon' | 'target' | 'victim'
 const KILL_COLS: { label: string; key: KillCol }[] = [
@@ -28,6 +29,11 @@ const KILL_COLS: { label: string; key: KillCol }[] = [
   { label: 'Victim', key: 'victim' },
 ]
 
+/** A category's ink, and the same ink washed out behind its label. */
+function tone(color: string): { color: string; bg: string } {
+  return { color, bg: `color-mix(in srgb, ${color} 12%, transparent)` }
+}
+
 // Classify from DCS unit type name (target_type field contains the DCS type string)
 function classifyTarget(targetType: string | null): { label: string; color: string; bg: string; icon?: IconComponent } {
   const t = (targetType ?? '').toLowerCase()
@@ -35,38 +41,38 @@ function classifyTarget(targetType: string | null): { label: string; color: stri
   if (
     /\bf-\d|\bf\/a-|\bf-16|f-18|f-15|mig-|su-\d|a-10|av-8|eurofighter|typhoon|tornado|rafale|gripen|mirage|hawk|hornet|viper|eagle|flanker|fullback|frogfoot|fencer|foxbat|foxhound|warthog|harrier|phantom|lightning|hercules|globemaster|strategic/.test(t) ||
     /aircraft|plane|jet|fighter|bomber|transport|tanker|awacs|recon/.test(t)
-  ) return { label: 'AIRCRAFT', color: '#60a5fa', bg: '#60a5fa18', icon: Aircraft }
+  ) return { label: 'AIRCRAFT', ...tone('var(--accent)'), icon: Aircraft }
   // Helicopter patterns
   if (/mi-|uh-|ah-|ch-|ka-|sa-\d|heli|huey|apache|blackhawk|chinook|hind|hip|havoc|hokum|seahawk|lynx|gazelle/.test(t) ||
     /helicopter|helo|rotary/.test(t)
-  ) return { label: 'HELO', color: '#38bdf8', bg: '#38bdf818', icon: Helicopter }
+  ) return { label: 'HELO', ...tone('var(--yellow)'), icon: Helicopter }
   // Naval
   if (/ship|boat|frigate|destroyer|carrier|corvette|patrol|naval|lha|cvn|ddg|ffg|slava|kuznetsov|perry|oliver|oliver hazard/.test(t))
-    return { label: 'NAVAL', color: '#06b6d4', bg: '#06b6d418', icon: Ship }
+    return { label: 'NAVAL', ...tone('var(--blue)'), icon: Ship }
   // Armor
   if (/t-\d{2,3}|m1|m60|leopard|challenger|abrams|merkava|k1|leclerc|tank|apc|ifv|bmp-|btr-|bradley|marder|warrior|cv90|stryker|armored/.test(t) ||
     /armor|tank/.test(t)
-  ) return { label: 'ARMOR', color: '#f97316', bg: '#f9731618', icon: Armor }
+  ) return { label: 'ARMOR', ...tone('var(--orange)'), icon: Armor }
   // Air defence
   if (/sa-\d|s-300|s-400|patriot|hawk|roland|gepard|tunguska|shilka|flak|aaa|vulcan|linebacker|tor|buk|kub|sa-6|sa-8|sa-10|sa-11|sa-13|sa-15|sa-19|radar|tre|str|fan song|search|track|acquisition|crow bar|straight flush|flap lid|clam shell|dog ear|fire dome|low blow/.test(t) ||
     /sam |manpad|stinger|igla|strela|air.def/.test(t)
-  ) return { label: 'AIR DEF', color: '#a78bfa', bg: '#a78bfa18', icon: Sam }
+  ) return { label: 'AIR DEF', ...tone('var(--red)'), icon: Sam }
   // Artillery / MLRS
   if (/2s\d|m109|paladin|pzh|as-90|caesar|howitzer|mlrs|bm-21|bm-30|smerch|uragan|grad|artillery|mortar/.test(t))
-    return { label: 'ARTY', color: '#fb923c', bg: '#fb923c18', icon: Arty }
+    return { label: 'ARTY', ...tone('var(--brass)'), icon: Arty }
   // Infantry
   if (/infantry|soldier|troop|manpad|squad|sniper|atgm crew|stinger crew/.test(t))
-    return { label: 'INF', color: '#22c55e', bg: '#22c55e18', icon: Infantry }
+    return { label: 'INF', ...tone('var(--green)'), icon: Infantry }
   // Logistics / vehicles
   if (/truck|supply|ural|kamaz|zil|hemtt|fmtv|mhz|logistics|cargo|transport|car|suv|jeep|humvee|hmmwv|land rover/.test(t))
-    return { label: 'VEHICLE', color: '#fbbf24', bg: '#fbbf2418', icon: Logistics }
+    return { label: 'VEHICLE', ...tone('var(--map-green)'), icon: Logistics }
   // Radar / EW
   if (/radar|ew |elint|jammer/.test(t))
-    return { label: 'RADAR', color: '#e879f9', bg: '#e879f918', icon: Radar }
+    return { label: 'RADAR', ...tone('var(--text-muted)'), icon: Radar }
   // Structure
   if (/building|structure|depot|hangar|bunker|farp|warehouse|fuel|ammo|command|cp |hq /.test(t))
-    return { label: 'STRUCT', color: '#94a3b8', bg: '#94a3b818', icon: Structure }
-  return { label: 'GND', color: '#64748b', bg: '#64748b18' }
+    return { label: 'STRUCT', ...tone('var(--text-muted)'), icon: Structure }
+  return { label: 'GND', ...tone('var(--text-dim)') }
 }
 
 // ── Filters ───────────────────────────────────────────────────────────────────
@@ -148,8 +154,8 @@ function BarList({ rows, empty }: { rows: { key: string; label: React.ReactNode;
       {rows.map(r => (
         <React.Fragment key={r.key}>
           <span style={{ fontSize: '0.68rem', color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.title}>{r.label}</span>
-          <div style={{ height: 8, background: 'rgba(148,163,184,0.1)', borderRadius: 2 }}>
-            <div style={{ width: `${(r.value / max) * 100}%`, height: '100%', background: 'var(--accent)', borderRadius: '0 4px 4px 0' }} />
+          <div style={{ height: 8, background: 'var(--bg-elevated)', boxShadow: 'inset 0 0 0 1px var(--border)' }}>
+            <div style={{ width: `${(r.value / max) * 100}%`, height: '100%', background: 'var(--accent)' }} />
           </div>
           <span className="font-mono" style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>{r.value}</span>
         </React.Fragment>
@@ -340,14 +346,14 @@ export default function KillFeed() {
         {/* ── Stat row ── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {([
-            { name: 'Kills by Blue', value: stats.blue, color: BLUE },
-            { name: 'Kills by Red', value: stats.red, color: RED },
+            { name: `Kills by ${campaign.blueLabel}`, value: stats.blue, color: BLUE },
+            { name: `Kills by ${campaign.redLabel}`, value: stats.red, color: RED },
             { name: 'Exchange (Blue:Red)', value: ratio, color: 'var(--accent)' },
             { name: 'By players', value: `${shown.length ? Math.round((stats.players / shown.length) * 100) : 0}%`, color: 'var(--accent)', note: `${stats.pvp} player-vs-player` },
           ] as const).map(s => (
             <div key={s.name} className="vs-card p-4" style={{ borderTop: `2px solid ${s.color}` }}>
               <div style={label}>{s.name}</div>
-              <div style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--text)', lineHeight: 1.1, marginTop: 4 }}>{s.value}</div>
+              <div className={`rsr-fig${s.color === BLUE ? ' rsr-fig--blue' : s.color === RED ? ' rsr-fig--red' : ''}`} style={{ fontSize: '2.1rem', marginTop: 4 }}>{s.value}</div>
               {'note' in s && <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', marginTop: 2 }}>{s.note}</div>}
             </div>
           ))}
@@ -366,7 +372,7 @@ export default function KillFeed() {
                     <XAxis dataKey="label" tick={{ fill: 'var(--text-dim)', fontSize: 9 }} axisLine={false} tickLine={false} minTickGap={24} />
                     <YAxis tick={{ fill: 'var(--text-dim)', fontSize: 10 }} axisLine={false} tickLine={false} allowDecimals={false} width={36} tickFormatter={(v: number) => String(Math.abs(v))} />
                     <ReferenceLine y={0} stroke="var(--border-light)" />
-                    <Tooltip cursor={{ fill: 'rgba(148,163,184,0.08)' }} content={<ActivityTip />} />
+                    <Tooltip cursor={{ fill: 'var(--accent-glow)' }} content={<ActivityTip />} />
                     <Bar dataKey="blue" stackId="k" fill={BLUE} maxBarSize={24} radius={[4, 4, 0, 0]} isAnimationActive={false} />
                     <Bar dataKey="red" stackId="k" fill={RED} maxBarSize={24} radius={[0, 0, 4, 4]} isAnimationActive={false} />
                   </BarChart>

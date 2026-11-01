@@ -110,6 +110,8 @@ export default function ConfigEditorPage() {
       <PageHeader art="abrams"
         icon={Config}
         title="CONFIG EDITOR"
+        file="Config"
+        stamp={<span className="stamp">Restricted</span>}
         sub="Campaign engine configuration — restricted access"
         right={
           dirty ? (
@@ -118,7 +120,7 @@ export default function ConfigEditorPage() {
               disabled={saveState === 'saving'}
               className="flex items-center gap-2"
               style={{
-                fontSize: '0.7rem', color: '#000', background: 'var(--accent)', border: 'none',
+                fontSize: '0.7rem', color: 'var(--on-accent)', background: 'var(--accent)', border: 'none',
                 padding: '0.45rem 1rem', borderRadius: 3, cursor: saveState === 'saving' ? 'not-allowed' : 'pointer',
                 opacity: saveState === 'saving' ? 0.7 : 1, fontWeight: 600, letterSpacing: '0.04em',
               }}
@@ -139,7 +141,7 @@ export default function ConfigEditorPage() {
         <div style={{ padding: '1rem' }}>
           <div className="vs-card" style={{ padding: '1.5rem', border: '1px solid rgba(245,158,11,0.4)' }}>
             <div className="flex items-center gap-2" style={{ marginBottom: 8 }}>
-              <Alert size={15} style={{ color: '#f59e0b' }} />
+              <Alert size={15} style={{ color: 'var(--accent)' }} />
               <span style={{ fontSize: '0.8rem', color: 'var(--text)', fontWeight: 600 }}>Config editor not enabled</span>
             </div>
             <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
@@ -154,7 +156,7 @@ export default function ConfigEditorPage() {
         <div style={{ padding: '1rem' }}>
           <div className="vs-card" style={{ padding: '1.5rem', border: '1px solid rgba(239,68,68,0.4)' }}>
             <div className="flex items-center gap-2">
-              <Alert size={15} style={{ color: '#ef4444' }} />
+              <Alert size={15} style={{ color: 'var(--red)' }} />
               <span style={{ fontSize: '0.75rem', color: 'var(--text)' }}>
                 {String((cfgError ?? schemaError) instanceof Error ? (cfgError ?? schemaError as Error).message : cfgError ?? schemaError)}
               </span>
@@ -221,7 +223,7 @@ export default function ConfigEditorPage() {
 
             {saveState === 'error' && (
               <div className="vs-card" style={{ padding: '0.8rem 0.9rem', marginBottom: '0.8rem', border: '1px solid rgba(239,68,68,0.4)' }}>
-                <div style={{ fontSize: '0.68rem', color: '#ef4444' }}>Save failed: {saveError}</div>
+                <div style={{ fontSize: '0.68rem', color: 'var(--red)' }}>Save failed: {saveError}</div>
               </div>
             )}
 

@@ -27,20 +27,20 @@ export const CFG_CATEGORIES: CfgCategory[] = [
   },
   {
     key: 'lives', label: 'Lives & Combat Rules', icon: Health,
-    fields: ['life_types', 'default_lives', 'limited_lives', 'era', 'last_stand', 'under_attack'],
+    fields: ['life_types', 'default_lives', 'limited_lives', 'era', 'last_stand', 'war_will', 'story', 'under_attack'],
   },
   {
     key: 'logistics', label: 'Cargo & Logistics', icon: Logistics,
     fields: [
       'cargo', 'c130_cargo', 'c130_cargo_template', 'helo_cargo', 'helo_cargo_template',
       'crate_template', 'crate_load_distance', 'crate_spread', 'max_crates', 'ground_vehicle_cargo',
-      'warehouse', 'logi_from_scenery', 'helo_insertion', 'logistics_exclusion', 'supply_alert_threshold', 'supply_auto_convoy_delay_secs',
+      'warehouse', 'ai_air_stock', 'logi_from_scenery', 'helo_insertion', 'logistics_exclusion', 'supply_alert_threshold', 'supply_auto_convoy_delay_secs',
       'factory', 'repair_crate', 'emergency_repair', 'repair_time', 'repair_supply_cost', 'deploy_supply_cost',
     ],
   },
   {
     key: 'objectives', label: 'Objectives & Deployables', icon: Capture,
-    fields: ['deployables', 'troops', 'dismount', 'unit_classification', 'extra_fixed_wing_objectives', 'frontline', 'actions', 'capture_consolidation_secs', 'population_scaling'],
+    fields: ['deployables', 'troops', 'dismount', 'unit_classification', 'extra_fixed_wing_objectives', 'frontline', 'actions', 'capture_consolidation_secs', 'population_scaling', 'ai_fill'],
   },
   {
     key: 'airdefense', label: 'SAM Sites & Air Defense', icon: Radar,

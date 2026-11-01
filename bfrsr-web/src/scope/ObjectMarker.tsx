@@ -79,7 +79,7 @@ export default function ObjectMarker(props: ObjectMarkerProps): ReactElement {
             <span className="mr-1 text-orange-500">
               {Math.round(object.estimatedSpeed)}
             </span>
-            <span className="text-cyan-500">
+            <span style={{ color: "var(--phosphor)" }}>
               {object.estimatedAltitudeRate.toFixed(1)}
             </span>
           </div>

@@ -9,10 +9,10 @@ import type { FlightRow } from '../replay/data'
  *  no-landing / lost / shot-down order on both themes; grey is a deliberate
  *  neutral ("unknown"), and every use carries a text label. */
 export const OUTCOME: Record<SortieOutcome, { label: string; color: string }> = {
-  landed:     { label: '✈ Landed',     color: '#16a34a' },
-  killed:     { label: '✕ Shot down',  color: '#dc2626' },
-  lost:       { label: '✕ Lost',       color: '#ca8a04' },
-  no_landing: { label: '— No landing', color: '#64748b' },
+  landed:     { label: '✈ Landed',     color: 'var(--green)' },
+  killed:     { label: '✕ Shot down',  color: 'var(--red)' },
+  lost:       { label: '✕ Lost',       color: 'var(--orange)' },
+  no_landing: { label: '— No landing', color: 'var(--text-dim)' },
 }
 
 /** A sortie's outcome; an older bfdb sends only `landed`. */

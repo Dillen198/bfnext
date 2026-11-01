@@ -41,9 +41,12 @@ import {
   Eraser,
 } from '@icons'
 import { pressable } from '@shared/web/a11y'
+import { campaign } from '../config/campaign'
 
-const MARKUP_COLORS = ['#ef4444', '#f59e0b', '#eab308', '#22c55e', '#3b82f6', '#a855f7', '#ffffff']
-const RUN_COLORS = ['#22c55e', '#f59e0b', '#3b82f6', '#a855f7', '#ec4899', '#14b8a6', '#f43f5e', '#84cc16']
+// Grease pencils for the acetate over the photos: red, amber, chinagraph
+// yellow, green, steel blue, black and white.
+const MARKUP_COLORS = ['#e0503f', '#ffb000', '#ffd23f', '#7fc06a', '#8db4d9', '#1d1b17', '#ffffff']
+const RUN_COLORS = ['#7fc06a', '#ffb000', '#8db4d9', '#e0503f', '#c9a24a', '#ec8f45', '#dde0db', '#e8c34a']
 function runColor(name: string, override?: string): string {
   if (override) return override
   let h = 0
@@ -52,15 +55,14 @@ function runColor(name: string, override?: string): string {
 }
 
 const REFRESH_MS = 20_000
-const COL_BLUE = '#4a8fd4'
-const COL_RED = '#cc4444'
-const COL_NEUTRAL = '#6a7a5a'
+const COL_NEUTRAL = '#8a8470'
 const FONT_HEAD = 'var(--font-display)'
 const FONT_MONO = 'var(--font-mono)'
 const DEFAULT_OPACITY = 0.9
 
 function sideColor(s: string) {
-  return s === 'Blue' ? COL_BLUE : s === 'Red' ? COL_RED : COL_NEUTRAL
+  // The theme's side pair (config/redstorm.ts), as the plot draws them.
+  return s === 'Blue' ? campaign.blueColor : s === 'Red' ? campaign.redColor : COL_NEUTRAL
 }
 
 type Dims = { w: number; h: number }
@@ -437,7 +439,7 @@ export default function IntelPage() {
     padding: '4px 8px', fontSize: '0.6rem', letterSpacing: '0.08em', cursor: 'pointer', borderRadius: 3,
     border: `1px solid ${on ? 'var(--accent)' : 'var(--border)'}`,
     background: on ? 'var(--accent)' : 'rgba(0,0,0,0.55)',
-    color: on ? '#fff' : 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 4,
+    color: on ? 'var(--on-accent)' : 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 4,
   })
 
   return (
@@ -460,7 +462,8 @@ export default function IntelPage() {
         <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <ReconIntel size={15} style={{ color: 'var(--accent)' }} />
-            <span style={{ fontFamily: FONT_HEAD, letterSpacing: '0.12em', fontSize: '1rem' }}>RECON INTEL</span>
+            <span style={{ fontFamily: FONT_HEAD, letterSpacing: '0.12em', fontSize: '1.05rem' }}>RECON PHOTOGRAPHY</span>
+            <span className="stamp stamp--sm" style={{ marginLeft: 'auto' }}>Secret</span>
           </div>
           <div style={{ marginTop: 6, fontSize: '0.68rem', letterSpacing: '0.1em', color: 'var(--text-muted)' }}>
             {canSwitch ? (
@@ -470,7 +473,7 @@ export default function IntelPage() {
                     flex: 1, padding: '4px 0', fontSize: '0.6rem', letterSpacing: '0.1em', cursor: 'pointer',
                     border: `1px solid ${adminSide === s ? 'var(--accent)' : 'var(--border)'}`,
                     background: adminSide === s ? 'var(--accent)' : 'transparent',
-                    color: adminSide === s ? '#fff' : 'var(--text-dim)', borderRadius: 3,
+                    color: adminSide === s ? 'var(--on-accent)' : 'var(--text-dim)', borderRadius: 3,
                   }}>{s.toUpperCase()}</button>
                 ))}
               </div>
@@ -502,7 +505,7 @@ export default function IntelPage() {
         {/* Needs placement */}
         {unplaced.length > 0 && (
           <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
-            <div style={{ fontSize: '0.6rem', letterSpacing: '0.12em', color: '#eab308', marginBottom: 6 }}>
+            <div style={{ fontSize: '0.6rem', letterSpacing: '0.12em', color: 'var(--yellow)', marginBottom: 6 }}>
               NEEDS PLACEMENT ({unplaced.length})
             </div>
             {unplaced.map(c => (
@@ -511,7 +514,7 @@ export default function IntelPage() {
                   display: 'flex', alignItems: 'center', gap: 4, padding: '3px 6px', cursor: 'pointer',
                   border: `1px solid ${placing?.id === c.id ? 'var(--accent)' : 'var(--border)'}`,
                   background: placing?.id === c.id ? 'var(--accent)' : 'transparent',
-                  color: placing?.id === c.id ? '#fff' : 'var(--text-dim)', borderRadius: 3,
+                  color: placing?.id === c.id ? 'var(--on-accent)' : 'var(--text-dim)', borderRadius: 3,
                 }}>
                   <Pin size={11} /> DROP
                 </button>
@@ -544,7 +547,7 @@ export default function IntelPage() {
                     cursor: 'pointer', borderRadius: 3,
                     border: `1px solid ${markupTool === t ? 'var(--accent)' : 'var(--border)'}`,
                     background: markupTool === t ? 'var(--accent)' : 'transparent',
-                    color: markupTool === t ? '#fff' : 'var(--text-dim)',
+                    color: markupTool === t ? 'var(--on-accent)' : 'var(--text-dim)',
                   }}>
                   <Ico size={13} />
                 </button>
@@ -564,7 +567,7 @@ export default function IntelPage() {
                 onChange={e => setMarkupWidth(Number(e.target.value))} style={{ flex: 1 }} />
               {selMarkup && (markup.find(m => m.id === selMarkup)?.mine || user?.is_admin) && (
                 <button onClick={() => deleteMarkup(selMarkup)} title="Delete selected"
-                  style={{ background: '#7f1d1d', border: 'none', color: '#fff', borderRadius: 3, padding: '3px 6px', cursor: 'pointer', fontSize: '0.6rem' }}>
+                  style={{ background: 'var(--red)', border: 'none', color: 'var(--on-accent)', borderRadius: 3, padding: '3px 6px', cursor: 'pointer', fontSize: '0.6rem' }}>
                   <Trash2 size={11} />
                 </button>
               )}
@@ -677,7 +680,7 @@ export default function IntelPage() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                 <span style={{ fontSize: '0.6rem', letterSpacing: '0.12em', color: 'var(--text-dim)', flex: 1 }}>SELECTED</span>
                 <button onClick={() => setLightbox(c)} title="View full photo"
-                  style={{ background: 'var(--accent)', border: 'none', color: '#fff', borderRadius: 3, padding: '2px 6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3, fontSize: '0.58rem' }}>
+                  style={{ background: 'var(--accent)', border: 'none', color: 'var(--on-accent)', borderRadius: 3, padding: '2px 6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3, fontSize: '0.58rem' }}>
                   <Maximize2 size={10} /> VIEW
                 </button>
                 <button onClick={() => setSelCap(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)' }}><X size={12} /></button>
@@ -765,9 +768,9 @@ export default function IntelPage() {
               <input type="range" min={0.15} max={1} step={0.05} value={alignOpacity}
                 onChange={e => setAlignOpacity(Number(e.target.value))} style={{ width: 90 }} />
             </label>
-            <button onClick={() => saveAlign(alignCorners)} style={btn('#16a34a')}>SAVE</button>
-            <button onClick={() => saveAlign(null)} title="Back to auto projection" style={btn('#555')}>RESET</button>
-            <button onClick={cancelAlign} style={btn('#555')}>CANCEL</button>
+            <button onClick={() => saveAlign(alignCorners)} style={btn('var(--green)')}>SAVE</button>
+            <button onClick={() => saveAlign(null)} title="Back to auto projection" style={btn('var(--bg-elevated)')}>RESET</button>
+            <button onClick={cancelAlign} style={btn('var(--bg-elevated)')}>CANCEL</button>
           </div>
         )}
 
@@ -891,7 +894,7 @@ export default function IntelPage() {
             padding: '8px 14px', display: 'flex', alignItems: 'center', gap: 12,
           }}>
             <button onClick={() => { if (cutoff >= 1) setCutoff(0); setPlaying(p => !p) }} style={{
-              background: 'var(--accent)', border: 'none', color: '#fff', borderRadius: 4,
+              background: 'var(--accent)', border: 'none', color: 'var(--on-accent)', borderRadius: 4,
               width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
             }}>
               {playing ? <Pause size={13} /> : <Play size={13} />}
@@ -928,7 +931,7 @@ export default function IntelPage() {
 
 function btn(bg: string): CSSProperties {
   return {
-    padding: '4px 10px', background: bg, color: '#fff', border: 'none', borderRadius: 3,
+    padding: '4px 10px', background: bg, color: bg === 'var(--bg-elevated)' ? 'var(--text)' : 'var(--on-accent)', border: 'none', borderRadius: 2,
     cursor: 'pointer', fontSize: '0.62rem', letterSpacing: '0.1em', fontFamily: FONT_HEAD,
   }
 }

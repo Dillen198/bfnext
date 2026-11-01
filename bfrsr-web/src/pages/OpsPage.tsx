@@ -25,7 +25,7 @@ const CELL: React.CSSProperties = {
   verticalAlign: 'top',
 }
 const MONO: React.CSSProperties = { fontFamily: 'var(--font-mono)' }
-const RED = '#ef4444'
+const RED = 'var(--red)'
 const AMBER = 'var(--yellow)'
 const OK = 'var(--accent)'
 
@@ -88,7 +88,7 @@ function ConfirmBtn({ label, icon, confirm, onConfirm, danger = true, disabled }
       )}
       <span style={{ fontSize: '0.64rem', color: danger ? RED : 'var(--text)' }}>{confirm}</span>
       <button onClick={() => { setAsking(false); onConfirm() }} style={{
-        fontSize: '0.62rem', color: '#fff', background: danger ? RED : 'var(--accent-dim)', border: 'none',
+        fontSize: '0.62rem', color: 'var(--on-accent)', background: danger ? RED : 'var(--accent)', border: 'none',
         padding: '0.2rem 0.6rem', borderRadius: 3, cursor: 'pointer',
       }}>{target ? `Confirm on ${target}` : 'Confirm'}</button>
       <button onClick={() => setAsking(false)} style={{
@@ -1091,7 +1091,7 @@ function LogsCard() {
           <button key={l.key} onClick={() => setWhich(l.key)} style={{
             fontSize: '0.6rem', padding: '2px 8px', borderRadius: 2, cursor: 'pointer', ...MONO,
             background: which === l.key ? 'var(--accent)' : 'transparent',
-            color: which === l.key ? '#000' : 'var(--text-dim)',
+            color: which === l.key ? 'var(--on-accent)' : 'var(--text-dim)',
             border: `1px solid ${which === l.key ? 'var(--accent)' : 'var(--border)'}`,
           }}>{l.label}</button>
         ))}
@@ -1132,7 +1132,7 @@ export default function OpsPage() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <PageHeader art="carrier-quarter" icon={Server} title="OPS" sub="Server box, processes, engine updates and bot config" />
+      <PageHeader art="carrier-quarter" icon={Server} title="SERVER OPS" file="Server ops" stamp={<span className="stamp">Restricted</span>} sub="Server box, processes, engine updates and bot config" />
       <div className="flex-1 overflow-auto p-4 space-y-4">
         {error && (
           <div className="vs-card flex items-start gap-2" style={{ padding: '0.75rem 1rem', borderColor: 'rgba(239,68,68,0.4)' }}>

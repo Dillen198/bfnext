@@ -57,8 +57,8 @@ const KIND_ICONS: Record<string, string> = {
   'Logistics Hub': '◈', 'Naval Base': '⚓', 'Carrier Group': '⚓', 'Command Center': '◆',
 }
 const KIND_COLORS: Record<string, string> = {
-  Airbase: '#3b82f6', FARP: '#22c55e', FOB: '#f97316', Factory: '#a78bfa',
-  'Logistics Hub': '#06b6d4', 'Naval Base': '#0ea5e9', 'Carrier Group': '#0ea5e9', 'Command Center': '#eab308',
+  Airbase: 'var(--blue)', FARP: 'var(--green)', FOB: 'var(--orange)', Factory: 'var(--brass)',
+  'Logistics Hub': 'var(--blue)', 'Naval Base': 'var(--blue)', 'Carrier Group': 'var(--blue)', 'Command Center': 'var(--yellow)',
 }
 
 // Health and Logistics are defense-strength stats (% of a unit group still
@@ -73,7 +73,7 @@ const COLUMN_HELP: Partial<Record<string, string>> = {
   'Last Taken': 'The most recent capture this round: by which side, and who flew it.',
 }
 
-const SIDE_COLOR: Record<string, string> = { Blue: 'var(--blue)', Red: 'var(--red)', Neutral: '#64748b' }
+const SIDE_COLOR: Record<string, string> = { Blue: 'var(--blue)', Red: 'var(--red)', Neutral: 'var(--text-dim)' }
 
 
 
@@ -262,7 +262,7 @@ export default function Objectives() {
             <TacMap objectives={objectives} fronts={fronts} onSelect={setDrawer} />
           </div>
           <div style={{ flex: '2 1 300px', minWidth: 0, height: 400, display: 'flex', flexDirection: 'column' }}>
-            <Panel title="Needs Attention" icon={Alert} iconColor="#ca8a04"
+            <Panel title="Needs Attention" icon={Alert} iconColor="var(--yellow)"
               right={<span className="font-mono-vs" style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>{attention.length}</span>}>
               <div style={{ overflowY: 'auto', maxHeight: 352 }}>
                 {attention.length === 0 ? (
@@ -330,7 +330,7 @@ export default function Objectives() {
         {/* Capture timeline -- full width. It carries a chart AND a scrolling
             event list, so squeezed into a third of the row it was twice the
             height of its neighbours and stretched the whole grid. */}
-        <Panel title="Capture Timeline" icon={Capture} iconColor="#fbbf24">
+        <Panel title="Capture Timeline" icon={Capture} iconColor="var(--yellow)">
           <CaptureTimeline events={captureEvents} />
         </Panel>
 
@@ -413,13 +413,13 @@ export default function Objectives() {
                       key={obj.id}
                       className="kill-row"
                       onClick={() => setDrawer(obj.name)}
-                      style={{ borderBottom: '1px solid var(--border)', background: isCrit ? 'rgba(239,68,68,0.02)' : 'transparent', cursor: 'pointer' }}
+                      style={{ borderBottom: '1px solid var(--border)', background: isCrit ? 'var(--red-bg)' : 'transparent', cursor: 'pointer' }}
                     >
                       <td style={{ padding: '9px 14px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <span style={{ color: KIND_COLORS[obj.kind] ?? 'var(--text-dim)' }}>{KIND_ICONS[obj.kind] ?? '■'}</span>
                           <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text)' }}>{obj.name}</span>
-                          {isCrit && <Alert size={11} style={{ color: '#f59e0b', flexShrink: 0 }} />}
+                          {isCrit && <Alert size={11} style={{ color: 'var(--accent)', flexShrink: 0 }} />}
                         </div>
                       </td>
                       <td style={{ padding: '9px 14px', fontSize: '0.7rem', color: 'var(--text-dim)' }}>{obj.kind}</td>
@@ -428,7 +428,7 @@ export default function Objectives() {
                       <td style={{ padding: '9px 14px', width: 120 }}><HealthBar value={obj.logi} /></td>
                       <td style={{ padding: '9px 14px', width: 120 }}><HealthBar value={obj.supply} /></td>
                       <td style={{ padding: '9px 14px', width: 120 }}><HealthBar value={obj.fuel} /></td>
-                      <td className="font-mono-vs" style={{ padding: '9px 14px', fontSize: '0.62rem', color: '#facc15', whiteSpace: 'nowrap' }}>
+                      <td className="font-mono-vs" style={{ padding: '9px 14px', fontSize: '0.62rem', color: 'var(--yellow)', whiteSpace: 'nowrap' }}>
                         {navaidByName.has(obj.name) ? navaidCell(navaidByName.get(obj.name)!) : <span style={{ color: 'var(--text-dim)' }}>—</span>}
                       </td>
                       <td style={{ padding: '9px 14px', fontSize: '0.64rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>

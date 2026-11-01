@@ -12,9 +12,9 @@ import {
 
 // Role badge colour mapping
 const ROLE_COLORS: Record<string, string> = {
-  Creator:              '#f59e0b',
+  Creator:              'var(--accent)',
   'Lead Developer':     'var(--accent)',
-  'Tester & Contributor': '#64748b',
+  'Tester & Contributor': 'var(--text-dim)',
 }
 
 export default function AboutPage() {
@@ -32,8 +32,10 @@ export default function AboutPage() {
     <div className="flex-1 overflow-y-auto">
       <PageHeader art="carrier-quarter"
         icon={Info}
-        title="ABOUT"
-        sub="Campaign system & credits"
+        title="ABOUT THIS STATION"
+        file="About"
+        stamp={<span className="stamp stamp--green">Unclassified</span>}
+        sub="The campaign system, this campaign, and the people behind it"
       />
 
       <div className="p-6 space-y-8 max-w-3xl">
@@ -91,7 +93,7 @@ export default function AboutPage() {
                 href={campaign.discord}
                 target="_blank" rel="noreferrer"
                 className="flex items-center gap-1.5 transition-opacity hover:opacity-80"
-                style={{ fontSize: '0.68rem', color: '#5865F2', textDecoration: 'none', letterSpacing: '0.1em' }}
+                style={{ fontSize: '0.68rem', color: 'var(--accent)', textDecoration: 'none', letterSpacing: '0.1em' }}
               >
                 <DiscordIcon />
                 JOIN DISCORD
@@ -215,9 +217,9 @@ export default function AboutPage() {
                     className="flex items-center justify-between"
                     style={{
                       padding: '0.5rem 0.75rem',
-                      background: 'rgba(56,189,248,0.05)',
-                      border: '1px solid rgba(56,189,248,0.12)',
-                      borderRadius: '4px',
+                      background: 'var(--blue-bg)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 2,
                     }}
                   >
                     <div className="flex items-center gap-3">
@@ -274,7 +276,7 @@ export default function AboutPage() {
                 <img
                   src="/hacker.jpg"
                   alt="Hacker"
-                  style={{ width: 48, height: 48, borderRadius: '8px', flexShrink: 0, objectFit: 'cover' }}
+                  style={{ width: 48, height: 48, borderRadius: 2, flexShrink: 0, objectFit: 'cover', filter: 'grayscale(0.35) sepia(0.2)' }}
                 />
                 <div className="min-w-0" style={{ flex: 1 }}>
                   <div className="font-display" style={{ fontSize: '0.95rem', letterSpacing: '0.14em', color: 'var(--text)', marginBottom: '0.4rem' }}>
@@ -297,7 +299,7 @@ export default function AboutPage() {
                 <img
                   src="/special-k.png"
                   alt="Special K"
-                  style={{ width: 48, height: 48, borderRadius: '8px', flexShrink: 0, objectFit: 'contain' }}
+                  style={{ width: 48, height: 48, borderRadius: 2, flexShrink: 0, objectFit: 'contain' }}
                 />
                 <div className="min-w-0" style={{ flex: 1 }}>
                   <div className="font-display" style={{ fontSize: '0.95rem', letterSpacing: '0.14em', color: 'var(--text)', marginBottom: '0.4rem' }}>
@@ -345,17 +347,10 @@ export default function AboutPage() {
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
-    <div
-      className="mb-4 font-display"
-      style={{
-        fontSize: '1.1rem', letterSpacing: '0.18em',
-        color: 'var(--text)',
-        borderLeft: '3px solid var(--accent)',
-        paddingLeft: '0.75rem',
-      }}
-    >
+    // A ruled section head, as the situation board's columns are headed.
+    <h2 className="sit-head mb-3" style={{ fontSize: '0.95rem', color: 'var(--text)', margin: '0 0 0.75rem' }}>
       {children}
-    </div>
+    </h2>
   )
 }
 

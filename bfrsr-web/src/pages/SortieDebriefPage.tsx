@@ -27,7 +27,7 @@ import { Aircraft, ChevronLeft, PlayCircle } from '@icons'
 
 const NM = 1852
 const PROFILE_POINTS = 400
-const SHOT_MARK = '#ca8a04'
+const SHOT_MARK = 'var(--yellow)'
 
 const label: React.CSSProperties = {
   fontSize: '0.58rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase',
@@ -43,8 +43,8 @@ function clock(secs: number): string {
 function Card({ title, right, children }: { title: string; right?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="vs-card p-0">
-      <div className="flex items-center gap-2 px-4 pt-4 pb-3" style={{ borderBottom: '1px solid var(--border)' }}>
-        <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>{title}</span>
+      <div className="rsr-panel-head flex items-center gap-2 px-4 py-2.5">
+        <span className="rsr-panel-title" style={{ fontSize: '0.66rem' }}>{title}</span>
         {right && <span className="ml-auto">{right}</span>}
       </div>
       {children}
@@ -183,7 +183,7 @@ function GroundTrack({ seg, shotTimes, endColor }: { seg: Seg; shotTimes: number
 // ── Shot log ──────────────────────────────────────────────────────────────────
 
 const RESULT: Record<Shot['result'], { text: string; color: string }> = {
-  kill:    { text: 'Kill',    color: '#16a34a' },
+  kill:    { text: 'Kill',    color: 'var(--green)' },
   hit:     { text: 'Hit',     color: 'var(--text)' },
   miss:    { text: 'Miss',    color: 'var(--text-muted)' },
   unknown: { text: '—',       color: 'var(--text-dim)' },
@@ -194,7 +194,7 @@ function ShotLog({ shots, meta, t0 }: { shots: Shot[]; meta: RecMeta; t0: number
     return <div style={{ fontSize: '0.66rem', color: 'var(--text-dim)' }}>No weapons fired on this flight.</div>
   }
   const th: React.CSSProperties = { ...label, padding: '4px 8px', textAlign: 'left', fontWeight: 600, borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }
-  const td: React.CSSProperties = { padding: '4px 8px', fontSize: '0.67rem', color: 'var(--text-muted)', borderBottom: '1px solid rgba(42,42,42,0.5)' }
+  const td: React.CSSProperties = { padding: '4px 8px', fontSize: '0.67rem', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', minWidth: 480, borderCollapse: 'collapse' }}>
@@ -211,7 +211,7 @@ function ShotLog({ shots, meta, t0 }: { shots: Shot[]; meta: RecMeta; t0: number
             const r = RESULT[sh.result]
             return (
               <tr key={i}>
-                <td style={{ ...td, fontFamily: 'monospace', color: '#64748b' }}>{clock((e.t - t0) / 1000)}</td>
+                <td style={{ ...td, fontFamily: 'monospace', color: 'var(--text-dim)' }}>{clock((e.t - t0) / 1000)}</td>
                 <td style={{ ...td, color: 'var(--text)' }}>{w?.n?.replace(/_/g, ' ') ?? '—'}</td>
                 <td style={td}>{tg ? objLabel(tg) : '—'}</td>
                 <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
@@ -310,7 +310,8 @@ export default function SortieDebriefPage() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <PageHeader art="hornet" icon={Aircraft} title="SORTIE DEBRIEF"
+      <PageHeader art="hornet" icon={Aircraft} title="SORTIE DEBRIEF" file="Debrief"
+        stamp={d ? <span className={`stamp${d.outcome === 'landed' ? ' stamp--green' : d.outcome === 'no_landing' ? ' stamp--dim' : ''}`}>{OUTCOME[d.outcome].label.replace(/^\S+\s/, '')}</span> : undefined}
         sub={d ? `${name} · ${d.aircraft.replace(/_/g, ' ')}${theater ? ` · ${theater}` : ''}` : name}
         right={
           <RouterLink to={back} className="flex items-center gap-1"
