@@ -943,6 +943,12 @@ fn render(a: &Angle, day: &str) -> String {
             "Holdings tonight: {blue_side} {blue}, {red_side} {red}.",
             "{blue} objectives are in {blue_side} hands, {red} in {red_side}.",
         ],
+        "story_event" if a.vars.contains_key("caused_by") => &[
+            "{title}. {text} Credited to {caused_by}.",
+            "{title}: {text} The action is credited to {caused_by}.",
+            "{text} It was {caused_by} who set it off. ({title})",
+        ],
+        "story_event" => &["{title}. {text}", "{title}: {text}"],
         "quiet" => &[
             "A quiet day. No ground changed hands and no significant action was reported.",
             "Little to report. The front was still and both sides appear to be resupplying.",
@@ -962,6 +968,7 @@ fn headline(items: &[NewsItem], facts: &DigestFacts, day: &str, f: &Factions) ->
         .to_string();
     };
     match top.angle.as_str() {
+        "story_event" => top.subject.to_uppercase(),
         "opening_day" | "opening_line" => {
             pick(&["THE CAMPAIGN OPENS", "DAY ONE", "THE WAR BEGINS"], &[day]).to_string()
         }
@@ -1246,6 +1253,44 @@ pub fn build(
 
     let quiet_days =
         history.iter().take_while(|d| d.facts.changed_hands.is_empty()).count() as i64;
+
+    // Story events (`Cfg::story`, ENGINE.md 3.4) are the day's turning
+    // points, set off by named players: they lead the day, even the opening
+    // one (pushed first, so they stay ahead of it at equal weight), and the
+    // dispatch credits whoever caused them.
+    let story: Vec<_> = db
+        .story_events(round)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|e| e.time >= start && e.time < end)
+        .collect();
+    for (i, e) in story.iter().take(4).enumerate() {
+        let mut a = Angle::new("story_event", e.title.to_string(), 100 - i as u8)
+            .var("title", e.title.to_string())
+            .var("text", e.text.to_string());
+        if !e.caused_by.is_empty() {
+            let names: Vec<String> = e.caused_by.iter().map(|s| s.to_string()).collect();
+            a = a.var("caused_by", geo::join_names(&names));
+        }
+        if let Some(side) = e.side {
+            let key = format!("{side:?}");
+            a = a.var("side", factions.name(&key)).var("side_adj", factions.adj(&key));
+        }
+        if !e.effects.is_empty() {
+            // The engine writes effects with the side keys ("Red fuel output
+            // -40%"); the dispatch only ever uses the faction names.
+            let fx: Vec<String> = e
+                .effects
+                .iter()
+                .map(|s| {
+                    s.replace("Blue ", &format!("{} ", factions.blue))
+                        .replace("Red ", &format!("{} ", factions.red))
+                })
+                .collect();
+            a = a.var("effects", fx.join("; "));
+        }
+        angles.push(a);
+    }
 
     // Day one. A war's opening day is its biggest news day: the disposition,
     // the force ratio and where the two sides are actually touching are all
@@ -1680,6 +1725,58 @@ pub fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_story_event_leads_the_day_and_names_who_caused_it() {
+        use crate::instance::InstanceId;
+        use bfprotocols::stats::{Stat, StoryEventStat};
+        let tmp = std::env::temp_dir()
+            .join(format!("bfdb-news-story-{}", uuid::Uuid::new_v4()));
+        let db = StatsDb::new_offline(tmp.join("db")).unwrap();
+        let now = Utc::now();
+        let ev = |id: &str, title: &str, time| StoryEventStat {
+            id: id.into(),
+            time,
+            title: title.into(),
+            text: "The Tuapse refinery is burning after a low-level strike.".into(),
+            caused_by: vec!["Shade".into(), "Kilo".into()],
+            side: Some(dcso3::coalition::Side::Red),
+            effects: vec!["Red fuel output -40%".into(), "Red will -6".into()],
+        };
+        db.ingest_test_stats(
+            crate::instance::DEFAULT_INSTANCE,
+            vec![
+                Stat::NewRound { sortie: "campaign".into() },
+                Stat::StoryEvent(ev("tuapse_burns", "Tuapse burns", now)),
+                // yesterday's is not today's news
+                Stat::StoryEvent(ev("old", "Old news", now - Duration::days(2))),
+            ],
+        );
+        let rid = db
+            .latest_rounds_for(&InstanceId::from(crate::instance::DEFAULT_INSTANCE))
+            .unwrap()
+            .into_iter()
+            .find(|(_, _, r)| r.end.is_none())
+            .map(|(_, rid, _)| rid)
+            .unwrap();
+        let f = Factions::default();
+        let d = build(&db, rid, now.date_naive(), &[], &f).unwrap();
+        let top = &d.items[0];
+        assert_eq!(
+            (top.angle.as_str(), top.subject.as_str()),
+            ("story_event", "Tuapse burns")
+        );
+        assert_eq!(top.vars["caused_by"], "Shade and Kilo");
+        assert!(top.vars["effects"].contains(&format!("{} fuel output -40%", f.red)));
+        assert!(top.text.contains("Tuapse burns"), "{}", top.text);
+        assert!(top.text.contains("Shade and Kilo"), "{}", top.text);
+        assert_eq!(d.headline, "TUAPSE BURNS");
+        assert!(!d.items.iter().any(|i| i.subject == "Old news"));
+        // what the writer (both voices) is handed
+        assert!(d.brief().starts_with("- [story_event] subject: Tuapse burns"));
+        drop(db);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 
     #[test]
     fn a_digest_filed_before_the_second_voice_still_reads() {

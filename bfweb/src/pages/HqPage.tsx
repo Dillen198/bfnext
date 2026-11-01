@@ -48,6 +48,7 @@ const OP_LABEL: Record<HqOpKind, string> = {
   tanker: 'TANKER',
   naval_strike: 'NAVAL STRIKE',
   air_repair: 'AIR REPAIR',
+  anti_ship: 'ANTI-SHIP',
 }
 const REQUESTS: { kind: HqRequestKind; label: string; friendly: boolean }[] = [
   { kind: 'cas', label: 'CAS', friendly: false },
@@ -62,6 +63,7 @@ const REQUESTS: { kind: HqRequestKind; label: string; friendly: boolean }[] = [
 ]
 const SOURCE_TEXT: Record<string, string> = {
   rules: "HQ's own assessment",
+  story: 'Story event orders',
   strategist: "Strategist's directive",
   human: 'Human orders',
   '': '—',

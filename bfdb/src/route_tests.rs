@@ -763,3 +763,185 @@ async fn cached_public_scans_keep_their_answers() {
     assert_eq!(h.get("/api/trails", Some(&admin)).await.status(), 200);
     assert_eq!(h.get("/api/trails", None).await.status(), 401);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn api_stats_carries_the_war_will() {
+    // its own instance id: /api/stats answers are cached per instance for
+    // the whole test process
+    let h = harness_with(serde_json::json!({ "instances": [{ "id": "will" }] }), |_| ());
+    // a round, but no war will from the engine: null
+    h.db.ingest_test_stats(
+        "will",
+        vec![bfprotocols::stats::Stat::NewRound { sortie: "campaign".into() }],
+    );
+    let v = body_json(h.get("/api/stats", None).await);
+    assert!(v.get("will").is_some_and(|w| w.is_null()), "{v}");
+
+    let h = harness_with(serde_json::json!({ "instances": [{ "id": "will2" }] }), |_| ());
+    let time = chrono::DateTime::parse_from_rfc3339("2026-10-31T12:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    h.db.ingest_test_stats(
+        "will2",
+        vec![
+            bfprotocols::stats::Stat::NewRound { sortie: "campaign".into() },
+            bfprotocols::stats::Stat::WarWill(bfprotocols::stats::WarWillStat {
+                blue: 63.04,
+                red: 18.,
+                blue_trend: Some(-4.),
+                red_trend: None,
+                threshold: 20.,
+                causes: vec![bfprotocols::stats::WillCause {
+                    side: dcso3::coalition::Side::Blue,
+                    text: "Carrier group hit".into(),
+                    delta: -8.,
+                    time,
+                }],
+            }),
+        ],
+    );
+    let v = body_json(h.get("/api/stats", None).await);
+    assert_eq!(
+        v["will"],
+        serde_json::json!({
+            "blue": { "value": 63.0, "trend": -4.0 },
+            "red": { "value": 18.0, "trend": null },
+            "threshold": 20.0,
+            "causes": [{
+                "side": "Blue",
+                "text": "Carrier group hit",
+                "delta": -8.0,
+                "time": "2026-10-31T12:00:00+00:00",
+            }],
+        })
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn api_stats_carries_the_story() {
+    // a round with no story event: null
+    let h = harness_with(serde_json::json!({ "instances": [{ "id": "story" }] }), |_| ());
+    h.db.ingest_test_stats(
+        "story",
+        vec![bfprotocols::stats::Stat::NewRound { sortie: "campaign".into() }],
+    );
+    let v = body_json(h.get("/api/stats", None).await);
+    assert!(v.get("story").is_some_and(|s| s.is_null()), "{v}");
+
+    let h =
+        harness_with(serde_json::json!({ "instances": [{ "id": "story2" }] }), |_| ());
+    let at = |s: &str| {
+        chrono::DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&chrono::Utc)
+    };
+    let ev = |id: &str, time: &str, side| bfprotocols::stats::StoryEventStat {
+        id: id.into(),
+        time: at(time),
+        title: "Tuapse burns".into(),
+        text: "The Tuapse refinery is burning.".into(),
+        caused_by: vec!["Shade".into()],
+        side,
+        effects: vec!["Red fuel output -40%".into(), "Red will -6".into()],
+    };
+    h.db.ingest_test_stats(
+        "story2",
+        vec![
+            bfprotocols::stats::Stat::NewRound { sortie: "campaign".into() },
+            bfprotocols::stats::Stat::StoryEvent(ev(
+                "moscow_terms",
+                "2026-10-31T14:00:00Z",
+                None,
+            )),
+            bfprotocols::stats::Stat::StoryEvent(ev(
+                "tuapse_burns",
+                "2026-10-31T12:00:00Z",
+                Some(dcso3::coalition::Side::Red),
+            )),
+        ],
+    );
+    let v = body_json(h.get("/api/stats", None).await);
+    assert_eq!(
+        v["story"],
+        serde_json::json!([
+            {
+                "id": "tuapse_burns",
+                "time": "2026-10-31T12:00:00+00:00",
+                "title": "Tuapse burns",
+                "text": "The Tuapse refinery is burning.",
+                "caused_by": ["Shade"],
+                "side": "Red",
+                "effects": ["Red fuel output -40%", "Red will -6"],
+            },
+            {
+                "id": "moscow_terms",
+                "time": "2026-10-31T14:00:00+00:00",
+                "title": "Tuapse burns",
+                "text": "The Tuapse refinery is burning.",
+                "caused_by": ["Shade"],
+                "side": null,
+                "effects": ["Red fuel output -40%", "Red will -6"],
+            },
+        ])
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn api_oob_shows_losses_to_all_and_stock_to_those_who_may_see_it() {
+    use bfprotocols::stats::{AirOobStat, AirframeCount, Stat};
+    let h = harness_with(serde_json::json!({ "instances": [{ "id": "oob" }] }), |_| ());
+    // a round, but nothing from the engine (ai_air_stock off): empty sides
+    h.db.ingest_test_stats("oob", vec![Stat::NewRound { sortie: "campaign".into() }]);
+    let v = body_json(h.get("/api/oob", None).await);
+    assert_eq!(v["blue"], serde_json::json!([]), "{v}");
+    assert_eq!(v["red"], serde_json::json!([]), "{v}");
+    assert!(v["round"].is_u64(), "{v}");
+
+    let count = |typ: &str, stock, lost, unlimited| AirframeCount {
+        typ: typ.into(),
+        stock,
+        lost,
+        unlimited,
+    };
+    // each ingest starts afresh, so the round comes along again
+    let h = harness_with(serde_json::json!({ "instances": [{ "id": "oob2" }] }), |_| ());
+    h.db.ingest_test_stats(
+        "oob2",
+        vec![
+            Stat::NewRound { sortie: "campaign".into() },
+            Stat::AirOrderOfBattle(AirOobStat::default()),
+            Stat::AirOrderOfBattle(AirOobStat {
+                blue: vec![count("F-14A", 12, 3, false), count("F-16C_50", 20, 0, true)],
+                red: vec![count("Tu-22M3", 0, 6, false), count("MiG-29S", 14, 2, false)],
+            }),
+        ],
+    );
+    // anonymous: losses only
+    let v = body_json(h.get("/api/oob", None).await);
+    assert_eq!(
+        v["red"],
+        serde_json::json!([
+            { "type": "MiG-29S", "stock": null, "lost": 2, "unlimited": false },
+            { "type": "Tu-22M3", "stock": null, "lost": 6, "unlimited": false },
+        ])
+    );
+    assert_eq!(v["blue"][0]["stock"], serde_json::Value::Null);
+    // an admin with no side of their own sees both, most aircraft first
+    let admin = h.session(true);
+    let v = body_json(h.get("/api/oob", Some(&admin)).await);
+    assert_eq!(
+        v["blue"],
+        serde_json::json!([
+            { "type": "F-16C_50", "stock": 20, "lost": 0, "unlimited": true },
+            { "type": "F-14A", "stock": 12, "lost": 3, "unlimited": false },
+        ])
+    );
+    assert_eq!(
+        v["red"][1],
+        serde_json::json!({ "type": "Tu-22M3", "stock": 0, "lost": 6, "unlimited": false })
+    );
+    // a round the engine sent nothing for: empty
+    let v = body_json(h.get("/api/oob?round=999999", Some(&admin)).await);
+    assert_eq!(
+        (v["blue"].clone(), v["red"].clone()),
+        (serde_json::json!([]), serde_json::json!([]))
+    );
+}

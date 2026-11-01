@@ -18,6 +18,15 @@ cuts what it spends on the air war, and every helicopter pilot what it spends
 on supply runs and troops, by
 {{cfg:smart_commander.hq.gap_fill.per_human_cut|0.35}} each.
 
+On a server with **AI fill-in** (`ai_fill`) on, it also looks at the other
+side. Against nobody it runs at {{cfg:ai_fill.floor|0.35}} of that; each
+enemy pilot in a slot adds more, up to all of it at
+{{cfg:ai_fill.full_at_enemy|8}} enemy pilots. One pilot on an empty server
+gets a fight their size, and a full server is decided by its players. The
+same rule paces the AI packages and the ground war's attacks, and while the
+other side has anyone flying, an empty side's bases are defended by its AI
+and capture at the normal speed.
+
 The HQ is set up per server. Where it is off, there is no **HQ** entry under
 F10 > Info, and `-hq` answers "there is no HQ on this server".
 
@@ -88,7 +97,8 @@ bases is being captured) the HQ does three things:
 
 1. **Posture.** *Offensive*, *balanced* or *defensive*, based on how much
    ground you hold, how many of your bases are under threat or being taken,
-   and how many enemy bases are within reach and weak.
+   and how many enemy bases are within reach and weak. On some servers the
+   side's own state counts too (see below).
 2. **Main effort.** The one enemy objective to concentrate on. It favours
    bases that are worth taking, already weakened, close to ground you hold,
    and above all bases with **no logistics left**, which fall to the first
@@ -105,6 +115,18 @@ bases is being captured) the HQ does three things:
 
 While nobody is on the server, the HQ keeps running what is under way but
 plans nothing new, unless the server says otherwise.
+
+**The side's own state.** Where the server turns it on, the posture also
+reads your side's will to fight, the fuel left in its network and how many
+fighters it still has against the enemy aircraft its radars see. High will
+pushes toward the offensive and low will toward the defensive, and a side
+whose will is breaking avoids costly operations such as strikes and bomber
+raids. Short of fuel the side holds whatever the map says, and with the fuel
+nearly gone its ground attacks also thin out. A side short of fighters keeps
+them home: less CAP far forward and fewer SEAD sweeps, more CAP over the
+bases it is holding and its own SAM sites. The THEATRE HQ page lists each of
+these among the reasons for the plan ("fuel 22% -- holding"), and the side
+is told when its posture changes.
 
 ### What it runs
 
@@ -123,6 +145,7 @@ plans nothing new, unless the server says otherwise.
 | **Bomber strike** | A friendly JTAC is lasing a target at the main effort, or one closing on a base we are holding |
 | **AWACS / tanker** | Kept on station behind the front while there is an air war to support |
 | **Naval strike** | Enemy logistics, factories and airbases in range of our carrier group |
+| **Anti-ship strike** | An enemy carrier group in reach of our airbases (the air packages' range unless the server sets a longer one for its bombers), when the side has an anti-ship Strike action |
 | **Air logistics repair** | Our bases whose logistics are shot up |
 
 AI air packages only go at targets within

@@ -60,7 +60,7 @@ Landing in time forgives it; the next takeoff checks again.
 
 ## How a round ends
 
-A round ends in one of four ways. The first three are announced to everyone
+A round ends in one of six ways. The first five are announced to everyone
 with a countdown before the server resets for the next round.
 
 - **Map victory.** Where the server sets one, a side that holds
@@ -79,6 +79,31 @@ Red is down to 1 primary objective(s) — Last Stand! Blue wins in 3600s if not 
   The countdown repeats at intervals
   (`Red is making their last stand! Blue wins in 45m 00s unless Red recaptures.`)
   and stops with `Red has recaptured objectives. Last stand cancelled.`
+- **War will.** Where the server runs it, each side has a **will to fight**,
+  0-100, starting at {{cfg:war_will.start|70}}. Losses lower it: a carrier
+  group hit ({{cfg:war_will.carrier_damaged|8}}) or sunk
+  ({{cfg:war_will.carrier_destroyed|25}}), a command centre lost
+  ({{cfg:war_will.command_center_lost|10}}), a factory destroyed or taken
+  ({{cfg:war_will.factory_lost|5}}), an airbase lost
+  ({{cfg:war_will.airbase_lost|4}}), aircraft, ships and ground formations,
+  and fuel stocks running under {{cfg:war_will.fuel_low_pct|30}}% of
+  capacity. Every enemy loss raises yours by half as much, and captures raise
+  the captor's. It recovers slowly while nothing goes wrong. A side whose
+  will stays under {{cfg:war_will.threshold|20}} for
+  {{cfg:war_will.hold_hours|6}} hours **asks for terms**, and the other side
+  wins. The side is warned when it drops under the line, and on a countdown
+  after that:
+
+```dcsmessage
+WILL TO FIGHT 18/100, below 20: we ask for terms in 5h 00m unless it recovers.
+```
+
+  The dashboard shows both sides' will, its trend and the biggest recent
+  causes.
+- **A story ending.** Where the campaign writes [story events](#story-events),
+  one of them can end the war: on the Southern Flank, Moscow asks for terms
+  once Soviet fuel has run short and its will has collapsed. Like every story
+  event, it only happens because of what was done in the round.
 - **Round length.** A server can cap a round at
   {{cfg:max_round_days|0}} real-world days (0 = no cap). If nobody has won by
   then, the round ends in a **draw**. This lets a theatre rotation move on from
@@ -98,6 +123,27 @@ or, for the round-length cap,
 A new round starts the map, everyone's points, lives and side switches, and the
 [war effort bar](./war-effort.md) from scratch. What you keep across rounds is
 your XP, level and achievements; see [XP, Levels & Squadrons](./progression.md).
+
+## Story events
+
+A campaign can write **story events**. Each one waits for something players
+(or the AI) do: an objective destroyed, captured or held, a type of aircraft
+shot down in numbers, supply convoys cut, a side's fuel or will to fight
+crossing a line. None of them runs on a clock or in a fixed order, so which
+fire, and when, is up to the round. When one fires, everyone is told, the
+pilots who caused it are named (and may be paid a bonus), and the war
+changes: will to fight, fuel or equipment output, stocks at a base, an action
+withdrawn, unlocked or repriced, the AI headquarters' orders, intel handed to
+a side, or the end of the round. Each fires once a round unless the campaign
+lets it repeat, and some rule each other out, so whichever side gets there
+first decides which way the story goes:
+
+```dcsmessage
+TUAPSE BURNS: The Tuapse refinery is burning after a strike by Shade and Kilo.
+```
+
+The dashboard lists the events that have fired, and the daily war news leads
+with them.
 
 ## Scheduled restarts
 

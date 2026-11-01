@@ -259,7 +259,7 @@ export type HqLine = 'air' | 'fires' | 'logistics' | 'troops' | 'ground'
 export type HqOpKind =
   | 'cap' | 'strike' | 'sead' | 'recon' | 'artillery' | 'missile_strike' | 'ambush'
   | 'convoy' | 'helo_supply' | 'helo_troops' | 'reinforce'
-  | 'bomber' | 'awacs' | 'tanker' | 'naval_strike' | 'air_repair'
+  | 'bomber' | 'awacs' | 'tanker' | 'naval_strike' | 'air_repair' | 'anti_ship'
 export type HqRequestKind =
   | 'cas' | 'cap' | 'sead' | 'recon' | 'fires' | 'supply' | 'troops' | 'tanker' | 'awacs'
 
@@ -317,12 +317,26 @@ export interface HqObjective {
   inbound: boolean
 }
 export interface HqContact { pos: LatLon; class: string; count: number; near: string; near_km: number; age_mins: number }
+/** How hard a side's AI fights, from both sides' pilots in a slot (`ai_fill`). */
+export interface HqAiFill {
+  pilots: number
+  enemy_pilots: number
+  /** What the other side's pilots call for, 0..1. */
+  enemy_match: number
+  /** AI packages' and ground AI's pressure, 0..1. */
+  pressure: number
+  /** The HQ's pressure (gap_factor), 0..1. */
+  hq_pressure: number
+  /** The side's own pilots don't hold its AI back: "AI-led". */
+  ai_led: boolean
+}
+
 export interface HqView {
   side: 'Blue' | 'Red'
   enabled: boolean
   paused: boolean
   posture: HqPosture | null
-  source: 'rules' | 'strategist' | 'human' | ''
+  source: 'rules' | 'story' | 'strategist' | 'human' | ''
   main_effort: HqObjRef | null
   defend: HqObjRef[]
   supply_priority: HqObjRef[]
@@ -338,6 +352,10 @@ export interface HqView {
   treasury: number
   reserve: number
   gap_factor: number
+  /** PvP AI fill-in (`ai_fill`); absent or null when it is off. */
+  ai_fill?: HqAiFill | null
+  /** The side's will to fight, 0-100 (`war_will`); absent or null when it is off. */
+  will?: number | null
   available: Partial<Record<HqOpKind, number>>
   ops: HqOp[]
   requests: HqRequest[]

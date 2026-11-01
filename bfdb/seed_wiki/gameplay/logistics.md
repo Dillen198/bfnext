@@ -58,6 +58,13 @@ That isn't a bug; the base is out of that type. Fly something else, or fly
 from somewhere else. A base with no working logistics can't launch anything:
 the slot answers `Objective is capturable`.
 
+On servers that run real orders of battle (`ai_air_stock`), the AI flies from
+the same stock: an AI CAP, strike or tanker takes its airframes from the base
+it launches from, and they only come back if they land or are recalled alive.
+Shoot down a regiment and it stays gone until production or a ferry flight
+replaces it. The AI gets no reservation, so the last jet on the ramp is
+whoever's slot or launch gets there first.
+
 ## How supplies move
 
 ### Hubs keep a reserve

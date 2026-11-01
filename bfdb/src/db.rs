@@ -10,7 +10,7 @@ use bfprotocols::{
     },
     perf::PerfInner,
     shots::{Dead, Who},
-    stats::{DetectionSource, EnId, Pos, Stat},
+    stats::{AirOobStat, DetectionSource, EnId, Pos, Stat, StoryEventStat, WarWillStat},
 };
 use chrono::prelude::*;
 use dcso3::{
@@ -1224,6 +1224,16 @@ pub(crate) struct StatsDbInner {
     /// and a new round starts an empty log; the value is a JSON
     /// `CombatLogLine` (not bincode, so the line can grow).
     combat_log: Tree<std::string::String, std::string::String>,
+    /// The latest war will per round (`Stat::WarWill`), as JSON
+    /// `WarWillStat` (not bincode, so it can grow). A new round starts
+    /// without one.
+    war_will: Tree<RoundId, std::string::String>,
+    /// The story events fired per round (`Stat::StoryEvent`), oldest first,
+    /// as a JSON array of `StoryEventStat`. A new round starts with none.
+    story: Tree<RoundId, std::string::String>,
+    /// The latest air order of battle per round (`Stat::AirOrderOfBattle`),
+    /// as JSON `AirOobStat`. A new round starts without one.
+    air_oob: Tree<RoundId, std::string::String>,
     // bfwiki uploaded images (screenshots etc.), keyed by generated Uuid
     wiki_images: Tree<Uuid, WikiImage>,
     // Recon intel (TARPS) captures, keyed (RoundId, capture Uuid). Per-round,
@@ -1804,6 +1814,9 @@ fn stat_variant_name(s: &Stat) -> &'static str {
         Stat::Weather { .. } => "Weather",
         Stat::GciPicture(_) => "GciPicture",
         Stat::CombatLog { .. } => "CombatLog",
+        Stat::WarWill(_) => "WarWill",
+        Stat::StoryEvent(_) => "StoryEvent",
+        Stat::AirOrderOfBattle(_) => "AirOrderOfBattle",
     }
 }
 
@@ -1981,6 +1994,9 @@ impl StatsDb {
             wiki_tombstones: Tree::open(&db, "wiki_tombstones")?,
             commander_grants: Tree::open(&db, "commander_grants")?,
             combat_log: Tree::open(&db, "combat_log")?,
+            war_will: Tree::open(&db, "war_will")?,
+            story: Tree::open(&db, "story")?,
+            air_oob: Tree::open(&db, "air_oob")?,
             wiki_images: Tree::open(&db, "wiki_images")?,
             intel_captures: Tree::open(&db, "intel_captures")?,
             intel_images: Tree::open(&db, "intel_images")?,
@@ -3696,6 +3712,27 @@ impl StatsDb {
 
     pub(crate) fn latest_weather(&self, inst: &InstanceState) -> Option<WeatherSnapshot> {
         inst.latest_weather.read().ok()?.clone()
+    }
+
+    /// The latest war will of `round` (`Stat::WarWill`), if the engine has
+    /// sent one: None with `war_will` off.
+    pub(crate) fn war_will(&self, round: RoundId) -> Option<WarWillStat> {
+        let json = self.war_will.get(&round).ok()??;
+        serde_json::from_str(&json).ok()
+    }
+
+    /// The story events fired in `round` (`Stat::StoryEvent`), oldest
+    /// first; None when none has fired (or `story` is off).
+    pub(crate) fn story_events(&self, round: RoundId) -> Option<Vec<StoryEventStat>> {
+        let json = self.story.get(&round).ok()??;
+        serde_json::from_str(&json).ok()
+    }
+
+    /// The latest air order of battle of `round` (`Stat::AirOrderOfBattle`),
+    /// if the engine has sent one: None with `ai_air_stock` off.
+    pub(crate) fn air_oob(&self, round: RoundId) -> Option<AirOobStat> {
+        let json = self.air_oob.get(&round).ok()??;
+        serde_json::from_str(&json).ok()
     }
 
     /// The most recent session's `Cfg`, or `None` if no session record can be
@@ -6474,6 +6511,21 @@ impl StatsDb {
                 };
                 self.combat_log.insert(&key, &serde_json::to_string(&line)?)?;
             }
+            Stat::WarWill(w) => {
+                self.war_will.insert(&ctx.round, &serde_json::to_string(&w)?)?;
+            }
+            Stat::StoryEvent(e) => {
+                let mut all = self.story_events(ctx.round).unwrap_or_default();
+                // The same firing read twice (an archive replay) is kept once.
+                if !all.iter().any(|o| o.id == e.id && o.time == e.time) {
+                    all.push(e);
+                    all.sort_by_key(|e| e.time);
+                    self.story.insert(&ctx.round, &serde_json::to_string(&all)?)?;
+                }
+            }
+            Stat::AirOrderOfBattle(o) => {
+                self.air_oob.insert(&ctx.round, &serde_json::to_string(&o)?)?;
+            }
             Stat::PilotXp { id, xp, reason: _ } => {
                 if ctx.public {
                     self.award_xp(id, XpEvent::Bonus(xp), time)?;
@@ -6976,6 +7028,9 @@ impl StatsDb {
         // Trails & weather
         self.trail_points.clear()?;
         self.round_instance.clear()?;
+        self.war_will.clear()?;
+        self.story.clear()?;
+        self.air_oob.clear()?;
         if let Ok(mut w) = inst.latest_weather.write() {
             *w = None;
         }
@@ -7050,6 +7105,9 @@ impl StatsDb {
         self.deploy_seen.clear()?;
         self.trail_points.clear()?;
         self.round_instance.clear()?;
+        self.war_will.clear()?;
+        self.story.clear()?;
+        self.air_oob.clear()?;
         // XP is scored from the same replay, so it goes too or it doubles.
         // Squadron rosters stay; only their XP is zeroed.
         self.progress.clear()?;
@@ -7610,7 +7668,7 @@ impl StatsDb {
     /// A single default instance with no engine, no ingestion source -- what
     /// the unit tests below need. (They referred to this before it existed,
     /// which kept the whole test build from compiling.)
-    fn new_offline<P: AsRef<Path>>(path: P) -> Result<Self> {
+    pub(crate) fn new_offline<P: AsRef<Path>>(path: P) -> Result<Self> {
         let cfg: InstanceCfg = serde_json::from_value(serde_json::json!({
             "id": crate::instance::DEFAULT_INSTANCE,
         }))?;
@@ -7645,6 +7703,225 @@ impl StatsDb {
             )
             .unwrap();
         self.round_instance.insert(&rid, &inst.to_string()).unwrap();
+    }
+
+    /// Run `stats` through the ingest pipeline for instance `inst`, one
+    /// second apart, as the archive reader would.
+    pub(crate) fn ingest_test_stats(&self, inst: &str, stats: Vec<Stat>) {
+        let inst = self.state(&InstanceId::from(inst));
+        let mut ctx = StatCtx::default();
+        let t0 = Utc::now() - chrono::Duration::seconds(stats.len() as i64 + 1);
+        for (i, st) in stats.into_iter().enumerate() {
+            self.add_stat(&inst, &mut ctx, t0 + chrono::Duration::seconds(i as i64), st)
+                .unwrap();
+        }
+    }
+}
+
+#[cfg(test)]
+mod war_will_tests {
+    use super::*;
+    use bfprotocols::stats::WillCause;
+
+    fn will() -> WarWillStat {
+        WarWillStat {
+            blue: 63.04,
+            red: 41.5,
+            blue_trend: Some(-4.0),
+            red_trend: None,
+            threshold: 20.,
+            causes: vec![WillCause {
+                side: Side::Red,
+                text: "Tuapse refinery destroyed".into(),
+                delta: -5.,
+                time: Utc.timestamp_opt(1_760_000_000, 0).unwrap(),
+            }],
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_latest_will_is_kept_per_round() {
+        let tmp = std::env::temp_dir().join(format!("bfdb-will-test-{}", Uuid::new_v4()));
+        let db = StatsDb::new_offline(tmp.join("db")).unwrap();
+        let mut older = will();
+        older.blue = 70.;
+        db.ingest_test_stats(
+            crate::instance::DEFAULT_INSTANCE,
+            vec![
+                Stat::NewRound { sortie: "campaign".into() },
+                Stat::WarWill(older),
+                Stat::WarWill(will()),
+            ],
+        );
+        let rid = db
+            .latest_rounds_for(&InstanceId::from(crate::instance::DEFAULT_INSTANCE))
+            .unwrap()
+            .into_iter()
+            .find(|(_, _, r)| r.end.is_none())
+            .map(|(_, rid, _)| rid)
+            .unwrap();
+        assert_eq!(db.war_will(rid), Some(will()));
+        assert_eq!(db.war_will(RoundId(rid.0 + 1)), None);
+        drop(db);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// bfdb's bincode rows number `Stat` variants by position: the new one
+    /// is last, and records written before it still decode.
+    #[test]
+    fn old_stat_records_still_decode() {
+        let old = Stat::RoundEnd { winner: Some(Side::Blue) };
+        let bytes = yats::serialize(&old).unwrap();
+        // written by a build before `WarWill`: variant 1, Some, Blue (2)
+        assert_eq!(bytes, OLD_ROUND_END);
+        match yats::deserialize::<Stat>(OLD_ROUND_END).unwrap() {
+            Stat::RoundEnd { winner: Some(Side::Blue) } => (),
+            other => panic!("decoded as {other:?}"),
+        }
+        let log = Stat::CombatLog {
+            side: Side::Red,
+            kind: "loss".into(),
+            text: "x".into(),
+            pos: None,
+            formation: None,
+        };
+        let bytes = yats::serialize(&log).unwrap();
+        assert_eq!(&bytes[..4], &COMBAT_LOG_TAG, "CombatLog moved");
+        let new = Stat::WarWill(will());
+        let bytes = yats::serialize(&new).unwrap();
+        assert_eq!(&bytes[..4], &WAR_WILL_TAG, "WarWill is not last");
+        match yats::deserialize::<Stat>(&bytes).unwrap() {
+            Stat::WarWill(w) => assert_eq!(w, will()),
+            other => panic!("decoded as {other:?}"),
+        }
+    }
+
+    const OLD_ROUND_END: &[u8] = &[0, 0, 0, 1, 1, 0, 0, 0, 2];
+    const COMBAT_LOG_TAG: [u8; 4] = [0, 0, 0, 44];
+    const WAR_WILL_TAG: [u8; 4] = [0, 0, 0, 45];
+    const STORY_EVENT_TAG: [u8; 4] = [0, 0, 0, 46];
+
+    fn story_event(id: &str, secs: i64) -> StoryEventStat {
+        StoryEventStat {
+            id: id.into(),
+            time: Utc.timestamp_opt(1_760_000_000 + secs, 0).unwrap(),
+            title: "Tuapse burns".into(),
+            text: "Shade's strike set the Tuapse refinery on fire.".into(),
+            caused_by: vec!["Shade".into()],
+            side: Some(Side::Red),
+            effects: vec!["Red fuel output -40%".into(), "Red will -6".into()],
+        }
+    }
+
+    /// `StoryEvent` comes after `WarWill`, and both still decode.
+    #[test]
+    fn story_event_is_last_and_decodes() {
+        let bytes = yats::serialize(&Stat::WarWill(will())).unwrap();
+        assert_eq!(&bytes[..4], &WAR_WILL_TAG, "WarWill moved");
+        let e = Stat::StoryEvent(story_event("tuapse_burns", 0));
+        let bytes = yats::serialize(&e).unwrap();
+        assert_eq!(&bytes[..4], &STORY_EVENT_TAG, "StoryEvent is not last");
+        match yats::deserialize::<Stat>(&bytes).unwrap() {
+            Stat::StoryEvent(s) => assert_eq!(s, story_event("tuapse_burns", 0)),
+            other => panic!("decoded as {other:?}"),
+        }
+        // and an old record still reads as before
+        assert!(matches!(
+            yats::deserialize::<Stat>(OLD_ROUND_END).unwrap(),
+            Stat::RoundEnd { winner: Some(Side::Blue) }
+        ));
+    }
+
+    const AIR_OOB_TAG: [u8; 4] = [0, 0, 0, 47];
+
+    fn oob() -> AirOobStat {
+        AirOobStat {
+            blue: vec![bfprotocols::stats::AirframeCount {
+                typ: "F-14A".into(),
+                stock: 12,
+                lost: 3,
+                unlimited: false,
+            }],
+            red: vec![bfprotocols::stats::AirframeCount {
+                typ: "Tu-22M3".into(),
+                stock: 0,
+                lost: 6,
+                unlimited: true,
+            }],
+        }
+    }
+
+    /// `AirOrderOfBattle` comes after `StoryEvent`, and everything before it
+    /// still decodes where it was.
+    #[test]
+    fn air_oob_is_last_and_decodes() {
+        let bytes = yats::serialize(&Stat::StoryEvent(story_event("x", 0))).unwrap();
+        assert_eq!(&bytes[..4], &STORY_EVENT_TAG, "StoryEvent moved");
+        let bytes = yats::serialize(&Stat::AirOrderOfBattle(oob())).unwrap();
+        assert_eq!(&bytes[..4], &AIR_OOB_TAG, "AirOrderOfBattle is not last");
+        match yats::deserialize::<Stat>(&bytes).unwrap() {
+            Stat::AirOrderOfBattle(o) => assert_eq!(o, oob()),
+            other => panic!("decoded as {other:?}"),
+        }
+        assert!(matches!(
+            yats::deserialize::<Stat>(OLD_ROUND_END).unwrap(),
+            Stat::RoundEnd { winner: Some(Side::Blue) }
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_latest_oob_is_kept_per_round() {
+        let tmp = std::env::temp_dir().join(format!("bfdb-oob-test-{}", Uuid::new_v4()));
+        let db = StatsDb::new_offline(tmp.join("db")).unwrap();
+        db.ingest_test_stats(
+            crate::instance::DEFAULT_INSTANCE,
+            vec![
+                Stat::NewRound { sortie: "campaign".into() },
+                Stat::AirOrderOfBattle(AirOobStat::default()),
+                Stat::AirOrderOfBattle(oob()),
+            ],
+        );
+        let rid = db
+            .latest_rounds_for(&InstanceId::from(crate::instance::DEFAULT_INSTANCE))
+            .unwrap()
+            .into_iter()
+            .find(|(_, _, r)| r.end.is_none())
+            .map(|(_, rid, _)| rid)
+            .unwrap();
+        assert_eq!(db.air_oob(rid), Some(oob()));
+        assert_eq!(db.air_oob(RoundId(rid.0 + 1)), None);
+        drop(db);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn story_events_are_kept_per_round_oldest_first() {
+        let tmp =
+            std::env::temp_dir().join(format!("bfdb-story-test-{}", Uuid::new_v4()));
+        let db = StatsDb::new_offline(tmp.join("db")).unwrap();
+        db.ingest_test_stats(
+            crate::instance::DEFAULT_INSTANCE,
+            vec![
+                Stat::NewRound { sortie: "campaign".into() },
+                Stat::StoryEvent(story_event("senaki_falls", 60)),
+                Stat::StoryEvent(story_event("tuapse_burns", 0)),
+                // the same firing again is not a second event
+                Stat::StoryEvent(story_event("senaki_falls", 60)),
+            ],
+        );
+        let rid = db
+            .latest_rounds_for(&InstanceId::from(crate::instance::DEFAULT_INSTANCE))
+            .unwrap()
+            .into_iter()
+            .find(|(_, _, r)| r.end.is_none())
+            .map(|(_, rid, _)| rid)
+            .unwrap();
+        let ids: Vec<std::string::String> =
+            db.story_events(rid).unwrap().into_iter().map(|e| e.id.to_string()).collect();
+        assert_eq!(ids, vec!["tuapse_burns", "senaki_falls"]);
+        assert_eq!(db.story_events(RoundId(rid.0 + 1)), None);
+        drop(db);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
 

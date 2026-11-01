@@ -982,8 +982,120 @@ pub(crate) fn stats_summary(db: &StatsDb, inst: &Inst) -> Result<serde_json::Val
             "red_registered": red_reg,
             "blue_online": blue_online,
             "red_online": red_online,
+            "will": active_rid.and_then(|rid| db.war_will(rid)).map(|w| will_json(&w)),
+            "story": active_rid.and_then(|rid| db.story_events(rid)).map(|s| story_json(&s)),
         }))
     }
+}
+
+/// `/api/oob`: each side's air order of battle (`ai_air_stock`) for the
+/// active round, or `?round=<id>` of this instance:
+/// `{"round": id, "blue": [{"type", "stock", "lost", "unlimited"}], "red": [...]}`,
+/// each side most aircraft first. Losses are public (they are kills on the
+/// dashboard anyway); how many airframes a side has left is not: like
+/// `/api/warehouse`, a pilot sees their own side's stock, an admin both, and
+/// everyone else gets `stock: null`. Both sides empty while the engine has
+/// sent nothing (feature off, or a round without it).
+pub(crate) async fn api_oob(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    use dcso3::coalition::Side;
+    // Never an error: without a coalition the caller just sees no stock.
+    let sees: (bool, bool) =
+        match require_coalition(&query, session_id, &db, &bot_cfg, &inst).await {
+            Ok(c) if c.god_mode => (true, true),
+            Ok(c) => (c.side == Side::Blue, c.side == Side::Red),
+            Err(_) => (false, false),
+        };
+    let round_id: Option<u64> = query.get("round").and_then(|s| s.parse().ok());
+    let value = task::block_in_place(|| -> Result<serde_json::Value> {
+        let rid = match round_id {
+            Some(id) if db.round_instance_of(db::RoundId(id)) != inst.id => None,
+            Some(id) => Some(db::RoundId(id)),
+            None => db
+                .latest_rounds_for(&inst.id)?
+                .into_iter()
+                .find(|(_, _, r)| r.end.is_none())
+                .map(|(_, rid, _)| rid),
+        };
+        let oob = rid.and_then(|rid| db.air_oob(rid)).unwrap_or_default();
+        Ok(oob_json(rid.map(|r| r.0), &oob, sees))
+    })?;
+    Ok(json_response(serde_json::to_string(&value).map_err(anyhow::Error::from)?))
+}
+
+/// The body of `/api/oob`; `sees` is (Blue stock, Red stock).
+pub(crate) fn oob_json(
+    round: Option<u64>,
+    oob: &bfprotocols::stats::AirOobStat,
+    sees: (bool, bool),
+) -> serde_json::Value {
+    let side = |v: &[bfprotocols::stats::AirframeCount], visible: bool| {
+        let mut v: Vec<&bfprotocols::stats::AirframeCount> = v.iter().collect();
+        v.sort_by(|a, b| b.stock.cmp(&a.stock).then(a.typ.as_str().cmp(b.typ.as_str())));
+        serde_json::Value::Array(
+            v.into_iter()
+                .map(|a| {
+                    serde_json::json!({
+                        "type": a.typ.as_str(),
+                        "stock": visible.then_some(a.stock),
+                        "lost": a.lost,
+                        "unlimited": visible && a.unlimited,
+                    })
+                })
+                .collect(),
+        )
+    };
+    serde_json::json!({
+        "round": round,
+        "blue": side(&oob.blue, sees.0),
+        "red": side(&oob.red, sees.1),
+    })
+}
+
+/// `/api/stats`'s `story`: the round's fired story events, oldest first.
+pub(crate) fn story_json(
+    events: &[bfprotocols::stats::StoryEventStat],
+) -> serde_json::Value {
+    serde_json::Value::Array(
+        events
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "id": e.id.as_str(),
+                    "time": e.time.to_rfc3339(),
+                    "title": e.title.as_str(),
+                    "text": e.text.as_str(),
+                    "caused_by": e.caused_by.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                    "side": e.side.map(|s| format!("{s:?}")),
+                    "effects": e.effects.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// `/api/stats`'s `will`: each side's war will and its trend, the
+/// threshold and the biggest recent causes.
+pub(crate) fn will_json(w: &bfprotocols::stats::WarWillStat) -> serde_json::Value {
+    // One decimal is all the dashboard shows; the raw values carry noise
+    // from fractional losses and hourly rates.
+    let r = |v: f64| (v * 10.).round() / 10.;
+    serde_json::json!({
+        "blue": { "value": r(w.blue), "trend": w.blue_trend.map(r) },
+        "red": { "value": r(w.red), "trend": w.red_trend.map(r) },
+        "threshold": r(w.threshold),
+        "causes": w.causes.iter().map(|c| serde_json::json!({
+            "side": format!("{:?}", c.side),
+            "text": c.text.as_str(),
+            "delta": r(c.delta),
+            "time": c.time.to_rfc3339(),
+        })).collect::<Vec<_>>(),
+    })
 }
 
 /// The DCSServerBot half of `/api/stats`: its restart time and weather win

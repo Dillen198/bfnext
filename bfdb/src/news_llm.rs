@@ -481,6 +481,13 @@ fn user_prompt(d: &NewsDigest, history: &[NewsDigest], voice: Voice) -> String {
 
     s.push_str("SITUATION — the only facts you have, most important first:\n");
     s.push_str(&d.brief());
+    if d.items.iter().any(|i| i.angle == "story_event") {
+        s.push_str(
+            "\nThe [story_event] items are the day's turning points: lead with them, \
+             report what they changed (effects) as consequences, and name whoever is in \
+             caused_by as the people who brought them about.\n",
+        );
+    }
 
     s.push_str("\nSTANDING NUMBERS:\n");
     s.push_str(&format!(

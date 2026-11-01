@@ -1780,6 +1780,14 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(with_instance(db.clone()))
         .then(api_briefing);
 
+    let oob = warp::path!("api" / "oob")
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .and(with_instance(db.clone()))
+        .then(api_oob);
+
     let warehouse = warp::path!("api" / "warehouse")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
@@ -2946,6 +2954,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .or(groundwar)
         .or(hq)
         .or(warehouse)
+        .or(oob)
         .or(kills)
         .or(capture_events)
         .or(pilot_sorties)

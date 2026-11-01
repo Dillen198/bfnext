@@ -27,7 +27,7 @@ export const CFG_CATEGORIES: CfgCategory[] = [
   },
   {
     key: 'lives', label: 'Lives & Combat Rules', icon: Health,
-    fields: ['life_types', 'default_lives', 'limited_lives', 'era', 'last_stand', 'under_attack'],
+    fields: ['life_types', 'default_lives', 'limited_lives', 'era', 'last_stand', 'war_will', 'story', 'under_attack'],
   },
   {
     key: 'logistics', label: 'Cargo & Logistics', icon: Logistics,
@@ -40,7 +40,7 @@ export const CFG_CATEGORIES: CfgCategory[] = [
   },
   {
     key: 'objectives', label: 'Objectives & Deployables', icon: Capture,
-    fields: ['deployables', 'troops', 'dismount', 'unit_classification', 'extra_fixed_wing_objectives', 'frontline', 'actions', 'capture_consolidation_secs', 'population_scaling'],
+    fields: ['deployables', 'troops', 'dismount', 'unit_classification', 'extra_fixed_wing_objectives', 'frontline', 'actions', 'capture_consolidation_secs', 'population_scaling', 'ai_fill'],
   },
   {
     key: 'airdefense', label: 'SAM Sites & Air Defense', icon: Radar,
