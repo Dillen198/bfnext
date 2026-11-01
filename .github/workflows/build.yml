@@ -69,7 +69,12 @@ jobs:
       # DB tests use throwaway sled dirs under the temp dir), and
       # bfcockpit/installer has no tests and builds fine on a Windows runner
       # (it only embeds a committed Lua script, no frontend build step).
+      # A bfdb test run on Windows still deadlocks now and then (0 CPU, every
+      # thread waiting; seen on the seed-image and range card tests). Until
+      # the cause is found, fail the step instead of holding the runner for
+      # the 6-hour job limit. A normal run, compile included, is well under it.
       - name: cargo test (workspace)
+        timeout-minutes: 40
         run: cargo test --workspace --locked
 
       # bftools is excluded from the workspace (own Cargo.lock, vendored Lua),
