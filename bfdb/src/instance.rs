@@ -305,6 +305,12 @@ impl Registry {
     /// Build from a parsed `--instances` file, validating the invariants that
     /// silently corrupt data if broken: duplicate ids, shared netidx bases,
     /// shared stats files, and shared UDP export ports.
+    ///
+    /// An instance that breaks one is left out (logged at ERROR) and the rest
+    /// are served; the instance listed first keeps the contested id, base,
+    /// port or file. Failing the whole load instead took every campaign's
+    /// dashboard and the bot's bfdb calls down for three hours on 31 Oct,
+    /// over a port clash in a new instance that was not even running yet.
     pub(crate) fn new(file: InstancesFile) -> Result<Self> {
         if file.instances.is_empty() {
             bail!("instances file lists no instances");
@@ -313,60 +319,70 @@ impl Registry {
         let mut bases: HashSet<String> = HashSet::new();
         let mut ports: HashSet<u16> = HashSet::new();
         let mut jsonls: HashSet<PathBuf> = HashSet::new();
-        for i in &file.instances {
-            if i.id.is_empty() {
-                bail!("an instance has an empty id");
-            }
-            if !i.id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-                bail!(
+        let mut kept: Vec<InstanceCfg> = Vec::with_capacity(file.instances.len());
+        for i in file.instances {
+            let base = i.base.as_ref().map(|b| format!("{b}"));
+            let problem = if i.id.is_empty() {
+                Some("an instance has an empty id".to_string())
+            } else if !i
+                .id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
+                Some(format!(
                     "instance id {:?} must be ASCII alphanumeric, '-' or '_' (it appears in URLs and DB keys)",
                     i.id
-                );
+                ))
+            } else if ids.contains(&i.id) {
+                Some(format!("duplicate instance id {:?}", i.id))
+            } else if let Some(b) = base.as_ref().filter(|b| bases.contains(*b)) {
+                Some(format!(
+                    "instance {:?} reuses netidx base {b} -- each DCS instance needs its own \
+                     `netidx_base` in its engine CFG, or their stats and RPCs will cross",
+                    i.id
+                ))
+            } else if let Some(p) = i.export_port.filter(|p| ports.contains(p)) {
+                Some(format!(
+                    "instance {:?} reuses UDP export port {p} -- give each instance its own \
+                     port and set the matching BF_PORT in its Export.lua",
+                    i.id
+                ))
+            } else if let Some(p) = i.stats_jsonl.as_ref().filter(|p| jsonls.contains(*p))
+            {
+                Some(format!(
+                    "instance {:?} reuses stats.jsonl {} -- each instance writes its own",
+                    i.id,
+                    p.display()
+                ))
+            } else {
+                None
+            };
+            if let Some(problem) = problem {
+                log::error!("{problem}; not serving this instance until that is fixed");
+                continue;
             }
-            if !ids.insert(i.id.clone()) {
-                bail!("duplicate instance id {:?}", i.id);
-            }
-            if let Some(b) = &i.base {
-                if !bases.insert(format!("{b}")) {
-                    bail!(
-                        "instance {:?} reuses netidx base {b} -- each DCS instance needs its own \
-                         `netidx_base` in its engine CFG, or their stats and RPCs will cross",
-                        i.id
-                    );
-                }
-            }
-            if let Some(p) = i.export_port {
-                if !ports.insert(p) {
-                    bail!(
-                        "instance {:?} reuses UDP export port {p} -- give each instance its own \
-                         port and set the matching BF_PORT in its Export.lua",
-                        i.id
-                    );
-                }
-            }
-            if let Some(p) = &i.stats_jsonl {
-                if !jsonls.insert(p.clone()) {
-                    bail!(
-                        "instance {:?} reuses stats.jsonl {} -- each instance writes its own",
-                        i.id,
-                        p.display()
-                    );
-                }
-            }
+            ids.insert(i.id.clone());
+            bases.extend(base);
+            ports.extend(i.export_port);
+            jsonls.extend(i.stats_jsonl.clone());
+            kept.push(i);
+        }
+        if kept.is_empty() {
+            bail!("no usable instance in the instances file (each one's problem is logged above)");
         }
         let default: InstanceId = match &file.default {
+            Some(d) if ids.contains(d.as_str()) => Arc::from(d.as_str()),
             Some(d) => {
-                if !ids.contains(d.as_str()) {
-                    bail!("default instance {d:?} is not in the instances list");
-                }
-                Arc::from(d.as_str())
+                log::error!(
+                    "default instance {d:?} is not among the instances being served; \
+                     defaulting to {:?}",
+                    kept[0].id
+                );
+                Arc::from(kept[0].id.as_str())
             }
-            None => Arc::from(file.instances[0].id.as_str()),
+            None => Arc::from(kept[0].id.as_str()),
         };
-        Ok(Self {
-            instances: file.instances.into_iter().map(Arc::new).collect(),
-            default,
-        })
+        Ok(Self { instances: kept.into_iter().map(Arc::new).collect(), default })
     }
 
     /// Load and validate `--instances <path>`.
@@ -465,5 +481,53 @@ mod tests {
         assert_eq!((blank.theme(), blank.brand_name()), (None, None));
         assert!(is_redstorm(Some(" RedStorm ")));
         assert!(!is_redstorm(Some("vector")) && !is_redstorm(None));
+    }
+
+    fn file(json: &str) -> InstancesFile {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn a_clashing_instance_is_left_out_not_fatal() {
+        // 31 Oct: redstorm reused vs1's export port and bfdb refused to start.
+        let reg = Registry::new(file(
+            r#"{"instances": [
+                {"id": "vs1", "export_port": 42002, "stats_jsonl": "a.jsonl"},
+                {"id": "vs2", "export_port": 42003, "stats_jsonl": "b.jsonl"},
+                {"id": "redstorm", "export_port": 42002, "stats_jsonl": "c.jsonl"}
+            ]}"#,
+        ))
+        .unwrap();
+        let ids: Vec<&str> = reg.all().iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["vs1", "vs2"]);
+
+        // A skipped instance claims nothing: its other values stay free.
+        let reg = Registry::new(file(
+            r#"{"instances": [
+                {"id": "vs1", "export_port": 42002},
+                {"id": "bad", "export_port": 42002, "stats_jsonl": "x.jsonl"},
+                {"id": "ok", "export_port": 42003, "stats_jsonl": "x.jsonl"},
+                {"id": "vs1", "export_port": 42004},
+                {"id": "no spaces", "export_port": 42005}
+            ]}"#,
+        ))
+        .unwrap();
+        let ids: Vec<&str> = reg.all().iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["vs1", "ok"]);
+    }
+
+    #[test]
+    fn default_falls_back_when_its_instance_is_left_out() {
+        let reg = Registry::new(file(
+            r#"{"default": "redstorm", "instances": [
+                {"id": "vs1", "export_port": 42002},
+                {"id": "redstorm", "export_port": 42002}
+            ]}"#,
+        ))
+        .unwrap();
+        assert_eq!(reg.resolve(None).unwrap().id, "vs1");
+
+        assert!(Registry::new(file(r#"{"instances": [{"id": ""}]}"#)).is_err());
+        assert!(Registry::new(file(r#"{"instances": []}"#)).is_err());
     }
 }

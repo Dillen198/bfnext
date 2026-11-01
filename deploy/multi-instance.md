@@ -13,8 +13,11 @@ otherwise collide on.
 
 ## 1. What must be unique per instance
 
-bfdb refuses to start if any of the first three collide, naming the offending
-key. The rest fail more quietly, so check them by hand.
+If any of the first three collide, bfdb leaves out the instance listed later and
+logs an ERROR naming it and the key that clashed. It keeps serving the others:
+the instance listed first keeps the contested value. (Until 1 Nov 2026 bfdb
+refused to start at all, so one bad entry took every server's dashboard down.)
+The rest fail more quietly, so check them by hand.
 
 | Thing | Where it is set | Why |
 |---|---|---|
@@ -29,6 +32,30 @@ key. The rest fail more quietly, so check them by hand.
 
 A **single netidx resolver** serves both instances — they are separated by their
 bases, not by separate resolvers. Don't run two.
+
+### The port plan
+
+Give every instance a slot number `n` (1, 2, 3, ...) and derive all of its ports
+from it, so a new instance never needs a hunt for free ports. This is the
+campaign box's plan:
+
+| Port | Rule | slot 1: vs1 | slot 2: vs2 | slot 3: redstorm | Set in |
+|---|---|---|---|---|---|
+| DCS `dcs_port` | 10308 + 10(n-1) | 10308 | 10318 | 10328 | `nodes.yaml` |
+| DCS `webgui_port` | 8088 + 2(n-1) | 8088 | 8090 | 8092 | `nodes.yaml` |
+| DCSServerBot `bot_port` | 6666 + 2(n-1) | 6666 | 6668 | 6669 (6670 by the rule; any free port works) | `nodes.yaml` |
+| SRS | 5002 + 2(n-1) | 5002 | 5004 | 5006 | `nodes.yaml` SRS extension **and** `gci.srs_port` |
+| Tacview real-time / remote control | 42674 + 2(n-1), +1 | 42674 / 42675 | 42676 / 42677 | 42678 / 42679 | `nodes.yaml` Tacview extension |
+| bfdb `export_port` | 42000 + n | 42001 | 42002 | 42003 | the instance's entry **and** `Scripts/bf_export_port.lua` |
+
+Folders follow the same slots: `tacviewExportPath` in `nodes.yaml` must equal
+the instance's `tacview_dir` (`C:\VectorStrike\Tacview\VS1`, `VS2`, `RSR`). Two
+instances recording into one folder mix their replays.
+
+Box-wide, one of each: bfdb `listen_address` 8880, `site_address` 8766, the
+netidx resolver 4564, the bot's `listen_port` 10042, DCSServerBot's REST API
+9876, PostgreSQL 5432. The range box has its own copy of these, with
+`export_port` 42004 (see `DCSServerBot/config/SAMPLE-range-server.md`).
 
 Sortie (mission) names *may* repeat: rounds are tagged with their instance id in
 the DB, and round selection filters on that tag rather than on the scenario name.

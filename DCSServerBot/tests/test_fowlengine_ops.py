@@ -1007,7 +1007,59 @@ def test_dcs_texture_lines_are_not_crashes():
         "2026-09-26 10:22:33.000 ALERT   EDCORE (Main): # -------------- 20260926-102233 --------------",
         "2026-09-26 10:22:33.001 ALERT   EDCORE (Main): # C0000005 ACCESS_VIOLATION at 00007ff6 00:00000000",
     ]
-    assert [e.level for e in la.parse_entries("dcs:vs1", real)] == ["CRASH", "CRASH"]
+    crash = la.parse_entries("dcs:vs1", real)
+    assert [e.level for e in crash] == ["CRASH"]          # header + exception: one crash
+    assert "ACCESS_VIOLATION" in crash[0].full
+
+
+# vs1, 1 Nov 07:31: died in Tacview's export hook. The report showed the dump
+# header and the exception as two issues and dropped the stack.
+VS1_CRASH = """2026-11-01 07:31:34.437 INFO    Scripting (Main): event:type=end shooting,initiatorPilotName=OB1
+2026-11-01 07:31:36.925 INFO    EDCORE (Main): try to write dump information
+2026-11-01 07:31:37.006 INFO    EDCORE (Main): # -------------- 20261101-073137 --------------
+2026-11-01 07:31:37.008 INFO    EDCORE (Main): DCS/2.9.31.29434 (x86_64; MT; Windows NT 10.0.26300)
+2026-11-01 07:31:37.008 INFO    EDCORE (Main): C:\\Program Files\\Eagle Dynamics\\DCS World Server\\bin\\lua.dll
+2026-11-01 07:31:37.010 INFO    EDCORE (Main): # C0000005 ACCESS_VIOLATION at 00007ff9d4639511 00:00000000
+2026-11-01 07:31:37.013 INFO    EDCORE (Main): 0x0000000000009511 (lua): luaF_newproto + 0x12D1
+2026-11-01 07:31:37.018 INFO    EDCORE (Main): 0x0000000000001eaf (lua): lua_pushstring + 0x5F
+2026-11-01 07:31:37.018 INFO    EDCORE (Main): 0x000000000098c3cc (DCS_server): SW + 0x23E6AC
+2026-11-01 07:31:37.020 INFO    EDCORE (Main): 0x000000000001540b (tacview): (function-name not available) + 0x0
+2026-11-01 07:31:37.436 INFO    EDCORE (Main): Minidump created.
+2026-11-01 07:31:37.436 INFO    Lua::Config (Main): stack traceback:
+\t[C]: in function 'ExportUpdateBegin'
+\t[string "C:\\Users\\atpad\\Saved Games\\DCS.vectorstrike_1\\Scripts/TacviewGameExport.lua"]:69: in function <...>
+2026-11-01 07:31:37.436 INFO    APP (Main): enumerating loaded modules
+"""
+
+
+def test_dcs_crash_is_one_issue_with_its_stack():
+    ents = la.parse_entries("dcs:vs1", VS1_CRASH.splitlines())
+    assert [e.level for e in ents] == ["CRASH"]
+    full = ents[0].full
+    assert "ACCESS_VIOLATION" in full and "lua_pushstring" in full
+    assert "TacviewGameExport.lua" in full and "enumerating" not in full
+    sig = la.signature(ents[0])
+    assert "ACCESS_VIOLATION" in sig and "lua:lua_pushstring" in sig and "tacview:" in sig
+    # The same crash on another day is the same issue; a different stack is not.
+    again = la.parse_entries("dcs:vs1", VS1_CRASH.replace("20261101-073137", "20261105-120000").splitlines())
+    assert la.fingerprint(again[0]) == la.fingerprint(ents[0])
+    other = la.parse_entries("dcs:vs1", VS1_CRASH.replace("(tacview)", "(bflib)").splitlines())
+    assert la.fingerprint(other[0]) != la.fingerprint(ents[0])
+
+
+def test_crash_files_are_one_entry_per_crash(world):
+    an = la.LogAnalyzer(world.cog, log, str(world.tmp / "config" / "issues.json"))
+    logs = Path(world.servers[0].instance.home, "Logs")
+    logs.mkdir(parents=True, exist_ok=True)
+    assert an._crash_dumps() == []          # first look: what is there is history
+    (logs / "dcs.20261101-073137.crash").write_text(
+        "# C0000005 ACCESS_VIOLATION at 00007ff9d4639511\n0x9511 (lua): luaF_newproto + 0x12D1\n")
+    (logs / "dcs.20261101-073137.dmp").write_bytes(b"MDMP")
+    ents = an._crash_dumps()
+    assert len(ents) == 1 and ents[0].level == "CRASH"
+    assert ".dmp" in ents[0].full and ".crash" in ents[0].full
+    assert "ACCESS_VIOLATION" in ents[0].full
+    assert an._crash_dumps() == []          # seen once, reported once
 
 
 # ---- release signing ----------------------------------------------------------------

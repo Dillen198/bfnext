@@ -746,9 +746,9 @@ class Procman:
         """Write home/instances.json from `bfdb.instances:` and return its path,
         or None in single-server mode (where the flat flags are used instead).
 
-        Validation that would otherwise only surface as a bfdb startup failure
-        -- duplicate ids, shared netidx bases or shared UDP export ports -- is
-        left to bfdb, which refuses to start and says exactly which key clashed.
+        Validation -- duplicate ids, shared netidx bases or shared UDP export
+        ports -- is left to bfdb, which leaves out the later of two clashing
+        instances, logs exactly which key clashed, and serves the rest.
         Rendering here only maps YAML keys onto the file's schema."""
         if not self.multi_instance:
             # Clean up a stale file so a downgrade to single-server mode can't

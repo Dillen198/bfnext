@@ -90,6 +90,15 @@ _DCS_KEEP = re.compile(r"SCRIPTING|LuaNET|bflib|bfrange|fowl|Lua::|lua_|\.lua:\d
 # crashmodels / airfieldsbuilding_crash and DCS logs "No suitable driver found
 # to mount ..." for them on every start.
 _DCS_CRASH = re.compile(r"EDCORE.*(# -{5,}\s*\d{8}-\d{6}|ACCESS_VIOLATION|# C0000\w{3}|EXCEPTION_\w+)", re.I)
+# What DCS writes after the dump header: the faulting module, the exception,
+# the stack (one EDCORE line per frame) and the Lua traceback of whatever
+# script was running. Folded into the crash entry, so one crash is one issue
+# with its stack, not a header issue, an exception issue and no stack.
+_DCS_CRASH_BODY = re.compile(r"^(EDCORE|Lua::Config|LOG) \(", re.I)
+# "0x0000000000009511 (lua): luaF_newproto + 0x12D1" -> ("lua", "luaF_newproto")
+_DCS_FRAME = re.compile(r"0x[0-9a-fA-F]+ \(([^)]+)\): (.+?) \+ 0x[0-9a-fA-F]+")
+_DCS_EXCEPTION = re.compile(r"# ([0-9A-F]{8} .*?) at ", re.I)
+CRASH_FRAMES_IN_SIGNATURE = 6
 
 
 @dataclass
@@ -130,6 +139,12 @@ def parse_entries(source: str, lines: Iterable[str], min_level: str = "WARN",
             m = (mm.group(1), line) if mm else None
             if m:
                 m = _FakeMatch(m)
+        if (m is not None and kind == "dcs" and cur is not None and cur.level == "CRASH"
+                and _DCS_CRASH_BODY.match(m.group(2))):
+            if len(cur.extra) < 60:
+                cur.extra.append(m.group(2))
+            ctx.append(line)
+            continue
         if m is not None:
             if cur is not None and keep_cur:
                 out.append(cur)
@@ -187,9 +202,22 @@ def _last_meaningful(extra: list[str]) -> str:
     return f"{frame} | {exc}".strip(" |")
 
 
+def _crash_signature(e: Entry) -> Optional[str]:
+    """A DCS crash is identified by its exception and the top of its stack;
+    the dump header alone ("# ---- <timestamp> ----") is the same for every
+    crash, so without this they all collapsed into one issue."""
+    exc = next((m.group(1) for l in [e.text, *e.extra] if (m := _DCS_EXCEPTION.search(l))), None)
+    frames = [f"{m.group(1)}:{m.group(2).strip()}" for l in e.extra if (m := _DCS_FRAME.search(l))]
+    if not exc and not frames:
+        return None
+    return " | ".join([exc or "crash", *frames[:CRASH_FRAMES_IN_SIGNATURE]])
+
+
 def signature(e: Entry) -> str:
     base = e.text
-    if e.extra and ("Traceback" in e.full or "panicked at" in e.full or "stack backtrace" in e.full):
+    if e.level == "CRASH" and _kind_of(e.source) == "dcs" and (cs := _crash_signature(e)):
+        base = f"DCS crash: {cs}"
+    elif e.extra and ("Traceback" in e.full or "panicked at" in e.full or "stack backtrace" in e.full):
         base = f"{base} || {_last_meaningful(e.extra)}"
     s = base
     for rx, rep in _NORMALISE:
@@ -593,16 +621,32 @@ class LogAnalyzer:
                 continue
             first = s.name not in seen
             known = set(seen.get(s.name) or [])
+            # One crash writes dcs.<ts>.crash and dcs.<ts>.dmp: one entry for
+            # both, not an issue per extension.
+            fresh: dict[str, list] = {}
             for e in files:
                 key = f"{e.name}:{int(e.stat().st_mtime)}"
                 if key in known:
                     continue
                 known.add(key)
                 if not first:
-                    out.append(Entry(source=f"dcs:{s.name}", level="CRASH",
-                                     text=f"DCS crashed -- new crash file {e.name}",
-                                     extra=[f"{e.path} ({e.stat().st_size} bytes, "
-                                            f"{datetime.fromtimestamp(e.stat().st_mtime, timezone.utc).isoformat()})"]))
+                    fresh.setdefault(e.name.rsplit(".", 1)[0], []).append(e)
+            for stem, group in sorted(fresh.items()):
+                extra = [f"{e.path} ({e.stat().st_size} bytes, "
+                         f"{datetime.fromtimestamp(e.stat().st_mtime, timezone.utc).isoformat()})"
+                         for e in group]
+                # The .crash file is a short text report (exception + stack):
+                # worth having in the issue itself.
+                for e in group:
+                    if e.name.lower().endswith(".crash") and e.stat().st_size <= 64 * 1024:
+                        try:
+                            with open(e.path, encoding="utf-8", errors="replace") as fh:
+                                extra.extend(l.rstrip("\r\n") for l in fh.readlines()[:40])
+                        except OSError:
+                            pass
+                out.append(Entry(source=f"dcs:{s.name}", level="CRASH",
+                                 text=f"DCS crashed -- new crash files {stem}.*",
+                                 extra=extra))
             seen[s.name] = sorted(known)[-50:]
         return out
 
