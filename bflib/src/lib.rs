@@ -15,6 +15,7 @@ for more details.
 */
 
 mod admin;
+mod ai_fill;
 mod airlife;
 mod api;
 mod atis;
@@ -602,6 +603,9 @@ impl Context {
 
     fn respawn_groups(&mut self, lua: MizLua, miz: &Miz) -> Result<()> {
         let spctx = SpawnCtx::new(lua)?;
+        // Learn what each AI template flies before anything plans with it
+        // (`ai_air_stock`).
+        self.db.air_stock_learn_templates(&spctx, &self.idx);
         let mut perf_guard = Perf::get_mut();
         let perf = Arc::make_mut(&mut perf_guard.inner);
         self.db.respawn_after_load(lua, perf, &self.idx, miz, &mut self.landcache, &spctx)
@@ -687,7 +691,7 @@ fn on_player_try_connect(
                     let cfg = Arc::make_mut(&mut ctx.db.ephemeral.cfg);
                     cfg.banned.remove(&ucid);
                 }
-                let cfg = Arc::clone(&ctx.db.ephemeral.cfg);
+                let cfg = ctx.db.cfg_for_save();
                 ctx.do_bg_task(bg::Task::SaveConfig(path, cfg))
             }
         }
@@ -1501,6 +1505,14 @@ fn on_hit(
         };
         if dead {
             let id = target.object_id()?;
+            // who brought the building down, for story events
+            let shooter = e
+                .initiator
+                .as_ref()
+                .and_then(|u| u.as_unit().ok())
+                .and_then(|u| u.object_id().ok())
+                .and_then(|oid| crate::shots::who_for(&ctx.db, oid));
+            ctx.db.story_static_hit(&id, shooter);
             if let Err(e) = ctx.db.respawn_protected_static(lua, &ctx.idx, &id) {
                 error!("respawn protected static failed {e:?}")
             }
@@ -1975,6 +1987,9 @@ fn handle_event(
         Event::Takeoff(e) => {
             if let Some(unit) = e.initiator.as_ref().and_then(|o| o.as_unit().ok()) {
                 let id = unit.object_id()?;
+                // An AI aircraft noted down at a base (`ai_air_stock`) is
+                // flying again.
+                ctx.db.air_stock_took_off(&id);
                 let place = e.place.as_ref().and_then(|p| p.get_name().ok());
                 if ctx.recently_born.contains_key(&id) {
                     // spawned in the air
@@ -2018,6 +2033,15 @@ fn handle_event(
         Event::Land(e) => {
             if let Some(unit) = e.initiator.as_ref().and_then(|o| o.as_unit().ok()) {
                 let id = unit.object_id()?;
+                // An AI aircraft that drew from stock (`ai_air_stock`) is
+                // down at a friendly base: noted, booked in once its flight
+                // is all down.
+                if !ctx.recently_born.contains_key(&id)
+                    && let Ok(pos) = unit.get_ground_position()
+                {
+                    let now = ctx.now();
+                    ctx.db.air_stock_landed(&id, pos.0, now);
+                }
                 if ctx.recently_born.contains_key(&id) {
                     // spawned on the ground
                 } else if ctx.pending_takeoffs.remove(&id).is_some() {
@@ -5678,7 +5702,11 @@ fn slow_phase_0(
         if let Ok(t) = Timer::singleton(lua).and_then(|t| t.get_abs_time()) {
             ctx.db.ephemeral.mission_hour = Some(((t.0 % 86_400.) / 3_600.) as u8);
         }
-        for dead in ctx.shots_out.bring_out_your_dead(ts) {
+        let deads = ctx.shots_out.bring_out_your_dead(ts);
+        // Story events (`Cfg::story`): the deaths seen since the last report
+        // get their killers.
+        ctx.db.story_kills(&deads);
+        for dead in deads {
             info!("kill {:?}", dead);
             if let Some(points) = cfg.points.as_ref() {
                 ctx.db.award_kill_points(points, &dead)
@@ -5692,6 +5720,7 @@ fn slow_phase_0(
                     _ => None,
                 });
                 info!("Convoy unit destroyed! Side: {:?}, GroupId: {:?}", side, gid);
+                ctx.db.story_convoy_hit(*gid, killer_ucid);
                 ctx.do_bg_task(Task::Stat(Stat::ConvoyDestroyed {
                     from: convoy_info.0,
                     to: convoy_info.1,
@@ -5709,6 +5738,12 @@ fn slow_phase_0(
 
             ctx.do_bg_task(Task::Stat(Stat::Kill(dead)));
         }
+    });
+    // Story events (`Cfg::story`), right after the kills are reported so
+    // their killers are known.
+    step(lua, ctx, "story", |ctx| {
+        let ts = ctx.now();
+        ctx.db.story_tick(ts);
     });
     // Before repairs: a ghost enemy unit parked by a base keeps it
     // "threatened", and a threatened base never repairs.
@@ -5871,6 +5906,19 @@ fn slow_phase_1(
             ctx.db.trigger_last_stand_victory(ts, losing_side.opposite());
         }
         record_perf(&mut perf.unit_culling, perf_ts);
+    });
+    // War will (`Cfg::war_will`): recovery, the fuel drain, the threshold
+    // countdown and the stat for bfdb. The round end itself is in
+    // `check_victory`.
+    step(lua, ctx, "war will", |ctx| {
+        let ts = ctx.now();
+        ctx.db.will_tick(ts);
+    });
+    // AI flights all down at friendly bases go back into stock, and the
+    // order of battle goes to bfdb (`ai_air_stock`).
+    step(lua, ctx, "air stock", |ctx| {
+        let ts = ctx.now();
+        ctx.db.air_stock_tick(ts);
     });
     Ok(AdminResult::Continue)
 }

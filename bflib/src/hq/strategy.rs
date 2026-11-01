@@ -23,7 +23,7 @@ for more details.
 
 use super::{Override, picture::Picture, posture_weights};
 use bfprotocols::{
-    cfg::HqCfg,
+    cfg::{HqCfg, HqPostureCfg},
     db::objective::ObjectiveId,
     hq::{Directive, Line, OpKind, Posture},
 };
@@ -38,6 +38,8 @@ const STICKINESS: f64 = 1.35;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Source {
     Rules,
+    /// A story event's standing orders (`Cfg::story`).
+    Story,
     Strategist,
     Human,
 }
@@ -46,6 +48,7 @@ impl Source {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Rules => "rules",
+            Self::Story => "story",
             Self::Strategist => "strategist",
             Self::Human => "human",
         }
@@ -67,11 +70,50 @@ pub(crate) struct Plan {
     pub(crate) reasons: Vec<CompactString>,
     pub(crate) disabled: Vec<OpKind>,
     pub(crate) paused: bool,
+    /// What the side's own state does to the plan (`HqCfg::posture`).
+    pub(crate) strain: Strain,
+}
+
+/// What the side's own state -- will, fuel, fighters (`HqCfg::posture`,
+/// E7) -- does to the plan besides its posture. These are the side's means,
+/// not an opinion, so they stand whatever posture a story event, the
+/// strategist or a human sets. All 1 (and no kinds) without `hq.posture`.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Strain {
+    /// On top of the line weights, per kind of operation: low will avoids
+    /// the costly and risky ones, depleted fighters fly less SEAD.
+    pub(crate) kinds: BTreeMap<OpKind, f64>,
+    /// CAP far forward, over the base the main effort is pushed from.
+    pub(crate) cap_forward: f64,
+    /// CAP over the bases being held; above 1, the side's own SAM sites get
+    /// CAP too.
+    pub(crate) cap_home: f64,
+    /// How often the ground war's AI sends its attack waves, 0..1.
+    pub(crate) ground_attacks: f64,
+    /// The state that turned the posture, for the announcement.
+    pub(crate) note: Option<CompactString>,
+}
+
+impl Default for Strain {
+    fn default() -> Self {
+        Self {
+            kinds: BTreeMap::new(),
+            cap_forward: 1.,
+            cap_home: 1.,
+            ground_attacks: 1.,
+            note: None,
+        }
+    }
 }
 
 impl Plan {
     pub(crate) fn weight(&self, line: Line) -> f64 {
         self.weights.get(&line).copied().unwrap_or(1.)
+    }
+
+    /// The side's own state's weight on `kind` (`Strain`).
+    pub(crate) fn kind_weight(&self, kind: OpKind) -> f64 {
+        self.strain.kinds.get(&kind).copied().unwrap_or(1.)
     }
 
     pub(crate) fn avoided(&self, id: Option<ObjectiveId>) -> bool {
@@ -145,8 +187,13 @@ fn rules(cfg: &HqCfg, pic: &Picture, prev: Option<&Plan>) -> Plan {
     // Pressure scales with the size of the side: two threatened bases out of
     // forty is a quiet night, two out of five is a crisis.
     let size = (own.len() as f64 / 6.).max(1.);
-    let score = (opportunities - pressure) / size + (territory - 0.5) * 2.;
-    let posture = if being_captured > 0 && pressure / size >= 2. {
+    let mut score = (opportunities - pressure) / size + (territory - 0.5) * 2.;
+    let state = cfg.posture.as_ref().filter(|p| p.enabled);
+    let mut strain = Strain::default();
+    if let Some(pc) = state {
+        score += will(pc, pic, &mut strain, &mut reasons);
+    }
+    let mut posture = if being_captured > 0 && pressure / size >= 2. {
         Posture::Defensive
     } else if score >= 0.5 {
         Posture::Offensive
@@ -155,6 +202,10 @@ fn rules(cfg: &HqCfg, pic: &Picture, prev: Option<&Plan>) -> Plan {
     } else {
         Posture::Balanced
     };
+    if let Some(pc) = state {
+        posture = fuel(pc, pic, posture, &mut strain, &mut reasons);
+        air(pc, pic, &mut strain, &mut reasons);
+    }
     reasons.push(format_compact!("posture {} (score {score:.1})", posture.label()));
 
     // Main effort: best target, but the standing one keeps it unless beaten
@@ -236,6 +287,92 @@ fn rules(cfg: &HqCfg, pic: &Picture, prev: Option<&Plan>) -> Plan {
         reasons,
         disabled: vec![],
         paused: false,
+        strain,
+    }
+}
+
+/// Will (`Picture::will`): the posture score it adds, pushing toward
+/// offensive above `will_neutral` and defensive below; under `will_low` the
+/// costly and risky kinds are worth less.
+fn will(
+    pc: &HqPostureCfg,
+    pic: &Picture,
+    strain: &mut Strain,
+    reasons: &mut Vec<CompactString>,
+) -> f64 {
+    let Some(w) = pic.will.filter(|w| w.is_finite()) else { return 0. };
+    let shift = (w - pc.will_neutral) / 50. * pc.will_weight;
+    if w < pc.will_low {
+        let k = pc.will_low_risky_weight.clamp(0., 1.);
+        for kind in pc.risky_ops.iter() {
+            strain.kinds.insert(*kind, k);
+        }
+        reasons.push(format_compact!(
+            "will {w:.0} -- avoiding costly operations (x{k:.1}), score {shift:+.1}"
+        ));
+        if shift < 0. {
+            strain.note = Some(format_compact!("will {w:.0}"));
+        }
+    } else {
+        reasons.push(format_compact!("will {w:.0}, score {shift:+.1}"));
+    }
+    shift
+}
+
+/// Fuel (`Picture::fuel_pct`): short of it the side holds whatever the map
+/// says -- the offensive stalls -- and critical, its ground attacks thin out
+/// too.
+fn fuel(
+    pc: &HqPostureCfg,
+    pic: &Picture,
+    posture: Posture,
+    strain: &mut Strain,
+    reasons: &mut Vec<CompactString>,
+) -> Posture {
+    let Some(f) = pic.fuel_pct.filter(|f| f.is_finite()) else { return posture };
+    if f < pc.fuel_critical_pct {
+        let k = pc.fuel_critical_ground_attacks.clamp(0., 1.);
+        strain.ground_attacks = k;
+        let note = format_compact!("fuel {f:.0}% -- critical, holding");
+        reasons.push(format_compact!("{note}, ground attacks x{k:.1}"));
+        strain.note = Some(note);
+        Posture::Defensive
+    } else if f < pc.fuel_low_pct {
+        let note = format_compact!("fuel {f:.0}% -- holding");
+        reasons.push(note.clone());
+        strain.note = Some(note);
+        Posture::Defensive
+    } else {
+        reasons.push(format_compact!("fuel {f:.0}%"));
+        posture
+    }
+}
+
+/// Air strength (`Picture::fighters` against `Picture::enemy_air`, what
+/// the radars hold): depleted, the fighters stay home -- less CAP far
+/// forward and SEAD, more over the bases being held and the SAM sites.
+fn air(
+    pc: &HqPostureCfg,
+    pic: &Picture,
+    strain: &mut Strain,
+    reasons: &mut Vec<CompactString>,
+) {
+    let Some(own) = pic.fighters else { return };
+    let seen = pic.enemy_air.len();
+    let ratio = own as f64 / seen.max(pc.air_min_enemy as usize).max(1) as f64;
+    if ratio < pc.air_depleted_ratio {
+        let fwd = pc.air_depleted_forward_weight.max(0.);
+        strain.cap_forward = fwd;
+        strain.cap_home = pc.air_depleted_home_weight.max(0.);
+        let sead = strain.kinds.entry(OpKind::Sead).or_insert(1.);
+        *sead *= fwd;
+        reasons.push(format_compact!(
+            "{own} fighters against {seen} enemy aircraft on radar -- depleted: CAP kept over our bases and SAMs, sweeps x{fwd:.1}"
+        ));
+    } else {
+        reasons.push(format_compact!(
+            "{own} fighters against {seen} enemy aircraft on radar"
+        ));
     }
 }
 
@@ -345,10 +482,14 @@ pub(crate) fn plan(
     cfg: &HqCfg,
     pic: &Picture,
     prev: Option<&Plan>,
+    story: Option<&Directive>,
     directive: Option<&Directive>,
     human: Option<&Override>,
 ) -> Plan {
     let mut plan = rules(cfg, pic, prev);
+    if let Some(d) = story {
+        apply(&mut plan, pic, d, Source::Story);
+    }
     if let Some(d) = directive.filter(|_| cfg.strategist.enabled) {
         apply(&mut plan, pic, d, Source::Strategist);
     }
@@ -417,7 +558,170 @@ mod tests {
             battles: Default::default(),
             front: vec![],
             support: vec![],
+            will: None,
+            fuel_pct: None,
+            fighters: None,
         }
+    }
+
+    fn with_state() -> HqCfg {
+        HqCfg { posture: Some(HqPostureCfg::default()), ..HqCfg::default() }
+    }
+
+    /// One of ours, three enemy bases in reach and one of them with no
+    /// logistics left: the map says attack.
+    fn good_map() -> Picture {
+        pic(vec![
+            obj(1, 0., true, 100, false),
+            obj(4, -15_000., true, 100, false),
+            obj(2, 20_000., false, 40, false),
+            obj(3, 25_000., false, 100, true),
+        ])
+    }
+
+    /// As many bases as the enemy, nothing to take: balanced.
+    fn even_map() -> Picture {
+        pic(vec![obj(1, 0., true, 100, false), obj(2, 20_000., false, 100, false)])
+    }
+
+    /// Three of ours, one threatened, against two healthy enemy bases:
+    /// balanced, leaning defensive.
+    fn threatened_map() -> Picture {
+        let mut objs = vec![
+            obj(1, 0., true, 100, false),
+            obj(4, -10_000., true, 100, false),
+            obj(5, -20_000., true, 100, false),
+            obj(2, 20_000., false, 100, false),
+            obj(6, 30_000., false, 100, false),
+        ];
+        objs[0].threatened = true;
+        pic(objs)
+    }
+
+    fn said(p: &Plan, what: &str) -> bool {
+        p.reasons.iter().any(|r| r.contains(what))
+    }
+
+    #[test]
+    fn without_the_posture_block_the_sides_state_changes_nothing() {
+        let cfg = HqCfg::default();
+        for base in [good_map(), even_map(), threatened_map()] {
+            let a = plan(&cfg, &base, None, None, None, None);
+            let mut state = base.clone();
+            state.will = Some(5.);
+            state.fuel_pct = Some(3.);
+            state.fighters = Some(0);
+            state.enemy_air = vec![Vector2::new(0., 0.); 10];
+            let b = plan(&cfg, &state, None, None, None, None);
+            assert_eq!(a.posture, b.posture);
+            assert_eq!(a.main_effort, b.main_effort);
+            assert_eq!(a.weights, b.weights);
+            assert_eq!(a.reasons, b.reasons);
+            assert_eq!(b.strain, Strain::default());
+            // The block on with nothing to read: the map alone, as before.
+            let c = plan(&with_state(), &base, None, None, None, None);
+            assert_eq!(a.posture, c.posture);
+            assert_eq!(a.weights, c.weights);
+            assert_eq!(a.reasons, c.reasons);
+            assert_eq!(c.strain, Strain::default());
+        }
+    }
+
+    #[test]
+    fn short_of_fuel_the_side_holds_whatever_the_map_says() {
+        let cfg = with_state();
+        let mut p = good_map();
+        assert_eq!(plan(&cfg, &p, None, None, None, None).posture, Posture::Offensive);
+        p.fuel_pct = Some(80.);
+        let full = plan(&cfg, &p, None, None, None, None);
+        assert_eq!(full.posture, Posture::Offensive);
+        assert!(said(&full, "fuel 80%"), "{:?}", full.reasons);
+        p.fuel_pct = Some(22.);
+        let low = plan(&cfg, &p, None, None, None, None);
+        assert_eq!(low.posture, Posture::Defensive);
+        assert!(said(&low, "fuel 22% -- holding"), "{:?}", low.reasons);
+        assert_eq!(low.strain.ground_attacks, 1.);
+        assert_eq!(low.weights, posture_weights(Posture::Defensive));
+        // Critical: the ground attacks thin out too, and that holds even
+        // when a human orders the side forward.
+        p.fuel_pct = Some(6.);
+        let h = Override {
+            by: "cdr".into(),
+            set: chrono::Utc::now(),
+            expires: chrono::Utc::now(),
+            directive: Directive {
+                posture: Some(Posture::Offensive),
+                ..Default::default()
+            },
+            disabled_ops: vec![],
+            paused: false,
+        };
+        let crit = plan(&cfg, &p, None, None, None, Some(&h));
+        assert_eq!(crit.posture, Posture::Offensive);
+        assert_eq!(crit.source, Source::Human);
+        assert_eq!(crit.strain.ground_attacks, 0.5);
+        assert!(said(&crit, "critical"), "{:?}", crit.reasons);
+    }
+
+    #[test]
+    fn high_will_takes_an_even_map_onto_the_offensive() {
+        let cfg = with_state();
+        let mut p = even_map();
+        assert_eq!(plan(&cfg, &p, None, None, None, None).posture, Posture::Balanced);
+        p.will = Some(50.);
+        assert_eq!(plan(&cfg, &p, None, None, None, None).posture, Posture::Balanced);
+        p.will = Some(90.);
+        p.fuel_pct = Some(90.);
+        let a = plan(&cfg, &p, None, None, None, None);
+        assert_eq!(a.posture, Posture::Offensive);
+        assert!(said(&a, "will 90"), "{:?}", a.reasons);
+        assert!(a.strain.kinds.is_empty());
+        // The good map with high will but no fuel still holds.
+        let mut g = good_map();
+        g.will = Some(90.);
+        g.fuel_pct = Some(20.);
+        assert_eq!(plan(&cfg, &g, None, None, None, None).posture, Posture::Defensive);
+    }
+
+    #[test]
+    fn low_will_and_a_threatened_base_put_the_side_on_the_defensive() {
+        let cfg = with_state();
+        let mut p = threatened_map();
+        let a = plan(&cfg, &p, None, None, None, None);
+        assert_eq!(a.posture, Posture::Balanced);
+        p.will = Some(20.);
+        let b = plan(&cfg, &p, None, None, None, None);
+        assert_eq!(b.posture, Posture::Defensive);
+        // ... and it avoids its costly operations.
+        assert_eq!(b.kind_weight(OpKind::Bomber), 0.6);
+        assert_eq!(b.kind_weight(OpKind::Strike), 0.6);
+        assert_eq!(b.kind_weight(OpKind::Cap), 1.);
+        assert!(said(&b, "avoiding costly operations"), "{:?}", b.reasons);
+    }
+
+    #[test]
+    fn a_depleted_air_force_flies_fewer_sweeps() {
+        let cfg = with_state();
+        let mut p = even_map();
+        p.enemy_air = vec![Vector2::new(10_000., 0.); 12];
+        p.fighters = Some(40);
+        let strong = plan(&cfg, &p, None, None, None, None);
+        assert_eq!(strong.kind_weight(OpKind::Sead), 1.);
+        assert_eq!(strong.strain.cap_forward, 1.);
+        p.fighters = Some(6);
+        let weak = plan(&cfg, &p, None, None, None, None);
+        assert_eq!(weak.kind_weight(OpKind::Sead), 0.5);
+        assert_eq!(weak.strain.cap_forward, 0.5);
+        assert_eq!(weak.strain.cap_home, 1.3);
+        assert!(said(&weak, "6 fighters against 12"), "{:?}", weak.reasons);
+        // A quiet radar doesn't make a handful of fighters look strong.
+        p.enemy_air.clear();
+        p.fighters = Some(3);
+        assert_eq!(plan(&cfg, &p, None, None, None, None).strain.cap_forward, 0.5);
+        // Low will and depleted: both lower SEAD.
+        p.will = Some(10.);
+        let both = plan(&cfg, &p, None, None, None, None);
+        assert!((both.kind_weight(OpKind::Sead) - 0.3).abs() < 1e-9);
     }
 
     #[test]
@@ -428,16 +732,16 @@ mod tests {
             obj(2, 20_000., false, 100, false),
             obj(3, 25_000., false, 100, true),
         ]);
-        let a = plan(&cfg, &p, None, None, None);
+        let a = plan(&cfg, &p, None, None, None, None);
         assert_eq!(a.main_effort, Some(ObjectiveId::from(3)));
         // Objective 2 gets a little weaker: not enough to switch.
         let mut objs = p.objs.clone();
         objs[1].health = 70;
-        let b = plan(&cfg, &pic(objs.clone()), Some(&a), None, None);
+        let b = plan(&cfg, &pic(objs.clone()), Some(&a), None, None, None);
         assert_eq!(b.main_effort, Some(ObjectiveId::from(3)));
         // 3 is taken (now ours): the effort moves on.
         objs[2].own = true;
-        let c = plan(&cfg, &pic(objs), Some(&b), None, None);
+        let c = plan(&cfg, &pic(objs), Some(&b), None, None, None);
         assert_eq!(c.main_effort, Some(ObjectiveId::from(2)));
     }
 
@@ -451,7 +755,7 @@ mod tests {
         ];
         objs[0].being_captured = true;
         objs[0].threatened = true;
-        let a = plan(&cfg, &pic(objs), None, None, None);
+        let a = plan(&cfg, &pic(objs), None, None, None, None);
         assert_eq!(a.posture, Posture::Defensive);
         assert_eq!(a.defend.first(), Some(&ObjectiveId::from(1)));
     }
@@ -465,13 +769,13 @@ mod tests {
             obj(3, 25_000., false, 100, true),
         ]);
         let d = Directive { main_effort: Some(2), ..Default::default() };
-        let a = plan(&cfg, &p, None, Some(&d), None);
+        let a = plan(&cfg, &p, None, None, Some(&d), None);
         assert_eq!(a.main_effort, Some(ObjectiveId::from(2)));
         assert_eq!(a.source, Source::Strategist);
         // A directive naming our own base as the main effort is ignored.
         let bad = Directive { main_effort: Some(1), ..Default::default() };
         assert_eq!(
-            plan(&cfg, &p, None, Some(&bad), None).main_effort,
+            plan(&cfg, &p, None, None, Some(&bad), None).main_effort,
             Some(ObjectiveId::from(3))
         );
         let h = Override {
@@ -485,7 +789,7 @@ mod tests {
             disabled_ops: vec![OpKind::MissileStrike],
             paused: false,
         };
-        let b = plan(&cfg, &p, None, Some(&d), Some(&h));
+        let b = plan(&cfg, &p, None, None, Some(&d), Some(&h));
         assert_eq!(b.posture, Posture::Defensive);
         assert_eq!(b.main_effort, Some(ObjectiveId::from(2)));
         assert_eq!(b.source, Source::Human);

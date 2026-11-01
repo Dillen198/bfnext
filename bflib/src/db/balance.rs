@@ -30,6 +30,12 @@ for more details.
 //! so a defender slotting in shortens a running capture straight away, and a
 //! defender briefly between aircraft can only make a capture slower, never
 //! faster.
+//!
+//! With `ai_fill` on (and its `protection` switch), the AI fighting for a
+//! side counts as its defence: a side short of players is undefended only
+//! while the other side has nobody in a slot either. A lone pilot then
+//! captures from the AI at normal speed, and an empty server keeps its
+//! protection.
 
 use super::{Db, ephemeral::Ephemeral, objective::Objective, persisted::Persisted};
 use bfprotocols::cfg::{Cfg, PopulationScalingCfg, fmt_mult};
@@ -48,6 +54,25 @@ fn scaling(cfg: &Cfg) -> Option<&PopulationScalingCfg> {
     cfg.population_scaling.as_ref().filter(|p| p.enabled)
 }
 
+/// `ai_fill` is defending `owner`: the switch is on and the other side has
+/// someone in a slot for the AI to fight.
+fn ai_defends(eph: &Ephemeral, persisted: &Persisted, owner: Side) -> bool {
+    eph.cfg.ai_fill.as_ref().is_some_and(|a| a.enabled && a.protection)
+        && active_players(eph, persisted, owner.opposite()) > 0
+}
+
+/// Players in a slot on `owner`, for population scaling: with the AI
+/// defending it (see the module docs), at least `min_defenders`.
+fn defenders(
+    eph: &Ephemeral,
+    persisted: &Persisted,
+    ps: &PopulationScalingCfg,
+    owner: Side,
+) -> u32 {
+    let have = active_players(eph, persisted, owner);
+    if ai_defends(eph, persisted, owner) { have.max(ps.min_defenders) } else { have }
+}
+
 /// Auto-repair speed multiplier for a base owned by `owner` right now.
 pub(super) fn repair_speed_mult(
     eph: &Ephemeral,
@@ -56,7 +81,7 @@ pub(super) fn repair_speed_mult(
 ) -> f64 {
     match scaling(&eph.cfg) {
         Some(ps) if owner != Side::Neutral => {
-            ps.repair_speed_mult(active_players(eph, persisted, owner))
+            ps.repair_speed_mult(defenders(eph, persisted, ps, owner))
         }
         _ => 1.,
     }
@@ -87,11 +112,16 @@ impl Db {
     pub fn capture_time_mult(&self, owner: Side, attacker: Side) -> f64 {
         match scaling(&self.ephemeral.cfg) {
             Some(ps) if owner != Side::Neutral => ps.capture_time_mult(
-                self.active_players(owner),
+                defenders(&self.ephemeral, &self.persisted, ps, owner),
                 self.active_players(attacker),
             ),
             _ => 1.,
         }
+    }
+
+    /// Auto-repair speed multiplier for a base owned by `owner` right now.
+    pub fn repair_speed_mult(&self, owner: Side) -> f64 {
+        repair_speed_mult(&self.ephemeral, &self.persisted, owner)
     }
 
     /// See `repair_pulse_secs`.
@@ -109,7 +139,7 @@ impl Db {
             return None;
         }
         let have = self.active_players(owner);
-        if !ps.undefended(have) {
+        if !ps.undefended(defenders(&self.ephemeral, &self.persisted, ps, owner)) {
             return None;
         }
         let cap = self.capture_time_mult(owner, attacker);

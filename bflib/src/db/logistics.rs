@@ -1499,7 +1499,7 @@ pub fn route_is_interdicted(
 /// weapons/vehicles ("weapons."/"vehicles."/"Fortifications." prefixed), so
 /// this is the established way (already used by the supply-transfer
 /// exemption logic) to tell them apart within that shared map.
-fn is_airframe_item(name: &str) -> bool {
+pub(super) fn is_airframe_item(name: &str) -> bool {
     !is_model_only_item(name)
         && !name.starts_with("weapons.")
         && !name.starts_with("vehicles.")
@@ -4199,6 +4199,9 @@ impl Db {
         }
         for (id, side, gid, end) in finished {
             self.ephemeral.active_convoys.remove(&id);
+            if end == TransportEnd::Lost {
+                self.story_convoy_lost(side, gid, ts);
+            }
             self.finish_transport(&id, side, gid, end);
         }
     }
@@ -4363,6 +4366,9 @@ impl Db {
         }
         for (id, side, gid, end) in finished {
             self.ephemeral.active_air_routes.remove(&id);
+            if end == TransportEnd::Lost {
+                self.story_route_destroyed(side, &format!("air:{id}"), None, ts);
+            }
             self.finish_transport(&id, side, gid, end);
         }
     }
@@ -4488,6 +4494,9 @@ impl Db {
         }
         for (id, side, gid, end) in finished {
             self.ephemeral.active_sea_routes.remove(&id);
+            if end == TransportEnd::Lost {
+                self.story_route_destroyed(side, &format!("sea:{id}"), None, ts);
+            }
             self.finish_transport(&id, side, gid, end);
         }
     }
@@ -5006,6 +5015,8 @@ impl Db {
             }
             let hubs: SmallVec<[ObjectiveId; 16]> =
                 self.persisted.logistics_hubs.into_iter().copied().collect();
+            // what story events (`Cfg::story`) have done to this side's output
+            let story = self.story_production(side);
             for oid in hubs {
                 let logi = objective_mut!(self, &oid)?;
                 if logi.owner != side {
@@ -5019,7 +5030,9 @@ impl Db {
                 if intake <= 0. {
                     continue;
                 }
-                let portion = |qty: u32| -> u32 { (qty as f64 * intake).round() as u32 };
+                let portion = |qty: u32, m: f64| -> u32 {
+                    (qty as f64 * intake * m).round() as u32
+                };
                 let materiel_before = logi
                     .warehouse
                     .equipment
@@ -5028,14 +5041,14 @@ impl Db {
                     .unwrap_or(0);
                 for (name, inv) in logi.warehouse.equipment.iter_mut_cow() {
                     if name.as_str() == MATERIEL_ITEM {
-                        *inv += portion(materiel_production);
+                        *inv += portion(materiel_production, story.equipment);
                     } else if let Some(eq) = production.equipment.get(name) {
-                        *inv += portion(eq.production);
+                        *inv += portion(eq.production, story.equipment);
                     }
                 }
                 for (name, inv) in logi.warehouse.liquids.iter_mut_cow() {
                     if let Some(pr) = production.liquids.get(name) {
-                        *inv += portion(*pr);
+                        *inv += portion(*pr, story.fuel);
                     }
                 }
                 let materiel_after = logi
@@ -7658,6 +7671,8 @@ impl Db {
         // stock into its own warehouse where nothing could ever collect it,
         // so building or bombing one changed nothing at all.
         let mut produced: SmallVec<[(ObjectiveId, Side, u32); 8]> = smallvec![];
+        // what story events (`Cfg::story`) have done to each side's output
+        let story = [Side::Blue, Side::Red].map(|s| (s, self.story_production(s)));
         for (oid, obj) in self.persisted.objectives.iter_mut_cow() {
             let ObjectiveKind::Factory { production_rate, last_production_ts } =
                 &mut obj.kind
@@ -7675,8 +7690,13 @@ impl Db {
             }
             // A damaged factory runs at reduced output rather than either
             // full rate or nothing.
-            let qty =
-                ((*production_rate as f64) * (obj.logi as f64 / 100.)).round() as u32;
+            let mult = story
+                .iter()
+                .find(|(s, _)| *s == obj.owner)
+                .map(|(_, p)| p.equipment)
+                .unwrap_or(1.);
+            let qty = ((*production_rate as f64) * (obj.logi as f64 / 100.) * mult)
+                .round() as u32;
             *last_production_ts = Some(now);
             if qty == 0 {
                 continue;

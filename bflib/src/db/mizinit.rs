@@ -1785,6 +1785,7 @@ impl Db {
         let spctx = SpawnCtx::new(lua)?;
         let mut t = Self::default();
         t.ephemeral.set_cfg(miz, idx, cfg, to_bg)?;
+        t.story_sync_actions();
         if let Some(sc) = t.ephemeral.cfg.smart_commander.as_ref()
             && sc.treasury_start > 0
         {

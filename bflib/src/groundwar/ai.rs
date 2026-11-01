@@ -306,15 +306,46 @@ pub(super) fn think(
         let steer = crate::hq::cfg(ctx)
             .filter(|(_, h)| h.steer_ground_war && h.sides.contains(&side))
             .and_then(|_| ctx.hq.ground_steer(side));
-        let (offensive, axis) = match steer {
-            Some((posture, effort)) => {
-                (posture != bfprotocols::hq::Posture::Defensive, effort.or(axis))
+        // It also thins the attack waves out when the side's fuel is
+        // critical (`hq.posture`).
+        let (offensive, axis, pace) = match steer {
+            Some((posture, effort, pace)) => {
+                (posture != bfprotocols::hq::Posture::Defensive, effort.or(axis), pace)
             }
-            None => (offensive, axis),
+            None => (offensive, axis, 1.),
         };
         let offensive = offensive && !empty;
-        think_side(lua, ctx, cfg, ai, side, offensive, axis, now);
+        let attack = attack_due(ctx, ai, side, pace, now);
+        think_side(lua, ctx, cfg, ai, side, offensive, attack, axis, now);
     }
+}
+
+/// Whether `side` may send a new wave of attacks this pass. With `ai_fill`
+/// on, waves are spaced `think_secs / pressure` apart, so a side matched to
+/// one enemy pilot attacks at about half the rate of a full AI; the HQ's
+/// `pace` (critical fuel, `hq.posture`) spaces them out the same way.
+/// Always true with neither.
+fn attack_due(
+    ctx: &Context,
+    ai: &GroundAiCfg,
+    side: Side,
+    pace: f64,
+    now: DateTime<Utc>,
+) -> bool {
+    let fill = crate::ai_fill::ground_ai(ctx, side);
+    let pace = if pace.is_finite() { pace.clamp(0., 1.) } else { 1. };
+    if fill.is_none() && pace >= 1. {
+        return true;
+    }
+    let fill = fill.unwrap_or(1.);
+    if fill < bfprotocols::cfg::AI_FILL_MIN_PRESSURE || pace <= 0. {
+        return false;
+    }
+    let every = ai.think_secs.max(30) as f64 / (fill * pace);
+    ctx.groundwar
+        .last_attack
+        .get(&side)
+        .is_none_or(|t| (now - *t).num_seconds() as f64 >= every)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -325,6 +356,7 @@ fn think_side(
     ai: &GroundAiCfg,
     side: Side,
     offensive: bool,
+    attack: bool,
     axis: Option<ObjectiveId>,
     now: DateTime<Utc>,
 ) {
@@ -527,8 +559,9 @@ fn think_side(
     // 4. Attack. Each idle formation goes for the best target it can
     //    actually reach -- within `max_attack_m` of where it is, by a road
     //    that isn't a detour round half the map -- up to `concentration`
-    //    formations per target, `reserve` kept back.
-    if offensive {
+    //    formations per target, `reserve` kept back. (`attack` false: the
+    //    side is between waves, `ai_fill`.)
+    if offensive && attack {
         let ranked = rank_targets(&objs, side, ai.max_attack_m);
         let fs = forms(ctx, side, now);
         let mut attackers: fxhash::FxHashMap<ObjectiveId, usize> =
@@ -576,6 +609,9 @@ fn think_side(
                     break;
                 }
             }
+        }
+        if !sent.is_empty() {
+            ctx.groundwar.last_attack.insert(side, now);
         }
         for (target, n) in sent.iter() {
             let t = objs.iter().find(|o| o.id == *target);

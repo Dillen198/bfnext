@@ -2982,6 +2982,7 @@ impl Db {
                 continue;
             }
             info!("ground war: {side:?} {name} destroyed");
+            self.will_formation_destroyed(side, name.as_str(), now);
             let at = self.persisted.formations.get(&id).map(|f| f.pos);
             rt.event(
                 side,

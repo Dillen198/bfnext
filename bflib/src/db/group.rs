@@ -608,6 +608,9 @@ impl Db {
     }
 
     pub fn delete_group(&mut self, gid: &GroupId) -> Result<()> {
+        // An AI flight that drew its airframes from a base books the live
+        // ones back in while the group and its units are still here.
+        self.air_stock_group_removed(gid);
         let group = self
             .persisted
             .groups
@@ -1575,6 +1578,22 @@ impl Db {
         heavy: bool,
         min_dist_m: f64,
     ) -> Option<LaunchField> {
+        self.pick_launch_field_where(lua, side, near, rotary, heavy, min_dist_m, |_| true)
+    }
+
+    /// `pick_launch_field` over only the fields `ok` accepts (one that holds
+    /// the flight's airframes, `ai_air_stock`).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn pick_launch_field_where(
+        &self,
+        lua: MizLua,
+        side: Side,
+        near: Vector2,
+        rotary: bool,
+        heavy: bool,
+        min_dist_m: f64,
+        ok: impl Fn(&ObjectiveId) -> bool,
+    ) -> Option<LaunchField> {
         // Each candidate costs a couple of Lua calls (airbase + parking);
         // past this many the next field out is too far to matter anyway.
         const MAX_FIELDS_TRIED: usize = 8;
@@ -1583,10 +1602,11 @@ impl Db {
             self.persisted
                 .objectives
                 .into_iter()
-                .filter(|(_, o)| {
+                .filter(|(id, o)| {
                     o.owner == side
                         && !o.captureable()
                         && is_launch_kind(&o.kind, rotary, extra.contains(&o.name))
+                        && ok(id)
                 })
                 .map(|(id, o)| (*id, o.zone.pos())),
             near,
@@ -1982,6 +2002,10 @@ impl Db {
         id: &DcsOid<ClassUnit>,
         now: DateTime<Utc>,
     ) -> Result<()> {
+        // while the engine still knows what it was
+        self.will_unit_lost(id, now);
+        self.story_unit_lost(id, now);
+        self.air_stock_unit_lost(id);
         let uid = match self.ephemeral.unit_dead(&self.persisted, id) {
             None => return Ok(()),
             Some((uid, ucid)) => {
@@ -2117,6 +2141,7 @@ impl Db {
         id: &DcsOid<ClassStatic>,
         now: DateTime<Utc>,
     ) -> Result<()> {
+        self.story_static_lost(id, now);
         if let Some(uid) = self.ephemeral.uid_by_static.remove(id) {
             match self.persisted.units.get_mut_cow(&uid) {
                 None => error!("static_dead: missing unit {:?}", uid),

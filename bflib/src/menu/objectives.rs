@@ -302,10 +302,7 @@ fn repair_state(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString {
 /// " (undefended: repairs 1.5x faster)" while population scaling is speeding
 /// the base's repairs up, else nothing.
 fn speed_up_note(db: &Db, obj: &Objective) -> CompactString {
-    let Some(ps) = db.ephemeral.cfg.population_scaling.as_ref() else {
-        return CompactString::new("");
-    };
-    let m = ps.repair_speed_mult(db.active_players(obj.owner()));
+    let m = db.repair_speed_mult(obj.owner());
     if obj.owner() != Side::Neutral && m > 1. {
         format_compact!(" (undefended: repairs {} faster)", bfprotocols::cfg::fmt_mult(m))
     } else {

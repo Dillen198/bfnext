@@ -41,23 +41,33 @@ use std::{
     sync::Arc,
 };
 
+mod ai_air_stock;
+mod ai_fill;
 mod balance;
 mod command;
 mod economy;
 mod example;
 mod ground_war;
+mod story;
+mod war_will;
 pub use ground_war::{
     GarrisonCfg, GroundAiCfg, GroundCombatCfg, GroundWarCfg, PurchasedFormationCfg,
 };
 mod hq;
 pub use hq::{
     EscortPolicy, HqAirCfg, HqAirTemplate, HqCfg, HqCostsCfg, HqGapFillCfg, HqLimitsCfg,
-    HqPackagesCfg, HqRequestsCfg, HqStrategistCfg, HqSupportCfg,
+    HqPackagesCfg, HqPostureCfg, HqRequestsCfg, HqStrategistCfg, HqSupportCfg,
 };
 
+pub use ai_air_stock::AiAirStockCfg;
+pub use ai_fill::{AiFillCfg, AI_FILL_MIN_PRESSURE};
 pub use balance::{fmt_mult, EmergencyRepairCfg, PopulationScalingCfg};
 pub use command::{rank_min_score, rank_tier, CommandCfg, HuntersCfg, RANK_MIN_SCORE};
 pub use economy::{split_by_weight, EconomyCfg};
+pub use story::{
+    StoryCfg, StoryEffect, StoryEventCfg, StoryTrigger, STORY_MAX_WINDOW_MINUTES,
+};
+pub use war_will::WarWillCfg;
 
 // The rest of the config, split out of this file by subsystem. Every item
 // is re-exported here, so its path (`bfprotocols::cfg::X`) is unchanged.
@@ -336,6 +346,33 @@ pub struct Cfg {
     /// off.
     #[serde(default)]
     pub population_scaling: Option<PopulationScalingCfg>,
+    /// PvP with the AI filling in: each side's AI fights in proportion to
+    /// the gap between the two sides' pilots, not its own side's alone
+    /// (the HQ, AI packages, the ground war AI's attacks, and empty-side
+    /// protection). Absent = off: each AI looks at its own side only.
+    #[serde(default)]
+    pub ai_fill: Option<AiFillCfg>,
+    /// War will (Red Storm Rising, ENGINE.md 3.2): each side's will to
+    /// fight, 0-100, moved by losses, captures and fuel stocks, recovering
+    /// slowly while nothing bad happens. A side below `threshold` for
+    /// `hold_hours` asks for terms and the other side wins the round.
+    /// Absent = off.
+    #[serde(default)]
+    pub war_will: Option<WarWillCfg>,
+    /// Story events (Red Storm Rising, ENGINE.md 3.4): campaign-written
+    /// events, each set off by something players or the AI do (an objective
+    /// destroyed, captured or held, kills, supply routes cut, fuel or will
+    /// crossing a line), that tell everyone what happened, credit who caused
+    /// it and change the war. Absent = off.
+    #[serde(default)]
+    pub story: Option<StoryCfg>,
+    /// Real orders of battle (Red Storm Rising, ENGINE.md 3.1): AI flights
+    /// take their airframes from the warehouse of the field they launch
+    /// from, the stock players fly from, and only get them back by landing
+    /// or by being retired alive. Needs `warehouse`. Absent = off: AI
+    /// aircraft cost treasury points only.
+    #[serde(default)]
+    pub ai_air_stock: Option<AiAirStockCfg>,
     /// Who gets paid and how much: underdog pay, wealth taper, late-joiner
     /// start, kill values by target, hauler-paid logistics. On with moderate
     /// defaults when absent; `"economy": {"enabled": false}` turns it off.
@@ -1161,6 +1198,30 @@ impl Cfg {
             }
             if ps.min_defenders == 0 {
                 warn!("population_scaling.min_defenders is 0: no side ever counts as undefended")
+            }
+        }
+        if let Some(ww) =
+            cfg.war_will.as_ref().filter(|w| w.enabled && w.threshold() >= w.start())
+        {
+            warn!(
+                "war_will.threshold ({}) is not below war_will.start ({}): a side starts the round already breaking",
+                ww.threshold(),
+                ww.start()
+            )
+        }
+        if cfg.ai_air_stock.as_ref().is_some_and(|a| a.enabled) && cfg.warehouse.is_none()
+        {
+            warn!("ai_air_stock is on but there is no warehouse: AI aircraft draw on nothing")
+        }
+        if let Some(st) = cfg.story.as_ref().filter(|s| s.enabled) {
+            st.validate()?;
+            for (side, names) in &st.locked_actions {
+                for n in names {
+                    if !cfg.actions.get(side).is_some_and(|a| a.contains_key(n.as_str()))
+                    {
+                        warn!("story.locked_actions: {side:?} has no action '{n}'")
+                    }
+                }
             }
         }
         if let Some(er) = cfg.emergency_repair.as_ref().filter(|e| e.enabled) {

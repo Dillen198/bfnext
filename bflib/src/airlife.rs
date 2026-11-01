@@ -945,8 +945,20 @@ fn tick_packages(
         if pilots > cfg.max_side_pilots {
             continue;
         }
+        // ai_fill: fewer packages up, and further apart, for a side matched
+        // to a handful of enemy pilots (or with its own pilots up).
+        let fill = crate::ai_fill::packages(ctx, side);
+        if fill.is_some_and(|f| f < bfprotocols::cfg::AI_FILL_MIN_PRESSURE) {
+            continue;
+        }
+        let fill = fill.unwrap_or(1.);
+        let max_active = if fill < 1. {
+            (cfg.max_active_per_side as f64 * fill).ceil() as usize
+        } else {
+            cfg.max_active_per_side as usize
+        };
         let active = ctx.airlife.packages.iter().filter(|p| p.side == side).count();
-        if active >= cfg.max_active_per_side as usize {
+        if active >= max_active {
             continue;
         }
         if ctx
@@ -961,7 +973,7 @@ fn tick_packages(
                     .modern_war
                     .as_ref()
                     .and_then(|m| m.tempo.as_ref());
-                let factor = ctx.modern_war.tempo.factor(tempo, side, now);
+                let factor = ctx.modern_war.tempo.factor(tempo, side, now) / fill;
                 (now - *t).num_seconds()
                     < (cfg.launch_interval_secs as f64 * factor) as i64
             })

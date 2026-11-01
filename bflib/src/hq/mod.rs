@@ -150,6 +150,10 @@ pub struct SideSaved {
     pub directive: Option<HeldDirective>,
     #[serde(default)]
     pub record: BTreeMap<OpKind, Record>,
+    /// A story event's standing orders (`Cfg::story`, `StoryEffect::Hq`):
+    /// laid over the HQ's own plan, under the strategist and a human.
+    #[serde(default)]
+    pub story: Option<HeldDirective>,
 }
 
 /// What the HQ keeps in the save (`Persisted::hq`).
@@ -268,6 +272,8 @@ pub(crate) struct SideRt {
     /// Tasking-board entries the HQ posted.
     pub(crate) tasks: Vec<TaskId>,
     pub(crate) announced_effort: Option<ObjectiveId>,
+    /// The posture last told to the side (with `hq.posture`).
+    pub(crate) announced_posture: Option<Posture>,
     pub(crate) gap: f64,
     pub(crate) humans: u32,
     pub(crate) escorts: Vec<PendingEscort>,
@@ -333,13 +339,14 @@ impl Hq {
     }
 
     /// The main effort and posture the ground war's AI should follow, when
-    /// the HQ steers it.
+    /// the HQ steers it, and how often it may send attack waves, 0..1 (less
+    /// than 1 at critical fuel, `hq.posture`).
     pub(crate) fn ground_steer(
         &self,
         side: Side,
-    ) -> Option<(Posture, Option<ObjectiveId>)> {
+    ) -> Option<(Posture, Option<ObjectiveId>, f64)> {
         let plan = self.sides.get(&side)?.plan.as_ref()?;
-        Some((plan.posture, plan.main_effort))
+        Some((plan.posture, plan.main_effort, plan.strain.ground_attacks))
     }
 }
 
@@ -359,13 +366,16 @@ fn humans_on(ctx: &Context, side: Side) -> u32 {
 
 /// How much of a full HQ to run for `humans` players on the side.
 fn gap_factor(cfg: &HqCfg, humans: u32) -> f64 {
-    let g = &cfg.gap_fill;
-    if humans <= g.full_until_players {
-        return 1.;
+    cfg.gap_fill.factor(humans)
+}
+
+/// `n` scaled by an ai_fill factor, rounded up: at least one of anything
+/// the config allows any of. `fill` 1 (ai_fill off) leaves `n` alone.
+fn fill_count(n: u32, fill: f64) -> usize {
+    if n == 0 {
+        return 0;
     }
-    let span = g.fade_out_players.saturating_sub(g.full_until_players).max(1) as f64;
-    let t = ((humans - g.full_until_players) as f64 / span).min(1.);
-    1. - t * (1. - g.min_factor.clamp(0., 1.))
+    ((n as f64 * fill.clamp(0., 1.)).ceil() as usize).clamp(1, n as usize)
 }
 
 /// The slow-tick entry point: track what is under way, expire stale orders
@@ -392,7 +402,10 @@ pub(crate) fn tick(
         expire_orders(ctx, &cfg, side, now);
         requests::expire(ctx, &cfg, side, now);
         let humans = humans_on(ctx, side);
-        let gap = gap_factor(&cfg, humans);
+        // With ai_fill on, the other side's pilots in a slot count too: a
+        // side the AI fills for steps up as the other side fills up.
+        let gap =
+            gap_factor(&cfg, humans) * crate::ai_fill::hq_match(ctx, side).unwrap_or(1.);
         {
             let rt = ctx.hq.side(side);
             rt.humans = humans;
@@ -450,6 +463,7 @@ fn think(
         cfg,
         &pic,
         prev.as_ref(),
+        saved.story.as_ref().map(|d| &d.directive),
         saved.directive.as_ref().map(|d| &d.directive),
         saved.human.as_ref(),
     );
@@ -487,6 +501,14 @@ fn think(
         requests::answered(ctx, side, rid, "already under way");
     }
     let gap = ctx.hq.side(side).gap;
+    // ai_fill: the gap already weighs every candidate; a side matched to a
+    // handful of enemy pilots also spends and starts less per pass. Nothing
+    // at all below the minimum pressure.
+    let fill = crate::ai_fill::hq_match(ctx, side);
+    if fill.is_some() && gap < bfprotocols::cfg::AI_FILL_MIN_PRESSURE {
+        return;
+    }
+    let fill = fill.unwrap_or(1.);
     let ranked = planner::rank(ctx, cfg, side, &pic, &plan, &saved.record, gap, now);
     // What this pass may commit: a share of what is above the reserve, all
     // of it when a base is falling.
@@ -497,8 +519,9 @@ fn think(
     } else {
         cfg.max_spend_fraction
     };
-    let mut budget = (spendable as f64 * share.clamp(0., 1.)) as i64;
-    let mut left = cfg.max_new_ops_per_think as usize;
+    let mut budget = (spendable as f64 * share.clamp(0., 1.) * fill) as i64;
+    let max_new = fill_count(cfg.max_new_ops_per_think, fill);
+    let mut left = max_new;
     let mut done: Vec<(Line, ObjectiveId)> = vec![];
     let mut kinds: Vec<OpKind> = vec![];
     let mut skipped = 0usize;
@@ -543,7 +566,7 @@ fn think(
     ctx.hq.side(side).failed.retain(|_, t| (now - *t).num_seconds() < FAILED_RETRY_SECS);
     // Worth a line when there was money and nothing came of it; a side that
     // is simply broke would say so every pass.
-    if left == cfg.max_new_ops_per_think as usize && !ranked.is_empty() && spendable > 0 {
+    if left == max_new && !ranked.is_empty() && spendable > 0 {
         info!(
             "hq: {side:?} launched nothing this pass: {} candidate(s), {skipped} over the budget of {budget} \
              (treasury {}, reserve {})",
@@ -561,6 +584,31 @@ fn announce_effort(
     plan: &strategy::Plan,
     now: DateTime<Utc>,
 ) {
+    let rt = ctx.hq.side(side);
+    // With `hq.posture`, the side hears when its own state turns the war
+    // (the first plan after a restart is only noted).
+    if cfg.posture.as_ref().is_some_and(|p| p.enabled)
+        && rt.announced_posture != Some(plan.posture)
+    {
+        let first = rt.announced_posture.is_none();
+        rt.announced_posture = Some(plan.posture);
+        if !first {
+            // The state's note only when the HQ's own rules set the posture.
+            let why = plan
+                .strain
+                .note
+                .as_ref()
+                .filter(|_| plan.source == strategy::Source::Rules)
+                .map(|n| format_compact!(" ({n})"))
+                .unwrap_or_default();
+            let text = format_compact!("HQ: posture now {}{why}.", plan.posture.label());
+            info!("hq: {side:?} {text}");
+            ctx.hq.side(side).note(now, text.clone());
+            if cfg.announce {
+                ctx.db.ephemeral.msgs().panel_to_side(15, false, side, text);
+            }
+        }
+    }
     let rt = ctx.hq.side(side);
     if rt.announced_effort == plan.main_effort {
         return;
@@ -594,6 +642,10 @@ fn expire_orders(ctx: &mut Context, cfg: &HqCfg, side: Side, now: DateTime<Utc>)
         || !cfg.strategist.enabled
     {
         changed |= saved.directive.take().is_some();
+    }
+    if saved.story.as_ref().is_some_and(|d| now >= d.expires) {
+        saved.story = None;
+        changed = true;
     }
     if changed {
         ctx.db.ephemeral.dirty();
@@ -973,6 +1025,7 @@ pub(crate) fn launch_menu(
             &cfg,
             &pic,
             None,
+            saved.story.as_ref().map(|d| &d.directive),
             saved.directive.as_ref().map(|d| &d.directive),
             saved.human.as_ref(),
         ),
@@ -1074,6 +1127,7 @@ pub(crate) fn cost_of(ctx: &Context, kind: OpKind) -> Option<i64> {
         OpKind::Tanker => c.tanker,
         OpKind::NavalStrike => c.naval_strike,
         OpKind::AirRepair => c.air_repair,
+        OpKind::AntiShip => c.anti_ship,
     };
     Some(treasury::scaled(raw, cfg.cost_scale))
 }
@@ -1286,6 +1340,15 @@ mod tests {
         assert!(mid < 1. && mid > cfg.gap_fill.min_factor);
         assert!((gap_factor(&cfg, 16) - cfg.gap_fill.min_factor).abs() < 1e-9);
         assert!((gap_factor(&cfg, 60) - cfg.gap_fill.min_factor).abs() < 1e-9);
+    }
+
+    #[test]
+    fn ai_fill_scales_counts_but_never_to_nothing() {
+        assert_eq!(fill_count(3, 1.), 3);
+        assert_eq!(fill_count(3, 0.43), 2);
+        assert_eq!(fill_count(3, 0.01), 1);
+        assert_eq!(fill_count(0, 1.), 0);
+        assert_eq!(fill_count(2, 7.), 2);
     }
 
     #[test]

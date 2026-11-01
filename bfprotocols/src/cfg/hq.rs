@@ -79,7 +79,7 @@ pub struct HqCfg {
     #[serde(default)]
     pub air: FxHashMap<Side, HqAirCfg>,
     /// Names of the side's Fighters / Attackers / SEAD / Drone / Artillery /
-    /// Reinforce actions the HQ may use, per side. Empty = any of the side's
+    /// Reinforce / anti-ship Strike actions the HQ may use, per side. Empty = any of the side's
     /// actions of the right kind.
     #[serde(default)]
     pub actions_blue: Vec<String>,
@@ -89,6 +89,11 @@ pub struct HqCfg {
     /// Default 180000 m.
     #[serde(default = "default_air_range")]
     pub max_air_range_m: f64,
+    /// Anti-ship strikes go at enemy carrier groups this close to a friendly
+    /// airbase: long-range bombers with stand-off missiles reach further
+    /// than the rest of the air war. Default `max_air_range_m`.
+    #[serde(default)]
+    pub anti_ship_range_m: Option<f64>,
     /// Ground and helo operations only go at objectives this close to ground
     /// the side holds. Default 60000 m.
     #[serde(default = "default_ground_range")]
@@ -135,6 +140,116 @@ pub struct HqCfg {
     /// flights are sent to a tanker.
     #[serde(default)]
     pub support: HqSupportCfg,
+    /// The side's own state in its posture (Red Storm Rising ENGINE.md
+    /// 3.3): its will to fight, its fuel and its fighters against what its
+    /// radars see. Absent: the posture comes from the map alone.
+    #[serde(default)]
+    pub posture: Option<HqPostureCfg>,
+}
+
+/// What the side's own state does to the HQ's plan. Each input is skipped
+/// when the engine can't tell it: will needs `war_will`, fuel needs
+/// warehouses, air strength needs `ai_air_stock` (and a fighter type that
+/// isn't held at an `unlimited_aircraft` base or exempt).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HqPostureCfg {
+    /// Off switch that keeps the block around. Default true.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Will (0-100) that neither pushes nor holds the posture. Default 50.
+    #[serde(default = "p_will_neutral")]
+    pub will_neutral: f64,
+    /// Posture score per 50 points of will above (toward offensive) or
+    /// below (toward defensive) `will_neutral`. The map's score goes
+    /// offensive at 0.5 and defensive at -1. Default 1.
+    #[serde(default = "default_one")]
+    pub will_weight: f64,
+    /// Below this will the side avoids its costly and risky operations.
+    /// Default 35.
+    #[serde(default = "p_will_low")]
+    pub will_low: f64,
+    /// What those are worth then, 0..1. Default 0.6.
+    #[serde(default = "p_will_low_risky")]
+    pub will_low_risky_weight: f64,
+    /// The costly and risky kinds of operation. Default strike, sead,
+    /// bomber, anti_ship, helo_troops.
+    #[serde(default = "p_risky_ops")]
+    pub risky_ops: Vec<crate::hq::OpKind>,
+    /// Fuel in the side's network (all warehouse liquids at the bases it
+    /// holds against their capacity, the measure `war_will` drains on), in
+    /// percent, under which the side holds: defensive whatever the map
+    /// says. Default 30, as `war_will.fuel_low_pct`.
+    #[serde(default = "p_fuel_low")]
+    pub fuel_low_pct: f64,
+    /// Under this the fuel is critical: the ground war's AI also sends its
+    /// attack waves less often. Default 10, as `war_will.fuel_critical_pct`.
+    #[serde(default = "p_fuel_critical")]
+    pub fuel_critical_pct: f64,
+    /// How often the ground AI's attack waves go at critical fuel, 0..1
+    /// (with `steer_ground_war`). Default 0.5.
+    #[serde(default = "p_fuel_critical_attacks")]
+    pub fuel_critical_ground_attacks: f64,
+    /// The side's fighters (airframes of the types its CAP roster and
+    /// Fighters actions fly, over its bases) per enemy aircraft its radars
+    /// hold, under which its air force counts as depleted. Default 1.
+    #[serde(default = "default_one")]
+    pub air_depleted_ratio: f64,
+    /// The radar picture counts as at least this many enemy aircraft, so a
+    /// quiet sky doesn't make a handful of fighters look strong. Default 4.
+    #[serde(default = "p_air_min_enemy")]
+    pub air_min_enemy: u32,
+    /// Depleted: weight on fighters far forward -- CAP over the base the
+    /// main effort is pushed from, and SEAD. Default 0.5.
+    #[serde(default = "p_air_forward")]
+    pub air_depleted_forward_weight: f64,
+    /// Depleted: weight on CAP over the bases being held and the side's own
+    /// SAM sites, which then get CAP too. Default 1.3.
+    #[serde(default = "p_air_home")]
+    pub air_depleted_home_weight: f64,
+}
+
+impl Default for HqPostureCfg {
+    fn default() -> Self {
+        serde_json::from_str("{}").expect("HqPostureCfg defaults")
+    }
+}
+
+fn p_will_neutral() -> f64 {
+    50.
+}
+fn p_will_low() -> f64 {
+    35.
+}
+fn p_will_low_risky() -> f64 {
+    0.6
+}
+fn p_risky_ops() -> Vec<crate::hq::OpKind> {
+    use crate::hq::OpKind;
+    vec![
+        OpKind::Strike,
+        OpKind::Sead,
+        OpKind::Bomber,
+        OpKind::AntiShip,
+        OpKind::HeloTroops,
+    ]
+}
+fn p_fuel_low() -> f64 {
+    30.
+}
+fn p_fuel_critical() -> f64 {
+    10.
+}
+fn p_fuel_critical_attacks() -> f64 {
+    0.5
+}
+fn p_air_min_enemy() -> u32 {
+    4
+}
+fn p_air_forward() -> f64 {
+    0.5
+}
+fn p_air_home() -> f64 {
+    1.3
 }
 
 impl Default for HqCfg {
@@ -307,6 +422,10 @@ pub struct HqCostsCfg {
     pub naval_strike: i64,
     #[serde(default = "c_air_repair")]
     pub air_repair: i64,
+    /// An anti-ship strike on an enemy carrier group (needs a `Strike` action
+    /// with the `AntiShip` mission). Default 400.
+    #[serde(default = "c_anti_ship")]
+    pub anti_ship: i64,
 }
 
 /// When a strike flies with company.
@@ -374,6 +493,9 @@ fn c_naval() -> i64 {
 fn c_air_repair() -> i64 {
     150
 }
+fn c_anti_ship() -> i64 {
+    400
+}
 
 impl Default for HqCostsCfg {
     fn default() -> Self {
@@ -406,6 +528,9 @@ pub struct HqLimitsCfg {
     pub awacs: u32,
     #[serde(default = "l_one")]
     pub tanker: u32,
+    /// Anti-ship strikes in the air at once. Default 1.
+    #[serde(default = "l_one")]
+    pub anti_ship: u32,
     /// Seconds before the HQ fires on the same target again. Default 600.
     #[serde(default = "l_fires_cooldown")]
     pub fires_cooldown_secs: u32,
@@ -440,6 +565,21 @@ pub struct HqGapFillCfg {
 impl Default for HqGapFillCfg {
     fn default() -> Self {
         serde_json::from_str("{}").expect("HqGapFillCfg defaults")
+    }
+}
+
+impl HqGapFillCfg {
+    /// How much of a full AI to run for `humans` players on the side, 0..1:
+    /// 1 up to `full_until_players`, falling in a straight line to
+    /// `min_factor` at `fade_out_players`.
+    pub fn factor(&self, humans: u32) -> f64 {
+        if humans <= self.full_until_players {
+            return 1.;
+        }
+        let span =
+            self.fade_out_players.saturating_sub(self.full_until_players).max(1) as f64;
+        let t = ((humans - self.full_until_players) as f64 / span).min(1.);
+        1. - t * (1. - self.min_factor.clamp(0., 1.))
     }
 }
 
@@ -617,8 +757,42 @@ mod tests {
         assert_eq!(c.sides, vec![Side::Blue, Side::Red]);
         assert_eq!(c.costs.cap, 250);
         assert_eq!(c.limits.air, 3);
+        assert_eq!(c.costs.anti_ship, 400);
+        assert_eq!(c.limits.anti_ship, 1);
+        assert_eq!(c.anti_ship_range_m, None);
         assert!(matches!(c.override_rule, Rule::NeverAllowed));
         assert!(c.strategist.enabled);
+        assert!(c.posture.is_none());
+    }
+
+    #[test]
+    fn an_empty_posture_block_has_its_defaults() {
+        let c: HqCfg = serde_json::from_str(r#"{"posture": {}}"#).unwrap();
+        let p = c.posture.unwrap();
+        assert!(p.enabled);
+        assert_eq!((p.will_neutral, p.will_weight, p.will_low), (50., 1., 35.));
+        assert_eq!((p.fuel_low_pct, p.fuel_critical_pct), (30., 10.));
+        assert_eq!(p.air_depleted_ratio, 1.);
+        assert_eq!(p.air_min_enemy, 4);
+        assert!(p.risky_ops.contains(&crate::hq::OpKind::Sead));
+        let q: HqPostureCfg =
+            serde_json::from_str(r#"{"risky_ops": ["bomber"], "fuel_low_pct": 40}"#)
+                .unwrap();
+        assert_eq!(q.risky_ops, vec![crate::hq::OpKind::Bomber]);
+        assert_eq!(q.fuel_low_pct, 40.);
+    }
+
+    /// The block in `miz/SAMPLE_CFG.json` reads, and spells out the defaults.
+    #[test]
+    fn the_sample_posture_block_parses() {
+        let raw = include_str!("../../../miz/SAMPLE_CFG.json");
+        let v: serde_json::Value =
+            serde_json::from_str(raw.trim_start_matches('\u{feff}')).unwrap();
+        let p: HqPostureCfg =
+            serde_json::from_value(v["smart_commander"]["hq"]["posture"].clone())
+                .unwrap();
+        let d = HqPostureCfg::default();
+        assert_eq!(serde_json::to_value(&p).unwrap(), serde_json::to_value(&d).unwrap());
     }
 
     #[test]

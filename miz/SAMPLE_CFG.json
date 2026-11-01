@@ -82,6 +82,70 @@
     "repair_speed_mult_when_undefended": 1.0
   },
 
+  "_ai_fill_note": "Optional PvP with the AI filling in. Each side's AI (theatre HQ, air_life packages, ground war AI attacks) runs at its own-side fade (smart_commander.hq.gap_fill) times floor + (1 - floor) * min(enemy pilots in a slot / full_at_enemy, 1): one pilot against an empty side meets ~0.43 of a full AI, 8+ meet all of it. With protection on, a side short of players is not undefended while the other side has anyone in a slot. Absent = each AI looks at its own side only.",
+  "ai_fill": {
+    "floor": 0.35,
+    "full_at_enemy": 8,
+    "hq": true,
+    "packages": true,
+    "ground_ai": true,
+    "protection": true
+  },
+
+  "_war_will_note": "Optional war will (Red Storm Rising, ENGINE.md 3.2). Each side has a will to fight, 0-100, starting at start. Losses lower it (carrier group under carrier_damaged_pct health or sunk, airbase / command centre / logistics hub / factory / other objective captured, factory or command centre destroyed, aircraft by type, ships, ground_war formations destroyed) and give the other side enemy_loss_share of the same value; a capture gives the captor at least objective_captured. A side's fuel stock (all warehouse liquids it holds against their capacity) under fuel_low_pct / fuel_critical_pct drains it by the hour. It recovers recovery_per_hour, up to start, after quiet_hours without a loss. A side below threshold for hold_hours asks for terms and the other side wins the round. Absent = off.",
+  "war_will": {
+    "start": 70,
+    "threshold": 20,
+    "hold_hours": 6,
+    "recovery_per_hour": 1,
+    "quiet_hours": 1,
+    "enemy_loss_share": 0.5,
+    "carrier_damaged_pct": 75,
+    "carrier_damaged": 8,
+    "carrier_destroyed": 25,
+    "airbase_lost": 4,
+    "command_center_lost": 10,
+    "logistics_hub_lost": 3,
+    "factory_lost": 5,
+    "objective_lost": 2,
+    "objective_captured": 2,
+    "aircraft_lost": 0.3,
+    "large_aircraft_lost": 1,
+    "large_aircraft_tags": ["AWACS", "ALCM"],
+    "formation_destroyed": 2,
+    "naval_unit_lost": 1,
+    "fuel_low_pct": 30,
+    "fuel_low_per_hour": 1,
+    "fuel_critical_pct": 10,
+    "fuel_critical_per_hour": 3
+  },
+
+  "_ai_air_stock_note": "Optional real orders of battle (Red Storm Rising, ENGINE.md 3.1); needs warehouse. AI flights (HQ packages, air_life packages, bought air actions) take their airframes from the warehouse of the field they launch from, the stock players fly from; a field without enough of the type can't launch it, and the HQ picks another aircraft from hq.air or skips the job. Shot down, crashed or ejected: gone. Landed at a friendly base: back in that base's stock (return_on_land; the flight is removed once all its aircraft are down). Removed by the engine (package lifetime, RTB cull, restart): back to the field it launched from if its side still holds it, else to the side's nearest field. Players and AI share the stock first come first served. unlimited_aircraft fields and warehouse.exempt_airframes types are never drawn from; exempt_actions names actions or .miz templates that fly for free. Each side's airframes by type and its losses this round go to the dashboard (/api/oob). Absent = off.",
+  "ai_air_stock": {
+    "enabled": true,
+    "return_on_land": true,
+    "exempt_actions": ["Tanker", "AWACS"]
+  },
+
+  "_story_note": "Optional story events (Red Storm Rising, ENGINE.md 3.4). Each event waits for something players or the AI do -- an objective destroyed (ObjectiveDestroyed), captured (ObjectiveCaptured) or captured and held (ObjectiveHeld), its health below a line (ObjectiveHealthBelow), N kills of unit types or tags in a window (Kills), N convoys / supply flights / ships lost (SupplyRoutesDestroyed), a side's fuel stock or war will crossing a line (FuelBelow, WillBelow, WillAbove), a side's airframes of some types across its bases falling under a count (StockBelow, with ai_air_stock), another event (EventFired) -- then fires once per round (or again after repeat seconds), tells everyone, credits whoever caused it and changes the war: Will, Production, Stock, LockAction / UnlockAction / PriceAction (locked_actions start locked), Points to the players who caused it, Hq orders, RevealIntel, ReinforceAirframes (airframes credited to a base), EndRound, Message. requires / excludes chain and branch events. A full Southern Flank example is miz/Scenarios/Red Storm Rising/story.sample.json. Absent = off.",
+  "story": {
+    "locked_actions": {},
+    "events": [
+      {
+        "id": "refinery_burns",
+        "title": "The refinery burns",
+        "side": "Red",
+        "text": "{by} set {objective} on fire.",
+        "trigger": { "ObjectiveDestroyed": { "objective": "Tuapse refinery" } },
+        "effects": [
+          { "Production": { "side": "Red", "fuel_pct": -40 } },
+          { "Will": { "side": "Red", "delta": -6 } },
+          { "Points": { "points": 150 } }
+        ]
+      }
+    ]
+  },
+
   "economy": {
     "enabled": true,
     "underdog_max_bonus": 0.5,
@@ -351,7 +415,23 @@
       "requests": { "enabled": true, "cooldown_secs": 300, "ttl_secs": 1200, "max_open_per_side": 6, "bonus": 1.6 },
       "strategist": { "enabled": true, "max_directive_secs": 2400, "max_weight": 2.5 },
       "override_rule": "NeverAllowed",
-      "override_max_secs": 7200
+      "override_max_secs": 7200,
+      "_posture_note": "Optional (Red Storm Rising, ENGINE.md 3.3). The posture also reads the side's own state; absent = the map alone. Will (war_will): (will - will_neutral) / 50 * will_weight is added to the posture score (offensive at 0.5, defensive at -1); under will_low the risky_ops are weighted will_low_risky_weight. Fuel (all warehouse liquids the side holds against capacity, as war_will measures it): under fuel_low_pct the side is defensive whatever the map says; under fuel_critical_pct the ground AI's attack waves also go fuel_critical_ground_attacks as often, whatever posture is set. Air (ai_air_stock): airframes of the side's CAP roster / Fighters types over its bases, per enemy aircraft its radars hold (at least air_min_enemy), under air_depleted_ratio: CAP over the staging base and SEAD weighted air_depleted_forward_weight, CAP over held bases and own SAM sites air_depleted_home_weight. Each input is a reason on the HQ page; posture changes are announced.",
+      "posture": {
+        "enabled": true,
+        "will_neutral": 50,
+        "will_weight": 1.0,
+        "will_low": 35,
+        "will_low_risky_weight": 0.6,
+        "risky_ops": ["strike", "sead", "bomber", "anti_ship", "helo_troops"],
+        "fuel_low_pct": 30,
+        "fuel_critical_pct": 10,
+        "fuel_critical_ground_attacks": 0.5,
+        "air_depleted_ratio": 1.0,
+        "air_min_enemy": 4,
+        "air_depleted_forward_weight": 0.5,
+        "air_depleted_home_weight": 1.3
+      }
     }
   },
 

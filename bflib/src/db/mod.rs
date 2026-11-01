@@ -42,6 +42,7 @@ use std::{
 use tokio::sync::mpsc::UnboundedSender;
 
 pub mod actions;
+pub mod air_stock;
 pub mod balance;
 pub mod battle;
 pub mod capture_report;
@@ -69,9 +70,11 @@ pub mod persisted;
 pub mod player;
 pub mod recon;
 pub mod reinforce;
+pub mod story;
 pub mod tasking;
 pub mod tasks;
 pub mod war_effort;
+pub mod will;
 
 pub type Map<K, V> = immutable_chunkmap::map::Map<K, V, 256>;
 pub type MapM<K, V> = immutable_chunkmap::map::Map<K, V, 64>;
@@ -426,6 +429,8 @@ impl Db {
         GroupId::setseq(max(db.persisted.gid, GroupId::seq()));
         UnitId::setseq(max(db.persisted.uid, UnitId::seq()));
         db.ephemeral.set_cfg(miz, idx, cfg, to_bg)?;
+        // the round's story changes to the action list (Cfg::story)
+        db.story_sync_actions();
         db.load_veterans(path);
         // Restore the capture/last-stand timers that have to outlive a
         // restart (see Persisted::last_stand_state).

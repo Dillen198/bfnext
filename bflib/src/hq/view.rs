@@ -52,7 +52,11 @@ pub(crate) fn view(
             .map(|l| [l.latitude, l.longitude])
             .unwrap_or([0., 0.])
     };
-    let mut v = HqView { side: format!("{side:?}"), ..Default::default() };
+    let mut v = HqView {
+        side: format!("{side:?}"),
+        will: ctx.db.will_of(side),
+        ..Default::default()
+    };
     let Some((sc, hq)) = cfg(ctx) else { return v };
     if !hq.sides.contains(&side) {
         return v;
@@ -60,6 +64,8 @@ pub(crate) fn view(
     v.enabled = true;
     v.can_command = viewer.is_some_and(|u| super::may_command(ctx, &hq, Some(u)));
     let pic = picture::build(ctx, &hq, side, now);
+    // the picture's copy is the one the HQ will plan from (E7)
+    v.will = pic.will;
     let objref = |id: &ObjectiveId| {
         pic.get(id).map(|o| ObjRef {
             id: o.id.inner() as u64,
@@ -112,6 +118,7 @@ pub(crate) fn view(
         .collect();
     if let Some(rt) = rt {
         v.gap_factor = rt.gap;
+        v.ai_fill = crate::ai_fill::info(ctx, side, rt.gap);
         v.ops = rt
             .ops
             .iter()
@@ -300,6 +307,7 @@ pub(crate) fn intent_text(ctx: &Context, side: Side) -> CompactString {
             .map(|o| format_compact!("orders from {}", o.by))
             .unwrap_or_else(|| "human orders".into()),
         super::strategy::Source::Strategist => "strategist's directive".into(),
+        super::strategy::Source::Story => "orders after a story event".into(),
         super::strategy::Source::Rules => "HQ's own assessment".into(),
     };
     let _ =

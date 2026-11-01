@@ -1119,7 +1119,8 @@ fn with_mut_cfg<F: FnOnce(&mut Cfg) -> Result<()>>(
         let cfg = Arc::make_mut(&mut ctx.db.ephemeral.cfg);
         f(cfg)?
     }
-    let cfg = Arc::clone(&ctx.db.ephemeral.cfg);
+    // without the round's story changes to the action list
+    let cfg = ctx.db.cfg_for_save();
     ctx.do_bg_task(Task::SaveConfig(ctx.miz_state_path.clone(), cfg));
     Ok(())
 }

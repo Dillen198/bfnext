@@ -32,7 +32,10 @@ use super::{
 };
 use crate::{Context, db::intel::IntelUnitClass};
 use bfprotocols::{
-    cfg::{Action, ActionKind, EscortPolicy, HqCfg, TaskCfg, TaskTarget},
+    cfg::{
+        Action, ActionGeoLimit, ActionKind, EscortPolicy, HqCfg, StrikeMission, TaskCfg,
+        TaskTarget,
+    },
     db::{group::GroupId, objective::ObjectiveId},
     hq::{Line, OpKind, Posture},
 };
@@ -179,7 +182,37 @@ fn scaled(cfg: &HqCfg, cost: i64) -> i64 {
     super::treasury::scaled(cost, cfg.cost_scale)
 }
 
-/// The operations `side` has the means to run, and what each costs.
+/// The fighters the HQ may fly for `side`, as (roster label or action
+/// name, .miz template): its CAP roster and the Fighters actions it may use.
+/// What the posture counts the side's air strength by (E7).
+pub(crate) fn fighter_flights(
+    ctx: &Context,
+    cfg: &HqCfg,
+    side: Side,
+) -> Vec<(std::string::String, std::string::String)> {
+    let mut out = vec![];
+    if let Some(air) = cfg.air.get(&side) {
+        for t in &air.cap {
+            let label = t.label.clone().unwrap_or_else(|| t.plane.template.clone());
+            out.push((label.as_str().into(), t.plane.template.as_str().into()));
+        }
+    }
+    if let Some(actions) = ctx.db.ephemeral.cfg.actions.get(&side) {
+        for (name, a) in actions.iter() {
+            if let ActionKind::Fighters(p) = &a.kind
+                && allowed(cfg, side, name.as_str())
+            {
+                out.push((name.as_str().into(), p.template.as_str().into()));
+            }
+        }
+    }
+    out
+}
+
+/// The operations `side` has the means to run, and what each costs. With
+/// `ai_air_stock`, an aircraft none of the side's bases holds is left out:
+/// the HQ sends what it still has (MiG-21s when the MiG-29s are gone), and a
+/// job nothing in stock can fly is not offered at all.
 pub(crate) fn available(
     ctx: &Context,
     cfg: &HqCfg,
@@ -197,6 +230,14 @@ pub(crate) fn available(
             (OpKind::Sead, &air.sead),
         ] {
             for t in list {
+                let label = t.label.clone().unwrap_or_else(|| t.plane.template.clone());
+                if !ctx.db.air_stock_side_can_fly(
+                    side,
+                    label.as_str(),
+                    t.plane.template.as_str(),
+                ) {
+                    continue;
+                }
                 let helicopter =
                     matches!(t.plane.kind, bfprotocols::cfg::AiPlaneKind::Helicopter);
                 let akind = match kind {
@@ -205,7 +246,7 @@ pub(crate) fn available(
                     _ => ActionKind::Sead(t.plane.clone()),
                 };
                 rosters.entry(kind).or_default().push(AirOption {
-                    label: t.label.clone().unwrap_or_else(|| t.plane.template.clone()),
+                    label,
                     action: Action {
                         kind: akind,
                         cost: 0,
@@ -236,6 +277,13 @@ pub(crate) fn available(
                 ActionKind::Sead(p) => (OpKind::Sead, p),
                 _ => continue,
             };
+            if !ctx.db.air_stock_side_can_fly(
+                side,
+                name.as_str(),
+                plane.template.as_str(),
+            ) {
+                continue;
+            }
             rosters.entry(kind).or_default().push(AirOption {
                 label: name.clone(),
                 action: a.clone(),
@@ -277,6 +325,12 @@ pub(crate) fn available(
             if !allowed(cfg, side, name.as_str()) {
                 continue;
             }
+            // An aircraft no base holds: the next action of the kind, if any.
+            if let Some(t) = crate::db::air_stock::action_template(&a.kind)
+                && !ctx.db.air_stock_side_can_fly(side, name.as_str(), t)
+            {
+                continue;
+            }
             let pick = Some((name.clone(), a.clone()));
             match &a.kind {
                 ActionKind::Recon(_) | ActionKind::Drone(_) => {
@@ -292,6 +346,9 @@ pub(crate) fn available(
                 }
                 ActionKind::LogisticsRepair(_) => {
                     put(OpKind::AirRepair, c.air_repair, pick)
+                }
+                ActionKind::Strike(s) if s.mission == StrikeMission::AntiShip => {
+                    put(OpKind::AntiShip, c.anti_ship, pick)
                 }
                 _ => (),
             }
@@ -396,19 +453,35 @@ impl<'a> Gen<'a> {
         let pic = self.pic;
         // CAP over the bases we are holding and the one we stage from, where
         // the radars show enemy aircraft about.
-        let mut cover: Vec<&Obj> =
-            self.plan.defend.iter().filter_map(|id| pic.get(id)).collect();
+        // A side short of fighters (`Strain`) keeps them home: less over
+        // the staging base, more over the bases it holds and its own SAM
+        // sites, where the SAMs fight alongside them.
+        let strain = &self.plan.strain;
+        let mut cover: Vec<(&Obj, f64)> = self
+            .plan
+            .defend
+            .iter()
+            .filter_map(|id| pic.get(id))
+            .map(|o| (o, strain.cap_home))
+            .collect();
         if let Some(s) = self.staging()
-            && !cover.iter().any(|o| o.id == s.id)
+            && !cover.iter().any(|(o, _)| o.id == s.id)
         {
-            cover.push(s);
+            cover.push((s, strain.cap_forward));
         }
-        for o in cover {
+        if strain.cap_home > 1. {
+            for o in pic.own().filter(|o| o.sam_site()) {
+                if !cover.iter().any(|(c, _)| c.id == o.id) {
+                    cover.push((o, strain.cap_home));
+                }
+            }
+        }
+        for (o, k) in cover {
             if !self.in_air_range(o.pos) {
                 continue;
             }
             let near = pic.enemy_air_near(o.pos, 80_000.);
-            let value = if near > 0 {
+            let value = k * if near > 0 {
                 35. + 12. * near.min(6) as f64
             } else if o.being_captured {
                 18.
@@ -836,6 +909,49 @@ impl<'a> Gen<'a> {
         }
     }
 
+    /// Anti-ship strikes on the enemy's carrier groups, its airbases at sea.
+    /// Where a group is is public (its objective moves with the ships and
+    /// its label shows on the F10 map), so no radar contact is needed. Only
+    /// with an anti-ship `Strike` action, and only at groups within its
+    /// reach: `anti_ship_range_m` of one of our airbases, and the action's
+    /// own geo limit.
+    fn anti_ship(&mut self) {
+        let pic = self.pic;
+        let Some(av) = self.avail.get(&OpKind::AntiShip) else { return };
+        let Some((_, action)) = av.action.as_ref() else { return };
+        if !matches!(
+            &action.kind,
+            ActionKind::Strike(s) if s.mission == StrikeMission::AntiShip
+        ) {
+            return;
+        }
+        let reach = self.cfg.anti_ship_range_m.unwrap_or(self.cfg.max_air_range_m);
+        let geo = match action.geo_limit {
+            ActionGeoLimit::NearFriendlyObjective { max } => Some(max as f64),
+            ActionGeoLimit::Unlimited => None,
+        };
+        for o in pic.enemy().filter(|o| o.kind.is_carrier_group() && o.health > 0) {
+            let from = pic.air_gap(o.pos);
+            if from > reach || geo.is_some_and(|m| pic.gap(o.pos) > m) {
+                continue;
+            }
+            // A damaged carrier is the one to finish.
+            let damage = (100 - o.health.min(100)) as f64;
+            let value = 40. * o.value() * (1. + damage / 200.);
+            self.push(
+                OpKind::AntiShip,
+                Some(o),
+                o.pos,
+                o.name.clone(),
+                value,
+                format_compact!(
+                    "enemy carrier group {:.0} km from our nearest airbase",
+                    from / 1000.
+                ),
+            );
+        }
+    }
+
     fn logistics(&mut self) {
         let pic = self.pic;
         for (rank, id) in self.plan.supply.iter().enumerate() {
@@ -1067,6 +1183,7 @@ pub(crate) fn rank(
     g.support(ctx, side, now);
     g.fires(ctx);
     g.naval();
+    g.anti_ship();
     g.logistics();
     g.troops(ctx);
     if cfg.requests.enabled {
@@ -1082,7 +1199,7 @@ pub(crate) fn rank(
     for c in g.out.iter_mut() {
         let policy = match c.kind {
             OpKind::Bomber => cfg.packages.escort_bombers,
-            OpKind::Strike => cfg.packages.escort_strikes,
+            OpKind::Strike | OpKind::AntiShip => cfg.packages.escort_strikes,
             _ => continue,
         };
         let threatened = pic.enemy_air_near(c.pos, 120_000.) > 0;
@@ -1095,7 +1212,9 @@ pub(crate) fn rank(
             c.escort = cfg.packages.escort_flights.max(1);
             c.cost += cost * c.escort as i64;
         }
-        if !cfg.packages.sead_with_strikes {
+        // No SEAD with an anti-ship strike: the air defence is the ships
+        // themselves, and the bombers fire from stand-off range.
+        if !cfg.packages.sead_with_strikes || c.kind == OpKind::AntiShip {
             continue;
         }
         let sam = pic
@@ -1176,7 +1295,12 @@ pub(crate) fn rank(
             } else {
                 1.
             };
-            c.score = c.value * plan.weight(line) * gap * trust * effort;
+            c.score = c.value
+                * plan.weight(line)
+                * plan.kind_weight(c.kind)
+                * gap
+                * trust
+                * effort;
             c
         })
         .filter(|c| c.score >= MIN_SCORE)
@@ -1214,6 +1338,7 @@ pub(crate) fn room(cfg: &HqCfg, ctx: &Context, side: Side, kind: OpKind) -> u32 
             l.reinforce.saturating_sub(count(&|k| k == OpKind::Reinforce))
         }
         OpKind::Bomber => l.bomber.saturating_sub(count(&|k| k == OpKind::Bomber)),
+        OpKind::AntiShip => l.anti_ship.saturating_sub(count(&|k| k == OpKind::AntiShip)),
         OpKind::Awacs => {
             l.awacs.saturating_sub(support_up(cfg, ctx, side, OpKind::Awacs))
         }
@@ -1400,6 +1525,161 @@ mod tests {
         assert!(pick_air(&opts, &sit(0, 1, false, 40.)).is_none());
         // Too far for a helicopter.
         assert!(pick_air(&opts, &sit(0, 0, false, 200.)).is_none());
+    }
+
+    fn plan() -> Plan {
+        Plan {
+            posture: Posture::Balanced,
+            source: super::super::strategy::Source::Rules,
+            main_effort: None,
+            defend: vec![],
+            supply: vec![],
+            avoid: vec![],
+            weights: BTreeMap::new(),
+            intent: CompactString::default(),
+            reasons: vec![],
+            disabled: vec![],
+            paused: false,
+            strain: Default::default(),
+        }
+    }
+
+    fn backfire(geo_limit: ActionGeoLimit) -> Avail {
+        let plane: bfprotocols::cfg::AiPlaneCfg =
+            serde_json::from_value(serde_json::json!({
+                "kind": "FixedWing", "duration": 3600, "template": "RBACKFIRE",
+                "altitude": 9000, "altitude_typ": "BARO", "speed": 250
+            }))
+            .unwrap();
+        Avail {
+            cost: 400,
+            action: Some((
+                "Backfire raid".into(),
+                Action {
+                    kind: ActionKind::Strike(bfprotocols::cfg::StrikeCfg {
+                        mission: StrikeMission::AntiShip,
+                        plane,
+                        weapon_type: None,
+                        attacks: 2,
+                        carpet_length_m: 1500.,
+                    }),
+                    cost: 0,
+                    penalty: None,
+                    limit: None,
+                    geo_limit,
+                },
+            )),
+            options: vec![],
+        }
+    }
+
+    /// Our airbase at the origin, an enemy airbase far east, and an enemy
+    /// carrier group `cg_km` east of ours.
+    fn anti_ship_cands(
+        cfg: &HqCfg,
+        avail: &BTreeMap<OpKind, Avail>,
+        cg_km: f64,
+    ) -> Vec<Cand> {
+        use super::super::picture::tests::{carrier_group, obj, picture};
+        use bfprotocols::db::objective::ObjectiveKind;
+        let pic = picture(vec![
+            obj(1, true, 0., 0., ObjectiveKind::Airbase),
+            obj(2, false, 600., 0., ObjectiveKind::Airbase),
+            obj(3, false, cg_km, 0., carrier_group()),
+        ]);
+        let plan = plan();
+        let mut g = Gen { cfg, pic: &pic, plan: &plan, avail, out: vec![] };
+        g.anti_ship();
+        g.out
+    }
+
+    #[test]
+    fn a_carrier_group_in_range_draws_an_anti_ship_strike() {
+        let cfg = HqCfg::default();
+        let avail =
+            BTreeMap::from([(OpKind::AntiShip, backfire(ActionGeoLimit::Unlimited))]);
+        let out = anti_ship_cands(&cfg, &avail, 150.);
+        assert_eq!(out.len(), 1, "{out:?}");
+        let c = &out[0];
+        assert_eq!(c.kind, OpKind::AntiShip);
+        assert_eq!(c.target, Some(ObjectiveId::from(3)));
+        assert_eq!(c.pos, Vector2::new(150_000., 0.));
+        assert_eq!(c.cost, 400);
+        assert!(c.value >= MIN_SCORE, "{c:?}");
+        assert_eq!(c.action.as_ref().map(|(n, _)| n.as_str()), Some("Backfire raid"));
+    }
+
+    #[test]
+    fn no_anti_ship_strike_out_of_range_or_without_the_action() {
+        let cfg = HqCfg::default();
+        let avail =
+            BTreeMap::from([(OpKind::AntiShip, backfire(ActionGeoLimit::Unlimited))]);
+        // Past max_air_range_m (180 km).
+        assert!(anti_ship_cands(&cfg, &avail, 300.).is_empty());
+        // ... unless the campaign gives its bombers the reach.
+        let long = HqCfg { anti_ship_range_m: Some(400_000.), ..HqCfg::default() };
+        assert_eq!(anti_ship_cands(&long, &avail, 300.).len(), 1);
+        // The action's own geo limit.
+        let near = BTreeMap::from([(
+            OpKind::AntiShip,
+            backfire(ActionGeoLimit::NearFriendlyObjective { max: 100_000 }),
+        )]);
+        assert!(anti_ship_cands(&cfg, &near, 150.).is_empty());
+        // No anti-ship action: no anti-ship strike.
+        assert!(anti_ship_cands(&cfg, &BTreeMap::new(), 150.).is_empty());
+    }
+
+    /// CAP values by objective: our airbase 1 being held, airbase 2 the
+    /// main effort is pushed from, our SAM site 4, enemy base 3 the main
+    /// effort, enemy aircraft on radar over all of it.
+    fn cap_values(strain: super::super::strategy::Strain) -> Vec<(i64, f64)> {
+        use super::super::picture::tests::{obj, picture};
+        use bfprotocols::db::objective::ObjectiveKind;
+        let cfg = HqCfg::default();
+        let mut pic = picture(vec![
+            obj(1, true, -50., 0., ObjectiveKind::Airbase),
+            obj(2, true, -10., 0., ObjectiveKind::Airbase),
+            obj(4, true, -30., 20., ObjectiveKind::SpecialSamSite),
+            obj(3, false, 20., 0., ObjectiveKind::Fob),
+        ]);
+        pic.enemy_air = vec![Vector2::new(-20_000., 0.); 2];
+        let plan = Plan {
+            main_effort: Some(ObjectiveId::from(3)),
+            defend: vec![ObjectiveId::from(1)],
+            strain,
+            ..plan()
+        };
+        let avail = BTreeMap::from([(
+            OpKind::Cap,
+            Avail { cost: 250, action: None, options: vec![] },
+        )]);
+        let mut g = Gen { cfg: &cfg, pic: &pic, plan: &plan, avail: &avail, out: vec![] };
+        g.air();
+        let mut v: Vec<(i64, f64)> = g
+            .out
+            .iter()
+            .filter(|c| c.kind == OpKind::Cap)
+            .map(|c| (c.anchor.inner(), c.value))
+            .collect();
+        v.sort_by_key(|(id, _)| *id);
+        v
+    }
+
+    #[test]
+    fn depleted_fighters_cap_at_home_not_forward() {
+        let even = cap_values(Default::default());
+        assert_eq!(even.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![1, 2]);
+        assert_eq!(even[0].1, even[1].1);
+        let weak = cap_values(super::super::strategy::Strain {
+            cap_forward: 0.5,
+            cap_home: 1.3,
+            ..Default::default()
+        });
+        assert_eq!(weak.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![1, 2, 4]);
+        let v = even[0].1;
+        assert!((weak[0].1 - v * 1.3).abs() < 1e-9, "{weak:?}");
+        assert!((weak[1].1 - v * 0.5).abs() < 1e-9, "{weak:?}");
+        assert!((weak[2].1 - v * 1.3).abs() < 1e-9, "{weak:?}");
     }
 
     #[test]

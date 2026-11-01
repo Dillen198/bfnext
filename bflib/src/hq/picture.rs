@@ -71,9 +71,13 @@ pub(crate) struct Obj {
 }
 
 impl Obj {
-    /// What taking (or holding) it is worth, around 1.
+    /// What taking (or holding) it is worth, around 1. A carrier group
+    /// can't be taken, but it is the enemy's airbase at sea: worth sinking
+    /// (`planner`'s anti-ship strikes). Everything that captures or shells
+    /// objectives leaves the ones at sea alone.
     pub(crate) fn value(&self) -> f64 {
         match self.kind {
+            ObjectiveKind::CarrierGroup { .. } => 1.5,
             ObjectiveKind::Logistics => 1.6,
             ObjectiveKind::Factory { .. } => 1.4,
             ObjectiveKind::Airbase => 1.3,
@@ -81,7 +85,6 @@ impl Obj {
             ObjectiveKind::Fob | ObjectiveKind::Farp { .. } => 1.0,
             ObjectiveKind::NavalBase => 0.9,
             ObjectiveKind::SpecialSamSite => 0.6,
-            ObjectiveKind::CarrierGroup { .. } => 0.,
         }
     }
 
@@ -151,6 +154,17 @@ pub(crate) struct Picture {
     pub(crate) front: Vec<(Vector2, Vector2)>,
     /// Our AWACS and tankers on the map, whoever sent them.
     pub(crate) support: Vec<SupportFlight>,
+    /// The side's will to fight, 0-100 (`Cfg::war_will`); None with it off.
+    /// Read by the posture with `hq.posture` (E7).
+    pub(crate) will: Option<f64>,
+    /// Fuel in the side's network, percent of capacity (the measure
+    /// `war_will` drains on); None without warehouses or `hq.posture`.
+    pub(crate) fuel_pct: Option<f64>,
+    /// Airframes of the side's own fighter types over its bases
+    /// (`ai_air_stock`); None when it can't be told, never runs out, or
+    /// without `hq.posture`. Weighed against `enemy_air`, never against the
+    /// enemy's true stock.
+    pub(crate) fighters: Option<u64>,
 }
 
 impl Picture {
@@ -668,6 +682,8 @@ pub(crate) fn build(
         }
     }
     let support = support_flights(ctx, side);
+    // The side's own state, only read with `hq.posture` on (E7).
+    let posture = cfg.posture.as_ref().filter(|p| p.enabled);
 
     Picture {
         objs,
@@ -687,6 +703,14 @@ pub(crate) fn build(
         battles,
         front,
         support,
+        will: ctx.db.will_of(side),
+        fuel_pct: posture.and_then(|_| ctx.db.fuel_of(side)),
+        fighters: posture.and_then(|_| {
+            ctx.db.air_stock_airframes(
+                side,
+                &super::planner::fighter_flights(ctx, cfg, side),
+            )
+        }),
     }
 }
 
@@ -809,10 +833,16 @@ pub(crate) fn fixedwing_pilots(db: &crate::db::Db, side: Side) -> u32 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn obj(id: i64, own: bool, x_km: f64, y_km: f64, kind: ObjectiveKind) -> Obj {
+    pub(crate) fn obj(
+        id: i64,
+        own: bool,
+        x_km: f64,
+        y_km: f64,
+        kind: ObjectiveKind,
+    ) -> Obj {
         Obj {
             id: ObjectiveId::from(id),
             name: format!("obj{id}").into(),
@@ -837,7 +867,7 @@ mod tests {
 
     /// Ours west of x = 0, theirs east of it, a front line running north-south
     /// at x = 0.
-    fn picture(objs: Vec<Obj>) -> Picture {
+    pub(crate) fn picture(objs: Vec<Obj>) -> Picture {
         Picture {
             objs,
             humans: 0,
@@ -856,7 +886,30 @@ mod tests {
             battles: SmallVec::new(),
             front: vec![(Vector2::new(0., -300_000.), Vector2::new(0., 300_000.))],
             support: vec![],
+            will: None,
+            fuel_pct: None,
+            fighters: None,
         }
+    }
+
+    pub(crate) fn carrier_group() -> ObjectiveKind {
+        ObjectiveKind::CarrierGroup {
+            carrier_template: "CVN".into(),
+            waypoint: None,
+            parent_naval_base: None,
+            repair_start_time: None,
+        }
+    }
+
+    #[test]
+    fn a_carrier_group_is_worth_sinking() {
+        let cg = obj(1, false, 0., 0., carrier_group());
+        let ab = obj(2, false, 0., 0., ObjectiveKind::Airbase);
+        assert!(cg.value() > 0.);
+        // The enemy's airbase at sea is worth more than one on land.
+        assert!(cg.value() > ab.value());
+        // ... but nothing captures or shells it.
+        assert!(cg.at_sea());
     }
 
     fn rules() -> StationRules {

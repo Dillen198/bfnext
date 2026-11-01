@@ -1351,6 +1351,7 @@ impl Db {
                 newly_capturable,
             )
         };
+        self.will_objective_status(*oid, now);
         if newly_capturable {
             self.ephemeral.msgs().panel_to_all(
                 15,
@@ -2607,6 +2608,20 @@ impl Db {
             self.ephemeral.victory_countdown_last = None;
             return None;
         }
+        // War will (`Cfg::war_will`): a side below the threshold for
+        // `hold_hours` asks for terms, and the other side wins.
+        if let Some(side) = self.will_terms(now) {
+            self.ephemeral.victory = Some((now, side));
+            self.ephemeral.victory_countdown_last = None;
+            return None;
+        }
+        // A story event (`Cfg::story`) ended the war.
+        if let Some(side) = self.story_ending() {
+            info!("story: an event ended the round, winner {side:?}");
+            self.ephemeral.victory = Some((now, side));
+            self.ephemeral.victory_countdown_last = None;
+            return None;
+        }
         // Check MapOwned condition if auto_reset is configured.
         if let Some(vc) = self.ephemeral.cfg.auto_reset {
             let VictoryCondition::MapOwned { fraction } = vc.condition;
@@ -3309,6 +3324,8 @@ impl Db {
                     by: ucids.clone(),
                 });
                 self.war_effort_capture(new_owner, now);
+                self.will_capture(oid, previous_owner, new_owner, now);
+                self.story_capture(oid, previous_owner, new_owner, &ucids, now);
                 if let Some(capture) =
                     self.ephemeral.cfg.points.as_ref().map(|p| p.capture)
                     && !ucids.is_empty()
@@ -4692,6 +4709,7 @@ impl Db {
                 side: captor_side,
                 by: ucids.clone(),
             });
+            self.story_capture(oid, old_owner, captor_side, &ucids, now);
 
             // Rebuild objective markup
             let obj = objective!(self, oid)?;

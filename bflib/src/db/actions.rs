@@ -3459,6 +3459,10 @@ impl Db {
     /// field without it is passed over for the next one out. With nowhere to
     /// take off from the action is refused -- it is never air-started -- and
     /// `start_action` charges nothing for a refused action.
+    ///
+    /// With `ai_air_stock` the field also has to hold the flight's airframes:
+    /// the nearest one that does is used, and once the flight is in DCS they
+    /// are taken out of its stock (`db::air_stock`).
     fn add_and_spawn_ai_air_from(
         &mut self,
         perf: &mut PerfInner,
@@ -3495,6 +3499,22 @@ impl Db {
                     | ActionKind::Paratrooper(_)
                     | ActionKind::Deployable(_)
             );
+        // What the flight takes out of stock (`ai_air_stock`), if anything.
+        // A template the mission lacks fails in `add_group` below as before.
+        let need =
+            match self.ephemeral.cfg.ai_air_stock.as_ref().is_some_and(|a| a.enabled) {
+                false => None,
+                true => self
+                    .air_stock_template(spctx, idx, side, args.cfg.template.as_str())
+                    .ok()
+                    .and_then(|types| {
+                        self.air_stock_need(
+                            name.as_str(),
+                            args.cfg.template.as_str(),
+                            &types,
+                        )
+                    }),
+            };
         let field = match depart {
             Some(oid) => {
                 let obj = objective!(self, oid)?;
@@ -3518,6 +3538,15 @@ impl Db {
                         if rotary { "a helicopter" } else { "a fixed-wing flight" }
                     )
                 }
+                if let Some(need) = need.as_ref()
+                    && !self.air_stock_field_ok(&oid, need)
+                {
+                    bail!(
+                        "{} does not hold {} to launch this flight",
+                        obj.name,
+                        super::air_stock::describe(need)
+                    )
+                }
                 let name = String::from(obj.name.as_str());
                 let pos = self.launch_spot(spctx.lua(), &oid, rotary, heavy).ok_or_else(|| {
                     anyhow!("{name} has no free parking to launch this flight from")
@@ -3525,13 +3554,27 @@ impl Db {
                 LaunchField { oid, name, pos }
             }
             None => self
-                .pick_launch_field(spctx.lua(), side, args.pos, rotary, heavy, 10_000.)
-                .ok_or_else(|| {
-                    anyhow!(
+                .pick_launch_field_where(
+                    spctx.lua(),
+                    side,
+                    args.pos,
+                    rotary,
+                    heavy,
+                    10_000.,
+                    |oid| need.as_ref().is_none_or(|n| self.air_stock_field_ok(oid, n)),
+                )
+                .ok_or_else(|| match need.as_ref() {
+                    None => anyhow!(
                         "no friendly {} more than 10 km from the target has room to launch \
                          this flight",
                         if rotary { "airbase, FARP or FOB" } else { "airfield" }
-                    )
+                    ),
+                    Some(need) => anyhow!(
+                        "no friendly {} more than 10 km from the target holds {} with room to \
+                         launch this flight",
+                        if rotary { "airbase, FARP or FOB" } else { "airfield" },
+                        super::air_stock::describe(need)
+                    ),
                 })?,
         };
         let home = objective!(self, field.oid)?.zone.pos();
@@ -3613,6 +3656,9 @@ impl Db {
                 error!("could not remove unspawned action group {gid:?}: {de:?}");
             }
             return Err(e);
+        }
+        if let Some(need) = need.as_ref() {
+            self.air_stock_draw(gid, side, field.oid, need);
         }
         Ok(gid)
     }

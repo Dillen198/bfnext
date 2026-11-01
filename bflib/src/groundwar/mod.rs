@@ -73,6 +73,9 @@ pub(crate) struct GroundWar {
     pub(crate) rt: FormationRt,
     cmds: Vec<Cmd>,
     last_think: Option<DateTime<Utc>>,
+    /// When each side's AI last sent a wave of attacks (`ai_fill` paces
+    /// them).
+    last_attack: FxHashMap<Side, DateTime<Utc>>,
     pub(crate) last_order: FxHashMap<Ucid, DateTime<Utc>>,
     /// Base garrisons defending themselves (`Db::tick_garrisons`).
     pub(crate) garrison: crate::db::garrison::GarrisonRt,

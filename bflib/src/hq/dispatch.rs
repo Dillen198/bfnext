@@ -93,6 +93,11 @@ fn run_action(
             })?;
             ActionArgs::NavalCruiseMissileStrike(WithObj { cfg: cfg.clone(), oid })
         }
+        // Aimed at the carrier group's position: the strike picks the ships
+        // of the enemy group nearest it (`Db::strike_aims`).
+        ActionKind::Strike(cfg) => {
+            ActionArgs::Strike(WithPos { cfg: cfg.clone(), pos: c.pos })
+        }
         ActionKind::LogisticsRepair(cfg) => {
             let oid = c
                 .target
@@ -159,7 +164,8 @@ fn launch_inner(
         | OpKind::Bomber
         | OpKind::Awacs
         | OpKind::Tanker
-        | OpKind::AirRepair => {
+        | OpKind::AirRepair
+        | OpKind::AntiShip => {
             let gid = run_action(lua, ctx, perf, side, owner, c)?;
             match gid {
                 Some(gid) => Ok((Handle::Group(gid), "under way".into())),

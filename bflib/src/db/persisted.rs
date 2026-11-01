@@ -121,6 +121,15 @@ pub struct Persisted {
     /// The round's war-effort bar (`db::war_effort`).
     #[serde(default)]
     pub war_effort: super::war_effort::WarEffort,
+    /// Each side's will to fight (`Cfg::war_will`, `db::will`). None until
+    /// the feature first runs (and in saves from before it existed): it
+    /// then starts at `war_will.start`.
+    #[serde(default)]
+    pub war_will: Option<super::will::WarWill>,
+    /// The round's story so far (`Cfg::story`, `db::story`): fired events,
+    /// facts not yet evaluated and the effects that last.
+    #[serde(default)]
+    pub story: super::story::Story,
     /// Sides whose base funds have been seeded from `objective_start_points`
     /// this round. Load used to re-seed every base whose fund was exactly 0
     /// on every restart -- and size the share against only those bases, so a
@@ -205,6 +214,12 @@ pub struct Persisted {
     /// orders nor forgets what the HQ has learned.
     #[serde(default)]
     pub hq: crate::hq::HqSaved,
+    /// The air order of battle (`Cfg::ai_air_stock`, `db::air_stock`): the
+    /// AI flights holding airframes drawn from a base, so they go back
+    /// where they belong after a restart too, and each side's airframe
+    /// losses this round.
+    #[serde(default)]
+    pub air_stock: super::air_stock::AirStock,
 }
 
 impl Persisted {

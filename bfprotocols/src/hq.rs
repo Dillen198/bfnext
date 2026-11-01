@@ -67,7 +67,17 @@ impl Line {
 
 /// One kind of operation the HQ can run.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum OpKind {
@@ -92,10 +102,13 @@ pub enum OpKind {
     NavalStrike,
     /// A transport flying logistics repair to a friendly base.
     AirRepair,
+    /// An anti-ship strike (a `Strike` action flying its `AntiShip` mission)
+    /// on an enemy carrier group.
+    AntiShip,
 }
 
 impl OpKind {
-    pub const ALL: [OpKind; 16] = [
+    pub const ALL: [OpKind; 17] = [
         OpKind::Cap,
         OpKind::Strike,
         OpKind::Sead,
@@ -112,6 +125,7 @@ impl OpKind {
         OpKind::Tanker,
         OpKind::NavalStrike,
         OpKind::AirRepair,
+        OpKind::AntiShip,
     ];
 
     pub fn line(self) -> Line {
@@ -122,7 +136,8 @@ impl OpKind {
             | Self::Recon
             | Self::Bomber
             | Self::Awacs
-            | Self::Tanker => Line::Air,
+            | Self::Tanker
+            | Self::AntiShip => Line::Air,
             Self::Artillery | Self::MissileStrike | Self::Ambush | Self::NavalStrike => {
                 Line::Fires
             }
@@ -150,6 +165,7 @@ impl OpKind {
             Self::Tanker => "tanker",
             Self::NavalStrike => "naval cruise missile strike",
             Self::AirRepair => "air logistics repair",
+            Self::AntiShip => "anti-ship strike",
         }
     }
 }
@@ -522,6 +538,31 @@ pub struct PictureInfo {
     pub troops_out: u32,
 }
 
+/// PvP with the AI filling in (`ai_fill`): how hard the side's AI is
+/// fighting and why. "Red: AI-led, 2 pilots".
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AiFillInfo {
+    /// The side's pilots in a slot.
+    #[serde(default)]
+    pub pilots: u32,
+    /// The other side's pilots in a slot.
+    #[serde(default)]
+    pub enemy_pilots: u32,
+    /// What the other side's pilots call for, 0..1.
+    #[serde(default)]
+    pub enemy_match: f64,
+    /// The AI packages' and ground AI's pressure: own-side fade (by pilots
+    /// in a slot) times `enemy_match`, 0..1.
+    #[serde(default)]
+    pub pressure: f64,
+    /// The HQ's pressure (`gap_factor` with the enemy match in), 0..1.
+    #[serde(default)]
+    pub hq_pressure: f64,
+    /// The side's own pilots don't hold its AI back at all.
+    #[serde(default)]
+    pub ai_led: bool,
+}
+
 /// The HQ of one side, as that side sees it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HqView {
@@ -546,8 +587,15 @@ pub struct HqView {
     pub override_: Option<OverrideInfo>,
     pub treasury: i64,
     pub reserve: i64,
-    /// How much the HQ is doing given the side's player count, 0..1.
+    /// How much the HQ is doing given the side's player count, 0..1 (with
+    /// `ai_fill` on, the other side's count is in it too).
     pub gap_factor: f64,
+    /// `ai_fill`'s state for the side; None when it is off.
+    #[serde(default)]
+    pub ai_fill: Option<AiFillInfo>,
+    /// The side's will to fight, 0-100 (`war_will`); None when it is off.
+    #[serde(default)]
+    pub will: Option<f64>,
     /// The cost of each operation the side can run (ones it has no action
     /// or system for are missing).
     pub available: BTreeMap<OpKind, i64>,
