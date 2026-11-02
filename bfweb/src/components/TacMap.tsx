@@ -1,14 +1,14 @@
-import { useEffect } from 'react'
-import { MapContainer, TileLayer, Marker, Polyline, CircleMarker, useMap } from 'react-leaflet'
+import { useEffect, useMemo, useState } from 'react'
+import { MapContainer, TileLayer, Marker, Polyline, Polygon, CircleMarker, Pane, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import type { LatLngBoundsExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { renderToStaticMarkup } from 'react-dom/server'
-import { Pin, ExternalLink } from '@icons'
-import type { Objective, Frontlines } from '../api'
+import { ExternalLink, Layers } from '@icons'
+import type { Objective, Frontlines, LatLon } from '../api'
 import { campaign } from '../config/campaign'
 import { useTheme } from '@shared/web/theme'
-import { OBJ_ICON } from '../lib/objIcon'
+import { objectiveSymbol } from '../lib/objSymbol'
+import { territoryMap } from '../lib/territory'
 
 function FitBounds({ objectives, padding }: { objectives: Objective[]; padding: number }) {
   const map = useMap()
@@ -20,6 +20,42 @@ function FitBounds({ objectives, padding }: { objectives: Objective[]; padding: 
   return null
 }
 
+const TERRITORY_PREF = 'dash.territory'
+
+function loadTerritoryPref(): boolean {
+  try {
+    return localStorage.getItem(TERRITORY_PREF) !== '0'
+  } catch {
+    return true
+  }
+}
+
+/** The ground each side holds (lib/territory: every base's Voronoi cell, cut
+ *  to the coast where we have one) in its owner's colour, and the front where
+ *  the sides' ground meets. Its own pane sits over the tiles and under the
+ *  engine's front lines and the markers. It is worked out again only when a
+ *  base changes hands or moves, not on every refetch. */
+function Territory({ objectives, color, ink }: { objectives: Objective[]; color: (owner: string) => string; ink: string }) {
+  const key = objectives.map(o => `${o.id}:${o.owner}:${o.lat}:${o.lon}`).join(',')
+  const terr = useMemo(() => {
+    const t = territoryMap(objectives)
+    const byOwner = new Map<string, LatLon[][][]>()
+    for (const c of t.cells) byOwner.set(c.owner, [...(byOwner.get(c.owner) ?? []), [c.ring]])
+    return { sides: [...byOwner], front: t.front }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+  return (
+    <Pane name="territory" style={{ zIndex: 350 }}>
+      {terr.sides.map(([owner, polys]) => (
+        <Polygon key={owner} positions={polys} interactive={false}
+          pathOptions={{ stroke: false, fillColor: color(owner), fillOpacity: 0.14 }} />
+      ))}
+      <Polyline positions={terr.front} interactive={false}
+        pathOptions={{ color: ink, weight: 2, opacity: 0.55, lineCap: 'round', lineJoin: 'round' }} />
+    </Pane>
+  )
+}
+
 /** The public campaign map: objectives and the front line on a plain basemap.
  *  Everything drawn here comes from /api/objectives and /api/frontline, the
  *  public routes -- no contacts, so it is safe to show to anyone (the SITREP
@@ -27,7 +63,10 @@ function FitBounds({ objectives, padding }: { objectives: Objective[]; padding: 
  *
  *  `snapshot` is the Discord render: bigger glyphs, a stronger basemap, and a
  *  ring around every objective under attack or ready to capture, so the
- *  picture carries the "where is the fight" answer on its own. */
+ *  picture carries the "where is the fight" answer on its own.
+ *
+ *  The TERRITORY toggle shades the ground each side holds; the choice sticks
+ *  per browser. The snapshot leaves it out. */
 export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = false, onTilesLoaded, onSelect }: {
   objectives: Objective[]
   fronts: Frontlines
@@ -48,24 +87,24 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
   const red  = valid.filter(o => o.owner === 'Red').length
   const neu  = valid.filter(o => o.owner === 'Neutral').length
   const contested = snapshot ? valid.filter(o => o.threatened || o.captureable) : []
+  const [territory, setTerritoryState] = useState(loadTerritoryPref)
+  const setTerritory = (on: boolean) => {
+    setTerritoryState(on)
+    try {
+      localStorage.setItem(TERRITORY_PREF, on ? '1' : '0')
+    } catch {
+      /* private window: the choice just doesn't stick */
+    }
+  }
 
-  // The objective-type glyphs rendered straight onto the
-  // map -- no circle, no fill -- same OBJ_ICON set used by the Critical
-  // Objectives list on the SITREP page, so an objective reads the same way in
-  // both places. Owner colour + a flat dark outline keeps them legible over
-  // tiles (no coloured glow).
+  // The plot's own symbols (lib/objSymbol): a solid shape per kind in the
+  // owner's colour, edged in the board's dark (or paper) so it reads over the
+  // territory and the tiles. A destroyed objective is drawn faded.
   const markerIcon = (obj: Objective) => {
-    const c = ownerColor(obj.owner)
-    const alive = obj.health > 0
-    const base = obj.kind === 'Airbase' ? 22 : (obj.kind === 'Carrier Group' || obj.kind === 'Naval Base') ? 20 : 17
-    const size = snapshot ? Math.round(base * 1.5) : base
-    const Icon = OBJ_ICON[obj.kind] ?? Pin
-    const svg = renderToStaticMarkup(
-      <Icon size={size} color={c} strokeWidth={2.25}
-        style={{ opacity: alive ? 1 : 0.5, filter: 'drop-shadow(0 1px 1.5px rgba(0,0,0,0.9))' }} />
-    )
+    const s = (obj.kind === 'Airbase' || obj.kind === 'Command Center' ? 6.5 : 6) * (snapshot ? 1.5 : 1)
+    const { svg, size } = objectiveSymbol(obj.kind, ownerColor(obj.owner), theme === 'light' ? '#fbfbf8' : '#0b0f0d', s)
     return L.divIcon({
-      html: svg,
+      html: obj.health > 0 ? svg : `<div style="opacity:0.5">${svg}</div>`,
       className: '',
       iconSize: [size, size],
       iconAnchor: [size / 2, size / 2],
@@ -100,6 +139,7 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
         <TileLayer key={theme} url={canvasBase} maxZoom={19} opacity={snapshot ? 0.8 : 0.5}
           eventHandlers={snapshot ? { load: onTilesLoaded } : undefined} />
         {valid.length > 0 && !snapshot && <FitBounds objectives={valid} padding={28} />}
+        {territory && !snapshot && <Territory objectives={valid} color={ownerColor} ink={theme === 'light' ? '#1c2326' : '#e4e7e1'} />}
         {fronts.blue.map((l, i) => l.length > 1 && (
           <Polyline key={`fb-${i}`} positions={l}
             pathOptions={{ color: '#2f7dff', weight: snapshot ? 2 : 1.5, opacity: 0.8, dashArray: '6 5' }} />
@@ -136,18 +176,33 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
         <span style={{ color: 'var(--text-dim)' }}>{neu} NEU</span>
       </div>
 
-      {/* TACMAP button */}
-      {onOpenTacmap && (
-        <button onClick={onOpenTacmap} style={{
-          position: 'absolute', top: 8, right: 8, zIndex: 1000,
-          display: 'flex', alignItems: 'center', gap: 5,
-          background: 'rgba(8,11,6,0.90)', border: '1px solid var(--accent-border)',
-          color: 'var(--accent-bright)', padding: '5px 10px',
-          fontSize: '0.58rem', fontWeight: 700, letterSpacing: '0.14em',
-          cursor: 'pointer', textTransform: 'uppercase', fontFamily: 'var(--font-mono)',
-        }}>
-          <ExternalLink size={9} /> TACMAP
-        </button>
+      {/* Layer toggle and TACMAP button */}
+      {(!snapshot || onOpenTacmap) && (
+        <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 1000, display: 'flex', gap: 6 }}>
+          {!snapshot && (
+            <button type="button" aria-pressed={territory} onClick={() => setTerritory(!territory)}
+              title="Shade the ground each side holds: every base's zone of control, in its owner's colour" style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                background: 'rgba(8,11,6,0.90)', border: `1px solid ${territory ? 'var(--accent-border)' : 'var(--border)'}`,
+                color: territory ? 'var(--accent-bright)' : 'var(--text-dim)', padding: '5px 10px',
+                fontSize: '0.58rem', fontWeight: 700, letterSpacing: '0.14em',
+                cursor: 'pointer', textTransform: 'uppercase', fontFamily: 'var(--font-mono)',
+              }}>
+              <Layers size={9} /> TERRITORY
+            </button>
+          )}
+          {onOpenTacmap && (
+            <button type="button" onClick={onOpenTacmap} style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              background: 'rgba(8,11,6,0.90)', border: '1px solid var(--accent-border)',
+              color: 'var(--accent-bright)', padding: '5px 10px',
+              fontSize: '0.58rem', fontWeight: 700, letterSpacing: '0.14em',
+              cursor: 'pointer', textTransform: 'uppercase', fontFamily: 'var(--font-mono)',
+            }}>
+              <ExternalLink size={9} /> TACMAP
+            </button>
+          )}
+        </div>
       )}
 
       {/* Bottom legend */}
