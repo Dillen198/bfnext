@@ -2459,6 +2459,7 @@ impl Default for Cfg {
                 groups: vec![], // Carrier groups defined here, or auto-detected by BCARRIER/RCARRIER prefix
             }),
             special_sam_sites: vec![],
+            garrison_layouts: None,
             special_sam_capture_radius_m: 609.6, // 2000 ft
             special_sam_wake_distance: FxHashMap::default(),
             weather_effects: None,

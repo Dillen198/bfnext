@@ -2355,6 +2355,13 @@ impl Db {
                     if !airbase.is_exist()? {
                         return Ok(()); // can happen when farps get recycled
                     }
+                    // A garrison ship with a helicopter deck (a frigate in a
+                    // port) is an airbase to DCS. It is not the objective's
+                    // airfield, and a port zone holding it next to a real pad
+                    // must not count as two airbases.
+                    if name.starts_with("@synthetic:") {
+                        return Ok(());
+                    }
                     let pos3 = airbase.get_point().context("getting airbase position")?;
                     let pos = Vector2::new(pos3.x, pos3.z);
                     airbase

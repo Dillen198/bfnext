@@ -87,6 +87,8 @@ mod events;
 pub use events::*;
 mod frontline;
 pub use frontline::*;
+mod garrison_layouts;
+pub use garrison_layouts::*;
 mod helo;
 pub use helo::*;
 mod live_weather;
@@ -533,6 +535,10 @@ pub struct Cfg {
     /// Map-fixed SAM sites that can change hands via troop capture
     #[serde(default)]
     pub special_sam_sites: Vec<SpecialSamSiteCfg>,
+    /// Objective garrisons laid out unit by unit (each vehicle's position and
+    /// heading) instead of from G trigger zones. Absent = G zones only.
+    #[serde(default)]
+    pub garrison_layouts: Option<GarrisonLayoutsCfg>,
     /// Capture zone radius in metres, shared by every special SAM site (they have
     /// no mission-editor trigger zone of their own to derive one from)
     #[serde(default = "default_sam_capture_radius")]

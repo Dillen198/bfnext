@@ -187,6 +187,24 @@ impl From<&str> for ObjGroupClass {
     }
 }
 
+impl From<bfprotocols::cfg::GarrisonClass> for ObjGroupClass {
+    fn from(c: bfprotocols::cfg::GarrisonClass) -> Self {
+        use bfprotocols::cfg::GarrisonClass as G;
+        match c {
+            G::Logi => ObjGroupClass::Logi,
+            G::Aaa => ObjGroupClass::Aaa,
+            G::Lr => ObjGroupClass::Lr,
+            G::Mr => ObjGroupClass::Mr,
+            G::Sr => ObjGroupClass::Sr,
+            G::Armor => ObjGroupClass::Armor,
+            G::Services => ObjGroupClass::Services,
+            G::Infantry => ObjGroupClass::Infantry,
+            G::Naval => ObjGroupClass::Naval,
+            G::Other => ObjGroupClass::Other,
+        }
+    }
+}
+
 /// True for the template names the `logi_from_scenery` mode replaces with the
 /// map-building mechanic: the LOGI / LOGIA / LOGIB command-centre groups, the
 /// DEPOT resupply-pad groups, and the FUEL depot groups. Each of these is a

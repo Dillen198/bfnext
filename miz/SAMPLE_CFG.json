@@ -507,6 +507,12 @@
 
   "special_sam_sites": [],
 
+  "garrison_layouts": {
+    "red_country": "CJTF_RED",
+    "blue_country": "CJTF_BLUE",
+    "groups": []
+  },
+
   "jtac_priority": [
     ["SAM", "LR", "RadarGuided", "TrackRadar"],
     ["SAM", "MR", "RadarGuided", "TrackRadar"],

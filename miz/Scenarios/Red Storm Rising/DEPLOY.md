@@ -96,18 +96,28 @@ same as in steps 3 and 4, with `DCS.RSR` paths, `export_port: 42003`,
 ### Water probe (once per map layout)
 
 The build checks garrison positions against the water it knows about, but
-only DCS knows every river. If a garrison unit lands in water, bflib stops
-the mission at start with `placing group <name>: you can't spawn this unit in
-water`. The probe asks DCS about every position at once:
+only DCS knows every river. Garrisons are laid out vehicle by vehicle
+(`garrison_layouts`, which needs the bflib built with it), so a vehicle in
+water is left out with a `garrison <name> ... is in water, left out` warning
+rather than stopping the mission. An older mission with G zones stops instead,
+with `placing group <name>: you can't spawn this unit in water`. Either way,
+the probe asks DCS about every vehicle's exact spot at once:
 
 1. Copy `tools\probe\bfprobe.lua` (from the redstorm build folder) into
    `<SG>\DCS.RSR\Scripts\Hooks\` and restart the DCS server. Any Caucasus
    mission will do.
-2. Once the DCS log shows `bfprobe: wrote ...bfprobe_out.txt`, copy
-   `<SG>\DCS.RSR\bfprobe_out.txt` to the build PC (`E:\Saved Games\DCS\` or
-   Downloads) and **delete `bfprobe.lua` from Hooks**.
+2. The probe writes three files into `<SG>\DCS.RSR\`. Wait until the DCS log
+   shows `bfprobe: wrote` for each one:
+   - `bfprobe_out.txt`: water at every garrison spot.
+   - `bfrunways_out.txt`: every runway.
+   - `bfscenery_out.txt`: every map building round every objective. This one
+     comes last, about a minute after the mission starts.
+
+   Copy all three to the build PC (`E:\Saved Games\DCS\` or Downloads), then
+   **delete `bfprobe.lua` from Hooks**.
 3. On the build PC, `python tools\apply_probe2.py` moves every wet zone to a
-   dry spot the same probe confirmed, then `rebuild-all.ps1` rebuilds.
+   dry spot the same probe confirmed. `rebuild-all.ps1` then rebuilds, keeping
+   vehicles and scenery out of the buildings.
 
 ## 1. Close out the 2008 campaign
 

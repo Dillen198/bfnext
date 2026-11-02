@@ -1960,6 +1960,13 @@ impl Ephemeral {
                     }
                 }
             }
+            for g in cfg.garrison_layouts.iter().flat_map(|gl| gl.groups.iter()) {
+                for u in g.red_units.iter().chain(g.blue_units.iter()) {
+                    if !cfg.unit_classification.contains_key(u.typ.as_str()) {
+                        not_classified.insert(u.typ.as_str().into());
+                    }
+                }
+            }
             if not_classified.is_empty() {
                 Ok(())
             } else {

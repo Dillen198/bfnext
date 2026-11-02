@@ -16,7 +16,12 @@ for more details.
 
 use std::sync::Arc;
 
-use super::{Db, ephemeral::SlotInfo, group::DeployKind, objective::ObjGroup};
+use super::{
+    Db,
+    ephemeral::SlotInfo,
+    group::DeployKind,
+    objective::{ObjGroup, ObjGroupClass},
+};
 use crate::{
     bg::Task,
     db::{
@@ -1290,6 +1295,7 @@ impl Db {
                         country,
                         inline_units,
                         DeployKind::Objective { origin: id },
+                        ObjGroupClass::Lr,
                     )?
                 } else if let Some(tmpl) = template {
                     // AtPosWithCenter with pos==center is a pure translation that preserves each
@@ -1323,6 +1329,131 @@ impl Db {
             self.update_objective_status(&id, self.ephemeral.now())?;
         }
         Ok(())
+    }
+
+    /// Garrisons laid out unit by unit (`Cfg::garrison_layouts`): the same two
+    /// groups per entry a G zone gives (one per side, the non-owner's dead
+    /// until it captures the objective), but built from each unit's own
+    /// position and heading instead of a template at a zone centre.
+    ///
+    /// A unit that stands in water is left out with a warning rather than
+    /// stopping the mission, unlike a G zone's template; a group with every
+    /// unit in water is left out entirely.
+    fn init_garrison_layouts(&mut self, spctx: &SpawnCtx) -> Result<()> {
+        let Some(layouts) = self.ephemeral.cfg.garrison_layouts.clone() else {
+            return Ok(());
+        };
+        let land = Land::singleton(spctx.lua())?;
+        let (mut groups, mut wet) = (0usize, 0usize);
+        for g in &layouts.groups {
+            let label =
+                g.name.as_ref().map(|n| n.as_str()).unwrap_or(g.objective.as_str());
+            let oid = *self.persisted.objectives_by_name.get(&g.objective).ok_or_else(
+                || anyhow!("garrison {label}: no objective named {}", g.objective),
+            )?;
+            let owner = objective!(self, oid)?.owner;
+            let sides = [
+                (Side::Red, &g.red_units, layouts.red_country),
+                (Side::Blue, &g.blue_units, layouts.blue_country),
+            ];
+            for (side, units, country) in sides {
+                if units.is_empty() {
+                    continue;
+                }
+                // vehicles must stand on land, ships in water
+                let mut dry: Vec<SpecialSamUnitCfg> = Vec::with_capacity(units.len());
+                for u in units {
+                    let boat = self
+                        .ephemeral
+                        .cfg
+                        .unit_classification
+                        .get(u.typ.as_str())
+                        .is_some_and(|t| t.contains(UnitTag::Boat));
+                    let wet_here = matches!(
+                        land.get_surface_type(LuaVec2(Vector2::new(u.pos.x, u.pos.y)))?,
+                        SurfaceType::ShallowWater | SurfaceType::Water
+                    );
+                    if wet_here == boat {
+                        dry.push(u.clone());
+                    } else {
+                        wet += 1;
+                        warn!(
+                            "garrison {label} ({side}): {} at ({:.0}, {:.0}) is {}, left out",
+                            u.typ,
+                            u.pos.x,
+                            u.pos.y,
+                            if boat { "on land" } else { "in water" }
+                        );
+                    }
+                }
+                if dry.is_empty() {
+                    warn!(
+                        "garrison {label} ({side}): no unit stands on its own surface, group left out"
+                    );
+                    continue;
+                }
+                let gid = self
+                    .add_group_from_units(
+                        spctx,
+                        side,
+                        country,
+                        &dry,
+                        DeployKind::Objective { origin: oid },
+                        ObjGroupClass::from(g.class),
+                    )
+                    .with_context(|| format_compact!("placing garrison {label}"))?;
+                let o = objective_mut!(self, oid)?;
+                o.groups.get_or_default_cow(side).insert_cow(gid);
+                self.persisted.objectives_by_group.insert_cow(gid, oid);
+                if side != owner {
+                    for uid in group!(self, gid)?.units.clone().into_iter() {
+                        unit_mut!(self, uid)?.dead = true;
+                    }
+                }
+                groups += 1;
+            }
+        }
+        info!(
+            "[GARRISON_LAYOUTS] placed {groups} garrison groups from {} layouts ({wet} units on the wrong surface left out)",
+            layouts.groups.len()
+        );
+        Ok(())
+    }
+
+    /// After a load: garrison layout groups are synthetic (no .miz template),
+    /// and the table that tells the spawner their country is not saved. Put
+    /// it back for every objective group still waiting for one, after the
+    /// special SAM sites have registered theirs.
+    fn register_garrison_layout_templates(&mut self) {
+        use super::ephemeral::SyntheticGroupSpec;
+        use dcso3::group::GroupCategory;
+        let Some(layouts) = self.ephemeral.cfg.garrison_layouts.as_ref() else {
+            return;
+        };
+        let (red, blue) = (layouts.red_country, layouts.blue_country);
+        for (_, g) in &self.persisted.groups {
+            if !g.template_name.starts_with("@synthetic:")
+                || !matches!(g.origin, DeployKind::Objective { .. })
+                || self
+                    .ephemeral
+                    .synthetic_templates
+                    .contains_key(g.template_name.as_str())
+            {
+                continue;
+            }
+            let country = match g.side {
+                Side::Red => red,
+                Side::Blue => blue,
+                Side::Neutral => continue,
+            };
+            self.ephemeral.synthetic_templates.insert(
+                g.template_name.clone(),
+                SyntheticGroupSpec {
+                    country,
+                    category: g.kind.unwrap_or(GroupCategory::Ground),
+                },
+            );
+        }
     }
 
     /// Find every neutral-coalition static object placed inside an objective zone
@@ -1872,6 +2003,7 @@ impl Db {
             }
         }
 
+        t.init_garrison_layouts(&spctx).context("init_garrison_layouts failed")?;
         t.ensure_default_logi_coverage(&spctx, idx)
             .context("ensure_default_logi_coverage failed")?;
 
@@ -2036,6 +2168,7 @@ impl Db {
             .context("reconciling carrier task forces")?;
         self.init_special_sam_sites(spctx, idx, lua)
             .context("re-init special sam sites")?;
+        self.register_garrison_layout_templates();
         self.init_protected_statics(miz, lua).context("re-init protected statics")?;
         self.scan_objective_scenery(lua).context("scan_objective_scenery failed")?;
         // Before anything is queued for spawn: convert a save that predates

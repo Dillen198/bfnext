@@ -116,6 +116,88 @@ Kuznetsov, NASAMS, HIMARS, Avenger, Linebacker, Stryker, MRAP, C-RAM or GPS
 spoofer. `plan.BANNED_TYPES` lists them and `verify.py` fails the build on any.
 DCS has no T-64; T-72B and T-80B stand in.
 
+### Objective scenery
+
+Every objective except airbases and the carrier groups has a compound of
+statics, so it doesn't look like an empty field (`tools/build_statics.py`,
+649 statics at 25 objectives):
+
+| Objective | Compound |
+|---|---|
+| FOB | tents, camouflage nets over parked trucks, fuel and ammo dumps, a radio mast, a gate |
+| Logistics hub | container yard, site office, watchtower, generator, trucks and a fuel truck |
+| Refinery or oil terminal | tank farm, fuel bladders, plant building, tanker trucks, a fence |
+| Factory or dam | works buildings, excavators, containers, a radio mast, trucks |
+| Naval base | tower crane, container stacks, fuel tanks, port office |
+| Command centre (Tbilisi) | command bunker, two radio masts, tents, staff cars under nets |
+
+Trucks are each side's own: M818 and HEMTT for NATO, GAZ-66, ATZ-5 and UAZ for
+the Soviets. The statics are neutral. bflib respawns any neutral static inside
+an objective zone that gets destroyed, so the scenery survives strikes and never
+changes hands. Each compound stands on ground other missions spawn vehicles on,
+150 m clear of garrisons, FARP pads and known water, and off the roads. Tkibuli
+and Krasnodar refinery have no room for a full compound, so they get the first
+12 pieces only. Only Fortifications statics and parked vehicles are used.
+Warehouse and heliport statics would open DCS warehouses alongside the engine's
+logistics, and cargo statics can be sling-loaded.
+
+### Garrisons, vehicle by vehicle
+
+The mission has no `G` trigger zones. Every garrison group is in the
+config's `garrison_layouts` (`tools/build_garrisons.py`: 326 groups, 5,498
+vehicles counting both sides' versions), each vehicle with its own position
+and heading, the way the special SAM sites are. Two missions in `layouts/`
+decide how they stand. Both are edited in the Mission Editor, and
+`layouts/README.md` explains how:
+
+- **`RSR_FORMATIONS.miz`**: how each kind of group deploys. It is stamped at
+  every garrison site, turned to face the enemy.
+- **`RSR_SITES.miz`**: every objective's defences and scenery, placed at the
+  real place and taken exactly as placed. It holds drafts for all 44
+  objectives (the fleets excepted): 329 garrison groups and the 649 scenery
+  statics of the FOBs, depots, factories, ports and the HQ, all to check in
+  the editor.
+  - **Airfields** are laid out from the runway: SAMs beside both approaches,
+    guns covering the field from either side, armour on the enemy's side,
+    carriers on the flanks.
+  - **Everything else** is defended round its scenery compound: guns near
+    it, SAMs out toward the threat, armour forward and on the flanks.
+  - **Scenery** compounds (FOB, depot, refinery, works, port, HQ) are also
+    templates in `RSR_FORMATIONS.miz`. They apply to any objective that has
+    no scenery of its own in the sites file.
+
+The first formations follow 1980s doctrine. These are the US Army's manuals
+on the Soviet Army and on its own units: FM 100-2-1, FM 30-102, FM 44-3,
+FM 71-1 and FM 17-15.
+
+| Group | Soviet | NATO |
+|---|---|---|
+| Anti-aircraft guns | ring round the fire-control radar, guns 45 m apart, transport 150 m behind | Vulcans in pairs 50 m apart at the corners of the site, 300 m out |
+| Short-range SAMs | ZSU-23-4 pair 200 m apart up front, Strelas 250 m behind | Chaparrals in a 400 m diamond round a Vulcan |
+| Medium-range SAMs | Osas on a 250 m arc ahead of the radar | Rolands 350 m round their radar |
+| Armour | one echelon: tanks and carriers in one line 100 m apart, staggered | tanks 150 m apart, carriers 200 m behind, support 600 m back |
+| Supply trucks | dispersed 60 m apart | dispersed 60 m apart |
+
+The manuals give no internal spacing for Osa and Roland batteries, and no
+KS-19 layout. Those follow the nearest system the manuals do describe.
+
+"Toward the threat" means the nearest objective the other side holds. It is
+worked out separately for each side's version of a group, so when a base
+changes hands the new owner's units face the new owner's enemy. build_base
+still picks each group's site (ground other missions spawn vehicles on, clear
+of water), and the layout is centred on it. Every vehicle is then checked on
+its own and moved up to 56 m if needed: it must be at least 110 m from known
+water, off the roads, clear of the scenery and 9 m from every other vehicle. A
+vehicle with no clear spot nearby keeps the template's own offset, as a G zone
+would have placed it. That's 7%, nearly all of them on the mountain FOBs where
+no stock mission has parked a vehicle.
+
+**This needs a bflib with `garrison_layouts`.** An older engine ignores the
+key, with an "unknown key" warning, and every objective starts with no
+garrison. The engine leaves out a unit that DCS reports in water, with a
+warning, instead of stopping the mission. The water probe checks every
+vehicle's exact spot.
+
 ### Hidden air defences: 46 special SAM sites
 
 | Red (25) | Blue (21) |

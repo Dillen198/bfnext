@@ -1254,6 +1254,7 @@ impl Db {
         country: Country,
         units: &[SpecialSamUnitCfg],
         origin: DeployKind,
+        class: ObjGroupClass,
     ) -> Result<GroupId> {
         use super::ephemeral::SyntheticGroupSpec;
 
@@ -1261,15 +1262,29 @@ impl Db {
         // Use a stable template name derived from the group ID so synthetic_templates can look it up.
         let template_name = String::from(format_compact!("@synthetic:{}", gid));
         let group_name = template_name.clone();
+        // A group of ships (a port's warship and transports) spawns as a
+        // ship group; anything else is a ground group.
+        let category = if !units.is_empty()
+            && units.iter().all(|u| {
+                self.ephemeral
+                    .cfg
+                    .unit_classification
+                    .get(u.typ.as_str())
+                    .is_some_and(|t| t.contains(UnitTag::Boat))
+            }) {
+            GroupCategory::Ship
+        } else {
+            GroupCategory::Ground
+        };
 
         let mut spawned = SpawnedGroup {
             id: gid,
             name: group_name.clone(),
             template_name: template_name.clone(),
             side,
-            kind: Some(GroupCategory::Ground),
+            kind: Some(category),
             origin,
-            class: ObjGroupClass::Lr,
+            class,
             units: SetS::new(),
             tags: UnitTags(BitFlags::empty()),
         };
@@ -1317,10 +1332,9 @@ impl Db {
             self.persisted.units_by_name.insert_cow(unit_name, uid);
         }
 
-        self.ephemeral.synthetic_templates.insert(
-            template_name.clone(),
-            SyntheticGroupSpec { country, category: GroupCategory::Ground },
-        );
+        self.ephemeral
+            .synthetic_templates
+            .insert(template_name.clone(), SyntheticGroupSpec { country, category });
 
         self.persisted.groups.insert_cow(gid, spawned);
         self.persisted.groups_by_name.insert_cow(group_name, gid);
@@ -1399,6 +1413,7 @@ impl Db {
                 heading,
             }],
             DeployKind::Objective { origin },
+            ObjGroupClass::Other,
         )?;
         if let Some(group) = self.persisted.groups.get_mut_cow(&gid) {
             group.tags.0.insert(UnitTag::EventSpawn);
