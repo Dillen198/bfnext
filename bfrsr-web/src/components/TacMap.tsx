@@ -8,16 +8,17 @@ import type { Objective, Frontlines, LatLon } from '../api'
 import { campaign } from '../config/campaign'
 import { useTheme } from '@shared/web/theme'
 import { objectiveSymbol } from '../lib/objSymbol'
+import { placeLabels } from '../lib/plotLabels'
 import { territoryMap } from '../lib/territory'
 
-function FitBounds({ objectives, padding }: { objectives: Objective[]; padding: number }) {
+function FitBounds({ objectives, padding }: { objectives: Objective[]; padding: [number, number] }) {
   const map = useMap()
   useEffect(() => {
     if (!objectives.length) return
     // The plot can't be panned or zoomed, so it fits again whenever its box
     // changes size too.
     const fit = () => map.fitBounds(objectives.map(o => [o.lat, o.lon] as [number, number]) as LatLngBoundsExpression,
-      { padding: [padding, padding], maxZoom: 9, animate: false })
+      { padding, maxZoom: 9, animate: false })
     fit()
     map.on('resize', fit)
     return () => { map.off('resize', fit) }
@@ -48,42 +49,22 @@ function km(a: Objective, b: Objective): number {
 
 /** The ground each side holds (lib/territory: every base's Voronoi cell, cut
  *  to the coast where we have one) in its owner's colour, the front where
- *  the sides' ground meets, and a dotted connector, marked with its length,
- *  between bases that face each other across it. Its own pane sits over the
- *  tiles and under the engine's front lines and the markers. It is worked out
- *  again only when a base changes hands or moves, not on every refetch. */
-function Territory({ objectives, color, ink, halo }: { objectives: Objective[]; color: (owner: string) => string; ink: string; halo: string }) {
+ *  the sides' ground meets, and a dotted connector between bases that face
+ *  each other across it. Its own pane sits over the tiles and under the
+ *  engine's front lines and the markers. It is worked out again only when a
+ *  base changes hands or moves, not on every refetch. */
+function Territory({ objectives, color, ink }: { objectives: Objective[]; color: (owner: string) => string; ink: string }) {
   const key = objectives.map(o => `${o.id}:${o.owner}:${o.lat}:${o.lon}`).join(',')
   const terr = useMemo(() => {
     const t = territoryMap(objectives)
     const byOwner = new Map<string, LatLon[][][]>()
     for (const c of t.cells) byOwner.set(c.owner, [...(byOwner.get(c.owner) ?? []), [c.ring]])
     const facing = t.facing
-      .map(([i, j]) => ({ a: objectives[i], b: objectives[j], dist: km(objectives[i], objectives[j]) }))
-      .filter(f => f.dist <= FACING_KM)
-      .sort((p, q) => p.dist - q.dist)
+      .filter(([i, j]) => km(objectives[i], objectives[j]) <= FACING_KM)
+      .map(([i, j]) => ({ a: objectives[i], b: objectives[j] }))
     return { sides: [...byOwner], front: t.front, facing }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
-  // The distance labels, shortest first, each left out where it would land
-  // on one already placed (the plot is fixed, so only a refit moves them).
-  const map = useMap()
-  const [zoom, setZoom] = useState(() => map.getZoom())
-  useEffect(() => {
-    const onZoom = () => setZoom(map.getZoom())
-    map.on('zoomend', onZoom)
-    return () => { map.off('zoomend', onZoom) }
-  }, [map])
-  const labels = useMemo(() => {
-    const placed: { x0: number; x1: number; y0: number; y1: number }[] = []
-    return terr.facing.filter(({ a, b, dist }) => {
-      const p = map.project([(a.lat + b.lat) / 2, (a.lon + b.lon) / 2], zoom)
-      const box = { x0: p.x + 2, x1: p.x + 8 + 6 * `${Math.round(dist)} km`.length, y0: p.y - 16, y1: p.y - 1 }
-      if (placed.some(q => box.x0 < q.x1 && q.x0 < box.x1 && box.y0 < q.y1 && q.y0 < box.y1)) return false
-      placed.push(box)
-      return true
-    })
-  }, [map, terr, zoom])
   return (
     <Pane name="territory" style={{ zIndex: 350 }}>
       {terr.sides.map(([owner, polys]) => (
@@ -96,12 +77,51 @@ function Territory({ objectives, color, ink, halo }: { objectives: Objective[]; 
         <Polyline key={`${a.id}-${b.id}`} positions={[[a.lat, a.lon], [b.lat, b.lon]]} interactive={false}
           pathOptions={{ color: ink, weight: 1, opacity: 0.6, dashArray: '2 3' }} />
       ))}
-      {labels.map(({ a, b, dist }) => (
-        <Marker key={`${a.id}-${b.id}-km`} position={[(a.lat + b.lat) / 2, (a.lon + b.lon) / 2]} interactive={false} pane="territory"
+    </Pane>
+  )
+}
+
+/** Which names win a crowded spot: the command centre and fleets, then
+ *  airbases, then the hubs, factories and ports, then the forward bases. */
+const NAME_PRI: Record<string, number> = {
+  'Command Center': 6, 'Carrier Group': 6, Airbase: 5,
+  'Logistics Hub': 4, Factory: 4, 'Naval Base': 4, FOB: 3, FARP: 3,
+}
+const NAME_FONT = '600 10px'
+
+/** Every objective's name beside its symbol (lib/plotLabels: right, else
+ *  left, else left off where it would land on another name or symbol). Its
+ *  own pane sits over the markers and lets clicks through to them. */
+function ObjectiveNames({ objectives, ink, halo }: { objectives: Objective[]; ink: string; halo: string }) {
+  const map = useMap()
+  // Where the plot sits, which only a refit changes.
+  const [view, setView] = useState(() => `${map.getZoom()}:${map.getCenter().toString()}`)
+  useEffect(() => {
+    const onView = () => setView(`${map.getZoom()}:${map.getCenter().toString()}`)
+    map.on('zoomend moveend', onView)
+    return () => { map.off('zoomend moveend', onView) }
+  }, [map])
+  const key = objectives.map(o => `${o.id}:${o.name}:${o.kind}:${o.lat}:${o.lon}`).join(',')
+  const sides = useMemo(() => {
+    const ctx = document.createElement('canvas').getContext('2d')
+    const family = getComputedStyle(document.documentElement).getPropertyValue('--font-body').trim() || 'sans-serif'
+    if (ctx) ctx.font = `${NAME_FONT} ${family}`
+    const zoom = map.getZoom()
+    const px = map.getPixelBounds()
+    return placeLabels(objectives.map(o => {
+      const p = map.project([o.lat, o.lon], zoom)
+      return { x: p.x, y: p.y, w: (ctx?.measureText(o.name).width ?? o.name.length * 6) + 2, h: 12, pri: NAME_PRI[o.kind] ?? 2 }
+    }), 10, 7, { x0: px.min!.x + 6, x1: px.max!.x - 6, y0: px.min!.y + 6, y1: px.max!.y - 6 })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, key, view])
+  return (
+    <Pane name="names" style={{ zIndex: 650, pointerEvents: 'none' }}>
+      {objectives.map((o, i) => sides[i] && (
+        <Marker key={o.id} position={[o.lat, o.lon]} interactive={false} pane="names"
           icon={L.divIcon({
             className: '',
             iconSize: [0, 0],
-            html: `<span style="position:absolute;left:4px;bottom:3px;white-space:nowrap;font-style:italic;font-weight:600;font-size:10px;color:${ink};text-shadow:0 0 2px ${halo},0 0 2px ${halo},0 0 3px ${halo}">${Math.round(dist)} km</span>`,
+            html: `<span style="position:absolute;top:-7px;${sides[i] === 'right' ? 'left:10px' : 'left:-10px;transform:translateX(-100%)'};white-space:nowrap;font:${NAME_FONT} var(--font-body);line-height:14px;color:${ink};text-shadow:0 0 2px ${halo},0 0 2px ${halo},0 0 3px ${halo}">${o.name.replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`)}</span>`,
           })} />
       ))}
     </Pane>
@@ -116,6 +136,8 @@ function Territory({ objectives, color, ink, halo }: { objectives: Objective[]; 
  *  `snapshot` is the Discord render: bigger glyphs, a stronger basemap, and a
  *  ring around every objective under attack or ready to capture, so the
  *  picture carries the "where is the fight" answer on its own.
+ *
+ *  Every objective is named beside its symbol, where there is room.
  *
  *  The plot is fixed to its objectives: no panning or zooming (OPEN PLOT has
  *  the map to move about). The TERRITORY toggle shades the ground each side
@@ -170,7 +192,7 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
   }
 
   const { theme } = useTheme()
-  // What the symbols and the distance labels are edged in: the board's dark,
+  // What the symbols and their names are edged in: the board's dark,
   // or the paper.
   const halo = theme === 'light' ? '#fbfbf8' : '#0b0f0d'
   // Grease-pencil inks: china-marker blue and red, and the no man's land in
@@ -191,9 +213,10 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
     <div style={{ position: 'relative', height: '100%', background: acetate ? 'transparent' : theme === 'light' ? '#dfe0d8' : '#050806' }}>
       {/* A snapshot starts at its final bounds, with no fade: starting at the
           default view and then fitting loads a second zoom level of tiles, and
-          a one-shot screenshot catches both stacked. The fractional zoom it
-          fits at scales the tiles, which leaves hairline seams between them;
-          .tacmap-snapshot overlaps each tile by a pixel to close them. */}
+          a one-shot screenshot catches both stacked. Every plot fits at a
+          fractional zoom, so the objectives fill it; that scales the tiles,
+          which leaves hairline seams between them, and .tacmap-snapshot
+          overlaps each tile by a pixel to close them. */}
       <MapContainer
         {...(snapshot && valid.length > 0
           ? { bounds: valid.map(o => [o.lat, o.lon] as [number, number]) as LatLngBoundsExpression,
@@ -201,12 +224,12 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
           : { center: campaign.mapCenter, zoom: campaign.mapZoom })}
         style={{ position: 'absolute', inset: 0 }} zoomControl={false} attributionControl={false}
         dragging={false} scrollWheelZoom={false} doubleClickZoom={false} touchZoom={false} boxZoom={false} keyboard={false}
-        className={snapshot ? 'tacmap-snapshot' : undefined}
-        zoomSnap={snapshot ? 0.25 : 1} fadeAnimation={!snapshot} zoomAnimation={!snapshot}>
+        className="tacmap-snapshot"
+        zoomSnap={snapshot ? 0.25 : 0.1} fadeAnimation={!snapshot} zoomAnimation={!snapshot}>
         <TileLayer key={theme} url={canvasBase} maxZoom={19} opacity={snapshot ? 0.8 : acetate ? (theme === 'light' ? 0.55 : 0.6) : 0.5}
           eventHandlers={snapshot ? { load: onTilesLoaded } : undefined} />
-        {valid.length > 0 && !snapshot && <FitBounds objectives={valid} padding={28} />}
-        {territory && !snapshot && <Territory objectives={valid} color={ownerColor} ink={acetate ? grease.mid : theme === 'light' ? '#1c2326' : '#e4e7e1'} halo={halo} />}
+        {valid.length > 0 && !snapshot && <FitBounds objectives={valid} padding={[28, 46]} />}
+        {territory && !snapshot && <Territory objectives={valid} color={ownerColor} ink={acetate ? grease.mid : theme === 'light' ? '#1c2326' : '#e4e7e1'} />}
         {fronts.blue.map((l, i) => l.length > 1 && (
           <Polyline key={`fb-${i}`} positions={l}
             pathOptions={acetate
@@ -235,6 +258,7 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
           <Marker key={obj.id} position={[obj.lat, obj.lon]} icon={markerIcon(obj)} title={obj.name}
             eventHandlers={onSelect ? { click: () => onSelect(obj.name) } : undefined} />
         ))}
+        {!snapshot && <ObjectiveNames objectives={valid} ink={acetate ? grease.mid : theme === 'light' ? '#1c2326' : '#e4e7e1'} halo={halo} />}
       </MapContainer>
 
       {/* Top-left stat chip */}
