@@ -102,6 +102,10 @@ struct Wingman {
     typ: String,
     expires_at: DateTime<Utc>,
     landed_since: Option<DateTime<Utc>>,
+    /// The escort task, until the wingman is off the ground to take it: one
+    /// on the takeoff waypoint is thrown away when the takeoff starts, and
+    /// the wingman just flew its route somewhere else.
+    escort: Option<Task>,
 }
 
 #[derive(Debug)]
@@ -467,28 +471,28 @@ fn request_wingman(
     } else {
         LuaVec3(Vector3::new(-200., 50., 300.))
     };
-    let escort = Task::ComboTask(vec![
-        // It is there for the player's whole sortie; going bingo halfway
-        // through and leaving would defeat the point.
-        Task::WrappedCommand(Command::SetUnlimitedFuel(true)),
-        Task::WrappedOption(AiOption::Air(AirOption::Roe(AirRoe::WeaponFree))),
-        Task::WrappedOption(AiOption::Air(AirOption::ReactionOnThreat(
-            AirReactionToThreat::EvadeFire,
-        ))),
-        Task::Escort {
-            engagement_dist_max: engage,
-            target_types: targets,
-            params: FollowParams {
-                group: escorted,
-                pos: station,
-                last_waypoint_index: None,
-            },
-        },
-    ]);
-    // Waypoint 0 is the field: the spawn turns it into the takeoff, and the
-    // escort task on it starts the moment the wingman is up.
+    let options = || {
+        vec![
+            // It is there for the player's whole sortie; going bingo halfway
+            // through and leaving would defeat the point.
+            Task::WrappedCommand(Command::SetUnlimitedFuel(true)),
+            Task::WrappedOption(AiOption::Air(AirOption::Roe(AirRoe::WeaponFree))),
+            Task::WrappedOption(AiOption::Air(AirOption::ReactionOnThreat(
+                AirReactionToThreat::EvadeFire,
+            ))),
+        ]
+    };
+    // Handed over by `tick_wingmen` once the wingman is airborne.
+    let mut escort = options();
+    escort.push(Task::Escort {
+        engagement_dist_max: engage,
+        target_types: targets,
+        params: FollowParams { group: escorted, pos: station, last_waypoint_index: None },
+    });
+    // Waypoint 0 is the field: the spawn turns it into the takeoff. The
+    // route then points it at the player until it is up to take the escort.
     let mission = vec![
-        air_point(field.pos, field_elev, speed, escort),
+        air_point(field.pos, field_elev, speed, Task::ComboTask(options())),
         air_point(here, altitude, speed, Task::ComboTask(vec![])),
     ];
 
@@ -551,6 +555,7 @@ fn request_wingman(
             typ: typ.clone(),
             expires_at: now + Duration::seconds(cfg.lifetime_secs as i64),
             landed_since: None,
+            escort: Some(Task::ComboTask(escort)),
         },
     );
     Ok(format_compact!(
@@ -614,6 +619,33 @@ fn wingman_status(
     })
 }
 
+/// Give a wingman that has just got off the ground its escort task.
+fn join_up(lua: MizLua, ctx: &mut Context, ucid: Ucid) {
+    let Some(w) = ctx.airlife.wingmen.get(&ucid) else { return };
+    let Some(task) = w.escort.clone() else { return };
+    let Some(name) = ctx.db.persisted.groups.get(&w.gid).map(|g| g.name.clone()) else {
+        return;
+    };
+    let joined = (|| -> Result<bool> {
+        let g = Group::get_by_name(lua, name.as_str())?;
+        if !g.get_unit(1)?.in_air()? {
+            return Ok(false);
+        }
+        g.get_controller()?.set_task(task)?;
+        Ok(true)
+    })();
+    match joined {
+        Ok(true) => {
+            info!("air_life: wingman {name} airborne, escorting {ucid}");
+            if let Some(w) = ctx.airlife.wingmen.get_mut(&ucid) {
+                w.escort = None;
+            }
+        }
+        Ok(false) => (),
+        Err(e) => warn!("air_life: tasking wingman {name} to escort {ucid}: {e:?}"),
+    }
+}
+
 /// Keep every wingman honest: gone when shot down, home when the player is
 /// gone, down, or out of time.
 fn tick_wingmen(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
@@ -673,7 +705,9 @@ fn tick_wingmen(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
                     format_compact!("Your {} wingman is RTB: {why}.", w.typ),
                 );
             }
+            continue;
         }
+        join_up(lua, ctx, ucid);
     }
     // Cooldowns only matter for a while.
     ctx.airlife.wingman_lost_at.retain(|_, t| (now - *t).num_seconds() < 3600);

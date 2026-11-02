@@ -214,9 +214,14 @@ impl FollowParams {
     fn push_tbl(&self, tbl: &LuaTable) -> LuaResult<()> {
         tbl.raw_set("groupId", self.group)?;
         tbl.raw_set("pos", self.pos)?;
-        if let Some(idx) = self.last_waypoint_index {
-            tbl.raw_set("lastWptIndexFlag", true)?;
-            tbl.raw_set("lastWptIndex", idx)?
+        // DCS reads a missing flag as true: "until a waypoint" with no
+        // waypoint, so the follow ends the moment it starts. Say no.
+        match self.last_waypoint_index {
+            Some(idx) => {
+                tbl.raw_set("lastWptIndexFlag", true)?;
+                tbl.raw_set("lastWptIndex", idx)?
+            }
+            None => tbl.raw_set("lastWptIndexFlag", false)?,
         }
         Ok(())
     }
