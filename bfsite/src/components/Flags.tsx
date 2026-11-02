@@ -48,10 +48,28 @@ function Russia() {
   )
 }
 
+function Ussr() {
+  // The 1985 flag: red, with the gold star, hammer and sickle in the upper hoist.
+  return (
+    <>
+      <rect width="300" height="200" fill="#cc0000" />
+      <g fill="none" stroke="#ffd700" strokeWidth="2.4" strokeLinejoin="round">
+        <path d="M50 14 l3.2 9.8 h10.3 l-8.3 6 3.2 9.8 -8.4 -6 -8.4 6 3.2 -9.8 -8.3 -6 h10.3 z" />
+      </g>
+      <g fill="#ffd700">
+        <path d="M30 52 a22 22 0 0 0 34 22 l3 3 a26 26 0 0 1 -40 -26 z" />
+        <path d="M38 58 l20 20 -3 3 -20 -20 z" />
+        <path d="M33 54 l9 -7 5 5 -7 9 z" />
+      </g>
+    </>
+  )
+}
+
 function FlagArt({ id }: { id: FlagId }) {
   switch (id) {
     case 'georgia': return <Georgia />
     case 'russia': return <Russia />
+    case 'ussr': return <Ussr />
     default: return null
   }
 }

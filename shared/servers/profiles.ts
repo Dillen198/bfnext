@@ -11,7 +11,7 @@ import { VS_URLS } from '../web/urls'
  * Flags blended into a theatre's backdrop: the blue side's, then the red side's.
  * `rsii` is one picture of four: Russia, Syria, Iran and Iraq.
  */
-export type FlagId = 'blufor' | 'redfor' | 'georgia' | 'russia' | 'nato' | 'rsii'
+export type FlagId = 'blufor' | 'redfor' | 'georgia' | 'russia' | 'nato' | 'rsii' | 'ussr'
 
 /**
  * Each server's page has its own look: `desert` is the modern war's
@@ -93,6 +93,7 @@ export const SERVERS: ServerProfile[] = [
     livesEnforced: true,
     blueLabel: 'NATO',
     redLabel: 'Soviet',
+    flags: ['nato', 'ussr'],
     site: { label: 'Red Storm dashboard', url: VS_URLS.redstorm },
   },
   {
