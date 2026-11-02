@@ -23,6 +23,9 @@ export interface TerritoryMap {
   cells: { owner: string; ring: LatLon[] }[]
   /** Where ground of two different owners meets, on land. */
   front: [LatLon, LatLon][]
+  /** Bases of different owners whose ground touches (on land or at sea), as
+   *  indices into the sites passed in. */
+  facing: [number, number][]
 }
 
 // The Caucasus' land, 31.5-50 E by 37.5-48.5 N: everything but the Black Sea,
@@ -181,8 +184,9 @@ function onLand(a: XY, b: XY, poly: XY[]): [XY, XY][] {
 
 /** The ground each base holds and the front between the sides. */
 export function territoryMap(sites: TerritorySite[]): TerritoryMap {
-  const land = sites.filter((o) => !/carrier/i.test(o.kind))
-  if (land.length === 0) return { cells: [], front: [] }
+  const index = sites.flatMap((o, i) => (/carrier/i.test(o.kind) ? [] : [i]))
+  const land = index.map((i) => sites[i])
+  if (land.length === 0) return { cells: [], front: [], facing: [] }
   const lat0 = land.reduce((s, o) => s + o.lat, 0) / land.length
   const lon0 = land.reduce((s, o) => s + o.lon, 0) / land.length
   const kx = 111_320 * Math.cos((lat0 * Math.PI) / 180)
@@ -210,7 +214,7 @@ export function territoryMap(sites: TerritorySite[]): TerritoryMap {
     }
     return poly
   })
-  const out: TerritoryMap = { cells: [], front: [] }
+  const out: TerritoryMap = { cells: [], front: [], facing: [] }
   cells.forEach((cell, i) => {
     if (cell.length < 3) return
     let ground = [cell]
@@ -243,6 +247,7 @@ export function territoryMap(sites: TerritorySite[]): TerritoryMap {
       const a = on[0]
       const b = on.reduce((far, p) => (Math.hypot(p[0] - a[0], p[1] - a[1]) > Math.hypot(far[0] - a[0], far[1] - a[1]) ? p : far))
       if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 1) continue
+      out.facing.push([index[i], index[j]])
       for (const [p, q] of coast ? onLand(a, b, coast) : [[a, b] as [XY, XY]]) out.front.push([toLL(p), toLL(q)])
     }
   }

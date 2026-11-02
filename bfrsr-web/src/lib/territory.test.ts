@@ -51,10 +51,17 @@ describe('territoryMap', () => {
     expect(lonB).toBeCloseTo(20.2, 2)
   })
 
+  it('pairs the bases that face each other across the front', () => {
+    // Red 1 sits behind Red 0, so only Blue 0 and Red 0 face each other.
+    const t = territoryMap([site(10, 20.0, 'Blue'), site(10, 20.4, 'Red'), site(10, 20.8, 'Red')])
+    expect(t.facing).toEqual([[0, 1]])
+  })
+
   it('gives carrier groups no ground', () => {
-    const t = territoryMap([site(10, 20, 'Blue', 'Carrier Group'), site(10, 21, 'Red', 'Airbase')])
-    expect(t.cells.map((c) => c.owner)).toEqual(['Red'])
-    expect(t.front).toHaveLength(0)
+    const t = territoryMap([site(10, 20, 'Blue', 'Carrier Group'), site(10, 21, 'Red', 'Airbase'), site(10, 22, 'Blue')])
+    expect(t.cells.map((c) => c.owner)).toEqual(['Red', 'Blue'])
+    // Indices still count the carrier.
+    expect(t.facing).toEqual([[1, 2]])
   })
 
   it('fills the Caucasus out past the plot, but none of its seas', () => {

@@ -14,8 +14,13 @@ function FitBounds({ objectives, padding }: { objectives: Objective[]; padding: 
   const map = useMap()
   useEffect(() => {
     if (!objectives.length) return
-    map.fitBounds(objectives.map(o => [o.lat, o.lon] as [number, number]) as LatLngBoundsExpression,
+    // The plot can't be panned or zoomed, so it fits again whenever its box
+    // changes size too.
+    const fit = () => map.fitBounds(objectives.map(o => [o.lat, o.lon] as [number, number]) as LatLngBoundsExpression,
       { padding: [padding, padding], maxZoom: 9, animate: false })
+    fit()
+    map.on('resize', fit)
+    return () => { map.off('resize', fit) }
   }, [map, objectives, padding])
   return null
 }
@@ -30,20 +35,55 @@ function loadTerritoryPref(): boolean {
   }
 }
 
+/** How far apart two bases facing each other across the front can be and
+ *  still get a connector, km: past that they are not each other's fight. */
+const FACING_KM = 60
+
+function km(a: Objective, b: Objective): number {
+  const r = Math.PI / 180
+  const h = Math.sin(((b.lat - a.lat) * r) / 2) ** 2 +
+    Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(((b.lon - a.lon) * r) / 2) ** 2
+  return 2 * 6371 * Math.asin(Math.sqrt(h))
+}
+
 /** The ground each side holds (lib/territory: every base's Voronoi cell, cut
- *  to the coast where we have one) in its owner's colour, and the front where
- *  the sides' ground meets. Its own pane sits over the tiles and under the
- *  engine's front lines and the markers. It is worked out again only when a
- *  base changes hands or moves, not on every refetch. */
-function Territory({ objectives, color, ink }: { objectives: Objective[]; color: (owner: string) => string; ink: string }) {
+ *  to the coast where we have one) in its owner's colour, the front where
+ *  the sides' ground meets, and a dotted connector, marked with its length,
+ *  between bases that face each other across it. Its own pane sits over the
+ *  tiles and under the engine's front lines and the markers. It is worked out
+ *  again only when a base changes hands or moves, not on every refetch. */
+function Territory({ objectives, color, ink, halo }: { objectives: Objective[]; color: (owner: string) => string; ink: string; halo: string }) {
   const key = objectives.map(o => `${o.id}:${o.owner}:${o.lat}:${o.lon}`).join(',')
   const terr = useMemo(() => {
     const t = territoryMap(objectives)
     const byOwner = new Map<string, LatLon[][][]>()
     for (const c of t.cells) byOwner.set(c.owner, [...(byOwner.get(c.owner) ?? []), [c.ring]])
-    return { sides: [...byOwner], front: t.front }
+    const facing = t.facing
+      .map(([i, j]) => ({ a: objectives[i], b: objectives[j], dist: km(objectives[i], objectives[j]) }))
+      .filter(f => f.dist <= FACING_KM)
+      .sort((p, q) => p.dist - q.dist)
+    return { sides: [...byOwner], front: t.front, facing }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
+  // The distance labels, shortest first, each left out where it would land
+  // on one already placed (the plot is fixed, so only a refit moves them).
+  const map = useMap()
+  const [zoom, setZoom] = useState(() => map.getZoom())
+  useEffect(() => {
+    const onZoom = () => setZoom(map.getZoom())
+    map.on('zoomend', onZoom)
+    return () => { map.off('zoomend', onZoom) }
+  }, [map])
+  const labels = useMemo(() => {
+    const placed: { x0: number; x1: number; y0: number; y1: number }[] = []
+    return terr.facing.filter(({ a, b, dist }) => {
+      const p = map.project([(a.lat + b.lat) / 2, (a.lon + b.lon) / 2], zoom)
+      const box = { x0: p.x + 2, x1: p.x + 8 + 6 * `${Math.round(dist)} km`.length, y0: p.y - 16, y1: p.y - 1 }
+      if (placed.some(q => box.x0 < q.x1 && q.x0 < box.x1 && box.y0 < q.y1 && q.y0 < box.y1)) return false
+      placed.push(box)
+      return true
+    })
+  }, [map, terr, zoom])
   return (
     <Pane name="territory" style={{ zIndex: 350 }}>
       {terr.sides.map(([owner, polys]) => (
@@ -52,6 +92,18 @@ function Territory({ objectives, color, ink }: { objectives: Objective[]; color:
       ))}
       <Polyline positions={terr.front} interactive={false}
         pathOptions={{ color: ink, weight: 2, opacity: 0.55, lineCap: 'round', lineJoin: 'round' }} />
+      {terr.facing.map(({ a, b }) => (
+        <Polyline key={`${a.id}-${b.id}`} positions={[[a.lat, a.lon], [b.lat, b.lon]]} interactive={false}
+          pathOptions={{ color: ink, weight: 1, opacity: 0.6, dashArray: '2 3' }} />
+      ))}
+      {labels.map(({ a, b, dist }) => (
+        <Marker key={`${a.id}-${b.id}-km`} position={[(a.lat + b.lat) / 2, (a.lon + b.lon) / 2]} interactive={false} pane="territory"
+          icon={L.divIcon({
+            className: '',
+            iconSize: [0, 0],
+            html: `<span style="position:absolute;left:4px;bottom:3px;white-space:nowrap;font-style:italic;font-weight:600;font-size:10px;color:${ink};text-shadow:0 0 2px ${halo},0 0 2px ${halo},0 0 3px ${halo}">${Math.round(dist)} km</span>`,
+          })} />
+      ))}
     </Pane>
   )
 }
@@ -65,7 +117,9 @@ function Territory({ objectives, color, ink }: { objectives: Objective[]; color:
  *  ring around every objective under attack or ready to capture, so the
  *  picture carries the "where is the fight" answer on its own.
  *
- *  The TERRITORY toggle shades the ground each side holds; the choice sticks
+ *  The plot is fixed to its objectives: no panning or zooming (OPEN PLOT has
+ *  the map to move about). The TERRITORY toggle shades the ground each side
+ *  holds and links the bases facing each other; the choice sticks
  *  per browser. The snapshot leaves it out. */
 export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = false, onTilesLoaded, onSelect, acetate = false }: {
   objectives: Objective[]
@@ -106,7 +160,7 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
   // territory and the tiles. A destroyed objective is drawn faded.
   const markerIcon = (obj: Objective) => {
     const s = (obj.kind === 'Airbase' || obj.kind === 'Command Center' ? 6.5 : 6) * (snapshot ? 1.5 : 1)
-    const { svg, size } = objectiveSymbol(obj.kind, ownerColor(obj.owner), theme === 'light' ? '#fbfbf8' : '#0b0f0d', s)
+    const { svg, size } = objectiveSymbol(obj.kind, ownerColor(obj.owner), halo, s)
     return L.divIcon({
       html: obj.health > 0 ? svg : `<div style="opacity:0.5">${svg}</div>`,
       className: '',
@@ -116,6 +170,9 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
   }
 
   const { theme } = useTheme()
+  // What the symbols and the distance labels are edged in: the board's dark,
+  // or the paper.
+  const halo = theme === 'light' ? '#fbfbf8' : '#0b0f0d'
   // Grease-pencil inks: china-marker blue and red, and the no man's land in
   // white wax on the dark plot or black on the paper one.
   const grease = theme === 'light'
@@ -143,12 +200,13 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
               boundsOptions: { padding: [48, 48] as [number, number], maxZoom: 9 } }
           : { center: campaign.mapCenter, zoom: campaign.mapZoom })}
         style={{ position: 'absolute', inset: 0 }} zoomControl={false} attributionControl={false}
+        dragging={false} scrollWheelZoom={false} doubleClickZoom={false} touchZoom={false} boxZoom={false} keyboard={false}
         className={snapshot ? 'tacmap-snapshot' : undefined}
         zoomSnap={snapshot ? 0.25 : 1} fadeAnimation={!snapshot} zoomAnimation={!snapshot}>
         <TileLayer key={theme} url={canvasBase} maxZoom={19} opacity={snapshot ? 0.8 : acetate ? (theme === 'light' ? 0.55 : 0.6) : 0.5}
           eventHandlers={snapshot ? { load: onTilesLoaded } : undefined} />
         {valid.length > 0 && !snapshot && <FitBounds objectives={valid} padding={28} />}
-        {territory && !snapshot && <Territory objectives={valid} color={ownerColor} ink={acetate ? grease.mid : theme === 'light' ? '#1c2326' : '#e4e7e1'} />}
+        {territory && !snapshot && <Territory objectives={valid} color={ownerColor} ink={acetate ? grease.mid : theme === 'light' ? '#1c2326' : '#e4e7e1'} halo={halo} />}
         {fronts.blue.map((l, i) => l.length > 1 && (
           <Polyline key={`fb-${i}`} positions={l}
             pathOptions={acetate
@@ -198,7 +256,7 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
         <div style={{ position: 'absolute', top: acetate ? 12 : 8, right: acetate ? 12 : 8, zIndex: 1000, display: 'flex', gap: 6 }}>
           {!snapshot && (
             <button type="button" aria-pressed={territory} onClick={() => setTerritory(!territory)}
-              title="Shade the ground each side holds: every base's zone of control, in its owner's colour" style={{
+              title="Shade the ground each side holds (every base's zone of control, in its owner's colour) and link the bases facing each other across the front" style={{
                 display: 'flex', alignItems: 'center', gap: 5,
                 background: 'var(--bg-card-solid)', border: `1px solid ${territory ? 'var(--accent-border)' : 'var(--border)'}`,
                 color: territory ? 'var(--accent)' : 'var(--text-dim)', padding: '5px 10px',
