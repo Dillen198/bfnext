@@ -11,12 +11,25 @@ import {
   X,
 } from '@icons'
 import { api, type WikiPageMeta } from '../api'
+import { SERVERS } from '@shared/servers/profiles'
 import { useAuth } from '../context/AuthContext'
 import { ThemeToggle } from '@shared/web/theme'
-import InstanceSelect from './InstanceSelect'
+import ServerSelect from './ServerSelect'
+import { useServerLook } from '../context/ServerLookContext'
+import { THEME_CLASS, type ServerTheme } from '@shared/servers/profiles'
+import { FONTS, useFonts } from '@shared/servers/fonts'
+import '@shared/servers/themes.css'
+import './wiki-themes.css'
 import { ErrorBoundary } from '@shared/web/ErrorBoundary'
 import { LogoMark } from '@shared/web/LogoMark'
 import { useOffline, useOfflineText } from '@shared/web/snapshot'
+
+/** The strip under the top bar while the wiki wears a server's look. */
+const BANNER: Record<ServerTheme, string> = {
+  desert: 'Levant Ablaze · Operation Bronze Helm · NATO v RSII',
+  staff: 'Secret · Southern Flank 1985 · Red Storm Rising',
+  chart: 'Range control · Mariana Islands · 13°N 145°E',
+}
 
 function groupBySection(pages: WikiPageMeta[]) {
   const groups = new Map<string, WikiPageMeta[]>()
@@ -38,6 +51,8 @@ export default function Layout() {
   const { pathname } = useLocation()
   const [query, setQuery] = React.useState('')
   const [sidebarOpen, setSidebarOpen] = React.useState(false)
+  const { server, choose } = useServerLook()
+  useFonts(server && FONTS[server.theme])
 
   const { data: pages = [] } = useQuery({
     queryKey: ['wiki', 'pages'],
@@ -49,9 +64,13 @@ export default function Layout() {
     ? pages.filter(p => p.title.toLowerCase().includes(query.toLowerCase()))
     : pages
   const groups = groupBySection(filtered)
+  const servers = query.trim() ? SERVERS.filter(s => s.title.toLowerCase().includes(query.toLowerCase())) : SERVERS
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--bg)' }}>
+    <div
+      className={`wiki-shell${server ? ` wiki-themed th-${server.theme} ${THEME_CLASS[server.theme]}` : ''}`}
+      style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--bg)' }}
+    >
       {/* TOPBAR */}
       <header className="wiki-topbar">
         <button
@@ -64,14 +83,14 @@ export default function Layout() {
 
         <NavLink to="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
           <LogoMark size={46} alt="Vector Strike Wiki" />
-          <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '1.05rem', letterSpacing: '0.18em', color: 'var(--text)' }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.05rem', letterSpacing: '0.18em', color: 'var(--text)' }}>
             VECTOR STRIKE WIKI
           </div>
         </NavLink>
 
         <div style={{ flex: 1 }} />
 
-        <InstanceSelect style={{ marginRight: 12 }} />
+        <div style={{ marginRight: 12 }}><ServerSelect /></div>
 
         <ThemeToggle style={{ marginRight: 12 }} />
 
@@ -107,6 +126,16 @@ export default function Layout() {
         )}
       </header>
 
+      {server && (
+        <div className="wiki-theme-banner" role="note">
+          <span className="wiki-theme-banner-text">{BANNER[server.theme]}</span>
+          <NavLink to={`/servers/${server.slug}`} className="wiki-theme-banner-link">Field guide</NavLink>
+          <button type="button" className="wiki-theme-banner-x" onClick={() => choose(undefined)} aria-label="Back to the plain wiki">
+            <X size={13} />
+          </button>
+        </div>
+      )}
+
       {offlineText && (
         <div
           role="status"
@@ -141,6 +170,23 @@ export default function Layout() {
               onChange={e => setQuery(e.target.value)}
             />
           </div>
+
+          {/* Each server's field guide: its briefing and story, in its own look. */}
+          {servers.length > 0 && (
+            <div>
+              <div className="wiki-nav-group-label">Servers</div>
+              {servers.map(s => (
+                <NavLink
+                  key={s.slug}
+                  to={`/servers/${s.slug}`}
+                  onClick={() => setSidebarOpen(false)}
+                  className={({ isActive }) => `wiki-nav-item wiki-nav-server s-${s.theme}${isActive ? ' active' : ''}`}
+                >
+                  {s.title}
+                </NavLink>
+              ))}
+            </div>
+          )}
 
           {[...groups.entries()].map(([section, items]) => (
             <div key={section}>

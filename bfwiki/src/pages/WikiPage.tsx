@@ -36,7 +36,7 @@ export default function WikiPage() {
   if (error || !page) {
     return (
       <div>
-        <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '1.6rem', color: 'var(--text)', marginBottom: '0.5rem' }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.6rem', color: 'var(--text)', marginBottom: '0.5rem' }}>
           PAGE NOT FOUND
         </div>
         <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
@@ -64,7 +64,7 @@ export default function WikiPage() {
           <button
             onClick={() => navigate(`/edit?slug=${encodeURIComponent(slug)}`)}
             className="vs-btn-outline"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 2, fontSize: '0.68rem', letterSpacing: '0.1em', fontFamily: "'Bebas Neue', sans-serif", cursor: 'pointer', flexShrink: 0 }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 2, fontSize: '0.68rem', letterSpacing: '0.1em', fontFamily: 'var(--font-display)', cursor: 'pointer', flexShrink: 0 }}
           >
             <Pencil size={12} /> EDIT
           </button>

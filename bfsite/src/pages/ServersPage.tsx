@@ -1,11 +1,8 @@
-import { useServerStates } from '../live'
 import { SectionHead } from '../components/Bits'
 import JoinBand from '../components/JoinBand'
-import Reveal from '../components/Reveal'
-import TheatreCard from '../components/TheatreCard'
+import ServerTiles from '../servers/ServerTiles'
 
 export default function ServersPage() {
-  const { rows } = useServerStates()
   return (
     <>
       <section className="section page-first">
@@ -13,16 +10,10 @@ export default function ServersPage() {
           <SectionHead
             num={1}
             para="Situation · Theatres"
-            title={<>Two servers, <em>two wars.</em></>}
-            lede="Same engine, different eras and different rules. Each server runs its own campaign with its own front line, so pick the war you want to fight."
+            title={<>Two wars <em>and a range.</em></>}
+            lede="Same engine, different eras and different rules. Each campaign runs its own front line; the range is where you practise for both. Open one for its briefing and story."
           />
-          <div className="theatres">
-            {rows.map((r, i) => (
-              <Reveal key={r.theatre.key} delay={i * 120}>
-                <TheatreCard row={r} />
-              </Reveal>
-            ))}
-          </div>
+          <ServerTiles />
         </div>
       </section>
       <JoinBand />

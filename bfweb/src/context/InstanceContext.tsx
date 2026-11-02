@@ -4,6 +4,26 @@ import { api, instanceStore, type ServerInstance } from '../api'
 import { useInstanceSelection, type InstanceSelection } from '@shared/web/instance'
 import { useAuth } from './AuthContext'
 import { campaign } from '../config/campaign'
+import { SERVERS } from '@shared/servers/profiles'
+import { VS_URLS } from '@shared/web/urls'
+
+/**
+ * Campaigns with a dashboard of their own (Red Storm: bfrsr-web). This one is
+ * the modern campaign's, so they are left out of its server list for players.
+ * Admins keep them: the config editor and server ops work per instance.
+ */
+const OWN_DASHBOARD = new Set(
+  SERVERS.filter(s => s.instanceId && s.site.url !== VS_URLS.dashboard).map(s => s.instanceId),
+)
+
+// A ?instance= link (or a remembered choice) to one of them is dropped before
+// the first request, not once the server list arrives: until then every page
+// would load that campaign under this dashboard's look. An admin picks it
+// from the selector instead.
+{
+  const start = instanceStore.get()
+  if (start && OWN_DASHBOARD.has(start)) instanceStore.set(undefined)
+}
 
 /**
  * Which DCS server the dashboard is looking at.
@@ -81,10 +101,17 @@ export function InstanceProvider({ children }: { children: React.ReactNode }) {
   // Everything cached belongs to the server we just left -- except the two
   // queries that are about the whole bfdb rather than one server. Keeping
   // those stops the server selector itself blanking out mid-switch.
-  const onSwitch = useCallback(() => {
-    qc.removeQueries({ predicate: q => !INSTANCE_AGNOSTIC.has(q.queryKey[0] as string) })
+  // A dropped id (removed, or a campaign with its own dashboard reached by a
+  // ?instance= link) drops those too: they were fetched scoped to it.
+  const onSwitch = useCallback((reason: 'select' | 'stale') => {
+    if (reason === 'stale') qc.removeQueries()
+    else qc.removeQueries({ predicate: q => !INSTANCE_AGNOSTIC.has(q.queryKey[0] as string) })
   }, [qc])
-  const value = useInstanceSelection(instanceStore, data, onSwitch)
+  const list = useMemo(
+    () => (data && !isAdmin ? { ...data, instances: data.instances.filter(i => !OWN_DASHBOARD.has(i.id)) } : data),
+    [data, isAdmin],
+  )
+  const value = useInstanceSelection(instanceStore, list, onSwitch)
   const { current } = value
 
   // Applied while rendering, so the pages below read the new names on this

@@ -15,7 +15,7 @@ function LiveCell({ row }: { row: ServerRow }) {
   const why = row.notices[0]?.title
   return (
     <div className="live-cell">
-      {t.profile && <FlagBackdrop flags={t.profile.flags} />}
+      {t.profile?.flags && <FlagBackdrop flags={t.profile.flags} />}
       <div className="live-head">
         <span className="live-name">{t.label}</span>
         <StatusTag state={row.state} />
@@ -40,6 +40,8 @@ function LiveCell({ row }: { row: ServerRow }) {
 
 export default function Hero() {
   const { rows } = useServerStates()
+  // The servers the site has a page for; a retired one bfdb still lists stays on the status page.
+  const campaigns = rows.filter(r => r.theatre.profile)
   return (
     <section id="top" className="hero theme-locked-dark">
       <div className="hero-img" role="img" aria-label="Two jets dogfighting low over a burning battlefield at sunset" />
@@ -75,8 +77,8 @@ export default function Hero() {
       </div>
 
       <div className="wrap fade-up d5">
-        <div className="live-strip" style={{ ['--cols' as string]: rows.length }}>
-          {rows.map(r => <LiveCell key={r.theatre.key} row={r} />)}
+        <div className="live-strip" style={{ ['--cols' as string]: campaigns.length }}>
+          {campaigns.map(r => <LiveCell key={r.theatre.key} row={r} />)}
           <div className="live-cta">
             <Link to="/servers" className="text-link">Servers <ArrowRight size={12} /></Link>
             <Link to="/status" className="text-link">Status <ArrowRight size={12} /></Link>

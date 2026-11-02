@@ -12,6 +12,8 @@ export const VS_URLS = {
   dashboard: 'https://dashboard.vectorstrike.org',
   /** The player wiki (bfwiki). */
   wiki: 'https://wiki.vectorstrike.org',
+  /** The Red Storm Rising dashboard (bfrsr-web). */
+  redstorm: 'https://redstorm.vectorstrike.org',
   /** The training range site (bfrange-web). */
   range: 'https://range.vectorstrike.org',
   /** bfdb, for VITE_API_BASE and the dev servers' `--mode live` proxy. */

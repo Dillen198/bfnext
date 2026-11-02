@@ -25,5 +25,5 @@
     "jsx": "react-jsx",
     "strict": true
   },
-  "include": ["src", "../shared/icons", "../shared/web"]
+  "include": ["src", "../shared/icons", "../shared/web", "../shared/servers"]
 }

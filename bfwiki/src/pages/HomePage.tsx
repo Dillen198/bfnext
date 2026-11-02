@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import GuideTiles from '../servers/GuideTiles'
 import {
   Comms as Radio,
   Compass,
@@ -42,9 +43,9 @@ const FEATURES = [
 
 export default function HomePage() {
   return (
-    <div style={{ maxWidth: 900 }}>
+    <div style={{ maxWidth: 1100 }}>
       <div style={{ marginBottom: '2.5rem' }}>
-        <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '2.6rem', letterSpacing: '0.06em', color: 'var(--text)', lineHeight: 1.1 }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: '2.6rem', letterSpacing: '0.06em', color: 'var(--text)', lineHeight: 1.1 }}>
           VECTOR STRIKE WIKI
         </div>
         <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', marginTop: '0.75rem', maxWidth: 560, lineHeight: 1.6 }}>
@@ -52,12 +53,18 @@ export default function HomePage() {
         </p>
         <div style={{ display: 'flex', gap: 10, marginTop: '1.5rem' }}>
           <Link to="/playbooks/first-sortie" className="vs-btn">GET STARTED</Link>
-          <a href="https://discord.gg/XyGkb3WAXS" target="_blank" rel="noreferrer" className="vs-btn-outline" style={{ display: 'inline-flex', alignItems: 'center', padding: '6px 14px', borderRadius: 2, fontSize: '0.72rem', letterSpacing: '0.12em', fontFamily: "'Bebas Neue', sans-serif", textDecoration: 'none' }}>
+          <a href="https://discord.gg/XyGkb3WAXS" target="_blank" rel="noreferrer" className="vs-btn-outline" style={{ display: 'inline-flex', alignItems: 'center', padding: '6px 14px', borderRadius: 2, fontSize: '0.72rem', letterSpacing: '0.12em', fontFamily: 'var(--font-display)', textDecoration: 'none' }}>
             JOIN THE DISCORD
           </a>
         </div>
       </div>
 
+      <div className="wiki-home-servers">
+        <div className="wiki-home-label">Field guides · one per server</div>
+        <GuideTiles />
+      </div>
+
+      <div className="wiki-home-label">Topics</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14 }}>
         {FEATURES.map(f => (
           <Link
@@ -67,7 +74,7 @@ export default function HomePage() {
             style={{ padding: '1.1rem 1.25rem', textDecoration: 'none', display: 'block' }}
           >
             <f.icon size={18} style={{ color: 'var(--accent)', marginBottom: 8 }} />
-            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '1rem', letterSpacing: '0.08em', color: 'var(--text)', marginBottom: 6 }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', letterSpacing: '0.08em', color: 'var(--text)', marginBottom: 6 }}>
               {f.title.toUpperCase()}
             </div>
             <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.55 }}>{f.body}</div>

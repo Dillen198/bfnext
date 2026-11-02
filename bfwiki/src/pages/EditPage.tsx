@@ -126,7 +126,7 @@ export default function EditPage({ isNew = false }: { isNew?: boolean }) {
 
   return (
     <div>
-      <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '1.5rem', letterSpacing: '0.06em', color: 'var(--text)', marginBottom: '1.25rem' }}>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', letterSpacing: '0.06em', color: 'var(--text)', marginBottom: '1.25rem' }}>
         {isNew ? 'NEW PAGE' : 'EDIT PAGE'}
       </div>
 
@@ -162,7 +162,7 @@ export default function EditPage({ isNew = false }: { isNew?: boolean }) {
           <button
             type="button"
             className="vs-btn-outline"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 2, fontSize: '0.65rem', letterSpacing: '0.08em', fontFamily: "'Bebas Neue', sans-serif", cursor: uploading ? 'wait' : 'pointer' }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 2, fontSize: '0.65rem', letterSpacing: '0.08em', fontFamily: 'var(--font-display)', cursor: uploading ? 'wait' : 'pointer' }}
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading || offline}
           >

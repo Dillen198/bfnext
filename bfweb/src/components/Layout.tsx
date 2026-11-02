@@ -9,6 +9,11 @@ import { ThemeToggle } from '@shared/web/theme'
 import { useInstance } from '../context/InstanceContext'
 import { LogoMark } from '@shared/web/LogoMark'
 import Backdrop from './Backdrop'
+import { SERVERS, THEME_CLASS, type ServerTheme } from '@shared/servers/profiles'
+import { FONTS, useFonts } from '@shared/servers/fonts'
+import { VS_URLS } from '@shared/web/urls'
+import '@shared/servers/themes.css'
+import './dash-themes.css'
 import StatusBanner from './StatusBanner'
 import { useOffline } from '@shared/web/snapshot'
 import { ErrorBoundary } from '@shared/web/ErrorBoundary'
@@ -45,6 +50,11 @@ import {
   ChevronsRight,
   Lock,
 } from '@icons'
+
+/** The strip under the top bar while the dashboard wears a server's look. */
+const BANNER: Partial<Record<ServerTheme, string>> = {
+  desert: 'Levant Ablaze · Operation Bronze Helm · NATO v RSII',
+}
 
 // ── Nav config ────────────────────────────────────────────────────────────────
 
@@ -374,6 +384,11 @@ export default function Layout() {
     ],
   ].filter(g => g.length > 0)
 
+  // The modern campaign's look. This is its dashboard; Red Storm has its own
+  // (bfrsr-web), so only a server whose live site is this one is dressed.
+  const look = SERVERS.find(s => s.instanceId && s.instanceId === current?.id && s.site.url === VS_URLS.dashboard)
+  useFonts(look && FONTS[look.theme])
+
   const hasCampaignSelect = rounds.length > 0 || multi
   const campaignProps = {
     value: selectorValue,
@@ -387,7 +402,7 @@ export default function Layout() {
 
 
   return (
-    <>
+    <div className={look ? `dash-themed ${THEME_CLASS[look.theme]}` : undefined} style={{ display: 'contents' }}>
       <Backdrop />
     <div className="vs-shell" style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
 
@@ -559,6 +574,14 @@ export default function Layout() {
         )}
       </header>
 
+      {look && BANNER[look.theme] && (
+        <div className="dash-theme-banner" role="note">
+          <span className="dash-theme-banner-text">{BANNER[look.theme]}</span>
+          <a href={`${VS_URLS.wiki}/servers/${look.slug}`} className="dash-theme-banner-wiki">Field guide</a>
+          <a href={`${VS_URLS.site}/servers/${look.slug}`}>Briefing</a>
+        </div>
+      )}
+
       {/* ══════════════════════════════════════════════════════════
           BODY
           ══════════════════════════════════════════════════════════ */}
@@ -686,6 +709,6 @@ export default function Layout() {
 
       </div>
     </div>
-    </>
+    </div>
   )
 }

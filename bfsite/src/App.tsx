@@ -7,6 +7,7 @@ import Community from './components/Community'
 import JoinBand from './components/JoinBand'
 import HomePage from './pages/HomePage'
 import ServersPage from './pages/ServersPage'
+import ServerPage from './pages/ServerPage'
 import StatusPage from './pages/StatusPage'
 import NotFoundPage from './pages/NotFoundPage'
 import { ErrorBoundary } from '@shared/web/ErrorBoundary'
@@ -28,7 +29,8 @@ function PageChrome() {
   const { pathname } = useLocation()
   useEffect(() => {
     window.scrollTo(0, 0)
-    document.title = TITLES[pathname] ?? 'Vector Strike'
+    // A server page names itself (ServerPage).
+    if (!pathname.startsWith('/servers/')) document.title = TITLES[pathname] ?? 'Vector Strike'
   }, [pathname])
   return null
 }
@@ -44,6 +46,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/servers" element={<ServersPage />} />
+          <Route path="/servers/:slug" element={<ServerPage />} />
           <Route path="/join" element={<div className="page-first-wrap"><Execution /></div>} />
           <Route path="/status" element={<StatusPage />} />
           <Route path="/community" element={<div className="page-first-wrap"><Community /><JoinBand /></div>} />

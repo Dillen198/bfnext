@@ -15,7 +15,7 @@ export default function LoginPage() {
       <div style={{ padding: '2rem', width: '100%', maxWidth: '340px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--bg-card)' }}>
         <div style={{ textAlign: 'center', marginBottom: '1.75rem' }}>
           <LogoMark size={96} alt="Vector Strike Wiki" style={{ margin: '0 auto 0.75rem', display: 'block' }} />
-          <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '1.8rem', letterSpacing: '0.15em', color: 'var(--text)' }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.8rem', letterSpacing: '0.15em', color: 'var(--text)' }}>
             VECTOR STRIKE
           </div>
           <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.14em', marginTop: '0.25rem' }}>
@@ -33,7 +33,7 @@ export default function LoginPage() {
               display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
               background: '#5865F2', color: '#fff', padding: '0.65rem 1.5rem', borderRadius: '3px',
               textDecoration: 'none', fontSize: '0.78rem', letterSpacing: '0.1em',
-              fontFamily: "'Bebas Neue', sans-serif",
+              fontFamily: 'var(--font-display)',
             }}
           >
             <DiscordIcon />

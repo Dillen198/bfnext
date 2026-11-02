@@ -31,7 +31,7 @@ export default function Situation() {
               Fly whatever you own: fast jets, attack helicopters, transports or trainers. Every role
               moves the war, and every sortie is on the record.
             </p>
-            <Link to="/servers" className="text-link">Two servers, two wars <ArrowRight size={12} /></Link>
+            <Link to="/servers" className="text-link">Pick your war <ArrowRight size={12} /></Link>
           </Reveal>
 
           <Reveal delay={100} className="cap-grid">

@@ -3,12 +3,14 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from './context/AuthContext'
 import { InstanceProvider } from './context/InstanceContext'
+import { ServerLookProvider } from './context/ServerLookContext'
 import { ThemeProvider, type ThemeOptions } from '@shared/web/theme'
 import Layout from './components/Layout'
 import LoginPage from './pages/LoginPage'
 import HomePage from './pages/HomePage'
 import WikiPage from './pages/WikiPage'
 import EditPage from './pages/EditPage'
+import ServerGuidePage from './servers/ServerGuidePage'
 
 // Every mockup block on one page, for looking at them without a bfdb. Only
 // under `vite dev`: the import is dropped from production builds.
@@ -26,6 +28,7 @@ export default function App() {
       <ThemeProvider options={THEME}>
         <AuthProvider>
           <InstanceProvider>
+            <ServerLookProvider>
             <BrowserRouter>
               <Routes>
                 <Route path="/login" element={<LoginPage />} />
@@ -36,10 +39,12 @@ export default function App() {
                   <Route index element={<HomePage />} />
                   <Route path="new" element={<EditPage isNew />} />
                   <Route path="edit" element={<EditPage />} />
+                  <Route path="servers/:slug" element={<ServerGuidePage />} />
                   <Route path="*" element={<WikiPage />} />
                 </Route>
               </Routes>
             </BrowserRouter>
+            </ServerLookProvider>
           </InstanceProvider>
         </AuthProvider>
       </ThemeProvider>

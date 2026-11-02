@@ -36,5 +36,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src", "../shared/icons", "../shared/web", "../shared/models"]
+  "include": ["src", "../shared/icons", "../shared/web", "../shared/models", "../shared/servers"]
 }

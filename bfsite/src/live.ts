@@ -1,7 +1,7 @@
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { useOffline, type ServerLastState } from '@shared/web/snapshot'
 import { api, roundNo, snapshot, type Health, type ServerInstance } from './api'
-import { SERVERS, type ServerProfile } from './config/servers'
+import { CAMPAIGNS, SERVERS, type ServerProfile } from './config/servers'
 import { useNotices, type Notice, type ServerState } from './status'
 
 /** A theatre as the page shows it: the static pitch, plus the live instance when bfdb answers. */
@@ -38,7 +38,7 @@ export function useTheatres() {
           redLabel: profile?.redLabel ?? i.red_label ?? 'REDFOR',
         }
       })
-    : SERVERS.map(p => ({
+    : CAMPAIGNS.map(p => ({
         key: p.instanceId,
         profile: p,
         instance: undefined,

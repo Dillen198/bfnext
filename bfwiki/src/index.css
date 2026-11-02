@@ -372,3 +372,12 @@ body {
 .logo-mark--dark { display: none !important; }
 :root[data-theme="light"] .logo-mark--light { display: none !important; }
 :root[data-theme="light"] .logo-mark--dark { display: block !important; }
+
+/* ── server field guides: the sidebar entries and the home tiles ── */
+.wiki-nav-server { display: flex; align-items: center; gap: 8px; }
+.wiki-nav-server::before { content: ''; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--dot); }
+.wiki-nav-server.s-desert { --dot: #c8642f; }
+.wiki-nav-server.s-staff { --dot: #a3271f; }
+.wiki-nav-server.s-chart { --dot: #a0307a; }
+.wiki-home-servers { margin-bottom: 2.25rem; }
+.wiki-home-label { margin-bottom: 0.75rem; font-family: var(--font-mono); font-size: 0.62rem; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase; color: var(--text-dim); }

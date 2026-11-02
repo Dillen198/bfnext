@@ -55,7 +55,7 @@ export default function Execution() {
                   <p>Search <strong style={{ color: 'var(--text)' }}>[VS] Vector Strike</strong> in the DCS multiplayer browser. Pick a theatre:</p>
                   <div className="step-extra">
                     {SERVERS.map(s => (
-                      <div key={s.instanceId}>
+                      <div key={s.slug}>
                         <div className="label" style={{ marginBottom: 4 }}>{s.label}</div>
                         <BrowserName name={s.browserName} />
                       </div>
