@@ -1130,10 +1130,15 @@ impl Db {
             }
         }
 
-        // IADN: link SAM sites to their nearest friendly command center.
-        // A SAM site with no link (or whose linked command center later
-        // dies/changes hands) falls back to plain DCS AI -- see the EMCON
-        // gating in ewr.rs.
+        Ok(())
+    }
+
+    /// IADN: link SAM sites to their nearest friendly command center.
+    /// A SAM site with no link (or whose linked command center later
+    /// dies/changes hands) falls back to plain DCS AI -- see the EMCON
+    /// gating in ewr.rs. Must run after init_special_sam_sites: on a fresh
+    /// campaign the sites don't exist before it, and none would be linked.
+    fn link_sam_sites_to_command_centers(&mut self) -> Result<()> {
         for sam_id in &self.persisted.special_sam_sites.clone() {
             let sam_obj = objective!(self, sam_id)?;
             let sam_pos = sam_obj.zone.pos();
@@ -2017,6 +2022,8 @@ impl Db {
         info!("[CARRIER_SETUP] Carrier initialization complete");
         t.init_special_sam_sites(&spctx, idx, lua)
             .context("init_special_sam_sites failed")?;
+        t.link_sam_sites_to_command_centers()
+            .context("linking SAM sites to command centers")?;
         t.init_protected_statics(miz, lua).context("init_protected_statics failed")?;
         t.scan_objective_scenery(lua).context("scan_objective_scenery failed")?;
 
@@ -2168,6 +2175,8 @@ impl Db {
             .context("reconciling carrier task forces")?;
         self.init_special_sam_sites(spctx, idx, lua)
             .context("re-init special sam sites")?;
+        self.link_sam_sites_to_command_centers()
+            .context("re-linking SAM sites to command centers")?;
         self.register_garrison_layout_templates();
         self.init_protected_statics(miz, lua).context("re-init protected statics")?;
         self.scan_objective_scenery(lua).context("scan_objective_scenery failed")?;

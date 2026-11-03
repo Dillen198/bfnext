@@ -48,9 +48,20 @@ the live server has spawned on every one of them.
   a Ticonderoga, two Arleigh Burkes); the RSII naval group off the Syrian
   coast (Kuznetsov, the cruiser Moskva, a Neustrashimy, a Ropucha). Both stay
   where the donor's are: proven water. No Type 052 (not an RSII ship).
-- **Air defence**: 75 hidden SAM sites (49 RSII, 26 NATO) from the owner's
+- **Air defence**: 116 hidden SAM sites (76 RSII, 40 NATO) from the owner's
   Levant SAM template and the 2.x campaign's proven sites, strongest first,
-  18 km apart, within 60 km of their side's objectives.
+  12 km apart, within 80 km of their side's objectives (75 sites, 18 km and
+  60 km until 3 November 2026). No site moves; on a site's own unit spots:
+  - the third of the RSII's SA-2 and SA-3 sites nearest the front are
+    SA-11 Buk and SA-15 Tor (with a Pantsir) instead;
+  - the seven NATO Hawk sites nearest the front are NASAMS and IRIS-T in turn;
+  - every S-300 and SA-5 has a Tor or Pantsir guard (Cyprus' get Tors), every
+    Patriot two Avengers beside its C-RAM.
+
+  Every site is networked through its side's nearest command centre: the
+  Air Defence Academy cues the RSII's centre, north, coast and Euphrates, the
+  159th Regiment the south; Incirlik HQ and HI06 HQ split NATO's north and
+  south. Lose the command centre and its sites fall back to plain DCS AI.
 
 Garrisons are laid out unit by unit (`garrison_layouts`), each group in a
 formation facing the nearest objective the enemy holds.
@@ -62,13 +73,24 @@ Flank runs: the theatre HQ for both sides (`smart_commander.hq`), `ai_fill`,
 `ai_air_stock`, `garrison_layouts`. Strike, CAS and SEAD templates are added to
 the mission with loads from DCS's own payload library.
 
-## Status (2 November 2026)
+## Status (3 November 2026)
 
 Built, checked and probed (`levant\README.md` in the build folder): LEVANT.miz
-and LEVANT_CFG, 171 garrison groups (about 709 vehicles a side), 75 SAM sites,
+and LEVANT_CFG, 171 garrison groups (about 709 vehicles a side), 116 SAM sites,
 the HQ, ai_fill, ai_air_stock and the 14 story events. The config loads with
 the engine's own loader and every cross-check passes. The terrain probe ran in
 a local DCS with the Syria map: 78 garrison vehicles on water, in buildings or
-by a runway were moved, and one SAM site with a unit in the sea was left out.
-The three HQ zones, missing from every Syria base after 20 September, are copied
-from the mission the live round runs. Not deployed.
+by a runway were moved, and two SAM sites with a unit in the sea (the Naqoura
+and Latakia EWRs) were left out. The three HQ zones, missing from every Syria
+base after 20 September, are copied from the mission the live round runs.
+Not deployed.
+
+3 November 2026, the air defence redone with the owner: more sites, the mix
+above, and the IADN linking fixed in bflib. The links to command centres used
+to be made before the SAM sites existed, so on a fresh campaign no site was
+networked until the first restart; now they are made right after the sites,
+on a fresh start and on every load. The "shield goes blind" story event now
+names the area the Air Defence Academy actually cues (Homs to Aleppo, the coast
+and the Euphrates; the 159th Regiment cues the south). The public site's Syria
+data (`shared/servers/syria.ts`, "48 hidden SAM sites") still describes the
+live 2.x map and changes when Levant goes live.
