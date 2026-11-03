@@ -4335,6 +4335,7 @@ impl Db {
                     cost_fraction,
                     origin: None,
                     jtac: None,
+                    ordered: false,
                 };
                 let gid = self.add_and_queue_group(
                     &spctx,

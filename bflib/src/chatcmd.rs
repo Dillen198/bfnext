@@ -592,6 +592,7 @@ fn delete_command(ctx: &mut Context, id: PlayerId, s: &str) {
                         cost_fraction,
                         origin,
                         jtac: _,
+                        ordered: _,
                     } => {
                         let player = *player;
                         let points = (spec.cost as f32 / 2.).ceil() as i32;

@@ -51,6 +51,13 @@ pub struct CommandCfg {
     /// Default 25000.
     #[serde(default = "default_deploy_range_m")]
     pub deploy_range_m: f64,
+    /// Ground groups per side the treasury may have in the field: units
+    /// ordered out by road from the command map, and every copy in a bought
+    /// formation (and what is left of one after it stands down). Every one is
+    /// a real DCS group for as long as it lives, and enough of them stop the
+    /// server. Players' own crates don't count. 0 = no cap. Default 24.
+    #[serde(default = "default_max_ordered_groups")]
+    pub max_ordered_groups: u32,
 }
 
 /// `CommandCfg::hunters`.
@@ -86,6 +93,9 @@ fn default_commander_rank() -> u8 {
 }
 fn default_deploy_range_m() -> f64 {
     25_000.
+}
+fn default_max_ordered_groups() -> u32 {
+    24
 }
 fn default_hunters_red() -> Vec<String> {
     vec!["Type_093".into()]
@@ -130,6 +140,7 @@ impl Default for CommandCfg {
             commander_rank: default_commander_rank(),
             hunters: HuntersCfg::default(),
             deploy_range_m: default_deploy_range_m(),
+            max_ordered_groups: default_max_ordered_groups(),
         }
     }
 }
@@ -158,5 +169,6 @@ mod tests {
         let c: CommandCfg = serde_json::from_str("{}").unwrap();
         assert!(c.require_commander);
         assert_eq!(c.commander_rank, 4);
+        assert_eq!(c.max_ordered_groups, 24);
     }
 }

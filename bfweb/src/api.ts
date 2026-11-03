@@ -454,6 +454,8 @@ export interface GroundFormation {
   trail: LatLon[]
   losses: number
   kills: number
+  /** Bought from the treasury: a disband removes it rather than sending it home. */
+  purchased?: boolean
 }
 
 export interface GroundEnemyContact {
@@ -709,6 +711,7 @@ export type CommandOrder =
   | { station: { group: number; at: LatLon } }
   | { rtb: { group: number } }
   | { disband: { group: number } }
+  | { disband_formation: { formation: number } }
   | { sail: { group: number; to: LatLon } }
   | { convoy: { to: number } }
   | { helo_supply: { to: number } }

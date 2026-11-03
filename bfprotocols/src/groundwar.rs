@@ -171,6 +171,10 @@ pub struct FormationInfo {
     pub losses: u32,
     #[serde(default)]
     pub kills: u32,
+    /// Bought from the treasury rather than raised from a garrison: a
+    /// disband removes it instead of sending it home.
+    #[serde(default)]
+    pub purchased: bool,
 }
 
 /// An enemy formation our forces have spotted, now or recently.

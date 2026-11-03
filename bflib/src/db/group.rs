@@ -202,6 +202,11 @@ pub enum DeployKind {
         origin: Option<ObjectiveId>,
         #[serde(default)]
         jtac: Option<bfprotocols::cfg::JtacState>,
+        /// Paid for by the treasury: ordered out from the command map, or a
+        /// copy in a bought formation. Any commander of the side may disband
+        /// it, and it counts toward `command.max_ordered_groups`.
+        #[serde(default)]
+        ordered: bool,
     },
     Troop {
         player: Ucid,
@@ -468,6 +473,7 @@ impl Db {
                 cost_fraction: _,
                 origin: _,
                 jtac: _,
+                ordered: _,
             } => {
                 let name = pname(player);
                 let resp = moved_by
@@ -748,12 +754,13 @@ impl Db {
             .count()
     }
 
-    /// Can a commander of `side` disband this group? Only ground units no
-    /// player owns: dismount squads, and deployed units or troops whose
-    /// owner is the default ucid (spawned by the HQ, an admin or the API, or
-    /// ordered from the command panel before orders carried a commander).
-    /// A player's own units stay theirs to -delete; a squad holding a base
-    /// it just captured is left alone, since removing it would end the hold.
+    /// Can a commander of `side` disband this group? Ground units no player
+    /// paid for: dismount squads, units the treasury paid for (`ordered`:
+    /// from the command map, or what a bought formation left behind), and
+    /// deployed units or troops whose owner is the default ucid (spawned by
+    /// the HQ, an admin or the API). A player's own crates stay theirs to
+    /// -delete; a squad holding a base it just captured is left alone, since
+    /// removing it would end the hold.
     pub fn disbandable(&self, side: Side, gid: &GroupId) -> Result<(), &'static str> {
         let group = self.persisted.groups.get(gid).ok_or("no such group")?;
         if group.side != side {
@@ -761,12 +768,13 @@ impl Db {
         }
         match &group.origin {
             DeployKind::Dismount { .. } => (),
+            DeployKind::Deployed { ordered: true, .. } => (),
             DeployKind::Deployed { player, .. } | DeployKind::Troop { player, .. }
                 if *player == Ucid::default() => {}
             DeployKind::Deployed { .. } | DeployKind::Troop { .. } => {
                 return Err("a player owns that -- only they can remove it");
             }
-            _ => return Err("only unowned ground units and dismounts can be disbanded"),
+            _ => return Err("only ground units no player paid for can be disbanded"),
         }
         if self
             .persisted
@@ -779,13 +787,29 @@ impl Db {
         Ok(())
     }
 
+    /// `side`'s treasury-paid ground groups with anyone left alive in them,
+    /// in the field or marching with a bought formation: what
+    /// `command.max_ordered_groups` caps.
+    pub fn ordered_groups(&self, side: Side) -> usize {
+        let Some(gids) = self.persisted.groups_by_side.get(&side) else { return 0 };
+        gids.into_iter()
+            .filter_map(|gid| self.persisted.groups.get(gid))
+            .filter(|g| matches!(g.origin, DeployKind::Deployed { ordered: true, .. }))
+            .filter(|g| {
+                g.units
+                    .into_iter()
+                    .any(|u| self.persisted.units.get(u).is_some_and(|u| !u.dead))
+            })
+            .count()
+    }
+
     /// Disband a group `disbandable` allows. Nothing is refunded: nobody
     /// paid for it, or the treasury did.
     pub fn disband(&mut self, side: Side, gid: &GroupId) -> Result<()> {
         if let Err(e) = self.disbandable(side, gid) {
             bail!("{e}")
         }
-        info!("disbanding unowned {side:?} group {gid}");
+        info!("disbanding {side:?} group {gid}");
         self.delete_group(gid)
     }
 

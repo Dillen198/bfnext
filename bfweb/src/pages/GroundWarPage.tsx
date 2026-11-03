@@ -947,7 +947,10 @@ export default function GroundWarPage(): ReactElement {
         onOlder={() => void loadOlderLog()} hasOlder={!logEnd && savedLog.length >= 200} olderBusy={logBusy} />
       {single && !selAsset && (
         <Drawer f={single} side={side} pic={pic} lockMins={Math.round(pic.player_lock_secs / 60)} onClose={clearAll}
-          canOrder={canOrder} onPosture={(roe, pace) => void order({ posture: { formations: [single.id], roe, pace } })} />
+          canOrder={canOrder} onPosture={(roe, pace) => void order({ posture: { formations: [single.id], roe, pace } })}
+          onDisband={() => void order({ disband_formation: { formation: single.id } }, single.purchased
+            ? `Disband ${single.name}? It is removed for good and nothing is refunded.`
+            : `Disband ${single.name}? It leaves the field now and goes straight back to its garrison.`)} />
       )}
       {selAsset && (
         <AssetPanel a={selAsset} canCommand={canOrder} mode={assetMode} setMode={armAsset}

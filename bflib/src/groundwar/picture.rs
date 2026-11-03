@@ -300,6 +300,7 @@ pub(crate) fn picture(ctx: &Context, lua: MizLua, side: Side) -> GroundPicture {
                 trail,
                 losses: f.losses,
                 kills: f.kills,
+                purchased: f.purchased,
             }
         })
         .collect();

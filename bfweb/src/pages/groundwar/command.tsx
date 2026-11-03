@@ -219,7 +219,7 @@ export function AssetPanel({ a, canCommand, mode, setMode, onRtb, onDisband, onC
             const active = d.mode != null && mode === d.mode
             return (
               <button key={v} className={active ? 'on' : ''} disabled={!canCommand}
-                title={canCommand ? (v === 'disband' ? 'Remove this unowned unit for good (no refund)' : `${d.label} (${d.key})`) : 'Commanders give orders'}
+                title={canCommand ? (v === 'disband' ? 'Remove it for good (no refund)' : `${d.label} (${d.key})`) : 'Commanders give orders'}
                 onClick={() => (d.mode ? setMode(active ? 'none' : d.mode) : v === 'disband' ? onDisband() : onRtb())}>
                 {d.key && <kbd>{d.key}</kbd>} {d.label}
               </button>

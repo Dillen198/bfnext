@@ -1566,6 +1566,7 @@ impl Db {
                                     cost_fraction: 1.,
                                     origin: Some(from_obj),
                                     jtac: None,
+                                    ordered: false,
                                 };
                                 let gid = self.add_and_queue_group(
                                     &spctx,
@@ -5067,6 +5068,7 @@ impl Db {
                     cost_fraction: 1.0,
                     origin: Some(from_obj),
                     jtac: None,
+                    ordered: false,
                 };
 
                 match self.add_and_queue_group(
@@ -5804,6 +5806,7 @@ impl Db {
                     cost_fraction: crate_data.charged.unwrap_or(0.),
                     origin: Some(crate_data.origin),
                     jtac: None,
+                    ordered: false,
                 };
 
                 match self.add_and_queue_group(

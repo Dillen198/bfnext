@@ -1410,6 +1410,7 @@ impl Db {
             cost_fraction: 0.0,
             origin: None,
             jtac: None,
+            ordered: true,
         };
         let mut gids: Vec<GroupId> = Vec::with_capacity(count as usize);
         let built = (|| -> Result<()> {
@@ -2810,6 +2811,72 @@ impl Db {
         self.ephemeral.dirty();
         info!("ground war: {:?} {} rejoined the garrison at {at}", f.side, f.name);
         Ok(())
+    }
+
+    /// A commander takes a formation out of the field at once instead of
+    /// letting it drive home: a bought one is removed for good, one raised
+    /// from a garrison is put straight back at its posts -- at home, or at
+    /// the nearest base of ours if home is lost -- and leaves DCS with the
+    /// rest of that base. A formation carrying out another player's order
+    /// stays theirs until the order runs out. Nothing is refunded.
+    pub fn disband_formation(
+        &mut self,
+        rt: &mut FormationRt,
+        side: Side,
+        id: FormationId,
+        by: Option<Ucid>,
+        now: DateTime<Utc>,
+    ) -> Result<CompactString> {
+        let f = self
+            .persisted
+            .formations
+            .get(&id)
+            .ok_or_else(|| anyhow!("no such formation {id}"))?;
+        if f.side != side {
+            bail!("that formation isn't ours")
+        }
+        let (name, home, pos, purchased) = (f.name.clone(), f.home, f.pos, f.purchased);
+        if let (Some(b), Some(c)) = (by.as_ref(), f.commander.as_ref())
+            && b != c
+            && !f.ai_controlled(now)
+        {
+            let who =
+                self.persisted.players.get(c).map(|p| p.name.clone()).unwrap_or_default();
+            bail!("{name} is carrying out {who}'s order")
+        }
+        if purchased {
+            let f = self
+                .persisted
+                .formations
+                .remove_cow(&id)
+                .ok_or_else(|| anyhow!("no such formation {id}"))?;
+            for gid in &f.groups {
+                rt.spawnq.retain(|(_, g)| g != gid);
+                rt.live.remove(gid);
+                if self.persisted.groups.get(gid).is_some() {
+                    self.delete_group(gid)?;
+                }
+            }
+            self.forget_formation(rt, id);
+            self.ephemeral.dirty();
+            info!("ground war: {side:?} {name} disbanded");
+            return Ok(format_compact!("{name} disbanded"));
+        }
+        let at = self
+            .objectives()
+            .filter(|(_, o)| o.owner() == side && !crate::groundwar::at_sea(o.kind()))
+            .min_by(|(a, x), (b, y)| {
+                // Home first, if it is still ours.
+                (**b == home)
+                    .cmp(&(**a == home))
+                    .then(dist(x.pos(), pos).total_cmp(&dist(y.pos(), pos)))
+            })
+            .map(|(oid, o)| (*oid, o.name.clone()));
+        let Some((at, at_name)) = at else {
+            bail!("{name} has no base of ours to go back to")
+        };
+        self.dissolve_formation(rt, id, at, now)?;
+        Ok(format_compact!("{name} disbanded, back in the garrison at {at_name}"))
     }
 
     /// One of a purchased formation's groups, standing down: it stays where

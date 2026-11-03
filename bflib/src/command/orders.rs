@@ -159,6 +159,30 @@ fn why_not_cost(ctx: &Context, side: Side, cost: i64) -> String {
     crate::hq::treasury::shortfall(&ctx.db, side, cost)
 }
 
+/// `side`'s treasury-paid ground groups in the field and the cap on them
+/// (`command.max_ordered_groups`), or None with no cap.
+fn ordered_use(ctx: &Context, side: Side) -> Option<(usize, usize)> {
+    let cap = ctx.db.ephemeral.cfg.command.max_ordered_groups as usize;
+    (cap > 0).then(|| (ctx.db.ordered_groups(side), cap))
+}
+
+/// Why `n` more treasury-paid ground groups can't go out, if they can't.
+fn why_not_room(used: Option<(usize, usize)>, n: usize) -> Option<String> {
+    let (have, cap) = used?;
+    if have + n <= cap {
+        None
+    } else if have >= cap {
+        Some(format!(
+            "{have} of {cap} ordered ground groups are in the field: disband some first"
+        ))
+    } else {
+        Some(format!(
+            "room for {} more ordered ground group(s): {have} of {cap} are in the field",
+            cap - have
+        ))
+    }
+}
+
 /// Everything `side` can order now, for the command map.
 pub(super) fn catalog(ctx: &Context, side: Side) -> Vec<OrderOption> {
     let mut out = vec![];
@@ -177,6 +201,7 @@ pub(super) fn catalog(ctx: &Context, side: Side) -> Vec<OrderOption> {
             });
         }
     }
+    let used = ordered_use(ctx, side);
     if let Some(deps) = ctx.db.ephemeral.cfg.deployables.get(&side) {
         for d in deps {
             if !d.kind.is_group() {
@@ -188,6 +213,11 @@ pub(super) fn catalog(ctx: &Context, side: Side) -> Vec<OrderOption> {
             let mut why = why_not_cost(ctx, side, cost);
             if d.limit > 0 && out_now >= d.limit as usize && why.is_empty() {
                 why = format!("{out_now} of {} already deployed", d.limit);
+            }
+            if why.is_empty()
+                && let Some(full) = why_not_room(used, 1)
+            {
+                why = full;
             }
             out.push(OrderOption {
                 key: format!("deploy:{name}"),
@@ -217,6 +247,11 @@ pub(super) fn catalog(ctx: &Context, side: Side) -> Vec<OrderOption> {
                     "{in_field} of {} formations already in the field",
                     gw.max_formations_per_side
                 );
+            }
+            if why.is_empty()
+                && let Some(full) = why_not_room(used, p.min_count.max(1) as usize)
+            {
+                why = full;
             }
             out.push(OrderOption {
                 key: format!("formation:{name}"),
@@ -764,6 +799,9 @@ fn deploy(
     if spec.limit > 0 && deployed_count(ctx, side, &spec.path) >= spec.limit as usize {
         return Err(format_compact!("all {} allowed are already deployed", spec.limit));
     }
+    if let Some(full) = why_not_room(ordered_use(ctx, side), 1) {
+        return Err(full.into());
+    }
     if wet(lua, pos)? {
         return Err("that point is in the water".into());
     }
@@ -778,7 +816,8 @@ fn deploy(
     let spctx = SpawnCtx::new(lua).map_err(err)?;
     // Owned by the commander who ordered it, so they can -delete it and are
     // credited for what it does. The treasury paid, not them, so
-    // cost_fraction 0 means a -delete refunds them nothing.
+    // cost_fraction 0 means a -delete refunds them nothing, and `ordered`
+    // lets any commander of the side disband it.
     let origin = DeployKind::Deployed {
         player: ucid.unwrap_or_default(),
         moved_by: None,
@@ -786,6 +825,7 @@ fn deploy(
         cost_fraction: 0.0,
         origin: None,
         jtac: None,
+        ordered: true,
     };
     ctx.db
         .queue_drive(
@@ -854,6 +894,9 @@ pub(super) fn buy_formation(
     }
     let cost = copy_cost(ctx, &p, &spec) * count as i64;
     afford(ctx, side, cost)?;
+    if let Some(full) = why_not_room(ordered_use(ctx, side), count as usize) {
+        return Err(full.into());
+    }
     let to = from_ll(lua, to)?;
     let mut wps = Vec::with_capacity(via.len());
     for ll in via {
@@ -1203,4 +1246,20 @@ pub(super) fn hunter_assets(
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::why_not_room;
+
+    #[test]
+    fn ordered_group_cap() {
+        assert_eq!(why_not_room(None, 50), None);
+        assert_eq!(why_not_room(Some((3, 24)), 1), None);
+        assert_eq!(why_not_room(Some((20, 24)), 4), None);
+        assert!(why_not_room(Some((24, 24)), 1).is_some_and(|w| w.contains("disband")));
+        assert!(
+            why_not_room(Some((22, 24)), 4).is_some_and(|w| w.contains("room for 2"))
+        );
+    }
 }

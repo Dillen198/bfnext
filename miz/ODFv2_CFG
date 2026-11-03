@@ -6725,6 +6725,9 @@
     "Blue": 500000,
     "Red": 500000
   },
+  "command": {
+    "max_ordered_groups": 24
+  },
   "smart_commander": {
     "tick_period_secs": 60,
     "treasury_start": 2000,

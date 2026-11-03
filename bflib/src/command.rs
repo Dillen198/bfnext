@@ -876,6 +876,10 @@ fn order_inner(
             ctx.db.disband(side, &gid).map_err(|e| format_compact!("{e}"))?;
             Ok(format_compact!("{name} disbanded"))
         }
+        CommandOrder::DisbandFormation { formation } => ctx
+            .db
+            .disband_formation(&mut ctx.groundwar.rt, side, formation, ucid, now)
+            .map_err(|e| format_compact!("{e}")),
         CommandOrder::Sail { group, to } => {
             let pos = from_ll(lua, to)?;
             let land = Land::singleton(lua).map_err(|e| format_compact!("{e}"))?;

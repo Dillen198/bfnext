@@ -447,7 +447,7 @@ const PACE_OPTS: [Pace, string, string][] = [
   ['fast', 'FAST', 'Flat out: about 58 km/h (36 mph) by road, as fast as its slowest vehicle'],
 ]
 
-export function Drawer({ f, side, pic, lockMins, onClose, canOrder = false, onPosture }: {
+export function Drawer({ f, side, pic, lockMins, onClose, canOrder = false, onPosture, onDisband }: {
   f: GroundFormation
   side: Side
   pic: GroundPicture
@@ -455,6 +455,7 @@ export function Drawer({ f, side, pic, lockMins, onClose, canOrder = false, onPo
   onClose: () => void
   canOrder?: boolean
   onPosture?: (roe?: Roe, pace?: Pace) => void
+  onDisband?: () => void
 }): ReactElement {
   const roe: Roe = f.roe ?? 'auto'
   const pace: Pace = f.pace ?? 'normal'
@@ -523,6 +524,13 @@ export function Drawer({ f, side, pic, lockMins, onClose, canOrder = false, onPo
       {!f.has_infantry && <p className="gw-drawer-note">No infantry or troop carriers left: it can break a base but not take it.</p>}
       {f.broken && <p className="gw-drawer-note bad">Morale has collapsed. It is falling back whatever its orders until it rallies.</p>}
       {onPosture && <p className="gw-drawer-note">Your orders keep the AI off it for {lockMins} min.</p>}
+      {onDisband && (
+        <div className="cm-orders">
+          <button disabled={!canOrder}
+            title={!canOrder ? 'Commanders give orders' : f.purchased ? 'Remove it from the field for good (no refund)' : `Send it straight back to the garrison ${home && home.owner === side ? `at ${home.name}` : 'of our nearest base'} (no drive home)`}
+            onClick={onDisband}>DISBAND</button>
+        </div>
+      )}
     </aside>
   )
 }

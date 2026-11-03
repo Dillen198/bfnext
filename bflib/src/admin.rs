@@ -960,6 +960,7 @@ fn admin_spawn_one(
                         origin: None,
                         cost_fraction: 1.,
                         jtac: None,
+                        ordered: false,
                     };
                     ctx.db
                         .add_and_queue_group(
@@ -2989,6 +2990,7 @@ pub(crate) fn api_spawn_deployable(
                 cost_fraction: 1.0,
                 origin: None,
                 jtac: None,
+                ordered: false,
             };
             let gid = ctx.db.add_and_queue_group(
                 &spctx,

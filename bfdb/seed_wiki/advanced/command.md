@@ -63,10 +63,10 @@ hotkey, or right-click the map for its main order:
 
 | Asset | Orders |
 |---|---|
-| Ground formations | **Attack** (**A**, then click an enemy base), **Defend** (**D**, then one of your bases), **Hold** (**H**), **Withdraw** (**W**: home, or the nearest base you hold), **Release** (**X**: hand back to the AI), **Raise** (**R**: a new formation at the base under the cursor), and **Move** (**M**) to any point that isn't an enemy base. A Move is a road march: the column drives on past enemies it only sees and returns fire, stopping to fight only when the enemy is within about 3 km. To go looking for a fight, give an Attack. The same orders as F10 → Ground Forces (see [Ground War](./ground-war.md)), under the same rules |
+| Ground formations | **Attack** (**A**, then click an enemy base), **Defend** (**D**, then one of your bases), **Hold** (**H**), **Withdraw** (**W**: home, or the nearest base you hold), **Release** (**X**: hand back to the AI), **Raise** (**R**: a new formation at the base under the cursor), **Move** (**M**) to any point that isn't an enemy base, and **DISBAND** (in its panel): it leaves the field at once. A bought formation is removed for good; one raised from a garrison is put straight back at its posts, at home or the nearest base you hold, instead of driving there. Nothing is refunded, and a formation carrying out another commander's order stays theirs until the order runs out. A Move is a road march: the column drives on past enemies it only sees and returns fire, stopping to fight only when the enemy is within about 3 km. To go looking for a fight, give an Attack. The same orders as F10 → Ground Forces (see [Ground War](./ground-war.md)), under the same rules |
 | AI flights | **Station** (**S**): go to a point and work there (CAP station, tanker or AWACS orbit, attack area); given while the flight is still on the ramp, it takes effect once it is airborne. **RTB** (**B**) |
 | Deployed units, troops | **Move** (**M**) |
-| Units nobody owns, dismount squads | **DISBAND**: removed for good, nothing refunded. Not a squad holding a base it has just captured, and never a unit a player owns: only they can remove it |
+| Units the treasury paid for (deployments from the panel, what a bought formation left behind), units nobody owns, dismount squads | **DISBAND**: removed for good, nothing refunded. Any commander of the side can disband them. Not a squad holding a base it has just captured, and never a unit a player built from crates: only they can remove it |
 | Batteries | **Fire** (**G**) on a point inside the orange ring |
 | Carrier groups | **Sail** (**M**) to open water |
 | Every battery in range | **Barrage** (**V**) |
@@ -160,6 +160,16 @@ A bought formation counts towards your side's formation limit
 {{cfg:ground_war.max_live_formations|6}} formations both sides together may
 have in DCS. It starts with its base's supply. When it stands down, its survivors stay where they are as the buying
 commander's deployed units.
+
+### The cap on ordered ground units
+
+Every unit the panel puts on the ground is a real DCS group for as long as it
+lives, and enough of them slow the whole server down. So a side may have at
+most {{cfg:command.max_ordered_groups|24}} groups the treasury paid for in the
+field at once: deployments by road, each copy in a bought formation, and what
+a bought formation left behind when it stood down. Players' own crates don't
+count. At the cap, deployments and formations show why they can't be ordered;
+disband something to make room.
 
 ## The order catalogue
 

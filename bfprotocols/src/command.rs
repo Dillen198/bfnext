@@ -350,9 +350,13 @@ pub enum CommandOrder {
     Station { group: i64, at: LatLon },
     /// An AI flight goes home.
     Rtb { group: i64 },
-    /// Remove a ground group no player owns (a dismount squad, or a unit
-    /// the HQ put down). Nothing is refunded.
+    /// Remove a ground group no player paid for (a dismount squad, a unit
+    /// the HQ put down, or one the treasury paid for). Nothing is refunded.
     Disband { group: i64 },
+    /// Take a ground formation out of the field at once: a bought one is
+    /// removed, one raised from a garrison goes straight back to its posts.
+    /// Nothing is refunded.
+    DisbandFormation { formation: u32 },
     /// A carrier group sails to a point.
     Sail { group: i64, to: LatLon },
     /// A supply convoy to one of our bases.

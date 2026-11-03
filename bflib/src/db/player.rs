@@ -661,6 +661,7 @@ impl Db {
                                 cost_fraction: _,
                                 origin: _,
                                 jtac: _,
+                                ordered: _,
                             } => Some(*player),
                             DeployKind::Troop { player, .. } => Some(*player),
                             DeployKind::Action { player, .. } => *player,
