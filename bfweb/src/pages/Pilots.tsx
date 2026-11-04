@@ -4,8 +4,12 @@ import QueryState from '../components/QueryState'
 import { kd, sl, fmtHours, fmtDuration } from '../lib/format'
 import { Link as RouterLink, useSearchParams } from 'react-router-dom'
 import type { FlightRow } from '../replay/data'
-import { api, type Pilot, type PilotSortie, type TheaterBreakdown, type PilotKill, type PilotDeploy, type PilotProgression, type Challenge } from '../api'
+import { api, type Pilot, type PilotSortie, type TheaterBreakdown, type PilotKill, type PilotDeploy, type PilotProgression, type Challenge, type SortieOutcome } from '../api'
 import PageHeader from '../components/PageHeader'
+import { Card, Tape } from '../components/Levant'
+import { useDashLook } from '../lib/look'
+import { campaign } from '../config/campaign'
+import { rankFor, nextRankAt } from '../ranks'
 import SortieDetail from './SortieDetail'
 import PilotCharts from './PilotCharts'
 import { RivalsCard, CompareCard } from './PilotRivals'
@@ -28,7 +32,10 @@ import {
   ChevronDown,
   ChevronUp,
   PlayCircle,
+  Check,
+  ExternalLink,
 } from '@icons'
+import './levant/pilots.css'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -124,6 +131,65 @@ function SortHeader<T extends string>({
   )
 }
 
+// ── Levant Ablaze: shared parts ───────────────────────────────────────────────
+// The desert look draws the page from classes (levant/pilots.css) instead of
+// the olive HUD's inline styles; each component below branches on the look
+// and shares its data work with the plain path.
+
+const sideTone = (s: Pilot['side'] | string): 'b' | 'r' | 'n' => (s === 'Blue' ? 'b' : s === 'Red' ? 'r' : 'n')
+const sideLabel = (s: Pilot['side']) => (s === 'Blue' ? campaign.blueLabel : s === 'Red' ? campaign.redLabel : 'No side on record')
+/** An outcome's words without the glyph the plain look leads with. */
+const outcomeText = (o: SortieOutcome) => OUTCOME[o].label.replace(/^\S+\s/, '')
+
+/** Campaign score, counted as the leaderboard counts it, for the rank. */
+function campaignScore(p: Pilot): number {
+  return (p.air_kills * 3) + (p.ground_kills * 2) + (p.captures * 5) +
+    p.repairs + p.supply_transfers + (p.troops * 0.5) + (p.farps * 4) +
+    (p.deploys * 2) + p.actions - (p.deaths * 2)
+}
+
+/** A log's column heads; the sortable ones are buttons. On a phone only the
+ *  buttons stay, as a strip. */
+function LogHead<T extends string>({ cols, sort, onSort, className }: {
+  cols: { col?: T; label: string; area: string }[]
+  sort: { col: T; dir: SortDir }
+  onSort: (s: { col: T; dir: SortDir }) => void
+  className: string
+}) {
+  return (
+    <div className={`pl-head ${className}`}>
+      {cols.map(c => {
+        const col = c.col
+        if (col === undefined) return <span key={c.label} className="ds-k" style={{ gridArea: c.area }}>{c.label}</span>
+        const active = sort.col === col
+        return (
+          <button key={c.label} type="button" style={{ gridArea: c.area }} className={active ? 'on' : undefined}
+            aria-pressed={active} title={`Sort by ${c.label.toLowerCase()}`}
+            onClick={() => onSort({ col, dir: active && sort.dir === 'desc' ? 'asc' : 'desc' })}>
+            {c.label}
+            {active ? (sort.dir === 'desc' ? <ChevronDown size={10} /> : <ChevronUp size={10} />) : <ChevronDown size={10} className="off" />}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function Pager({ page, total, setPage }: { page: number; total: number; setPage: React.Dispatch<React.SetStateAction<number>> }) {
+  if (total <= 1) return null
+  return (
+    <div className="pl-pager">
+      <button type="button" aria-label="Previous page" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>
+        <ChevronLeft size={12} />
+      </button>
+      <span>{page + 1} / {total}</span>
+      <button type="button" aria-label="Next page" onClick={() => setPage(p => Math.min(total - 1, p + 1))} disabled={page === total - 1}>
+        <ChevronRight size={12} />
+      </button>
+    </div>
+  )
+}
+
 // ── Flight log ────────────────────────────────────────────────────────────────
 
 type SortieCol = 'date' | 'aircraft' | 'duration' | 'kills' | 'outcome'
@@ -132,6 +198,7 @@ type SortieCol = 'date' | 'aircraft' | 'duration' | 'kills' | 'outcome'
 const OUTCOME_RANK = { landed: 3, no_landing: 2, lost: 1, killed: 0 } as const
 
 function FlightLog({ ucid, sorties, breakdown, replays }: { ucid: string; sorties: PilotSortie[]; breakdown: TheaterBreakdown[]; replays: FlightRow[] }) {
+  const look = useDashLook()
   const [sort, setSort] = useState<{ col: SortieCol; dir: SortDir }>({ col: 'date', dir: 'desc' })
   const [page, setPage] = useState(0)
   const [open, setOpen] = useState<number | null>(null)
@@ -174,6 +241,71 @@ function FlightLog({ ucid, sorties, breakdown, replays }: { ucid: string; sortie
   const page_sorties = sorted.slice(page * PER_PAGE, (page + 1) * PER_PAGE)
 
   const cell: React.CSSProperties = { padding: '5px 10px', fontSize: '0.67rem', color: 'var(--text-muted)', borderBottom: '1px solid rgba(42,42,42,0.5)' }
+
+  if (look.profile) {
+    return (
+      <Card tape={<>Flight log · {sorties.length}</>} tone="rust" right={<Pager page={page} total={totalPages} setPage={setPage} />}>
+        {sorties.length === 0 ? <p className="lv-empty">No sorties recorded</p> : (
+          <div className="pl-log pl-log-sorties">
+            <LogHead className="pl-log-cols" sort={sort} onSort={s => { setSort(s); setPage(0) }} cols={[
+              { col: 'date', label: 'Date', area: 'when' },
+              { col: 'aircraft', label: 'Aircraft', area: 'ac' },
+              { label: 'Theatre', area: 'thr' },
+              { col: 'duration', label: 'Duration', area: 'dur' },
+              { col: 'kills', label: 'Kills', area: 'k' },
+              { col: 'outcome', label: 'Outcome', area: 'out' },
+              { label: 'Replay', area: 'rp' },
+            ]} />
+            <ol>
+              {page_sorties.map((s, i) => {
+                const id = s.sortie_id
+                const isOpen = id !== undefined && open === id
+                const o = outcomeOf(s)
+                const replay = replayFor(s, replays)
+                const cells = (
+                  <>
+                    <span className="pl-when"><b>{fmtDate(s.takeoff)}</b><span>{fmtTime(s.takeoff)}–{s.land ? fmtTime(s.land) : '—'}</span></span>
+                    <span className="pl-ac"><span className="pl-chip">{s.aircraft}</span></span>
+                    <span className="pl-thr">{ridToScenario[s.round_id] ?? `Round ${roundNum(s.round_id)}`}</span>
+                    <span className={`pl-dur${s.duration_secs > 0 ? '' : ' dim'}`}>{fmtDuration(s.duration_secs)}</span>
+                    <span className="pl-k">
+                      {s.air_kills === undefined ? <span className="dim">—</span> : (
+                        <>
+                          <b className={s.air_kills ? 'a' : undefined} title="Air-to-air">{s.air_kills}</b>
+                          <span className="dim">/</span>
+                          <b className={s.ground_kills ? 'g' : undefined} title="Air-to-ground">{s.ground_kills ?? 0}</b>
+                        </>
+                      )}
+                    </span>
+                    <span className="pl-out"><Tape className={`sm pl-otape pl-o-${o}`}>{outcomeText(o)}</Tape></span>
+                  </>
+                )
+                return (
+                  <li key={id ?? i} className={`pl-o-${o}${isOpen ? ' open' : ''}`}>
+                    <div className="pl-log-line">
+                      {id === undefined
+                        ? <div className="pl-log-main">{cells}</div>
+                        : (
+                          <button type="button" className="pl-log-main" aria-expanded={isOpen}
+                            title={isOpen ? 'Hide sortie details' : 'Show sortie details'}
+                            onClick={() => setOpen(isOpen ? null : id)}>
+                            {cells}
+                          </button>
+                        )}
+                      {replay
+                        ? <RouterLink className="pl-watch" to={`/replay/${encodeURIComponent(replay.rec)}?focus=${replay.i}`}><PlayCircle size={13} /> Watch</RouterLink>
+                        : <span className="pl-watch none">—</span>}
+                    </div>
+                    {isOpen && <SortieDetail ucid={ucid} sortieId={id} replay={replay} />}
+                  </li>
+                )
+              })}
+            </ol>
+          </div>
+        )}
+      </Card>
+    )
+  }
 
   return (
     <div className="vs-card">
@@ -298,6 +430,7 @@ function KillLog({ kills, allPilots, breakdown }: {
   allPilots: Pilot[]
   breakdown: TheaterBreakdown[]
 }) {
+  const look = useDashLook()
   const [sort, setSort] = useState<{ col: KillCol; dir: SortDir }>({ col: 'time', dir: 'desc' })
   const [page, setPage] = useState(0)
   const PER_PAGE = 15
@@ -334,6 +467,42 @@ function KillLog({ kills, allPilots, breakdown }: {
   const page_kills = sorted.slice(page * PER_PAGE, (page + 1) * PER_PAGE)
 
   const cell: React.CSSProperties = { padding: '5px 10px', fontSize: '0.67rem', color: 'var(--text-muted)', borderBottom: '1px solid rgba(42,42,42,0.5)' }
+
+  if (look.profile) {
+    return (
+      <Card tape={<>Kill log · {kills.length}</>} right={<Pager page={page} total={totalPages} setPage={setPage} />}>
+        {kills.length === 0 ? <p className="lv-empty">No kills recorded</p> : (
+          <div className="pl-log pl-log-kills">
+            <LogHead className="pl-log-cols" sort={sort} onSort={s => { setSort(s); setPage(0) }} cols={[
+              { col: 'time', label: 'When', area: 'when' },
+              { col: 'target_type', label: 'Target', area: 'tgt' },
+              { col: 'victim', label: 'Victim pilot', area: 'vic' },
+              { label: 'Airframe', area: 'af' },
+              { col: 'weapon', label: 'Weapon', area: 'wpn' },
+              { label: 'Theatre', area: 'thr' },
+            ]} />
+            <ol>
+              {page_kills.map((k, i) => {
+                const victimName = k.victim_ucid ? (ucidToName[k.victim_ucid] ?? 'Unknown') : null
+                return (
+                  <li key={i} className={`pl-side-${sideTone(k.victim_side)}`}>
+                    <div className="pl-log-main">
+                      <span className="pl-when"><b>{fmtDate(k.time)}</b><span>{fmtTime(k.time)}</span></span>
+                      <span className="pl-tgt">{k.target_type ?? '—'}</span>
+                      <span className="pl-vic">{victimName ? <b>{victimName}</b> : <span className="dim">AI / env</span>}</span>
+                      <span className="pl-af">{k.killer_airframe ? <span className="pl-chip">{k.killer_airframe}</span> : <span className="dim">—</span>}</span>
+                      <span className="pl-wpn">{k.weapon ?? <span className="dim">—</span>}</span>
+                      <span className="pl-thr">{ridToScenario[k.round_id] ?? `Round ${roundNum(k.round_id)}`}</span>
+                    </div>
+                  </li>
+                )
+              })}
+            </ol>
+          </div>
+        )}
+      </Card>
+    )
+  }
 
   return (
     <div className="vs-card">
@@ -422,6 +591,7 @@ function KillLog({ kills, allPilots, breakdown }: {
 type DeployCol = 'time' | 'deployable' | 'aircraft' | 'method'
 
 function DeployLog({ deploys, total }: { deploys: PilotDeploy[]; total: number }) {
+  const look = useDashLook()
   const [sort, setSort] = useState<{ col: DeployCol; dir: SortDir }>({ col: 'time', dir: 'desc' })
   const [page, setPage] = useState(0)
   const PER_PAGE = 15
@@ -448,6 +618,43 @@ function DeployLog({ deploys, total }: { deploys: PilotDeploy[]; total: number }
     if (method === 'AirDrop') return <span style={{ color: '#60a5fa', fontSize: '0.62rem', letterSpacing: '0.06em' }}>▼ Air Drop</span>
     if (method === 'ManualUnpack') return <span style={{ color: '#f59e0b', fontSize: '0.62rem', letterSpacing: '0.06em' }}>✋ Manual Unpack</span>
     return <span style={{ color: '#475569' }}>—</span>
+  }
+
+  if (look.profile) {
+    const none = total > 0 ? `${total} deploy${total === 1 ? '' : 's'} recorded before per-deploy logging was added` : 'No deploys recorded'
+    return (
+      <Card tape={<>Deploy log · {deploys.length}</>} right={<Pager page={page} total={totalPages} setPage={setPage} />}>
+        {total > deploys.length && deploys.length > 0 && (
+          <p className="pl-note">+{total - deploys.length} more before per-deploy logging</p>
+        )}
+        {deploys.length === 0 ? <p className="lv-empty">{none}</p> : (
+          <div className="pl-log pl-log-deploys">
+            <LogHead className="pl-log-cols" sort={sort} onSort={s => { setSort(s); setPage(0) }} cols={[
+              { col: 'time', label: 'When', area: 'when' },
+              { col: 'deployable', label: 'What', area: 'what' },
+              { col: 'aircraft', label: 'Aircraft', area: 'ac' },
+              { col: 'method', label: 'Method', area: 'how' },
+            ]} />
+            <ol>
+              {page_deploys.map((d, i) => (
+                <li key={i}>
+                  <div className="pl-log-main">
+                    <span className="pl-when"><b>{fmtDate(d.time)}</b><span>{fmtTime(d.time)}</span></span>
+                    <span className="pl-what">{d.deployable}</span>
+                    <span className="pl-ac">{d.aircraft ? <span className="pl-chip">{d.aircraft}</span> : <span className="dim">—</span>}</span>
+                    <span className="pl-how">
+                      {d.method === 'AirDrop' ? <Tape className="sm">Air drop</Tape>
+                        : d.method === 'ManualUnpack' ? <Tape tone="n" className="sm">Manual unpack</Tape>
+                        : <span className="dim">—</span>}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+      </Card>
+    )
   }
 
   return (
@@ -576,9 +783,78 @@ function PilotCardView({ pilot, p }: { pilot: Pilot; p: PilotProgression }) {
   )
 }
 
+/** A challenge in the desert look: its name, its count, a thin meter. */
+function ChallengeLine({ c }: { c: Challenge }) {
+  const pct = Math.min(100, (c.progress / Math.max(1, c.goal)) * 100)
+  return (
+    <li className={c.done ? 'done' : undefined}>
+      <div className="pl-chal-top">
+        <span>{c.done && <Check size={11} />}{c.label}</span>
+        <b>{c.progress}/{c.goal}</b>
+        <em>+{c.xp} XP</em>
+      </div>
+      <div className="pl-bar thin"><i style={{ width: `${pct}%` }} /></div>
+    </li>
+  )
+}
+
+function ProgressionDesert({ p, ucid, pct }: { p: PilotProgression; ucid: string; pct: number }) {
+  const got = p.achievements.filter(a => a.tier > 0).length
+  return (
+    <Card tape="Progression" right={
+      <a className="lv-more pl-share" href={api.pilotCardUrl(ucid)} target="_blank" rel="noreferrer"
+        title="Open the card image to share (Discord /card posts the same one)">
+        Share card <ExternalLink size={10} />
+      </a>
+    }>
+      <div className="pl-prog">
+        <div className="pl-level">
+          <div className="pl-level-n"><span className="ds-k">Level</span><b>{p.level}</b></div>
+          <div className="pl-level-xp">
+            <div className="pl-level-top">
+              <span className="pl-xp">{p.xp.toLocaleString()}<small>XP</small></span>
+              <span className="lv-sub">{(p.next_level_xp - p.xp).toLocaleString()} XP to level {p.level + 1}</span>
+            </div>
+            <div className="pl-bar" role="img" aria-label={`${Math.round(pct)}% of the way to level ${p.level + 1}`}>
+              <i style={{ width: `${pct}%` }} />
+            </div>
+          </div>
+        </div>
+        <div className="pl-chal">
+          {([['Today', p.daily], ['This week', p.weekly]] as const).map(([name, list]) => (
+            <div key={name}>
+              <span className="ds-k">{name}</span>
+              <ul>{list.map(c => <ChallengeLine key={c.label} c={c} />)}</ul>
+            </div>
+          ))}
+        </div>
+        {p.achievements.length > 0 && (
+          <div>
+            <span className="ds-k">Achievements · {got} of {p.achievements.length}</span>
+            <ul className="pl-ach">
+              {p.achievements.map(a => (
+                <li key={a.key} className={a.tier > 0 ? 'got' : undefined}>
+                  <strong>{a.label}</strong>
+                  <span className="pl-pips" role="img" aria-label={`Tier ${a.tier} of ${a.max_tier}`}>
+                    {Array.from({ length: Math.min(a.max_tier, 10) }, (_, i) => <i key={i} className={i < a.tier ? 'on' : undefined} />)}
+                  </span>
+                  <span className="lv-sub">Tier {a.tier}/{a.max_tier} · {a.value}{a.next != null ? ` (next ${a.next})` : ''}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </Card>
+  )
+}
+
 function ProgressionCard({ p, dim, ucid, pilot }: { p: PilotProgression; dim: React.CSSProperties; ucid: string; pilot: Pilot }) {
+  const look = useDashLook()
   const span = Math.max(1, p.next_level_xp - p.level_xp)
   const pct = Math.min(100, ((p.xp - p.level_xp) / span) * 100)
+  // The pilot card itself is the profile's hero in the desert look.
+  if (look.profile) return <ProgressionDesert p={p} ucid={ucid} pct={pct} />
   return (
     <div className="vs-card p-0">
       <div className="flex items-center gap-2 px-4 pt-4 pb-3" style={{ borderBottom: '1px solid var(--border)' }}>
@@ -629,10 +905,43 @@ function ProgressionCard({ p, dim, ucid, pilot }: { p: PilotProgression; dim: Re
 
 // ── Theater breakdown ─────────────────────────────────────────────────────────
 
+/** K/D in three bands: good (no deaths, or 5+), fair (2+), poor. */
+function kdBand(kdVal: string, deaths: number): 'good' | 'fair' | 'poor' {
+  return deaths === 0 || parseFloat(kdVal) >= 5 ? 'good' : parseFloat(kdVal) >= 2 ? 'fair' : 'poor'
+}
+
 function TheaterCard({ td }: { td: TheaterBreakdown }) {
+  const look = useDashLook()
   const roundNum = useRoundNo()
   const kd_val = kd(td.air_kills, td.ground_kills, td.deaths)
   const kd_color = td.deaths === 0 ? '#22c55e' : parseFloat(kd_val) >= 5 ? '#22c55e' : parseFloat(kd_val) >= 2 ? '#f59e0b' : '#ef4444'
+  const ratio = (k: number) => (td.deaths > 0 ? (k / td.deaths).toFixed(2) : k > 0 ? '∞' : '0.00')
+  if (look.profile) {
+    const rows: [string, string | number, string?][] = [
+      ['A/A kills', td.air_kills, 'a'],
+      ['A/G kills', td.ground_kills, 'g'],
+      ['AA K/D', ratio(td.air_kills)],
+      ['AG K/D', ratio(td.ground_kills)],
+      ['Deaths', td.deaths, td.deaths > 0 ? 'bad' : 'dim'],
+      ['Captures', td.captures, td.captures > 0 ? 'warn' : undefined],
+      ['Hours', fmtHours(td.hours)],
+    ]
+    return (
+      <article className="pl-thr-card">
+        <header>
+          <strong>{td.scenario || `Round ${roundNum(td.round_id)}`}</strong>
+          <span className="ds-k">Round #{roundNum(td.round_id)}</span>
+        </header>
+        <div className="pl-thr-big">
+          <div><span className="ds-k">Kills</span><b>{td.air_kills + td.ground_kills}</b></div>
+          <div className={kdBand(kd_val, td.deaths)}><span className="ds-k">K/D</span><b>{kd_val}</b></div>
+        </div>
+        <dl className="pl-rows sm">
+          {rows.map(([k, v, c]) => <div key={k}><dt>{k}</dt><dd className={c}>{v}</dd></div>)}
+        </dl>
+      </article>
+    )
+  }
   const dim: React.CSSProperties = { fontSize: '0.58rem', color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase' }
   const statRow = (label: string, value: string | number, highlight?: string) => (
     <div className="flex justify-between items-center" style={{ padding: '3px 0', borderBottom: '1px solid rgba(42,42,42,0.4)' }}>
@@ -656,8 +965,8 @@ function TheaterCard({ td }: { td: TheaterBreakdown }) {
         {statRow('A/A Kills', td.air_kills, '#3b82f6')}
         {statRow('A/G Kills', td.ground_kills, '#f97316')}
         {statRow('Total Kills', td.air_kills + td.ground_kills, 'var(--text)')}
-        {statRow('AA K/D', td.deaths > 0 ? (td.air_kills / td.deaths).toFixed(2) : td.air_kills > 0 ? '∞' : '0.00')}
-        {statRow('AG K/D', td.deaths > 0 ? (td.ground_kills / td.deaths).toFixed(2) : td.ground_kills > 0 ? '∞' : '0.00')}
+        {statRow('AA K/D', ratio(td.air_kills))}
+        {statRow('AG K/D', ratio(td.ground_kills))}
         {statRow('K/D Ratio', kd_val, kd_color)}
         {statRow('Deaths', td.deaths, td.deaths > 0 ? '#ef4444' : 'var(--text-dim)')}
         {statRow('Captures', td.captures, td.captures > 0 ? '#eab308' : undefined)}
@@ -667,9 +976,97 @@ function TheaterCard({ td }: { td: TheaterBreakdown }) {
   )
 }
 
+// ── Levant Ablaze: the profile hero ───────────────────────────────────────────
+
+/** The airframe the pilot flies most, framed in the hero; gone if no photo. */
+function HeroAirframe({ type }: { type: string }) {
+  const [err, setErr] = useState(false)
+  return (
+    <figure className={`pl-hero-ac${err ? ' none' : ''}`}>
+      {err
+        ? <Aircraft size={54} aria-hidden="true" />
+        : <img src={`/images/aircraft/${encodeURIComponent(type)}.jpg`} alt={type} onError={() => setErr(true)} />}
+      <figcaption><span className="ds-k">Most flown</span><b>{type}</b></figcaption>
+    </figure>
+  )
+}
+
+/** The pilot card: name, side, rank and the headline numbers, drawn as the
+ *  SITREP's scoreboard. bfdb renders the same card as a PNG for sharing (the
+ *  Progression card links to it). */
+function PilotHero({ pilot, standing, isMe, prog, mostFlown, sorties, onClear }: {
+  pilot: Pilot
+  standing: number | null
+  isMe: boolean
+  prog?: PilotProgression
+  mostFlown: string | null
+  sorties: number
+  onClear: () => void
+}) {
+  const score = campaignScore(pilot)
+  const rank = rankFor(score, pilot.side)
+  const next = nextRankAt(score)
+  const RankIcon = rank.icon
+  const t = sideTone(pilot.side)
+  const logistics = pilot.repairs + pilot.supply_transfers + pilot.troops + pilot.farps + pilot.deploys
+  const badges = prog ? prog.achievements.filter(a => a.tier > 0).length : 0
+  const board: [string, string | number, string?][] = [
+    ['Air kills', pilot.air_kills, 'a'],
+    ['Ground kills', pilot.ground_kills, 'g'],
+    ['K/D', kd(pilot.air_kills, pilot.ground_kills, pilot.deaths)],
+    ['Flight time', fmtHours(pilot.hours)],
+    ['Sorties', sorties],
+    ['Captures', pilot.captures],
+    ['Logistics', logistics],
+    ['Deaths', pilot.deaths, 'dim'],
+  ]
+  return (
+    <section className={`pl-hero ${t}`} aria-label={`${pilot.name}: pilot record`}>
+      <div className={`pl-hero-top${mostFlown ? ' art' : ''}`}>
+        <div className="pl-hero-id">
+          <div className="pl-hero-tags">
+            <Tape tone={t}>{sideLabel(pilot.side)}</Tape>
+            {standing !== null && standing > 0 && (
+              <Tape tone={standing <= 3 ? 'rust' : 'n'} className="sm">No. {standing} on the board</Tape>
+            )}
+            {isMe && <Tape tone="warn" className="sm">You</Tape>}
+          </div>
+          <h2 className="pl-hero-name" style={{ '--chars': Math.max(6, pilot.name.length) } as React.CSSProperties}>
+            {prog?.squadron && <span>[{prog.squadron}]</span>}
+            {pilot.name}
+          </h2>
+          <div className="pl-hero-rank">
+            <RankIcon size={38} strokeWidth={1.6} />
+            <div>
+              <b>{rank.title}</b>
+              <span>
+                {next !== null ? `${next - Math.round(score)} score to the next rank` : 'Top of the ladder'}
+                {' · '}score {Math.round(score).toLocaleString()}
+              </span>
+            </div>
+          </div>
+          {prog && (
+            <div className="pl-hero-lvl">
+              Level <b>{prog.level}</b> · <b>{prog.xp.toLocaleString()}</b> XP · <b>{badges}</b> achievement{badges === 1 ? '' : 's'}
+            </div>
+          )}
+        </div>
+        {mostFlown && <HeroAirframe key={mostFlown} type={mostFlown} />}
+        <button type="button" className="pl-clear" onClick={onClear}><RotateCcw size={11} /> Clear</button>
+      </div>
+      <dl className="pl-board">
+        {board.map(([k, v, c]) => (
+          <div key={k} className={c}><dt>{k}</dt><dd>{v}</dd></div>
+        ))}
+      </dl>
+    </section>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function Pilots() {
+  const look = useDashLook()
   const { user } = useAuth()
   const queryClient = useQueryClient()
   const [searchParams] = useSearchParams()
@@ -751,6 +1148,141 @@ export default function Pilots() {
 
   const dim: React.CSSProperties = { fontSize: '0.58rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase' }
 
+  // The career record and contributions, for both looks; `cls` is the desert
+  // look's colour for the value, `color` the plain look's.
+  const career = pilot ? [
+    { label: 'A/A Victories', value: pilot.air_kills, color: '#60a5fa', cls: 'a' },
+    { label: 'A/G Victories', value: pilot.ground_kills, color: '#f97316', cls: 'g' },
+    { label: 'V/L Ratio', value: kd(pilot.air_kills, pilot.ground_kills, pilot.deaths), color: '#22c55e', cls: 'hi' },
+    { label: 'S/L Ratio', value: sl(totalSorties, totalLandings), color: '#a78bfa', cls: undefined },
+    { label: 'Flight Time', value: fmtHours(pilot.hours), color: 'var(--text)', cls: undefined },
+    { label: 'Current Streak', value: curStreakVal, color: '#22c55e', cls: 'ok' },
+    { label: 'Best Streak', value: bestStreakVal, color: '#f59e0b', cls: 'warn' },
+    { label: 'Best A/A (round)', value: bestAA, color: '#60a5fa', cls: 'a' },
+    { label: 'Best A/G (round)', value: bestAG, color: '#f97316', cls: 'g' },
+  ] : []
+  const contributions = pilot ? [
+    { label: 'Captures',     value: pilot.captures },
+    { label: 'Repairs',      value: pilot.repairs },
+    { label: 'Supply Runs',  value: pilot.supply_transfers },
+    { label: 'Troops',       value: pilot.troops },
+    { label: 'FARPs',        value: pilot.farps },
+    { label: 'Deploys',      value: pilot.deploys },
+    { label: 'Actions',      value: pilot.actions },
+    { label: 'Donated Pts',  value: pilot.donated_points },
+  ] : []
+  const onSearch = (v: string) => { setSearch(v); if (!v) clearSelection() }
+  const pick = (p: Pilot) => { setSelected(p.ucid); setSearch(p.name) }
+
+  if (look.profile) {
+    return (
+      <div className="flex flex-col flex-1 overflow-hidden">
+        <PageHeader art="hornet-top" icon={PilotIcon} title="PILOTS" sub={`${pilots.length} registered pilots`} />
+
+        <div className="pl-page">
+          {/* ── Search ── */}
+          <Card tape="Pilot search" className="pl-search" right={<span className="pl-count">{pilots.length} on record</span>}>
+            <div className="pl-search-box">
+              <Search size={14} aria-hidden="true" />
+              <input
+                type="text"
+                placeholder="Search pilots by name…"
+                aria-label="Search pilots by name"
+                value={search}
+                onChange={e => onSearch(e.target.value)}
+                onFocus={() => setSearchFocus(true)}
+                onBlur={() => setTimeout(() => setSearchFocus(false), 150)}
+                className="vs-input"
+              />
+              {showDropdown && filtered.length > 0 && (
+                <div className="pl-drop">
+                  {filtered.map(p => (
+                    <button key={p.ucid} type="button" className={`pl-drop-row pl-side-${sideTone(p.side)}`}
+                      onMouseDown={() => pick(p)} onClick={() => pick(p)}>
+                      <span className="rk">{pilots.indexOf(p) + 1}</span>
+                      <span className="nm">
+                        <b>{p.name}</b>
+                        {user?.ucid === p.ucid && <Tape tone="warn" className="sm">You</Tape>}
+                      </span>
+                      <span className="st">
+                        <b>{p.air_kills + p.ground_kills}</b>k · <b>{p.hours.toFixed(1)}</b>h · <b>{p.deaths}</b>d
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {/* ── Link account banner ── */}
+          {user && !user.ucid && (
+            <Card tape="Not linked yet" tone="rust" className="pl-link">
+              <div className="pl-link-body">
+                <Link size={16} aria-hidden="true" />
+                <p>
+                  Run <code>/linkme</code> in Discord for a token, then <code>-linkme &lt;token&gt;</code> in DCS chat to see your profile highlighted.
+                </p>
+                <button type="button" className="ds-btn ghost pl-btn-sm" onClick={() => queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })}>
+                  Check again
+                </button>
+              </div>
+            </Card>
+          )}
+
+          {isError && (
+            <QueryState what="the pilot roster" isLoading={false} isError error={error} onRetry={refetch} />
+          )}
+
+          {!pilot && !isLoading && !isError && (
+            <div className="pl-blank">
+              <PilotIcon size={44} aria-hidden="true" />
+              <Tape tone="n">No pilot selected</Tape>
+              <p>Search for a pilot above</p>
+            </div>
+          )}
+
+          {pilot && (
+            <div className="pl-profile">
+              <PilotHero pilot={pilot} standing={pilotRank} isMe={user?.ucid === pilot.ucid} prog={progression}
+                mostFlown={mostFlown} sorties={totalSorties} onClear={() => { clearSelection(); setSearch('') }} />
+
+              <div className="pl-col pl-aside">
+                <Card tape="Career record">
+                  <dl className="pl-rows">
+                    {career.map(s => <div key={s.label}><dt>{s.label}</dt><dd className={s.cls}>{s.value}</dd></div>)}
+                  </dl>
+                </Card>
+                <Card tape="Contributions">
+                  <dl className="pl-contrib">
+                    {contributions.map(s => <div key={s.label}><dt>{s.label}</dt><dd className={s.value ? undefined : 'dim'}>{s.value}</dd></div>)}
+                  </dl>
+                </Card>
+              </div>
+
+              <div className="pl-col pl-main">
+                {progression && selected && <ProgressionCard p={progression} dim={dim} ucid={selected} pilot={pilot} />}
+                <PilotCharts key={pilot.ucid} sorties={sorties} />
+                <RivalsCard ucid={pilot.ucid} sorties={sorties} kills={kills} pilots={pilots} />
+                <CompareCard key={`cmp-${pilot.ucid}`} pilot={pilot} pilots={pilots} />
+                {breakdown.length > 0 && (
+                  <Card tape={<>Theatre breakdown · {breakdown.length}</>}>
+                    <div className="pl-thr-grid">
+                      {breakdown.map(td => <TheaterCard key={td.round_id} td={td} />)}
+                    </div>
+                  </Card>
+                )}
+                {/* Keyed by pilot: a different pilot starts on page one, nothing open. */}
+                <FlightLog key={pilot.ucid} ucid={pilot.ucid} sorties={sorties} breakdown={breakdown} replays={replays} />
+                <KillLog kills={kills} allPilots={pilots} breakdown={breakdown} />
+                <DeployLog deploys={deploys} total={pilot.deploys} />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <PageHeader art="hornet-top" icon={PilotIcon} title="PILOTS" sub={`${pilots.length} registered pilots`} />
@@ -767,7 +1299,7 @@ export default function Pilots() {
               type="text"
               placeholder="Search pilots by name…"
               value={search}
-              onChange={e => { setSearch(e.target.value); if (!e.target.value) clearSelection() }}
+              onChange={e => onSearch(e.target.value)}
               onFocus={() => setSearchFocus(true)}
               onBlur={() => setTimeout(() => setSearchFocus(false), 150)}
               className="vs-input w-full"
@@ -785,7 +1317,7 @@ export default function Pilots() {
                   return (
                     <button
                       key={p.ucid}
-                      onMouseDown={() => { setSelected(p.ucid); setSearch(p.name) }}
+                      onMouseDown={() => pick(p)}
                       style={{
                         width: '100%', textAlign: 'left', background: 'none', border: 'none',
                         borderBottom: i < filtered.length - 1 ? '1px solid var(--border)' : 'none',
@@ -896,17 +1428,7 @@ export default function Pilots() {
                   <span style={dim}>Career Stats</span>
                 </div>
                 <div className="px-4 py-1">
-                  {[
-                    { label: 'A/A Victories', value: pilot.air_kills, color: '#60a5fa' },
-                    { label: 'A/G Victories', value: pilot.ground_kills, color: '#f97316' },
-                    { label: 'V/L Ratio', value: kd(pilot.air_kills, pilot.ground_kills, pilot.deaths), color: '#22c55e' },
-                    { label: 'S/L Ratio', value: sl(totalSorties, totalLandings), color: '#a78bfa' },
-                    { label: 'Flight Time', value: fmtHours(pilot.hours), color: 'var(--text)' },
-                    { label: 'Current Streak', value: curStreakVal, color: '#22c55e' },
-                    { label: 'Best Streak', value: bestStreakVal, color: '#f59e0b' },
-                    { label: 'Best A/A (round)', value: bestAA, color: '#60a5fa' },
-                    { label: 'Best A/G (round)', value: bestAG, color: '#f97316' },
-                  ].map(s => (
+                  {career.map(s => (
                     <div key={s.label} className="flex justify-between items-center" style={{ padding: '0.5rem 0', borderBottom: '1px solid rgba(42,42,42,0.5)' }}>
                       <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.08em' }}>{s.label}</span>
                       <span style={{ fontSize: '0.85rem', fontWeight: 700, color: s.color, fontFamily: 'monospace' }}>{s.value}</span>
@@ -922,16 +1444,7 @@ export default function Pilots() {
                   <span style={dim}>Contributions</span>
                 </div>
                 <div className="grid grid-cols-2 gap-0">
-                  {[
-                    { label: 'Captures',     value: pilot.captures },
-                    { label: 'Repairs',      value: pilot.repairs },
-                    { label: 'Supply Runs',  value: pilot.supply_transfers },
-                    { label: 'Troops',       value: pilot.troops },
-                    { label: 'FARPs',        value: pilot.farps },
-                    { label: 'Deploys',      value: pilot.deploys },
-                    { label: 'Actions',      value: pilot.actions },
-                    { label: 'Donated Pts',  value: pilot.donated_points },
-                  ].map((s, i) => (
+                  {contributions.map((s, i) => (
                     <div key={s.label} style={{ padding: '0.65rem 1rem', borderRight: i % 2 === 0 ? '1px solid var(--border)' : 'none', borderBottom: i < 6 ? '1px solid var(--border)' : 'none' }}>
                       <div style={{ fontSize: '0.56rem', color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '0.2rem' }}>{s.label}</div>
                       <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{s.value}</div>

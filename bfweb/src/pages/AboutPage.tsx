@@ -2,13 +2,23 @@ import { useQuery } from '@tanstack/react-query'
 import PageHeader from '../components/PageHeader'
 import { api } from '../api'
 import { campaign } from '../config/campaign'
+import { useDashLook } from '../lib/look'
+import { Card, Head, Tape } from '../components/Levant'
 import {
   Info,
   Server,
   Pilot,
   Support,
   ExternalLink,
+  ArrowRight,
 } from '@icons'
+
+const FEATURES = [
+  'Territory Control', 'Logistics', 'Cargo Transport', 'Troop Deployments',
+  'JTAC', 'EWR', 'Kill Tracking', 'Commander System',
+  'Pilot Lives', 'F10 Menus', 'Persistent Stats', 'Combined Arms',
+]
+const PRESENTATION = 'https://docs.google.com/presentation/d/1EAOe0iK-1s6i0UV5ObxSD86gGBj1Ixz6FOotQn5XPdc/edit#slide=id.g2b6a346170f_1_35'
 
 // Role badge colour mapping
 const ROLE_COLORS: Record<string, string> = {
@@ -27,6 +37,10 @@ export default function AboutPage() {
     staleTime: 10 * 60_000,
     retry: false,
   })
+
+  // In the campaign's look the page is laid out like SITREP and the site.
+  const look = useDashLook()
+  if (look.profile) return <LevantAbout build={build} />
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -68,11 +82,7 @@ export default function AboutPage() {
             </p>
 
             <div className="flex flex-wrap gap-2 pt-1">
-              {[
-                'Territory Control', 'Logistics', 'Cargo Transport', 'Troop Deployments',
-                'JTAC', 'EWR', 'Kill Tracking', 'Commander System',
-                'Pilot Lives', 'F10 Menus', 'Persistent Stats', 'Combined Arms',
-              ].map(tag => (
+              {FEATURES.map(tag => (
                 <span
                   key={tag}
                   style={{
@@ -97,7 +107,7 @@ export default function AboutPage() {
                 JOIN DISCORD
               </a>
               <a
-                href="https://docs.google.com/presentation/d/1EAOe0iK-1s6i0UV5ObxSD86gGBj1Ixz6FOotQn5XPdc/edit#slide=id.g2b6a346170f_1_35"
+                href={PRESENTATION}
                 target="_blank" rel="noreferrer"
                 className="flex items-center gap-1.5 transition-opacity hover:opacity-80"
                 style={{ fontSize: '0.68rem', color: 'var(--accent)', textDecoration: 'none', letterSpacing: '0.1em' }}
@@ -337,6 +347,137 @@ export default function AboutPage() {
         )}
 
       </div>
+    </div>
+  )
+}
+
+// ── Levant Ablaze's look ──────────────────────────────────────────────────────
+
+/** Engine-credit roles as tape: the creator's in rust. */
+const ROLE_TAPE: Record<string, 'rust' | undefined> = { Creator: 'rust' }
+
+/** The same content as the plain page, laid out like SITREP (levant.css). */
+function LevantAbout({ build }: { build?: { git: string; version: string; built: string } }) {
+  return (
+    <div className="lv-page">
+      <header className="lv-hero">
+        <div className="lv-hero-img" role="img" aria-label="Two jets fighting low over a burning battlefield at dusk" />
+        <div className="lv-hero-scrim" />
+        <div className="lv-wrap lv-hero-body">
+          <div className="lv-hero-top lv-about-top">
+            <div>
+              <Tape tone="rust">About</Tape>
+              <h1 className="lv-title">Fowl <span>Engine</span></h1>
+              <div className="lv-round">The dynamic persistent campaign system for DCS World</div>
+            </div>
+            <div className="lv-ctas">
+              <a className="ds-btn" href={campaign.discord} target="_blank" rel="noreferrer"><DiscordIcon /> Join Discord</a>
+              <a className="ds-btn ghost" href={PRESENTATION} target="_blank" rel="noreferrer">Presentation <ExternalLink size={13} /></a>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <section className="lv-section lv-sitrep" aria-label="This server">
+        <div className="lv-wrap lv-about-facts">
+          <div className="lv-readout"><span className="ds-k">Campaign</span><span className="lv-fact">{campaign.name}</span></div>
+          <div className="lv-readout"><span className="ds-k">Campaign version</span><span className="lv-fact">{campaign.version}</span></div>
+          <div className="lv-readout">
+            <span className="ds-k">Server build</span>
+            <span className="lv-fact" title={build ? `built ${build.built}` : undefined}>
+              {build ? <>{build.git}<small> · {build.version}</small></> : '—'}
+            </span>
+          </div>
+          <div className="lv-readout"><span className="ds-k">Server</span><span className="lv-fact">{campaign.server}</span></div>
+          {campaign.serverIp && <div className="lv-readout"><span className="ds-k">Server IP</span><span className="lv-fact">{campaign.serverIp}</span></div>}
+          <div className="lv-readout">
+            <span className="ds-k">Factions</span>
+            <span className="lv-fact"><span className="b">{campaign.blueLabel}</span><small> vs </small><span className="r">{campaign.redLabel}</span></span>
+          </div>
+        </div>
+      </section>
+
+      <section className="lv-section">
+        <div className="lv-wrap lv-about-engine">
+          <div>
+            <Head n="01">The engine</Head>
+            <div className="lv-prose">
+              <p><b>Fowl Engine is a persistent, multiplayer dynamic campaign system for DCS World.</b> It runs full-scale
+                warfare campaigns with territory control, logistics, objective capture and coordinated combined arms,
+                all tracked in real time across every sortie.</p>
+              <p>Every action shapes the battlefield: supply convoys can be interdicted, FARPs destroyed, troops deployed
+                and territory flipped. Campaigns persist across sessions with full stat tracking, kill feeds and leaderboards.</p>
+              <p>Originally created by <b>Eric Stokes</b>.</p>
+            </div>
+          </div>
+          <Card tape="What it runs" tone="rust">
+            <ul className="lv-features">{FEATURES.map(f => <li key={f}>{f}</li>)}</ul>
+          </Card>
+        </div>
+      </section>
+
+      <section className="lv-section lv-band">
+        <div className="lv-wrap">
+          <Head n="02">Credits</Head>
+          <div className="lv-credits">
+            {campaign.engineCredits.map(c => (
+              <article key={c.name} className={`lv-credit${c.role === 'Creator' ? ' lead' : ''}`}>
+                <span className="lv-mono" aria-hidden="true">{c.name.slice(0, 2)}</span>
+                <div>
+                  <strong>{c.name}</strong>
+                  {c.handle && <span className="lv-handle">{c.handle}</span>}
+                  <Tape tone={ROLE_TAPE[c.role]} className="sm">{c.role}</Tape>
+                </div>
+              </article>
+            ))}
+          </div>
+          {campaign.serverCredits.length > 0 && (
+            <>
+              <h3 className="lv-h3">Server team</h3>
+              <div className="lv-credits">
+                {campaign.serverCredits.map(m => (
+                  <article key={m.name} className="lv-credit">
+                    <span className="lv-mono" aria-hidden="true">{m.name.slice(0, 2)}</span>
+                    <div><strong>{m.name}</strong><Tape className="sm">{m.role}</Tape></div>
+                  </article>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </section>
+
+      <section className="lv-section">
+        <div className="lv-wrap">
+          <Head n="03">Special thanks</Head>
+          <div className="lv-thanks">
+            <Card tape="Eagle Dynamics">
+              <div className="lv-thank">
+                <img className="wide" src="https://www.digitalcombatsimulator.com/images/logos/Eagle_Dynamics.png" alt="Eagle Dynamics" />
+                <p>Developers of DCS World, the military flight simulator Fowl Engine is built on.</p>
+                <a className="ds-link" href="https://www.digitalcombatsimulator.com" target="_blank" rel="noreferrer">digitalcombatsimulator.com <ArrowRight size={12} /></a>
+              </div>
+            </Card>
+            <Card tape="61st ATP" tone="rust">
+              <div className="lv-thank">
+                <img src="/hacker.jpg" alt="Hacker" />
+                <p>A persistent, 24/7 campaign lives or dies on having a machine that never goes offline, and Vector Strike
+                  has one because <b>Hacker</b>, founder of <b>61st ATP (Arctic Terns &amp; Penguins)</b>, generously donated
+                  the server it runs on. Every objective captured, every sortie flown and every name on the leaderboard is
+                  only possible because of that support. On behalf of the whole squadron: thank you.</p>
+              </div>
+            </Card>
+            <Card tape="DCSServerBot">
+              <div className="lv-thank">
+                <img src="/special-k.png" alt="Special K" className="contain" />
+                <p>Built by <b>Special K</b>, DCSServerBot is the Discord framework running our server bot: mission control,
+                  player management, and the live campaign integration that ties Vector Strike&apos;s Discord to the fight in the air.</p>
+                <a className="ds-link" href="https://github.com/Special-K-s-Flightsim-Bots/DCSServerBot" target="_blank" rel="noreferrer">github.com/DCSServerBot <ArrowRight size={12} /></a>
+              </div>
+            </Card>
+          </div>
+        </div>
+      </section>
     </div>
   )
 }

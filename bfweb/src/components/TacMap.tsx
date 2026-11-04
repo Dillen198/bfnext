@@ -11,18 +11,24 @@ import { objectiveSymbol } from '../lib/objSymbol'
 import { placeLabels } from '../lib/plotLabels'
 import { territoryMap } from '../lib/territory'
 
-function FitBounds({ objectives, padding }: { objectives: Objective[]; padding: [number, number] }) {
+/** Room the plot leaves on each side for whatever sits over it, in px. */
+export interface MapInset { left: number; right: number; top: number; bottom: number }
+const NO_INSET: MapInset = { left: 0, right: 0, top: 0, bottom: 0 }
+
+function FitBounds({ objectives, inset }: { objectives: Objective[]; inset: MapInset }) {
   const map = useMap()
+  const { left, right, top, bottom } = inset
   useEffect(() => {
     if (!objectives.length) return
     // The plot can't be panned or zoomed, so it fits again whenever its box
-    // changes size too.
+    // changes size too. An inset keeps the objectives clear of panels laid
+    // over the map (Levant SITREP), so the plot sits in the open part.
     const fit = () => map.fitBounds(objectives.map(o => [o.lat, o.lon] as [number, number]) as LatLngBoundsExpression,
-      { padding, maxZoom: 9, animate: false })
+      { paddingTopLeft: [left + 28, top + 46], paddingBottomRight: [right + 28, bottom + 46], maxZoom: 9, animate: false })
     fit()
     map.on('resize', fit)
     return () => { map.off('resize', fit) }
-  }, [map, objectives, padding])
+  }, [map, objectives, left, right, top, bottom])
   return null
 }
 
@@ -143,7 +149,7 @@ function ObjectiveNames({ objectives, ink, halo }: { objectives: Objective[]; in
  *  the map to move about). The TERRITORY toggle shades the ground each side
  *  holds and links the bases facing each other; the choice sticks
  *  per browser. The snapshot leaves it out. */
-export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = false, onTilesLoaded, onSelect }: {
+export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = false, onTilesLoaded, onSelect, inset = NO_INSET }: {
   objectives: Objective[]
   fronts: Frontlines
   /** Shows the TACMAP button when given. */
@@ -153,6 +159,8 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
   onTilesLoaded?: () => void
   /** Clicking an objective's glyph; the Objectives page opens its drawer. */
   onSelect?: (name: string) => void
+  /** Panels laid over the map: the plot and its chips keep clear of them. */
+  inset?: MapInset
 }) {
   const valid = objectives.filter(o => o.lat !== 0 || o.lon !== 0)
   const ownerColor = (owner: string) =>
@@ -219,7 +227,7 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
         zoomSnap={snapshot ? 0.25 : 0.1} fadeAnimation={!snapshot} zoomAnimation={!snapshot}>
         <TileLayer key={theme} url={canvasBase} maxZoom={19} opacity={snapshot ? 0.8 : 0.5}
           eventHandlers={snapshot ? { load: onTilesLoaded } : undefined} />
-        {valid.length > 0 && !snapshot && <FitBounds objectives={valid} padding={[28, 46]} />}
+        {valid.length > 0 && !snapshot && <FitBounds objectives={valid} inset={inset} />}
         {territory && !snapshot && <Territory objectives={valid} color={ownerColor} ink={theme === 'light' ? '#1c2326' : '#e4e7e1'} />}
         {fronts.blue.map((l, i) => l.length > 1 && (
           <Polyline key={`fb-${i}`} positions={l}
@@ -246,7 +254,7 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
 
       {/* Top-left stat chip */}
       <div style={{
-        position: 'absolute', top: 8, left: 8, zIndex: 1000,
+        position: 'absolute', top: inset.top + 8, left: inset.left + 8, zIndex: 1000,
         background: 'rgba(8,11,6,0.90)', border: '1px solid var(--border)',
         padding: snapshot ? '10px 18px' : '5px 10px', display: 'flex', gap: snapshot ? 16 : 10,
         fontSize: chipFont, fontFamily: 'var(--font-mono)', letterSpacing: '0.1em',
@@ -260,7 +268,7 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
 
       {/* Layer toggle and TACMAP button */}
       {(!snapshot || onOpenTacmap) && (
-        <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 1000, display: 'flex', gap: 6 }}>
+        <div style={{ position: 'absolute', top: inset.top + 8, right: inset.right + 8, zIndex: 1000, display: 'flex', gap: 6 }}>
           {!snapshot && (
             <button type="button" aria-pressed={territory} onClick={() => setTerritory(!territory)}
               title="Shade the ground each side holds (every base's zone of control, in its owner's colour) and link the bases facing each other across the front" style={{
@@ -289,7 +297,7 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
 
       {/* Bottom legend */}
       <div style={{
-        position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)', zIndex: 1000,
+        position: 'absolute', bottom: inset.bottom + 8, left: `calc(${inset.left}px + (100% - ${inset.left + inset.right}px) / 2)`, transform: 'translateX(-50%)', zIndex: 1000,
         display: 'flex', gap: snapshot ? 24 : 14, background: 'rgba(8,11,6,0.88)',
         padding: snapshot ? '9px 18px' : '4px 12px', border: '1px solid var(--border)',
         fontSize: legendFont, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em',

@@ -3,6 +3,8 @@ import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import type { CaptureEvent } from '../api'
 import { campaign } from '../config/campaign'
 import { ago } from '../lib/format'
+import { useDashLook } from '../lib/look'
+import '../pages/levant/objectives.css'
 
 /**
  * The round's capture history: who took what, when.
@@ -30,7 +32,87 @@ function capturers(by: string[]): string {
   return by.length > 0 ? 'no pilot credited' : 'unattributed'
 }
 
+const sideTone = (s: string) => (s === 'Blue' ? 'b' : s === 'Red' ? 'r' : 'n')
+
+/** Levant Ablaze: the totals as readouts, the chart on charred ground, the
+ *  contested bases as chips and the flips as a log with a side edge. */
+function LevantTimeline({ events, series, contested, now }: {
+  events: CaptureEvent[]
+  series: { t: number; label: string; blue: number; red: number; objective: string }[]
+  contested: [string, number][]
+  now: number
+}) {
+  if (events.length === 0) {
+    return <p className="lv-empty ob-tl-empty">No objectives have changed hands this round</p>
+  }
+  const blueTotal = series.length ? series[series.length - 1].blue : 0
+  const redTotal = series.length ? series[series.length - 1].red : 0
+  const tick = { fill: 'var(--sand-dim)', fontSize: 11, fontFamily: 'var(--ds-label)' }
+  return (
+    <div className="ob-tl">
+      <div className="ob-tl-totals">
+        <div className="ob-tl-total b"><span className="ds-k">{campaign.blueLabel} took</span><b>{blueTotal}</b></div>
+        <div className="ob-tl-total r"><span className="ds-k">{campaign.redLabel} took</span><b>{redTotal}</b></div>
+        <div className="ob-tl-total"><span className="ds-k">Captures · objectives</span><b>{events.length}<small> · {new Set(events.map(e => e.objective)).size}</small></b></div>
+      </div>
+
+      <div className="capture-timeline-body">
+        <div style={{ minWidth: 0 }}>
+          <ResponsiveContainer width="100%" height={160}>
+            <AreaChart data={series} margin={{ left: -18, right: 6, top: 4 }}>
+              <CartesianGrid stroke="var(--line)" strokeDasharray="2 4" vertical={false} />
+              <XAxis dataKey="label" tick={tick} axisLine={false} tickLine={false} minTickGap={40} />
+              <YAxis tick={tick} axisLine={false} tickLine={false} width={28} allowDecimals={false} />
+              <Tooltip
+                contentStyle={{
+                  background: 'var(--char-2)', border: '1px solid var(--line)', borderTop: '3px solid var(--rust)',
+                  borderRadius: 0, color: 'var(--sand)', fontSize: 12, fontFamily: 'var(--ds-label)',
+                }}
+                labelStyle={{ color: 'var(--sand-2)', letterSpacing: '0.06em' }}
+                labelFormatter={(l, payload) => {
+                  const o = payload?.[0]?.payload?.objective
+                  return o ? `${l} — ${o}` : String(l)
+                }}
+              />
+              <Area type="stepAfter" dataKey="blue" name={campaign.blueLabel} stroke={campaign.blueColor}
+                fill={campaign.blueColor} fillOpacity={0.16} strokeWidth={1.8} isAnimationActive={false} />
+              <Area type="stepAfter" dataKey="red" name={campaign.redLabel} stroke={campaign.redColor}
+                fill={campaign.redColor} fillOpacity={0.16} strokeWidth={1.8} isAnimationActive={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+
+          {contested.length > 0 && (
+            <div className="ob-tl-contested">
+              <span className="ds-k">Most contested</span>
+              <div>
+                {contested.map(([name, count]) => (
+                  <span key={name} className="ob-tl-chip">{name}<b>×{count}</b></span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <ol className="capture-timeline-log ob-tl-log">
+          {events.slice(0, 20).map((e, i) => {
+            const d = new Date(e.time)
+            return (
+              <li key={`${e.time}-${e.objective}-${i}`} className={sideTone(e.side)}>
+                <time>{fmtClock(d)}</time>
+                <strong>{e.objective}</strong>
+                <span className="by">{capturers(e.by)}</span>
+                <span className="ago">{ago(d, now)}</span>
+              </li>
+            )
+          })}
+        </ol>
+      </div>
+    </div>
+  )
+}
+
 export default function CaptureTimeline({ events }: { events: CaptureEvent[] }) {
+  const look = useDashLook()
   const now = Date.now()
 
   // bfdb hands these back newest-first; the chart needs the other order.
@@ -60,6 +142,8 @@ export default function CaptureTimeline({ events }: { events: CaptureEvent[] }) 
       .sort((a, b) => b[1] - a[1])
       .slice(0, 6)
   }, [events])
+
+  if (look.profile) return <LevantTimeline events={events} series={series} contested={contested} now={now} />
 
   if (events.length === 0) {
     return (

@@ -30,6 +30,8 @@ import { useRound } from '../context/RoundContext'
 import { useFlagBackground } from '../lib/flags'
 import { useWireframe } from '../lib/wireframe'
 import { pressable } from '@shared/web/a11y'
+import LevantSitrep from './LevantSitrep'
+import { useDashLook } from '../lib/look'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -432,6 +434,10 @@ export default function Dashboard() {
     return { all: recent.length, blue: recent.filter(k => k.killer?.side === 'Blue').length, red: recent.filter(k => k.killer?.side === 'Red').length }
   }, [feed, now])
   const roundId = selectedRound ?? rounds.find(r => r.active)?.id ?? null
+  // The round on show, for the masthead: the picked one, else the open one.
+  const shownRound = rounds.find(r => r.id === roundId)
+  const look = useDashLook()
+  const masthead = look.onCampaign && look.profile?.slug === 'syria' ? look.profile : undefined
 
   const blueDelta = useDelta(blueObj)
   const redDelta  = useDelta(redObj)
@@ -445,6 +451,45 @@ export default function Dashboard() {
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
+
+  const readouts = (
+    <>
+      <KpiCell label="ONLINE" value={online.length} icon={PilotIcon}
+        sub={`${blue.length} blu · ${red.length} red`} />
+      <KpiCell label="AIRBORNE" value={inAir} icon={Aircraft} color="var(--accent)"
+        sub={online.length > 0 ? `${Math.round(inAir / online.length * 100)}% of online` : '—'} />
+      <KpiCell label={`${campaign.blueLabel} OBJ`} value={blueObj}
+        icon={Shield} color={campaign.blueColor} delta={blueDelta}
+        sub={`${total > 0 ? Math.round(blueObj / total * 100) : 0}% territory`} />
+      <KpiCell label={`${campaign.redLabel} OBJ`} value={redObj}
+        icon={Shield} color={campaign.redColor} delta={redDelta}
+        sub={`${total > 0 ? Math.round(redObj / total * 100) : 0}% territory`} />
+      <KpiCell label="AT RISK" value={atRisk} icon={Alert}
+        color={atRisk > 0 ? 'var(--red)' : 'var(--text-dim)'}
+        sub="falling or under attack" />
+      <KpiCell label="KILLS · 1H" value={lastHour.all} icon={KillIcon} color="var(--red)"
+        sub={`${lastHour.blue} blu · ${lastHour.red} red`} />
+      <KpiCell label="TOTAL PILOTS" value={stats?.total_pilots ?? '—'}
+        sub={`${stats?.blue_registered ?? 0} blu · ${stats?.red_registered ?? 0} red`} />
+    </>
+  )
+
+  // Levant Ablaze: SITREP as the campaign's page on the site lays it out --
+  // a page that scrolls, not three columns fitted to the window.
+  if (masthead) return (
+    <>
+      <LevantSitrep
+        profile={masthead} round={shownRound} roundId={roundId}
+        online={online} objectives={objectives} fronts={fronts} attention={attention}
+        kills={kills} feed={feed} now={now} pilots={pilots} nameMap={nameMap} stats={stats}
+        news={news?.days} newsErr={newsErr} blueDelta={blueDelta} redDelta={redDelta}
+        offline={objectivesQ.isError || onlineQ.isError}
+        onRetry={() => { objectivesQ.refetch(); onlineQ.refetch() }}
+        onOpen={setDrawer}
+      />
+      <ObjectiveDrawer objective={drawer} onClose={() => setDrawer(null)} onOpen={setDrawer} />
+    </>
+  )
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
@@ -480,23 +525,7 @@ export default function Dashboard() {
 
       {/* ── KPI strip ── */}
       <div className="kpi-strip" style={kpiArt}>
-        <KpiCell label="ONLINE" value={online.length} icon={PilotIcon}
-          sub={`${blue.length} blu · ${red.length} red`} />
-        <KpiCell label="AIRBORNE" value={inAir} icon={Aircraft} color="var(--accent)"
-          sub={online.length > 0 ? `${Math.round(inAir / online.length * 100)}% of online` : '—'} />
-        <KpiCell label={`${campaign.blueLabel} OBJ`} value={blueObj}
-          icon={Shield} color={campaign.blueColor} delta={blueDelta}
-          sub={`${total > 0 ? Math.round(blueObj / total * 100) : 0}% territory`} />
-        <KpiCell label={`${campaign.redLabel} OBJ`} value={redObj}
-          icon={Shield} color={campaign.redColor} delta={redDelta}
-          sub={`${total > 0 ? Math.round(redObj / total * 100) : 0}% territory`} />
-        <KpiCell label="AT RISK" value={atRisk} icon={Alert}
-          color={atRisk > 0 ? 'var(--red)' : 'var(--text-dim)'}
-          sub="falling or under attack" />
-        <KpiCell label="KILLS · 1H" value={lastHour.all} icon={KillIcon} color="var(--red)"
-          sub={`${lastHour.blue} blu · ${lastHour.red} red`} />
-        <KpiCell label="TOTAL PILOTS" value={stats?.total_pilots ?? '—'}
-          sub={`${stats?.blue_registered ?? 0} blu · ${stats?.red_registered ?? 0} red`} />
+        {readouts}
       </div>
 
       {/* ── Main body ── */}
@@ -509,11 +538,9 @@ export default function Dashboard() {
           borderBottom: isMobile ? '1px solid var(--border)' : 'none',
         }}>
           {/* Map header */}
-          <div style={{ padding: '5px 12px', background: 'rgba(0,0,0,0.3)', borderBottom: '1px solid var(--border)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div className="dash-subhead">
             <Pin size={9} style={{ color: 'var(--accent)' }} />
-            <span style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', flex: 1 }}>
-              TACTICAL OVERVIEW
-            </span>
+            <span className="dash-subhead-title">TACTICAL OVERVIEW</span>
             <LiveBadge />
           </div>
           {/* Map */}
@@ -527,11 +554,9 @@ export default function Dashboard() {
           <div style={isMobile
             ? { flex: '0 0 auto', maxHeight: 260, display: 'flex', flexDirection: 'column', borderTop: '1px solid var(--border)' }
             : { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', borderTop: '1px solid var(--border)' }}>
-            <div style={{ padding: '5px 12px', background: 'rgba(0,0,0,0.25)', borderBottom: '1px solid var(--border)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div className="dash-subhead">
               <Comms size={9} style={{ color: 'var(--accent)' }} />
-              <span style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', flex: 1 }}>
-                WAR NEWS
-              </span>
+              <span className="dash-subhead-title">WAR NEWS</span>
               {news?.days?.[0] && !news.days[0].final_ && (
                 <span className="vs-pulse font-mono-vs" style={{ fontSize: '0.63rem', color: 'var(--accent)', border: '1px solid var(--accent-border)', padding: '1px 5px' }}>
                   TODAY

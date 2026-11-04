@@ -413,6 +413,31 @@ body {
   border-radius: 2px;
 }
 
+/* Panel header (components/Panel.tsx). Two sizes: md for a page-level card,
+   sm for a dense panel inside a column. */
+.vs-panel-head {
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  padding: 11px 18px; border-bottom: 1px solid var(--border);
+}
+.vs-panel-head.sm { padding: 7px 13px; }
+.vs-panel-icon { flex-shrink: 0; }
+.vs-panel-title {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 0.66rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted);
+}
+.vs-panel-head.sm .vs-panel-title { font-size: 0.63rem; letter-spacing: 0.2em; font-family: var(--font-mono); }
+.vs-panel-count { font-size: 0.63rem; color: var(--text-dim); flex-shrink: 0; }
+
+/* A strip heading inside a column (SITREP's map and war news). */
+.dash-subhead {
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  padding: 5px 12px; background: rgba(0,0,0,0.3); border-bottom: 1px solid var(--border);
+}
+.dash-subhead-title {
+  flex: 1; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--text-dim); font-family: var(--font-mono);
+}
+
 /* Stat card */
 .stat-card {
   background: var(--bg-card);

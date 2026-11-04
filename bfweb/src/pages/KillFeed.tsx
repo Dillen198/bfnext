@@ -16,6 +16,10 @@ import {
 } from '@icons'
 import { useRound } from '../context/RoundContext'
 import { useTableSort, SortTh } from '../components/SortableTh'
+import { useDashLook } from '../lib/look'
+import { campaign } from '../config/campaign'
+import { Card as LvCard, Tape } from '../components/Levant'
+import './levant/killfeed.css'
 
 type KillCol = 'time' | 'category' | 'killer' | 'airframe' | 'weapon' | 'target' | 'victim'
 const KILL_COLS: { label: string; key: KillCol }[] = [
@@ -158,6 +162,139 @@ function BarList({ rows, empty }: { rows: { key: string; label: React.ReactNode;
   )
 }
 
+// ── Levant Ablaze: the same page drawn in the campaign's desert look ─────────
+// Styles: pages/levant/killfeed.css. The plain look above keeps its own JSX.
+
+type Tone = 'b' | 'r' | 'n'
+const tone = (s: string | null | undefined): Tone => (s === 'Blue' ? 'b' : s === 'Red' ? 'r' : 'n')
+const sideName = (s: string | null | undefined) => (s === 'Blue' ? campaign.blueLabel : s === 'Red' ? campaign.redLabel : 'Neutral')
+
+/** Air kills on rust tape, air defences on the warning tape, the rest sand. */
+const CLS_TONE: Record<string, 'rust' | 'warn' | 'n' | undefined> = {
+  AIRCRAFT: 'rust', HELO: 'rust', 'AIR DEF': 'warn', RADAR: 'warn', STRUCT: 'n', GND: 'n',
+}
+
+function ClassTape({ label, icon: Icon, t }: { label: string; icon?: IconComponent; t?: 'rust' | 'warn' | 'n' }) {
+  return (
+    <Tape tone={t} className="sm kf-cls">
+      {Icon && <Icon size={10} strokeWidth={2} />}
+      {label}
+    </Tape>
+  )
+}
+
+/** A square segmented control with its name in the first cell. */
+function DSeg<T extends string>({ value, options, onChange, name, k, labels, tones }: {
+  value: T; options: readonly T[]; onChange: (v: T) => void; name: string; k: string
+  labels?: Partial<Record<T, string>>; tones?: Partial<Record<T, Tone>>
+}) {
+  return (
+    <div role="group" aria-label={name} className="kf-seg">
+      <span className="kf-k" aria-hidden="true">{k}</span>
+      {options.map(o => (
+        <button key={o} type="button" aria-pressed={value === o} onClick={() => onChange(o)}
+          className={`kf-seg-btn${tones?.[o] ? ` ${tones[o]}` : ''}`}>
+          {labels?.[o] ?? o}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+const TICK = { fill: 'var(--sand-dim)', fontSize: 11, fontWeight: 600, fontFamily: "'Barlow Condensed', 'Arial Narrow', sans-serif", letterSpacing: '0.06em' }
+
+function DesertTip({ active, payload }: { active?: boolean; payload?: ReadonlyArray<{ payload?: ActRow }> }) {
+  const p = payload?.[0]?.payload
+  if (!active || !p) return null
+  return (
+    <div className="kf-tip">
+      <span className="ds-k">{p.label}</span>
+      <div className="b"><i /><b>{p.blue}</b> by {campaign.blueLabel}</div>
+      <div className="r"><i /><b>{-p.red}</b> by {campaign.redLabel}</div>
+    </div>
+  )
+}
+
+function DesertActivity({ rows }: { rows: ActRow[] }) {
+  if (rows.length === 0) return <p className="lv-empty kf-chart-empty">No kills in this view</p>
+  return (
+    <div className="kf-chart">
+      <ResponsiveContainer width="100%" height={170}>
+        <BarChart data={rows} stackOffset="sign" margin={{ left: -14, right: 4, top: 4, bottom: 0 }} barCategoryGap={2}>
+          <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 3" />
+          <XAxis dataKey="label" tick={TICK} axisLine={false} tickLine={false} minTickGap={24} />
+          <YAxis tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} width={36} tickFormatter={(v: number) => String(Math.abs(v))} />
+          <ReferenceLine y={0} stroke="var(--sand-dim)" />
+          <Tooltip cursor={{ fill: 'rgba(200,100,47,0.1)' }} content={<DesertTip />} />
+          <Bar dataKey="blue" stackId="k" fill={BLUE} maxBarSize={24} isAnimationActive={false} />
+          <Bar dataKey="red" stackId="k" fill={RED} maxBarSize={24} isAnimationActive={false} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
+interface ExRow { name: string; blue: number; red: number; icon?: IconComponent }
+
+/** What each side destroyed: a butterfly, the class on tape in the middle. */
+function DesertExchange({ rows, cat, onCat }: { rows: ExRow[]; cat: string | null; onCat: (c: string | null) => void }) {
+  if (rows.length === 0) return <p className="lv-empty">No kills in this view</p>
+  const max = Math.max(1, ...rows.map(e => Math.max(e.blue, e.red)))
+  return (
+    <div className="kf-ex">
+      <span className="kf-ex-side b">{campaign.blueLabel}</span>
+      <span className="kf-k kf-ex-mid">Target class</span>
+      <span className="kf-ex-side r">{campaign.redLabel}</span>
+      {rows.map(e => (
+        <React.Fragment key={e.name}>
+          <span className="kf-ex-n b">{e.blue}</span>
+          <div className="kf-ex-bar b" title={`${e.blue} ${e.name} by ${campaign.blueLabel}`}>
+            <i style={{ width: `${(e.blue / max) * 100}%` }} />
+          </div>
+          <button type="button" className="kf-ex-cls" aria-pressed={cat === e.name}
+            onClick={() => onCat(cat === e.name ? null : e.name)} title={cat === e.name ? 'Show every category' : `Only ${e.name}`}>
+            <ClassTape label={e.name} icon={e.icon} t={cat === e.name ? 'rust' : 'n'} />
+          </button>
+          <div className="kf-ex-bar r" title={`${e.red} ${e.name} by ${campaign.redLabel}`}>
+            <i style={{ width: `${(e.red / max) * 100}%` }} />
+          </div>
+          <span className="kf-ex-n r">{e.red}</span>
+        </React.Fragment>
+      ))}
+    </div>
+  )
+}
+
+interface RankRow { key: string; name: string; n: number; side?: string; to?: string }
+
+/** Ranked bars, as the SITREP's top shooters. */
+function DesertRank({ rows, of, empty }: { rows: RankRow[]; of: number; empty: string }) {
+  if (rows.length === 0) return <p className="lv-empty">{empty}</p>
+  const max = Math.max(1, ...rows.map(r => r.n))
+  return (
+    <ol className="lv-shooters kf-rank">
+      {rows.map((r, i) => {
+        const bar = r.side ? tone(r.side) : i === 0 ? 'a' : 'g'
+        return (
+          <li key={r.key} className={`${r.side ? tone(r.side) : ''}${i === 0 ? ' first' : ''}${r.to ? '' : ' static'}`}>
+            <span className="rk">{i + 1}</span>
+            <div className="who">
+              {r.to
+                ? <RouterLink to={r.to} title={r.name}><strong>{r.name}</strong></RouterLink>
+                : <strong title={r.name}>{r.name}</strong>}
+              <div className="bar"><i className={bar} style={{ width: `${(r.n / max) * 100}%` }} /></div>
+            </div>
+            <dl>
+              <div><dt>Kills</dt><dd>{r.n}</dd></div>
+              <div><dt>Share</dt><dd>{of ? Math.round((r.n / of) * 100) : 0}%</dd></div>
+            </dl>
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 const realUcid = (u: string | null): string | null => (u && !/^0+$/.test(u) ? u : null)
@@ -166,6 +303,7 @@ const realUcid = (u: string | null): string | null => (u && !/^0+$/.test(u) ? u 
 const FEED_LIMIT = 500
 
 export default function KillFeed() {
+  const look = useDashLook()
   const { selectedRound } = useRound()
   const { data: raw, isLoading, isError, error, refetch, dataUpdatedAt } = useQuery({
     queryKey: ['kills-feed', selectedRound],
@@ -251,7 +389,7 @@ export default function KillFeed() {
       .map(([w, n]) => ({ key: w, label: w, title: w, value: n }))
   }, [shown])
 
-  const topKillers = useMemo(() => {
+  const killerRank = useMemo(() => {
     const m = new Map<string, { n: number; side: string }>()
     shown.forEach(k => {
       if (!k.killer?.ucid) return
@@ -259,15 +397,16 @@ export default function KillFeed() {
       e.n++
       m.set(k.killer.ucid, e)
     })
-    return [...m.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, 10).map(([ucid, e]) => ({
-      key: ucid, value: e.n, title: nameOf(ucid) ?? ucid,
-      label: (
-        <RouterLink to={`/pilots?ucid=${ucid}`} style={{ color: 'var(--text)', textDecoration: 'none' }}>
-          <span style={{ color: sideColor(e.side), fontSize: '0.6em', marginRight: 6 }}>●</span>{nameOf(ucid) ?? ucid.slice(0, 8)}
-        </RouterLink>
-      ),
-    }))
-  }, [shown, nameOf])
+    return [...m.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, 10).map(([ucid, e]) => ({ ucid, ...e }))
+  }, [shown])
+  const topKillers = useMemo(() => killerRank.map(e => ({
+    key: e.ucid, value: e.n, title: nameOf(e.ucid) ?? e.ucid,
+    label: (
+      <RouterLink to={`/pilots?ucid=${e.ucid}`} style={{ color: 'var(--text)', textDecoration: 'none' }}>
+        <span style={{ color: sideColor(e.side), fontSize: '0.6em', marginRight: 6 }}>●</span>{nameOf(e.ucid) ?? e.ucid.slice(0, 8)}
+      </RouterLink>
+    ),
+  })), [killerRank, nameOf])
 
   // What each side destroyed, by category.
   const exchange = useMemo(() => {
@@ -299,19 +438,158 @@ export default function KillFeed() {
   const today = new Date().toISOString().slice(0, 10)
   const filtered = shown.length !== kills.length
   const ratio = stats.red > 0 ? (stats.blue / stats.red).toFixed(2) : stats.blue > 0 ? '∞' : '—'
+  const playerPct = `${shown.length ? Math.round((stats.players / shown.length) * 100) : 0}%`
+  const clearFilters = () => { setSide('All'); setWho('All'); setCat(null); setQ('') }
+
+  const header = (
+    <PageHeader art="flanker-rear"
+      icon={KillFeedIcon}
+      title="KILL FEED"
+      sub={`${kills.length >= FEED_LIMIT ? `latest ${FEED_LIMIT}` : kills.length} events · refreshes every 15s`}
+      right={
+        <span className="font-mono" style={{ fontSize: '0.62rem', color: 'var(--text-dim)' }}>
+          {dataUpdatedAt ? `UPD ${new Date(dataUpdatedAt).toISOString().slice(11, 19)}Z` : ''}
+        </span>
+      }
+    />
+  )
+
+  if (look.profile) {
+    const pctOf = (n: number) => (shown.length ? Math.round((n / shown.length) * 100) : 0)
+    return (
+      <div className="flex flex-col flex-1 overflow-hidden">
+        {header}
+        <div className="lv-page kf-page">
+          <div className="kf-body">
+            {/* One filter row; it scopes everything below */}
+            <div className="kf-bar">
+              <DSeg name="Killer side" k="Side" value={side} options={['All', 'Blue', 'Red'] as const} onChange={setSide}
+                labels={{ Blue: campaign.blueLabel, Red: campaign.redLabel }} tones={{ Blue: 'b', Red: 'r' }} />
+              <DSeg name="Killer" k="Killer" value={who} options={['All', 'Players', 'AI'] as const} onChange={setWho} />
+              <label className="kf-field">
+                <span className="kf-k">Target</span>
+                <select value={cat ?? ''} onChange={e => setCat(e.target.value || null)} aria-label="Target category">
+                  <option value="">All targets</option>
+                  {cats.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </label>
+              <label className="kf-field kf-search">
+                <span className="kf-k">Find</span>
+                <input value={q} onChange={e => setQ(e.target.value)} placeholder="Pilot, weapon, unit…" aria-label="Search kills" />
+              </label>
+              {filtered && <button type="button" className="kf-clear" onClick={clearFilters}>Clear</button>}
+              <span className="kf-count">
+                <b>{shown.length}</b>{filtered && <> of {kills.length}</>} kills
+              </span>
+            </div>
+
+            <div className="kf-strip" aria-label="Readouts">
+              <div className="lv-readout kf-b">
+                <span className="ds-k">Kills by {campaign.blueLabel}</span>
+                <span className="lv-v">{stats.blue}</span>
+                <span className="lv-sub">{pctOf(stats.blue)}% of this view</span>
+              </div>
+              <div className="lv-readout kf-r">
+                <span className="ds-k">Kills by {campaign.redLabel}</span>
+                <span className="lv-v">{stats.red}</span>
+                <span className="lv-sub">{pctOf(stats.red)}% of this view</span>
+              </div>
+              <div className="lv-readout kf-rust">
+                <span className="ds-k">Exchange</span>
+                <span className="lv-v">{ratio}</span>
+                <span className="lv-sub">{campaign.blueLabel} : {campaign.redLabel}</span>
+              </div>
+              <div className="lv-readout">
+                <span className="ds-k">By players</span>
+                <span className="lv-v">{playerPct}</span>
+                <span className="lv-sub">{stats.pvp} player-vs-player</span>
+              </div>
+            </div>
+
+            <div className="kf-two">
+              <LvCard tape="Activity" tone="rust" bodyClass="kf-card-pad"
+                right={<span className="kf-legend"><i className="b" />{campaign.blueLabel} up <i className="r" />{campaign.redLabel} down · UTC</span>}>
+                <DesertActivity rows={activity} />
+              </LvCard>
+              <LvCard tape="What each side destroyed" bodyClass="kf-card-pad">
+                <DesertExchange rows={exchange} cat={cat} onCat={setCat} />
+              </LvCard>
+            </div>
+
+            <div className="kf-two kf-two-sm">
+              <LvCard tape="Top killers" tone="rust" right={<span className="kf-k">Players</span>}>
+                <DesertRank of={stats.players} empty="No player kills in this view."
+                  rows={killerRank.map(e => ({ key: e.ucid, n: e.n, side: e.side, name: nameOf(e.ucid) ?? e.ucid.slice(0, 8), to: `/pilots?ucid=${e.ucid}` }))} />
+              </LvCard>
+              <LvCard tape="Top weapons">
+                <DesertRank of={shown.length} empty="No kills in this view."
+                  rows={topWeapons.map(w => ({ key: w.key, n: w.value, name: w.key }))} />
+              </LvCard>
+            </div>
+
+            <LvCard tape={<>Event log · {shown.length}</>} tone="r"
+              right={<span className="lv-live"><i />Live</span>}>
+              <div className="kf-table-wrap">
+                <table className="kf-table">
+                  <thead>
+                    <tr>
+                      {KILL_COLS.map(c => (
+                        <SortTh key={c.key} label={c.label} colKey={c.key} sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <QueryState
+                      colSpan={7} what="kills" isLoading={isLoading}
+                      isError={isError} error={error} onRetry={refetch}
+                      isEmpty={shown.length === 0}
+                      emptyText={kills.length === 0 ? 'No kills recorded yet' : 'No kills match the filters'}
+                    />
+                    {sortedKills.map((k, i) => {
+                      const killerName = nameOf(k.killer?.ucid)
+                      const victimName = nameOf(k.victim.ucid)
+                      const c = classifyTarget(k.target_type)
+                      // No killer = environment/crash; Neutral AI = unknown coalition
+                      const hasKiller = k.killer != null
+                      const isEnv = !hasKiller || k.killer!.side === 'Neutral'
+                      return (
+                        <tr key={i} className={isEnv ? 'n' : tone(k.killer!.side)}>
+                          <td className="kf-t"><time dateTime={k.time}>{fmtZ(k.time, today)}</time></td>
+                          <td><ClassTape label={c.label} icon={c.icon} t={CLS_TONE[c.label]} /></td>
+                          <td>
+                            <div className="kf-who">
+                              {isEnv && <span className="kf-env">Env</span>}
+                              {killerName
+                                ? <RouterLink to={`/pilots?ucid=${k.killer!.ucid}`}>{killerName}</RouterLink>
+                                : <span className="kf-ai">{hasKiller ? k.killer!.airframe ?? 'AI' : 'Environment'}</span>}
+                            </div>
+                          </td>
+                          <td>{k.killer?.airframe ? <span className="kf-ac">{k.killer.airframe}</span> : <span className="kf-none">—</span>}</td>
+                          <td className="kf-dim">{k.killer?.weapon ?? <span className="kf-none">—</span>}</td>
+                          <td className="kf-tgt">{k.target_type ?? '—'}</td>
+                          <td>
+                            <span className={`kf-vic ${tone(k.victim.side)}`} title={sideName(k.victim.side)}>
+                              {victimName
+                                ? <RouterLink to={`/pilots?ucid=${k.victim.ucid}`}>{victimName}</RouterLink>
+                                : <em>AI</em>}
+                            </span>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </LvCard>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <PageHeader art="flanker-rear"
-        icon={KillFeedIcon}
-        title="KILL FEED"
-        sub={`${kills.length >= FEED_LIMIT ? `latest ${FEED_LIMIT}` : kills.length} events · refreshes every 15s`}
-        right={
-          <span className="font-mono" style={{ fontSize: '0.62rem', color: 'var(--text-dim)' }}>
-            {dataUpdatedAt ? `UPD ${new Date(dataUpdatedAt).toISOString().slice(11, 19)}Z` : ''}
-          </span>
-        }
-      />
+      {header}
 
       <div className="flex-1 overflow-auto p-4 space-y-4">
         {/* ── One filter row; it scopes everything below ── */}
@@ -326,7 +604,7 @@ export default function KillFeed() {
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Pilot, weapon, unit…" className="vs-input" aria-label="Search kills"
             style={{ fontSize: '0.7rem', width: 200 }} />
           {filtered && (
-            <button type="button" onClick={() => { setSide('All'); setWho('All'); setCat(null); setQ('') }}
+            <button type="button" onClick={clearFilters}
               style={{ background: 'none', border: 'none', color: 'var(--accent-bright)', fontSize: '0.62rem', letterSpacing: '0.08em', cursor: 'pointer' }}>
               CLEAR
             </button>

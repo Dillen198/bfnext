@@ -32,6 +32,12 @@ const BY_INSTANCE: Record<string, FlagPair> = {
   vs2: { left: '/media/flag-georgia-l.png', right: '/media/flag-russia-r.png', bright: true },
 }
 
+/** The current server's two flags, for a page that lays them out itself. */
+export function useFlagPair(): FlagPair {
+  const { current } = useInstance()
+  return (current && BY_INSTANCE[current.id]) || COALITION
+}
+
 /**
  * How much of the panel colour is laid over the flags, as a percentage.
  * Higher is fainter. Busy, text-dense rows get more veil.

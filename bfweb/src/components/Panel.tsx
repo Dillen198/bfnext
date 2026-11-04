@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react'
 import type { IconComponent } from '@icons'
+import { useDashLook } from '../lib/look'
 
 /**
  * The one card chrome for the whole dashboard.
@@ -38,6 +39,25 @@ export default function Panel({
   size = 'md', style, className = '', bodyStyle, children,
 }: PanelProps) {
   const sm = size === 'sm'
+  // Levant Ablaze: the name on a strip of tape, as the campaign's cards are
+  // (levant.css). Inline rather than over the edge, so it never overlaps a
+  // card above it in a tight grid.
+  const look = useDashLook()
+  const head = look.profile ? (
+    <div className={`vs-panel-head lv-panel-head${sm ? ' sm' : ''}`}>
+      <span className={`ds-tape${sm ? ' sm' : ''}`}>{title}</span>
+      <span style={{ flex: 1 }} />
+      {right}
+      {count != null && <span className="vs-panel-count">{count}</span>}
+    </div>
+  ) : (
+    <div className={`vs-panel-head${sm ? ' sm' : ''}`}>
+      {Icon && <Icon size={sm ? 11 : 13} className="vs-panel-icon" style={{ color: iconColor ?? 'var(--text-dim)' }} />}
+      <span className="vs-panel-title">{title}</span>
+      {right}
+      {count != null && <span className="vs-panel-count font-mono-vs">{count}</span>}
+    </div>
+  )
   return (
     // The card is a flex column, and that is load-bearing rather than
     // cosmetic: `.vs-card` is a plain block, so a `bodyStyle` of `flex: 1`
@@ -64,42 +84,8 @@ export default function Panel({
         ...style,
       }}
     >
-      <div
-        style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          padding: sm ? '7px 13px' : '11px 18px',
-          borderBottom: '1px solid var(--border)',
-          flexShrink: 0,
-        }}
-      >
-        {Icon && <Icon size={sm ? 11 : 13} style={{ color: iconColor ?? 'var(--text-dim)', flexShrink: 0 }} />}
-        <span
-          style={{
-            fontSize: sm ? '0.63rem' : '0.66rem',
-            fontWeight: 700,
-            letterSpacing: sm ? '0.2em' : '0.12em',
-            textTransform: 'uppercase',
-            color: 'var(--text-muted)',
-            fontFamily: sm ? 'var(--font-mono)' : undefined,
-            flex: 1,
-            minWidth: 0,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {title}
-        </span>
-        {right}
-        {count != null && (
-          <span
-            className="font-mono-vs"
-            style={{ fontSize: '0.63rem', color: 'var(--text-dim)', flexShrink: 0 }}
-          >
-            {count}
-          </span>
-        )}
-      </div>
+      {/* Header styles live in index.css (.vs-panel-head). */}
+      {head}
       {children != null && <div style={bodyStyle}>{children}</div>}
     </div>
   )

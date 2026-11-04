@@ -64,8 +64,11 @@ let configLabels: { blue: string; red: string } | null = null
  */
 function applySideLabels(inst: ServerInstance | undefined): string {
   configLabels ??= { blue: campaign.blueLabel, red: campaign.redLabel }
-  campaign.blueLabel = inst?.blue_label || configLabels.blue
-  campaign.redLabel = inst?.red_label || configLabels.red
+  // A server that names neither side still has the names its page on the
+  // site gives it (vs1: NATO and RSII), so the dashboard says the same.
+  const profile = inst && SERVERS.find(s => s.instanceId === inst.id)
+  campaign.blueLabel = inst?.blue_label || profile?.blueLabel || configLabels.blue
+  campaign.redLabel = inst?.red_label || profile?.redLabel || configLabels.red
   return `${campaign.blueLabel}|${campaign.redLabel}`
 }
 

@@ -8,6 +8,8 @@ import CaptureBlockers from './CaptureBlockers'
 import { useAuth } from '../context/AuthContext'
 import { Link } from 'react-router-dom'
 import { X, Alert, Supply, Logistics } from '@icons'
+import { useDashLook } from '../lib/look'
+import '../pages/levant/objectives.css'
 
 /**
  * Everything known about one objective, including the supply topology the
@@ -65,12 +67,18 @@ function compact(n: number, abbreviate: boolean): string {
   return `${Math.round(n / 100_000) / 10}M`
 }
 
-function StockBar({ item }: { item: WarehouseItem }) {
+/** A stock line's fill and number scale, shared by both looks. */
+function stockOf(item: WarehouseItem) {
   const pct = item.capacity > 0 ? Math.min(100, (item.stored / item.capacity) * 100) : 0
-  const col = pct < 20 ? 'var(--red)' : pct < 50 ? 'var(--yellow)' : 'var(--accent)'
   // Scale is chosen per LINE, not per number, so a fraction never mixes units
   // the way "2000/40k" did.
   const abbrev = Math.max(item.stored, item.capacity) >= 10_000
+  return { pct, abbrev }
+}
+
+function StockBar({ item }: { item: WarehouseItem }) {
+  const { pct, abbrev } = stockOf(item)
+  const col = pct < 20 ? 'var(--red)' : pct < 50 ? 'var(--yellow)' : 'var(--accent)'
   return (
     <div className="stock-bar" style={{ display: 'flex', alignItems: 'center', gap: 7, flex: 1, minWidth: 0 }}>
       <div style={{ flex: 1, height: 4, background: 'var(--bg-elevated)', minWidth: 30 }}>
@@ -156,6 +164,196 @@ function SupplyGraph({ w, onOpen }: { w: Warehouse; onOpen: (name: string) => vo
   )
 }
 
+// ── Levant Ablaze ────────────────────────────────────────────────────────────
+// The drawer as a charred card standing at the window's edge: a rust top
+// edge, the objective's name heavy with its owner on tape, its condition as
+// four meters, then sections under small labels split by dashed rules.
+// Styles: pages/levant/objectives.css (ob-dr-*). The drawer is fixed, not
+// portalled, so it sits inside the shell's .srv-desert wrapper and reads its
+// palette from there.
+
+const sideTone = (s: string | undefined) => (s === 'Blue' ? 'b' : s === 'Red' ? 'r' : 'n')
+const sideName = (s: string | undefined) =>
+  s === 'Blue' ? campaign.blueLabel : s === 'Red' ? campaign.redLabel : 'Neutral'
+const band = (pct: number) => (pct < 20 ? 'low' : pct < 50 ? 'mid' : 'ok')
+
+function DesertStockBar({ item }: { item: WarehouseItem }) {
+  const { pct, abbrev } = stockOf(item)
+  return (
+    <div className={`stock-bar ob-sbar ${item.capacity > 0 ? band(pct) : 'unc'}`}>
+      <div className="ob-sbar-track"><i style={{ width: `${pct}%` }} /></div>
+      <span className="stock-count">
+        {compact(item.stored, abbrev)}
+        {item.capacity > 0 && <small>/{compact(item.capacity, abbrev)}</small>}
+      </span>
+      {item.capacity > 0 && <span className="stock-pct">{Math.round(pct)}%</span>}
+    </div>
+  )
+}
+
+function DesertStockRow({ k, v }: { k: string; v: WarehouseItem }) {
+  return (
+    <div className="stock-row ob-stock">
+      <span className="stock-label" title={k}>{k}</span>
+      <DesertStockBar item={v} />
+    </div>
+  )
+}
+
+function DesertSupplyGraph({ w, onOpen }: { w: Warehouse; onOpen: (name: string) => void }) {
+  if (!w.supplier && w.destinations.length === 0) {
+    return <p className="ob-dr-note">Not on a supply line — this objective is a hub, or nothing routes to it.</p>
+  }
+  const node = (name: string, owner: string, interdicted: boolean, role: string) => (
+    <button key={name} type="button" onClick={() => onOpen(name)} className={`supply-node ob-sg-node ${sideTone(owner)}`}>
+      <strong>{name}</strong>
+      {interdicted && <span className="ds-tape sm r">Cut</span>}
+      <span className="role">{role}</span>
+    </button>
+  )
+  return (
+    <div className="ob-sg">
+      {w.supplier && (
+        <>
+          {node(w.supplier.name, w.supplier.owner, w.supplier.interdicted, 'Supplies this')}
+          <span className="ob-sg-arrow" aria-hidden>↓</span>
+        </>
+      )}
+      <div className={`ob-sg-self ${sideTone(w.owner)}`}>{w.objective_name}</div>
+      {w.destinations.length > 0 && (
+        <>
+          <span className="ob-sg-arrow" aria-hidden>↓</span>
+          {w.destinations.map(d => node(d.name, d.owner, d.interdicted, 'Fed by this'))}
+        </>
+      )}
+    </div>
+  )
+}
+
+function DesertDrawer({ objective, onClose, onOpen, w, q, groups, lowCount, gated, signedIn }: {
+  objective: string
+  onClose: () => void
+  onOpen: (name: string) => void
+  w: Warehouse | undefined
+  q: { isLoading: boolean; isError: boolean; error: unknown; refetch: () => void }
+  groups: ReturnType<typeof groupItems> | null
+  lowCount: number
+  gated: boolean
+  signedIn: boolean
+}) {
+  const owner = w?.owner
+  return (
+    <>
+      <div role="presentation" onClick={onClose} className="ob-scrim" />
+      <div role="dialog" aria-label={`${objective} detail`} className={`ob-drawer ${sideTone(owner)}`}>
+        <header className="ob-dr-head">
+          <div className="ob-dr-id">
+            <div className="ob-dr-tags">
+              {w ? <span className={`ds-tape sm ${sideTone(owner)}`}>{sideName(owner)}</span> : <span className="ds-tape sm n">Objective</span>}
+              {w && <span className="ds-k">{w.kind}</span>}
+            </div>
+            <h2>{w?.objective_name ?? objective}</h2>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" className="vs-touch-target ob-dr-close">
+            <X size={16} />
+          </button>
+        </header>
+
+        <div className="ob-dr-body">
+          {gated ? (
+            <p className="ob-dr-gate">
+              A base's condition, stock and supply lines are your coalition's intel.{' '}
+              {signedIn
+                ? 'Register a side on the server this round to see them.'
+                : <><Link to="/login" className="ds-link">Sign in</Link> to see them.</>}
+            </p>
+          ) : (
+            <QueryState
+              what="this objective" isLoading={q.isLoading} isError={q.isError}
+              error={q.error} onRetry={q.refetch}
+            />
+          )}
+
+          {w && (
+            <>
+              {/* Condition, always visible -- it is on the F10 map anyway */}
+              <div className="ob-dr-cond">
+                {([['Health', w.health], ['Logistics', w.logi], ['Supply', w.supply], ['Fuel', w.fuel]] as const).map(([l, v]) => (
+                  <div key={l} className={v == null ? 'unk' : v < 40 ? 'low' : v < 60 ? 'mid' : 'ok'}
+                    title={v == null ? 'Not known — recon has not reported this' : undefined}>
+                    <span className="ds-k">{l}</span>
+                    {/* Unknown is not zero: an em dash, not a misleading 0%. */}
+                    <b>{v == null ? '—' : <>{v}<small>%</small></>}</b>
+                    <span className="bar"><i style={{ width: `${v == null ? 0 : Math.max(0, Math.min(100, v))}%` }} /></span>
+                  </div>
+                ))}
+              </div>
+
+              {w.capture && <CaptureBlockers report={w.capture} objectiveName={w.objective_name} />}
+
+              {w.damaged && (
+                <div className="ob-dr-alert">
+                  <Alert size={13} /> Warehouse knocked out — this base cannot store or issue materiel.
+                </div>
+              )}
+
+              {w.visibility !== 'full' && (
+                <p className="ob-dr-note ob-dr-sec">
+                  {w.visibility === 'intel' ? (
+                    <>
+                      Enemy objective — showing what recon has seen. Last observed{' '}
+                      <strong>{w.intel_as_of ? ago(w.intel_as_of) : 'unknown'}</strong>
+                      . Stock and supply routing need a closer look.
+                    </>
+                  ) : (
+                    <>Enemy objective — no recon on file. Fly a reconnaissance sortie to reveal its state.</>
+                  )}
+                </p>
+              )}
+
+              {w.visibility === 'full' && (
+                <>
+                  <section className="ob-dr-sec" aria-label="Supply line">
+                    <div className="ob-sec-k"><span className="ds-k"><Logistics size={11} /> Supply line</span></div>
+                    <DesertSupplyGraph w={w} onOpen={onOpen} />
+                  </section>
+
+                  <section className="ob-dr-sec" aria-label="Stock">
+                    <div className="ob-sec-k">
+                      <span className="ds-k"><Supply size={11} /> Stock</span>
+                      {lowCount > 0 && <span className="ds-tape sm r">{lowCount} line{lowCount === 1 ? '' : 's'} low</span>}
+                    </div>
+                    {groups && Object.entries(groups).map(([name, items]) =>
+                      items.length === 0 ? null : (
+                        <div key={name} className="ob-stock-group">
+                          <div className="ob-stock-k">
+                            <span>{name} <em>{items.length}</em></span>
+                            {/* Lead with the shortage -- it is the only number in
+                                this panel anyone acts on. */}
+                            {countBelow(items, 0.2) > 0 && <span className="short">{countBelow(items, 0.2)} under 20%</span>}
+                          </div>
+                          {items.slice(0, 25).map(([k, v]) => <DesertStockRow key={k} k={k} v={v} />)}
+                          {items.length > 25 && <div className="ob-stock-more">+ {items.length - 25} more</div>}
+                        </div>
+                      ),
+                    )}
+                    {Object.keys(w.liquids).length > 0 && (
+                      <div className="ob-stock-group">
+                        <div className="ob-stock-k"><span>Liquids</span></div>
+                        {Object.entries(w.liquids).map(([k, v]) => <DesertStockRow key={k} k={k} v={v} />)}
+                      </div>
+                    )}
+                  </section>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}
+
 export default function ObjectiveDrawer({
   objective, onClose, onOpen,
 }: {
@@ -163,6 +361,7 @@ export default function ObjectiveDrawer({
   onClose: () => void
   onOpen: (name: string) => void
 }) {
+  const look = useDashLook()
   // bfdb answers this for a pilot with a side this round, or an admin, and
   // nobody else: asked anyway it is a 401 or 403, re-asked every minute.
   const { user, loading: authLoading } = useAuth()
@@ -185,6 +384,13 @@ export default function ObjectiveDrawer({
   }, [w])
 
   if (!objective) return null
+
+  if (look.profile) {
+    return (
+      <DesertDrawer objective={objective} onClose={onClose} onOpen={onOpen} w={w} q={q}
+        groups={groups} lowCount={lowCount} gated={!canSeeStock && !authLoading} signedIn={!!user} />
+    )
+  }
 
   return (
     <>

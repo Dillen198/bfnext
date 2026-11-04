@@ -1,0 +1,166 @@
+/* Kill Feed in Levant Ablaze's look (pages/KillFeed.tsx, desert branch) and
+   SideBadge's desert tag. Every rule is under .srv-desert and prefixed kf-,
+   on top of the shared pieces in components/levant.css. */
+
+.srv-desert .kf-body { display: flex; flex-direction: column; gap: 30px; padding: 18px 18px 28px; max-width: 1560px; margin: 0 auto; box-sizing: border-box; }
+.srv-desert .kf-k { font-family: var(--ds-label); font-weight: 700; font-size: 0.68rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--sand-dim); white-space: nowrap; }
+
+/* ── the filter bar: square segments and inputs ─────────────────────────── */
+
+.srv-desert .kf-bar { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
+.srv-desert .kf-seg,
+.srv-desert .kf-field { display: flex; align-items: stretch; min-height: 32px; background: var(--char-2); border: 1px solid var(--line); }
+.srv-desert .kf-seg > .kf-k,
+.srv-desert .kf-field > .kf-k { display: flex; align-items: center; padding: 0 9px; background: var(--char-3); border-right: 1px solid var(--line); }
+.srv-desert .kf-seg-btn {
+  padding: 0 12px; border: none; border-left: 1px solid var(--line); background: transparent; cursor: pointer;
+  font-family: var(--ds-label); font-weight: 700; font-size: 0.8rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sand-2);
+}
+.srv-desert .kf-seg > .kf-k + .kf-seg-btn { border-left: none; }
+.srv-desert .kf-seg-btn:hover { color: var(--sand); background: var(--char-3); }
+.srv-desert .kf-seg-btn[aria-pressed='true'] { color: #1a0d05; background: var(--rust); }
+.srv-desert .kf-seg-btn.b[aria-pressed='true'] { color: #08131f; background: var(--blue); }
+.srv-desert .kf-seg-btn.r[aria-pressed='true'] { color: #1f0805; background: var(--red); }
+.srv-desert .kf-seg-btn:focus-visible,
+.srv-desert .kf-clear:focus-visible,
+.srv-desert .kf-ex-cls:focus-visible { outline: 2px solid var(--rust-bright); outline-offset: -2px; }
+
+.srv-desert .kf-field select,
+.srv-desert .kf-field input {
+  min-width: 0; padding: 0 10px; border: none; border-radius: 0; outline: none; background: transparent; color-scheme: dark;
+  font-family: var(--ds-body); font-size: 0.85rem; color: var(--sand);
+}
+.srv-desert .kf-field select { font-family: var(--ds-label); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; }
+.srv-desert .kf-field option { background: var(--char-2); color: var(--sand); }
+.srv-desert .kf-field input { width: 210px; }
+.srv-desert .kf-field input::placeholder { color: var(--sand-dim); }
+.srv-desert .kf-field:focus-within { border-color: var(--rust); }
+
+.srv-desert .kf-clear {
+  padding: 0 4px; border: none; background: none; cursor: pointer; align-self: center;
+  font-family: var(--ds-label); font-weight: 700; font-size: 0.8rem; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--rust-bright); border-bottom: 1px solid currentColor;
+}
+.srv-desert .kf-clear:hover { color: var(--sand); }
+.srv-desert .kf-count { margin-left: auto; align-self: center; font-family: var(--ds-label); font-weight: 600; font-size: 0.8rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--sand-dim); white-space: nowrap; }
+.srv-desert .kf-count b { font-family: var(--ds-display); font-weight: 600; font-size: 1.05rem; letter-spacing: 0; color: var(--sand); font-variant-numeric: tabular-nums; }
+
+/* ── the four readouts ──────────────────────────────────────────────────── */
+
+.srv-desert .kf-strip { display: grid; gap: 2px; padding: 2px; margin-top: -14px; grid-template-columns: repeat(2, minmax(0, 1fr)); background: rgba(12,9,6,0.92); border: 1px solid var(--line); }
+@media (min-width: 900px) { .srv-desert .kf-strip { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.srv-desert .kf-strip .lv-readout { padding: 10px 14px 9px; }
+.srv-desert .kf-strip .lv-v { font-size: 1.9rem; }
+.srv-desert .kf-strip .kf-b { border-left-color: var(--blue); }
+.srv-desert .kf-strip .kf-r { border-left-color: var(--red); }
+.srv-desert .kf-strip .kf-rust { border-left-color: var(--rust); }
+.srv-desert .kf-strip .kf-rust .lv-v { color: var(--rust-bright); }
+
+/* ── card rows ──────────────────────────────────────────────────────────── */
+
+.srv-desert .kf-two { display: grid; gap: 30px 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); }
+.srv-desert .kf-two-sm { grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); }
+.srv-desert .kf-card-pad { padding: 12px 14px 14px; }
+.srv-desert .kf-legend { display: inline-flex; align-items: center; gap: 5px; font-family: var(--ds-label); font-weight: 600; font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sand-dim); white-space: nowrap; }
+.srv-desert .kf-legend i { display: inline-block; width: 10px; height: 3px; background: var(--blue); }
+.srv-desert .kf-legend i.r { margin-left: 5px; background: var(--red); }
+
+/* the activity chart */
+.srv-desert .kf-chart .recharts-cartesian-axis-tick text { font-family: var(--ds-label); }
+.srv-desert .kf-chart-empty { height: 170px; display: flex; align-items: center; justify-content: center; padding: 0; }
+.srv-desert .kf-tip { display: grid; gap: 3px; min-width: 130px; padding: 6px 10px 7px; background: var(--char-3); border: 1px solid var(--line); border-top: 3px solid var(--coyote); }
+.srv-desert .kf-tip > div { display: flex; align-items: center; gap: 7px; font-family: var(--ds-label); font-weight: 500; font-size: 0.8rem; letter-spacing: 0.03em; color: var(--sand-2); }
+.srv-desert .kf-tip i { display: inline-block; width: 10px; height: 3px; background: var(--blue); }
+.srv-desert .kf-tip .r i { background: var(--red); }
+.srv-desert .kf-tip b { font-family: var(--ds-display); font-weight: 600; font-size: 0.98rem; color: var(--sand); font-variant-numeric: tabular-nums; }
+
+/* what each side destroyed: the butterfly */
+.srv-desert .kf-ex { display: grid; grid-template-columns: 28px minmax(0, 1fr) 96px minmax(0, 1fr) 28px; align-items: center; gap: 5px 7px; }
+.srv-desert .kf-ex-side { grid-column: span 2; font-family: var(--ds-display); font-weight: 600; font-size: 0.92rem; letter-spacing: 0.04em; text-transform: uppercase; padding-bottom: 5px; border-bottom: 1px dashed var(--line); }
+.srv-desert .kf-ex-side.b { color: var(--blue); text-align: right; }
+.srv-desert .kf-ex-side.r { color: var(--red); }
+.srv-desert .kf-ex-mid { text-align: center; padding-bottom: 5px; border-bottom: 1px dashed var(--line); align-self: stretch; display: flex; align-items: flex-end; justify-content: center; }
+.srv-desert .kf-ex-n { font-family: var(--ds-display); font-weight: 600; font-size: 0.9rem; color: var(--sand-2); font-variant-numeric: tabular-nums; text-align: right; }
+.srv-desert .kf-ex-n.r { text-align: left; }
+.srv-desert .kf-ex-bar { display: flex; height: 8px; background: var(--char-3); }
+.srv-desert .kf-ex-bar.b { justify-content: flex-end; }
+.srv-desert .kf-ex-bar i { display: block; height: 100%; }
+.srv-desert .kf-ex-bar.b i { background: var(--blue); }
+.srv-desert .kf-ex-bar.r i { background: var(--red); }
+.srv-desert .kf-ex-cls { all: unset; box-sizing: border-box; display: flex; justify-content: center; cursor: pointer; padding: 2px 0; }
+.srv-desert .kf-ex-cls:hover .ds-tape.n { color: var(--sand); --tape: #5a4a35; }
+
+/* the class on tape, with its icon */
+.srv-desert .kf-cls { display: inline-flex; align-items: center; gap: 4px; }
+.srv-desert .kf-cls svg { flex-shrink: 0; }
+
+/* top killers and top weapons: ranked bars as the SITREP's shooters */
+.srv-desert .kf-rank li { grid-template-columns: 28px minmax(0, 1fr) auto; padding: 6px 14px; }
+.srv-desert .kf-rank li.static { cursor: default; }
+.srv-desert .kf-rank .who a { display: block; min-width: 0; overflow: hidden; color: inherit; text-decoration: none; }
+.srv-desert .kf-rank .who a:hover strong,
+.srv-desert .kf-rank .who a:focus-visible strong { color: var(--rust-bright); }
+.srv-desert .kf-rank .who strong { display: block; }
+.srv-desert .kf-rank .bar { height: 4px; }
+.srv-desert .kf-rank .bar i { display: block; height: 100%; }
+.srv-desert .kf-rank .bar i.b { background: var(--blue); }
+.srv-desert .kf-rank .bar i.r { background: var(--red); }
+.srv-desert .kf-rank dl > div { min-width: 34px; }
+
+/* ── the event log ──────────────────────────────────────────────────────── */
+
+.srv-desert .kf-table-wrap { max-height: 560px; overflow: auto; }
+.srv-desert .kf-table { width: 100%; min-width: 780px; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.srv-desert .kf-table th {
+  position: sticky; top: 0; z-index: 1; padding: 8px 12px 7px; text-align: left; background: var(--char-2); border-bottom: 2px solid var(--line);
+  font-family: var(--ds-label); font-weight: 700; font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--sand-dim);
+}
+.srv-desert .kf-table .vs-sort-btn:focus-visible { outline: 2px solid var(--rust-bright); outline-offset: 2px; }
+.srv-desert .kf-table td { padding: 5px 12px; border-bottom: 1px solid rgba(58,47,34,0.7); white-space: nowrap; font-size: 0.84rem; color: var(--sand-2); }
+.srv-desert .kf-table tbody tr:nth-child(even) { background: rgba(0,0,0,0.12); }
+.srv-desert .kf-table tbody tr:hover { background: var(--char-3); }
+.srv-desert .kf-table tbody tr.b { --side: var(--blue); }
+.srv-desert .kf-table tbody tr.r { --side: var(--red); }
+.srv-desert .kf-table tbody tr > td:first-child { box-shadow: inset 3px 0 0 var(--side, #4a3c2b); padding-left: 14px; }
+.srv-desert .kf-table tbody tr > td[colspan] { box-shadow: none; white-space: normal; font-family: var(--ds-label); font-size: 0.95rem; }
+
+.srv-desert .kf-t time { font-family: var(--ds-display); font-weight: 500; font-size: 0.86rem; color: var(--sand-dim); }
+.srv-desert .kf-who { display: flex; align-items: center; gap: 7px; }
+.srv-desert .kf-who a { font-family: var(--ds-display); font-weight: 600; font-size: 0.94rem; letter-spacing: 0.02em; text-decoration: none; color: color-mix(in srgb, var(--side, var(--sand)) 55%, var(--sand)); }
+.srv-desert .kf-who a:hover,
+.srv-desert .kf-vic a:hover { color: var(--rust-bright); }
+.srv-desert .kf-who .kf-ai { font-family: var(--ds-label); font-weight: 600; letter-spacing: 0.04em; color: color-mix(in srgb, var(--side, var(--sand-dim)) 40%, var(--sand-dim)); }
+.srv-desert .kf-env { padding: 0 5px; font-family: var(--ds-label); font-weight: 700; font-size: 0.64rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sand-2); background: #4a3c2b; }
+.srv-desert .kf-ac { padding: 0 5px; font-family: var(--ds-label); font-weight: 700; font-size: 0.74rem; letter-spacing: 0.04em; color: var(--sand); background: var(--char-3); border: 1px solid var(--line); }
+.srv-desert .kf-dim { font-family: var(--ds-label); font-weight: 500; letter-spacing: 0.03em; color: var(--sand-dim); }
+.srv-desert .kf-tgt { color: var(--sand-2); }
+.srv-desert .kf-none { color: #4a3c2b; }
+.srv-desert .kf-vic { display: inline-block; padding: 0 0 0 7px; border-left: 3px solid var(--vside, #4a3c2b); }
+.srv-desert .kf-vic.b { --vside: var(--blue); }
+.srv-desert .kf-vic.r { --vside: var(--red); }
+.srv-desert .kf-vic a { font-family: var(--ds-display); font-weight: 600; font-size: 0.94rem; letter-spacing: 0.02em; text-decoration: none; color: color-mix(in srgb, var(--vside, var(--sand)) 55%, var(--sand)); }
+.srv-desert .kf-vic em { font-style: normal; font-family: var(--ds-label); font-weight: 600; letter-spacing: 0.06em; color: var(--sand-dim); }
+
+/* ── SideBadge: the side on a strip of tape ─────────────────────────────── */
+
+.srv-desert .kf-side { vertical-align: middle; flex-shrink: 0; }
+.srv-desert .kf-side.xs { padding: 0 6px; font-size: 0.62rem; letter-spacing: 0.1em; }
+
+/* ── phones ─────────────────────────────────────────────────────────────── */
+
+@media (max-width: 767px) {
+  .srv-desert .kf-body { padding: 14px 10px 24px; }
+  .srv-desert .kf-seg, .srv-desert .kf-field { min-height: 44px; }
+  .srv-desert .kf-seg-btn { flex: 1; padding: 0 10px; }
+  .srv-desert .kf-seg { flex: 1 1 100%; }
+  .srv-desert .kf-field { flex: 1 1 100%; }
+  .srv-desert .kf-field select, .srv-desert .kf-field input { flex: 1; width: auto; font-size: 16px; }
+  .srv-desert .kf-count { margin-left: 0; }
+  .srv-desert .kf-strip .lv-v { font-size: 1.6rem; }
+  .srv-desert .kf-ex { grid-template-columns: 24px minmax(0, 1fr) 86px minmax(0, 1fr) 24px; gap: 5px; }
+  .srv-desert .kf-table td { padding-top: 9px; padding-bottom: 9px; }
+  .srv-desert .kf-legend { font-size: 0.6rem; letter-spacing: 0.08em; }
+}
+@media (min-width: 768px) {
+  .srv-desert .kf-field select { min-width: 150px; }
+}

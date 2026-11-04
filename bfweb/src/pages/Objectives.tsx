@@ -2,18 +2,23 @@ import React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import QueryState from '../components/QueryState'
 import { useState, useMemo } from 'react'
-import { api, type NavaidEntry, type CaptureEvent, type Frontlines } from '../api'
+import { api, type NavaidEntry, type CaptureEvent, type Frontlines, type Objective as ObjectiveRow } from '../api'
 import HealthBar from '../components/HealthBar'
 import SideBadge from '../components/SideBadge'
 import PageHeader from '../components/PageHeader'
 import TacMap from '../components/TacMap'
 import { ago } from '../lib/format'
-import { attentionList, TONE } from '../lib/objectives'
+import { attentionList, TONE, type Attention, type Tone } from '../lib/objectives'
 import { useRound } from '../context/RoundContext'
 import { Objective, Alert, Pin, Capture } from '@icons'
 import CaptureTimeline from '../components/CaptureTimeline'
 import Panel from '../components/Panel'
 import ObjectiveDrawer from '../components/ObjectiveDrawer'
+import { Card } from '../components/Levant'
+import { campaign } from '../config/campaign'
+import { useCountUp } from '../lib/countUp'
+import { useDashLook } from '../lib/look'
+import './levant/objectives.css'
 
 type Filter = 'All' | 'Red' | 'Blue' | 'Neutral'
 type SortKey = 'name' | 'kind' | 'owner' | 'health' | 'logi' | 'supply' | 'fuel' | 'navaid' | 'last_change'
@@ -90,7 +95,221 @@ function LastTaken({ c, now }: { c: CaptureEvent | undefined; now: number }) {
   )
 }
 
+// ── Levant Ablaze ────────────────────────────────────────────────────────────
+// The page in the campaign's desert look, drawn in SITREP's vocabulary
+// (pages/LevantSitrep.tsx): the territory tug with big side percentages, the
+// map beside the attention list with its meters, holdings as rows of split
+// bars, then the register: owner on the left edge, condition as meters,
+// what is wrong on tape. On a phone the register's rows become cards and its
+// header a strip of sort chips. Styles: pages/levant/objectives.css (ob-*).
+
+const tone = (s: string | undefined | null): 'b' | 'r' | 'n' => (s === 'Blue' ? 'b' : s === 'Red' ? 'r' : 'n')
+const sideName = (s: string | undefined | null) => (s === 'Blue' ? campaign.blueLabel : s === 'Red' ? campaign.redLabel : 'Neutral')
+const REASON_TONE: Record<Tone, 'r' | 'warn' | 'n'> = { crit: 'r', warn: 'warn', info: 'n' }
+
+function Meter({ k, v }: { k: string; v: number }) {
+  const t = v < 25 ? 'low' : v < 60 ? 'mid' : 'ok'
+  return (
+    <div className={`lv-meter ${t}`}>
+      <span>{k}</span>
+      <div><i style={{ width: `${Math.max(0, Math.min(100, v))}%` }} /></div>
+      <b>{v}%</b>
+    </div>
+  )
+}
+
+function DesertTerritory({ counts, total }: { counts: Record<'Blue' | 'Red' | 'Neutral', number>; total: number }) {
+  const pct = (v: number) => (total ? (v / total) * 100 : 0)
+  // Animated like SITREP's front line (lib/countUp).
+  const b = useCountUp(pct(counts.Blue))
+  const r = useCountUp(pct(counts.Red))
+  const n = useCountUp(pct(counts.Neutral))
+  return (
+    <section className="ob-tug" aria-label="Territory control">
+      <div className="ob-tug-side b">
+        <b>{Math.round(b)}<small>%</small></b>
+        <span>{campaign.blueLabel} · {counts.Blue} held</span>
+      </div>
+      <div className="ob-tug-mid">
+        <span className="ds-tape sm rust">Territory control</span>
+        <span className="lv-sub">{total} objectives{counts.Neutral ? ` · ${counts.Neutral} neutral` : ''}</span>
+      </div>
+      <div className="ob-tug-side r">
+        <b>{Math.round(r)}<small>%</small></b>
+        <span>{campaign.redLabel} · {counts.Red} held</span>
+      </div>
+      <div className="ob-tug-bar fx" role="img"
+        aria-label={`${campaign.blueLabel} ${counts.Blue}, ${campaign.redLabel} ${counts.Red}, neutral ${counts.Neutral}`}>
+        <i className="b" style={{ width: `${b}%` }} />
+        <i className="n" style={{ width: `${n}%` }} />
+        <i className="r" style={{ width: `${r}%` }} />
+        <span className="mid" />
+        <span className="front" style={{ left: `${b}%` }} />
+      </div>
+    </section>
+  )
+}
+
+function DesertAttention({ items, onOpen }: { items: Attention[]; onOpen: (name: string) => void }) {
+  if (!items.length) {
+    return <p className="lv-empty">Nothing is under attack, about to fall, low on stock or freshly taken.</p>
+  }
+  return (
+    <ul className="lv-att">
+      {items.map(({ obj, reasons }) => (
+        <li key={obj.id}>
+          <button type="button" className={`lv-att-row ${tone(obj.owner)}`} onClick={() => onOpen(obj.name)}>
+            <div className="lv-att-top">
+              <strong>{obj.name}</strong>
+              <span className="lv-att-kind">{sideName(obj.owner)} · {obj.kind}</span>
+            </div>
+            <div className="lv-att-tags">
+              {reasons.map(r => <span key={r.text} className={`ds-tape sm ${REASON_TONE[r.tone]}`}>{r.text}</span>)}
+            </div>
+            <div className="lv-att-meters">
+              <Meter k="Def" v={obj.health} />
+              <Meter k="Sup" v={obj.supply} />
+              <Meter k="Fuel" v={obj.fuel} />
+            </div>
+          </button>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+interface KindRow { kind: string; total: number; Blue: number; Red: number; Neutral: number }
+
+function DesertHoldings({ byKind, kindMax, kindFilter, onPick }: {
+  byKind: KindRow[]; kindMax: number; kindFilter: string | null; onPick: (kind: string) => void
+}) {
+  return (
+    <ul className="ob-hold">
+      {byKind.map(k => {
+        const on = kindFilter === k.kind
+        return (
+          <li key={k.kind}>
+            <button type="button" className={`ob-hold-row${on ? ' on' : ''}`} aria-pressed={on} onClick={() => onPick(k.kind)}
+              title={on ? 'Show every type' : `Show only ${k.kind} in the table`}>
+              <span className="ob-hold-name"><i aria-hidden>{KIND_ICONS[k.kind] ?? '■'}</i>{k.kind}</span>
+              <span className="ob-hold-bar" style={{ width: `${(k.total / kindMax) * 100}%` }}
+                title={`${k.kind}: ${k.Blue} ${campaign.blueLabel} · ${k.Red} ${campaign.redLabel} · ${k.Neutral} neutral`}>
+                {(['Blue', 'Red', 'Neutral'] as const).filter(sd => k[sd] > 0).map(sd => (
+                  <i key={sd} className={tone(sd)} style={{ flex: k[sd] }} />
+                ))}
+              </span>
+              <span className="ob-hold-n">
+                <b>{k.total}</b>
+                <span className="b">{k.Blue}</span>
+                <span className="r">{k.Red}</span>
+                {k.Neutral > 0 && <span className="n">{k.Neutral}</span>}
+              </span>
+            </button>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+function DesertLastTaken({ c, now }: { c: CaptureEvent | undefined; now: number }) {
+  if (!c) return <span className="ob-dim">—</span>
+  // An all-zero UCID is bfdb's "no pilot credited".
+  const by = c.by.filter(n => !/^0+$/.test(n))
+  return (
+    <span className="ob-taken" title={new Date(c.time).toLocaleString()}>
+      <b className={tone(c.side)}>{sideName(c.side)}</b>
+      {by.length > 0 && <span> · {by.join(', ')}</span>}
+      <span className="ob-dim"> · {ago(c.time, now)}</span>
+    </span>
+  )
+}
+
+/** Where each column's cell sits on a phone card, and its small label there. */
+const DESERT_CELL: Record<string, string> = {
+  Name: 'ob-c-name', Type: 'ob-c-kind', Owner: 'ob-c-owner', Health: 'ob-c-m', Logistics: 'ob-c-m', Supply: 'ob-c-m', Fuel: 'ob-c-m',
+  Navaids: 'ob-c-nav', 'Last Taken': 'ob-c-taken', 'Last Change': 'ob-c-change',
+}
+
+interface DesertTableProps {
+  rows: ObjectiveRow[]
+  sortBy: SortKey
+  sortDir: 'asc' | 'desc'
+  onSort: (k: SortKey) => void
+  onOpen: (name: string) => void
+  navaidByName: Map<string, NavaidEntry[]>
+  lastCapture: Map<string, CaptureEvent>
+  reasonsById: Map<string, Attention['reasons']>
+  now: number
+  loading: boolean
+  isError: boolean
+  error: unknown
+  onRetry: () => void
+  emptyText: string
+}
+
+function DesertTable(p: DesertTableProps) {
+  return (
+    <div className="ob-reg-scroll">
+      <table className="ob-reg">
+        <thead>
+          <tr>
+            {COLS.map(({ label, key }) => {
+              const active = key != null && p.sortBy === key
+              return (
+                <th key={label} className={DESERT_CELL[label]} title={COLUMN_HELP[label]}
+                  aria-sort={active ? (p.sortDir === 'asc' ? 'ascending' : 'descending') : undefined}>
+                  {key ? (
+                    <button type="button" className={`ob-sort${active ? ' on' : ''}`} onClick={() => p.onSort(key)}>
+                      {label}<span aria-hidden>{active ? (p.sortDir === 'asc' ? '▲' : '▼') : '↕'}</span>
+                    </button>
+                  ) : <span className="ob-sort static">{label}</span>}
+                </th>
+              )
+            })}
+          </tr>
+        </thead>
+        <tbody>
+          <QueryState colSpan={10} what="objectives" isLoading={p.loading} isError={p.isError} error={p.error} onRetry={p.onRetry} />
+          {p.rows.map(obj => {
+            const reasons = p.reasonsById.get(obj.id) ?? []
+            const nav = p.navaidByName.get(obj.name)
+            return (
+              <tr key={obj.id} className={`ob-row ${tone(obj.owner)}`} onClick={() => p.onOpen(obj.name)}>
+                <td className="ob-c-name">
+                  <button type="button" className="ob-name" onClick={e => { e.stopPropagation(); p.onOpen(obj.name) }}>
+                    <i aria-hidden>{KIND_ICONS[obj.kind] ?? '■'}</i>
+                    <strong>{obj.name}</strong>
+                  </button>
+                  <span className="ob-name-sub">{sideName(obj.owner)} · {obj.kind}</span>
+                  {reasons.length > 0 && (
+                    <span className="ob-tags">
+                      {reasons.map(r => <span key={r.text} className={`ds-tape sm ${REASON_TONE[r.tone]}`}>{r.text}</span>)}
+                    </span>
+                  )}
+                </td>
+                <td className="ob-c-kind">{obj.kind}</td>
+                <td className="ob-c-owner"><SideBadge side={obj.owner} size="xs" /></td>
+                <td className="ob-c-m" data-k="Health"><HealthBar value={obj.health} /></td>
+                <td className="ob-c-m" data-k="Logistics"><HealthBar value={obj.logi} /></td>
+                <td className="ob-c-m" data-k="Supply"><HealthBar value={obj.supply} /></td>
+                <td className="ob-c-m" data-k="Fuel"><HealthBar value={obj.fuel} /></td>
+                <td className={`ob-c-nav${nav ? '' : ' none'}`} data-k="Navaids">{nav ? navaidCell(nav) : <span className="ob-dim">—</span>}</td>
+                <td className="ob-c-taken" data-k="Last taken"><DesertLastTaken c={p.lastCapture.get(obj.name)} now={p.now} /></td>
+                <td className="ob-c-change" data-k="Changed">{new Date(obj.last_change).toLocaleString()}</td>
+              </tr>
+            )
+          })}
+          <QueryState colSpan={10} what="objectives" isLoading={false}
+            isEmpty={!p.loading && !p.isError && p.rows.length === 0} emptyText={p.emptyText} />
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 export default function Objectives() {
+  const look = useDashLook()
   const { selectedRound } = useRound()
   const { data: objectives = [], isLoading, isError, error, refetch } = useQuery({
     queryKey: ['objectives', selectedRound],
@@ -208,9 +427,105 @@ export default function Objectives() {
     [objectives, filter, kindFilter, search, sortBy, sortDir, navaidByName]
   )
 
+  // What is wrong with each objective, for the desert register's tapes.
+  const reasonsById = useMemo(() => new Map(attention.map(a => [a.obj.id, a.reasons])), [attention])
+
   const bluePct    = total > 0 ? counts.Blue    / total * 100 : 0
   const redPct     = total > 0 ? counts.Red     / total * 100 : 0
   const neutralPct = total > 0 ? counts.Neutral / total * 100 : 0
+
+  if (look.profile) {
+    const header = (
+      <PageHeader art="abrams"
+        icon={Objective}
+        title="OBJECTIVES"
+        sub={`${total} total · ${counts.Blue} ${campaign.blueLabel} · ${counts.Red} ${campaign.redLabel} · ${counts.Neutral} neutral`}
+        right={
+          <input
+            type="search"
+            placeholder="Search…"
+            aria-label="Search objectives"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="vs-input w-36"
+          />
+        }
+      />
+    )
+    const filters: { f: Filter; label: string; n: number }[] = [
+      { f: 'All', label: 'All', n: total },
+      { f: 'Blue', label: campaign.blueLabel, n: counts.Blue },
+      { f: 'Red', label: campaign.redLabel, n: counts.Red },
+      { f: 'Neutral', label: 'Neutral', n: counts.Neutral },
+    ]
+    return (
+      <div className="flex flex-col flex-1 overflow-hidden">
+        {header}
+
+        <div className="flex-1 overflow-auto vs-page ob-page">
+          {total > 0 && <DesertTerritory counts={counts} total={total} />}
+
+          <div className="ob-split">
+            <Card tape="Tactical overview" tone="rust" className="ob-map">
+              <TacMap objectives={objectives} fronts={fronts} onSelect={setDrawer} />
+            </Card>
+            <Card tape={<>Needs attention · {attention.length}</>} tone="r" className="ob-att" bodyClass="lv-scroll">
+              <DesertAttention items={attention} onOpen={setDrawer} />
+            </Card>
+          </div>
+
+          {byKind.length > 0 && (
+            <Card tape="Holdings by type" tone="rust" className="ob-hold-card"
+              right={
+                <span className="ob-legend">
+                  {(['Blue', 'Red', 'Neutral'] as const).map(sd => <span key={sd} className={tone(sd)}><i />{sideName(sd)}</span>)}
+                </span>
+              }>
+              <DesertHoldings byKind={byKind} kindMax={kindMax} kindFilter={kindFilter}
+                onPick={k => setKindFilter(kindFilter === k ? null : k)} />
+            </Card>
+          )}
+
+          {/* Capture timeline -- full width, as on the plain page. */}
+          <Card tape="Capture timeline" tone="rust">
+            <CaptureTimeline events={captureEvents} />
+          </Card>
+
+          <Card tape={<>The register · {total}</>} className="ob-reg-card"
+            right={<span className="ob-shown"><b>{filtered.length}</b> shown</span>}>
+            <div className="ob-controls">
+              <div className="ob-seg" role="group" aria-label="Owner">
+                {filters.map(({ f, label, n }) => (
+                  <button key={f} type="button" className={`${tone(f)}${filter === f ? ' on' : ''}`} aria-pressed={filter === f}
+                    onClick={() => setFilter(f)}>
+                    {label}<b>{n}</b>
+                  </button>
+                ))}
+              </div>
+              {kindFilter && (
+                <button type="button" className="ob-kindchip" onClick={() => setKindFilter(null)} aria-label={`Clear the ${kindFilter} filter`}>
+                  {kindFilter}<span aria-hidden>✕</span>
+                </button>
+              )}
+              <span className="ob-help" title="Health and Logistics are defender strength (% of units alive). Supply and Fuel are warehouse stock levels.">
+                Health · Logistics = defenders alive <i>/</i> Supply · Fuel = stock <i>/</i> hover a header for more
+              </span>
+            </div>
+            <DesertTable rows={filtered} sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} onOpen={setDrawer}
+              navaidByName={navaidByName} lastCapture={lastCapture} reasonsById={reasonsById} now={now}
+              loading={isLoading} isError={isError} error={error} onRetry={refetch}
+              emptyText={objectives.length === 0 ? 'No objectives in this round' : 'No objectives match the current filter'} />
+          </Card>
+        </div>
+
+        <ObjectiveDrawer
+          objective={drawer}
+          onClose={() => setDrawer(null)}
+          onOpen={setDrawer}
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">

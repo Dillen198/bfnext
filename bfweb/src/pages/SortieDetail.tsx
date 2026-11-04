@@ -15,7 +15,10 @@ import type { FlightRow } from '../replay/data'
 import { api, type SortieDetail as Detail } from '../api'
 import { OUTCOME } from '../lib/sortie'
 import { fmtDuration } from '../lib/format'
-import { PlayCircle } from '@icons'
+import { PlayCircle, ArrowRight } from '@icons'
+import { Tape } from '../components/Levant'
+import { useDashLook } from '../lib/look'
+import './levant/pilots.css'
 
 const AIR = '#60a5fa'
 const GROUND = '#f97316'
@@ -24,6 +27,18 @@ const DEATH = '#ef4444'
 
 const sideColor = (side: string | null | undefined) =>
   side === 'Blue' ? '#3b82f6' : side === 'Red' ? '#ef4444' : '#64748b'
+const sideTone = (side: string | null | undefined) => (side === 'Blue' ? 'b' : side === 'Red' ? 'r' : 'n')
+
+/** The timeline's marks in each look. The desert look reads the campaign
+ *  palette; its end mark takes the outcome colour from a pl-o-* class. */
+const PLAIN_TL = {
+  track: '#334155', flown: 'var(--accent)', start: 'var(--accent)', tick: '#64748b',
+  air: AIR, ground: GROUND, deploy: DEPLOY, death: DEATH, radius: 4,
+}
+const DESERT_TL: typeof PLAIN_TL = {
+  track: 'var(--line)', flown: 'var(--sand-dim)', start: 'var(--sand)', tick: 'var(--sand-dim)',
+  air: 'var(--blue)', ground: 'var(--rust-bright)', deploy: 'var(--green)', death: 'var(--red)', radius: 0,
+}
 
 /** Seconds since takeoff as "T+1:04:09" / "T+4:09". */
 function fmtElapsed(secs: number): string {
@@ -82,7 +97,8 @@ function events(d: Detail): Ev[] {
 // labels stay their real size at any card width.
 const LANE = 22
 
-function Timeline({ d, evs }: { d: Detail; evs: Ev[] }) {
+function Timeline({ d, evs, desert = false }: { d: Detail; evs: Ev[]; desert?: boolean }) {
+  const C = desert ? DESERT_TL : PLAIN_TL
   // The flight's own length when known; otherwise stretch to the last event
   // so nothing falls off the right edge.
   const span = Math.max(d.duration_secs, ...evs.map(e => e.t), 60)
@@ -96,16 +112,17 @@ function Timeline({ d, evs }: { d: Detail; evs: Ev[] }) {
   return (
     <div role="img" aria-label="Sortie timeline" style={{ position: 'relative', height: 48, margin: '0 8px' }}>
       {/* Flight bar: the whole axis dim, the flown part lit. */}
-      <div style={{ position: 'absolute', left: 0, right: 0, top: LANE - 1, height: 2, background: '#334155' }} />
-      <div style={{ position: 'absolute', left: 0, width: pct(flown), top: LANE - 1, height: 2, background: 'var(--accent)', opacity: 0.6 }} />
-      <span style={{ ...at(0), width: 8, height: 8, borderRadius: 4, background: 'var(--accent)' }} title="Takeoff" />
+      <div style={{ position: 'absolute', left: 0, right: 0, top: LANE - 1, height: 2, background: C.track }} />
+      <div style={{ position: 'absolute', left: 0, width: pct(flown), top: LANE - 1, height: 2, background: C.flown, opacity: 0.6 }} />
+      <span style={{ ...at(0), width: 8, height: 8, borderRadius: C.radius, background: C.start }} title="Takeoff" />
       {d.duration_secs > 0 && (
-        <span style={{ ...at(d.duration_secs), width: 8, height: 8, borderRadius: 4, background: OUTCOME[d.outcome].color }}
+        <span className={desert ? `pl-o-${d.outcome}` : undefined}
+          style={{ ...at(d.duration_secs), width: 8, height: 8, borderRadius: C.radius, background: desert ? 'var(--o)' : OUTCOME[d.outcome].color }}
           title={OUTCOME[d.outcome].label} />
       )}
       {ticks.map((t, i) => (
-        <span key={i} className="font-mono" style={{
-          position: 'absolute', left: pct(t), top: LANE + 9, fontSize: '0.56rem', color: '#64748b', whiteSpace: 'nowrap',
+        <span key={i} className={desert ? 'pl-sd-tick' : 'font-mono'} style={{
+          position: 'absolute', left: pct(t), top: LANE + 9, fontSize: '0.56rem', color: C.tick, whiteSpace: 'nowrap',
           transform: i === 0 ? 'none' : i === ticks.length - 1 ? 'translateX(-100%)' : 'translateX(-50%)',
         }}>
           {fmtElapsed(t)}
@@ -114,18 +131,18 @@ function Timeline({ d, evs }: { d: Detail; evs: Ev[] }) {
       {evs.map((e, i) => {
         const tip = `${fmtElapsed(e.t)}  ${e.text}${e.sub ? ` — ${e.sub}` : ''}`
         if (e.kind === 'kill') {
-          const c = e.air ? AIR : GROUND
+          const c = e.air ? C.air : C.ground
           return (
             <span key={i} title={tip} style={{ ...at(e.t), top: LANE - 12, fontSize: 12, color: c, lineHeight: 1, cursor: 'default' }}>▼</span>
           )
         }
         if (e.kind === 'deploy') {
           return (
-            <span key={i} title={tip} style={{ ...at(e.t), width: 9, height: 9, background: DEPLOY, transform: 'translate(-50%, -50%) rotate(45deg)', cursor: 'default' }} />
+            <span key={i} title={tip} style={{ ...at(e.t), width: 9, height: 9, background: C.deploy, transform: 'translate(-50%, -50%) rotate(45deg)', cursor: 'default' }} />
           )
         }
         return (
-          <span key={i} title={tip} style={{ ...at(e.t), fontSize: 15, fontWeight: 700, color: DEATH, lineHeight: 1, cursor: 'default' }}>✕</span>
+          <span key={i} title={tip} style={{ ...at(e.t), fontSize: 15, fontWeight: 700, color: C.death, lineHeight: 1, cursor: 'default' }}>✕</span>
         )
       })}
     </div>
@@ -210,6 +227,70 @@ function EventList({ evs, takeoff }: { evs: Ev[]; takeoff: string }) {
   )
 }
 
+// ── Levant Ablaze ─────────────────────────────────────────────────────────────
+
+const outcomeText = (o: Detail['outcome']) => OUTCOME[o].label.replace(/^\S+\s/, '')
+
+function TileDesert({ name, value, cls, note }: { name: string; value: string | number; cls?: string; note?: string }) {
+  return (
+    <div className={`pl-sd-tile${cls ? ` ${cls}` : ''}`} title={note}>
+      <span className="ds-k">{name}</span>
+      <b>{value}</b>
+    </div>
+  )
+}
+
+function EventsDesert({ evs, takeoff }: { evs: Ev[]; takeoff: string }) {
+  const t0 = Date.parse(takeoff)
+  return (
+    <div className="pl-sd-sec">
+      <span className="ds-k">Events</span>
+      {evs.length === 0 ? (
+        <p className="pl-none">No kills, deploys or losses recorded on this sortie.</p>
+      ) : (
+        <ol className="pl-sd-ev">
+          {evs.map((e, i) => {
+            const kind = e.kind === 'kill' ? (e.air ? 'a' : 'g') : e.kind === 'deploy' ? 'dp' : 'x'
+            const tag = e.kind === 'kill' ? (e.air ? 'A/A kill' : 'A/G kill') : e.kind === 'deploy' ? 'Deploy' : 'Loss'
+            return (
+              <li key={i} className={`${kind}${e.kind === 'kill' ? ` pl-side-${sideTone(e.side)}` : ''}`}>
+                <time title={fmtClock(new Date(t0 + e.t * 1000).toISOString())}>{fmtElapsed(e.t)}</time>
+                <span className="tag">{tag}</span>
+                <span className="what">{e.text}{e.sub && <em> · {e.sub}</em>}</span>
+              </li>
+            )
+          })}
+        </ol>
+      )}
+    </div>
+  )
+}
+
+function WeaponsDesert({ d }: { d: Detail }) {
+  if (d.weapons.length === 0) return null
+  const max = Math.max(...d.weapons.map(w => w.shots), 1)
+  return (
+    <div className="pl-sd-sec">
+      <span className="ds-k">Weapons</span>
+      <ul className="pl-sd-wpn">
+        {d.weapons.map(w => (
+          <li key={w.weapon}>
+            <span className="nm" title={w.weapon}>{w.weapon}</span>
+            {/* Shots (track), hits (fill) */}
+            <div className="bar">
+              <i className="shots" style={{ width: `${(w.shots / max) * 100}%` }} />
+              <i className="hits" style={{ width: `${(w.hits / max) * 100}%` }} />
+            </div>
+            <span className="n">
+              <b>{w.shots}</b> fired · <b>{w.hits}</b> hit · <b className={w.kills > 0 ? 'k' : undefined}>{w.kills}</b> kill{w.kills === 1 ? '' : 's'}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 /** `debriefLink` adds a link to the full-page debrief; the debrief page
  *  itself renders this panel without one. */
 export default function SortieDetail({ ucid, sortieId, replay, debriefLink = true }: {
@@ -218,6 +299,7 @@ export default function SortieDetail({ ucid, sortieId, replay, debriefLink = tru
   replay?: FlightRow
   debriefLink?: boolean
 }) {
+  const look = useDashLook()
   const { data: d, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['pilot-sortie', ucid, sortieId],
     queryFn: () => api.pilotSortie(ucid, sortieId),
@@ -232,6 +314,55 @@ export default function SortieDetail({ ucid, sortieId, replay, debriefLink = tru
   const kills = d.air_kills + d.ground_kills
   const hitPct = d.shots > 0 ? `${Math.round((d.hits / d.shots) * 100)}%` : '—'
   const shotNote = 'Counts only shots at targets that died: DCS reports a shot to the stats server inside the kill record, so misses on survivors are not seen.'
+  const tacviewNote = 'Shots fired / kills in the Tacview recording of this flight -- this one does count misses.'
+
+  if (look.profile) {
+    return (
+      <div className="pl-sd">
+        <div className="pl-sd-tiles">
+          <div className={`pl-sd-tile out pl-o-${d.outcome}`}>
+            <span className="ds-k">Outcome</span>
+            <Tape className={`sm pl-otape pl-o-${d.outcome}`}>{outcomeText(d.outcome)}</Tape>
+          </div>
+          <TileDesert name="Duration" value={fmtDuration(d.duration_secs)} />
+          <TileDesert name="A/A kills" value={d.air_kills} cls={d.air_kills ? 'a' : undefined} />
+          <TileDesert name="A/G kills" value={d.ground_kills} cls={d.ground_kills ? 'g' : undefined} />
+          <TileDesert name="Shots on kills" value={d.shots} note={shotNote} />
+          <TileDesert name="Hit rate" value={hitPct} note={shotNote} />
+          <TileDesert name="Deploys" value={d.deploys.length} cls={d.deploys.length ? 'dp' : undefined} />
+          {replay && <TileDesert name="Tacview" value={`${replay.shots} / ${replay.kills}`} note={tacviewNote} />}
+        </div>
+
+        <div className="pl-sd-sec">
+          <div className="pl-sd-tl-head">
+            <span className="ds-k">Timeline</span>
+            <span className="pl-sd-key a">▼ A/A</span>
+            <span className="pl-sd-key g">▼ A/G</span>
+            <span className="pl-sd-key dp">◆ Deploy</span>
+            <span className="pl-sd-key x">✕ Loss</span>
+            <span className="pl-sd-links">
+              {debriefLink && (
+                <RouterLink className="ds-link" to={`/pilots/${encodeURIComponent(ucid)}/sortie/${sortieId}`}>
+                  Full debrief <ArrowRight size={11} />
+                </RouterLink>
+              )}
+              {replay && (
+                <RouterLink className="ds-link" to={`/replay/${encodeURIComponent(replay.rec)}?focus=${replay.i}`}>
+                  <PlayCircle size={12} /> Watch replay
+                </RouterLink>
+              )}
+            </span>
+          </div>
+          <Timeline d={d} evs={evs} desert />
+        </div>
+
+        <div className="pl-sd-cols">
+          <EventsDesert evs={evs} takeoff={d.takeoff} />
+          {kills > 0 || d.weapons.length > 0 ? <WeaponsDesert d={d} /> : null}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div style={{ padding: '12px 16px 16px', display: 'flex', flexDirection: 'column', gap: 14, background: 'rgba(0,0,0,0.18)' }}>
@@ -245,7 +376,7 @@ export default function SortieDetail({ ucid, sortieId, replay, debriefLink = tru
         <Tile name="Deploys" value={d.deploys.length} color={d.deploys.length ? DEPLOY : undefined} />
         {replay && (
           <Tile name="Tacview" value={`${replay.shots} / ${replay.kills}`}
-            note="Shots fired / kills in the Tacview recording of this flight -- this one does count misses." />
+            note={tacviewNote} />
         )}
       </div>
 

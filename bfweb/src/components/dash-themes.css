@@ -1,8 +1,12 @@
 /* The dashboard in the modern campaign's look: Levant Ablaze in desert
-   combat. (Red Storm has its own dashboard, bfrsr-web.) The palette and faces come from
-   shared/servers/themes.css, on a display:contents wrapper round the backdrop
-   and the shell (Layout); this file fills in the dashboard's own names and
-   dresses its chrome. Popups portalled to <body> keep the plain look. */
+   combat, the same look as its page on the site and its field guide in the
+   wiki. (Red Storm has its own dashboard, bfrsr-web.) The palette and faces
+   come from shared/servers/themes.css, on a display:contents wrapper round
+   the backdrop and the shell (Layout, LoginPage; lib/look.ts says when);
+   this file fills in the dashboard's own names and redresses its parts:
+   charred panels, sand type, rust for what matters, tape for labels and a
+   film of dust over the battle art. Popups portalled to <body> keep the
+   plain look. */
 
 .dash-themed {
   --font-display: var(--th-display);
@@ -12,27 +16,73 @@
 
 /* ── names the dashboard uses that the shared palettes don't set ── */
 .srv-desert.dash-themed {
-  --bg-card: rgba(29,24,18,0.86); --bg-elevated: rgba(38,32,23,0.92); --bg-hover: #2a2219; --bg-input: #120e0a;
-  --bg-chrome: rgba(18,14,10,0.9);
+  --bg-card: rgba(29,24,18,0.9); --bg-elevated: rgba(38,32,23,0.94); --bg-hover: #2a2219; --bg-input: #120e0a;
+  --bg-chrome: rgba(18,14,10,0.92);
   --bg-card-solid: #1d1812; --bg-elevated-solid: #262017; --bg-chrome-solid: #120e0a;
   --accent-dim: #a9512a; --green: #8fb04a; --orange: var(--rust); --purple: #a28ad8; --cyan: #5fb3a8;
   --blue-dim: #4f86ba; --blue-bg: rgba(106,166,220,0.10); --red-dim: #b23a2e; --red-bg: rgba(217,73,59,0.10);
   --scrollbar: #3a2f22;
+  --dust: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  --tape-cut: polygon(2% 0, 98% 4%, 100% 50%, 97% 100%, 1% 96%, 0 52%);
 }
+.srv-desert.dash-themed ::selection { background: rgba(200,100,47,0.45); color: #fff; }
 
-/* ── the backdrop paints each look's ground ── */
+/* ── the backdrop: charred dark under dust ── */
 .dash-themed .vs-backdrop { background: var(--bg); }
-.srv-desert.dash-themed .vs-backdrop::before {
-  content: ''; position: absolute; inset: 0; opacity: 0.16;
-  background: url(/media/hero.jpg) center 40% / cover no-repeat;
-  filter: sepia(0.4) saturate(0.9) blur(1px);
+/* No picture here: the battle art is each page's band, shown once. */
+.srv-desert.dash-themed .vs-backdrop::after {
+  content: ''; position: absolute; inset: 0; opacity: 0.07; mix-blend-mode: screen;
+  background-image: var(--dust);
 }
-.srv-desert.dash-themed .vs-backdrop-grid { background-image: radial-gradient(rgba(224,122,63,0.12) 1px, transparent 1px); }
-.srv-desert.dash-themed .vs-backdrop-sweep { background: linear-gradient(180deg, transparent, rgba(224,122,63,0.05) 68%, rgba(224,122,63,0.09)); }
+/* the dot matrix and the scan bar are the plain look's HUD; the desert has dust */
+.srv-desert.dash-themed .vs-backdrop-grid,
+.srv-desert.dash-themed .vs-backdrop-sweep { display: none; }
+body:has(.srv-desert.dash-themed)::after { display: none; }
 
-/* ── chrome ── */
-.dash-themed .page-header::after { background: linear-gradient(90deg, var(--accent) 0%, transparent 60%); }
-.dash-themed .nav-item.active { color: var(--accent); }
+/* ── top bar ── */
+/* Plain charred, like the sidebar: the battle art belongs to each page's own
+   band (SITREP's, PageHeader's), and painting it here too stacked the same
+   picture twice, out of register. */
+.srv-desert.dash-themed .topbar {
+  background-color: #120e0a;
+  background-image: var(--dust);
+  background-blend-mode: soft-light;
+  border-bottom: 1px solid var(--line);
+}
+/* Glass top bar (desktop). The bar is laid over the top of the page instead
+   of above it: the page's own band (SITREP's, PageHeader's) runs up behind
+   it, so the battle art shows once, through frosted glass, and content
+   blurs under the bar as it scrolls. The body row slides up by the bar's
+   height; the sidebar, and any page without a band, start below it.
+   Phones keep the solid bar: the nav drawer hangs from under it. */
+@media (min-width: 861px) {
+  .srv-desert.dash-themed .vs-shell > .topbar {
+    position: relative; z-index: 40; margin-bottom: -54px;
+    background-color: rgba(14,11,8,0.34); background-image: none;
+    backdrop-filter: blur(14px) saturate(1.25); -webkit-backdrop-filter: blur(14px) saturate(1.25);
+    border-bottom: 1px solid rgba(227,210,173,0.09);
+    box-shadow: 0 10px 30px -18px rgba(0,0,0,0.9);
+  }
+  .srv-desert.dash-themed .sidebar { padding-top: 54px; }
+  .srv-desert.dash-themed .vs-main { padding-top: 54px; }
+  .srv-desert.dash-themed .vs-main:has(.lv-pagehead, .lv-top) { padding-top: 0; }
+  /* a notice above a band must not hide under the bar */
+  .srv-desert.dash-themed .vs-main:has(.lv-pagehead, .lv-top) > [role="status"],
+  .srv-desert.dash-themed .vs-main:has(.lv-pagehead, .lv-top) > [role="alert"] { margin-top: 54px; }
+  .srv-desert.dash-themed .page-header.lv-pagehead { padding-top: calc(16px + 54px); min-height: calc(104px + 54px); }
+  .srv-desert.dash-themed .lv-top { padding-top: calc(14px + 54px); }
+  /* the Rounds list sticks below the bar, not under it */
+  .srv-desert .rd-list-card { top: calc(16px + 54px) !important; }
+}
+@media (min-width: 861px) and (max-height: 820px) {
+  .srv-desert.dash-themed .lv-top { padding-top: calc(10px + 54px); }
+}
+.srv-desert.dash-themed .topbar-brandname { font-weight: 700; font-size: 1.12rem !important; letter-spacing: 0.12em !important; color: var(--sand) !important; }
+.srv-desert.dash-themed .topbar-sep { background: var(--line); }
+.srv-desert.dash-themed .topbar .font-mono-vs { font-family: var(--ds-display); font-weight: 600; letter-spacing: 0.04em !important; }
+.srv-desert .logo-mark--light { display: block !important; }
+.srv-desert .logo-mark--dark { display: none !important; }
+
 .dash-theme-banner {
   flex-shrink: 0; display: flex; align-items: center; gap: 14px; padding: 5px 16px;
   font-family: var(--th-label); font-size: 0.74rem; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;
@@ -40,16 +90,172 @@
 .dash-theme-banner-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dash-theme-banner a { color: inherit; text-decoration: none; border-bottom: 1px solid currentColor; white-space: nowrap; }
 @media (max-width: 560px) { .dash-theme-banner a.dash-theme-banner-wiki { display: none; } }
-
-/* desert: battle art in the bar, rust strip, tape headings */
-.srv-desert.dash-themed .topbar {
-  background:
-    linear-gradient(90deg, rgba(18,14,10,0.97) 0%, rgba(18,14,10,0.85) 55%, rgba(18,14,10,0.6) 100%),
-    url(/media/hero.jpg) center 45% / cover no-repeat !important;
-  border-bottom: 2px solid var(--rust);
-}
 .srv-desert .dash-theme-banner { color: #1a0d05; background: var(--rust); }
-.srv-desert.dash-themed .page-header-title { text-transform: uppercase; }
-.srv-desert.dash-themed .nav-group-label { color: var(--rust-bright); }
-.srv-desert .logo-mark--light { display: block !important; }
-.srv-desert .logo-mark--dark { display: none !important; }
+
+/* ── sidebar ── */
+.srv-desert.dash-themed .sidebar { background: rgba(18,14,10,0.94); border-right: 1px solid var(--line); }
+.srv-desert.dash-themed .nav-group-label {
+  font-family: var(--ds-label); font-size: 0.7rem; letter-spacing: 0.22em; color: var(--rust-bright); padding-top: 16px;
+}
+.srv-desert.dash-themed .nav-item {
+  height: 38px; font-family: var(--ds-label); font-size: 0.92rem; font-weight: 600; letter-spacing: 0.1em; color: var(--sand-2);
+}
+.srv-desert.dash-themed .nav-item:hover { color: var(--sand); background: var(--char-3); }
+.srv-desert.dash-themed .nav-item.active {
+  color: var(--sand);
+  background: linear-gradient(90deg, rgba(200,100,47,0.22), rgba(200,100,47,0.04) 85%);
+}
+.srv-desert.dash-themed .nav-item.active::before { top: 0; height: 100%; width: 3px; border-radius: 0; background: var(--rust); }
+.srv-desert.dash-themed .nav-item.active svg { color: var(--rust-bright); }
+.srv-desert.dash-themed .nav-item.locked { color: var(--sand-dim); opacity: 0.5; }
+.srv-desert.dash-themed .nav-item.locked:hover { color: var(--sand-2); background: var(--char-2); opacity: 0.8; }
+.srv-desert.dash-themed .nav-divider { background: var(--line); height: 0; border-top: 1px dashed var(--line); }
+.srv-desert.dash-themed .sidebar-collapse-btn { border-top-color: var(--line); font-family: var(--ds-label); letter-spacing: 0.14em; }
+.srv-desert.dash-themed .sidebar-collapse-btn:hover { color: var(--rust-bright); }
+.srv-desert.dash-themed .sidebar-footer-text { font-family: var(--ds-label); font-size: 0.7rem !important; letter-spacing: 0.16em !important; }
+
+/* ── page header: heavy condensed title over a rust rule ── */
+.srv-desert.dash-themed .page-header {
+  padding: 16px 22px 14px;
+  background: linear-gradient(90deg, rgba(18,14,10,0.95), rgba(18,14,10,0.82));
+  border-bottom: 1px solid var(--line);
+}
+.srv-desert.dash-themed .page-header::after { height: 3px; opacity: 1; background: linear-gradient(90deg, var(--rust) 0%, var(--rust) 120px, rgba(200,100,47,0.35) 120px, transparent 70%); }
+.srv-desert.dash-themed .page-header-title {
+  font-family: var(--ds-display); font-weight: 700; font-size: clamp(1.6rem, 3vw, 2.15rem);
+  letter-spacing: 0.02em; line-height: 0.95; color: var(--sand);
+}
+.srv-desert.dash-themed .page-header-sub {
+  margin-top: 6px; font-family: var(--ds-label); font-weight: 500; font-size: 0.86rem; letter-spacing: 0.06em; color: var(--sand-dim);
+}
+.srv-desert.dash-themed .page-header-icon {
+  width: 40px; height: 40px; border-radius: 0; color: #1a0d05; background: var(--rust); border: none;
+  clip-path: polygon(0 0, 100% 0, 100% 78%, 78% 100%, 0 100%);
+}
+
+/* ── panels: charred cards, a coyote edge, condensed sand headings ── */
+.srv-desert.dash-themed .vs-card,
+.srv-desert.dash-themed .vs-card-accent,
+.srv-desert.dash-themed .stat-card {
+  background-color: var(--bg-card); border: 1px solid var(--line); border-radius: 0;
+}
+.srv-desert.dash-themed .vs-card:hover { border-color: #4a3c2b; box-shadow: 0 18px 40px -24px rgba(0,0,0,0.9); }
+.srv-desert.dash-themed .vs-card-accent { border-top: 3px solid var(--rust); }
+.srv-desert.dash-themed .vs-card-blue { border-radius: 0; border-color: var(--line); border-top: 3px solid var(--blue); border-left: 1px solid var(--line); }
+.srv-desert.dash-themed .vs-card-red { border-radius: 0; border-color: var(--line); border-top: 3px solid var(--red); border-left: 1px solid var(--line); }
+.srv-desert.dash-themed .stat-card:hover { border-color: var(--accent-border); }
+.srv-desert.dash-themed .stat-card-label { font-family: var(--ds-label); letter-spacing: 0.18em; color: var(--sand-dim); }
+.srv-desert.dash-themed .stat-card-value { font-family: var(--ds-display); font-weight: 600; color: var(--sand); }
+
+.srv-desert.dash-themed .vs-panel-head {
+  position: relative; padding: 10px 16px 9px 18px; background: rgba(18,14,10,0.55); border-bottom: 1px solid var(--line);
+}
+.srv-desert.dash-themed .vs-panel-head.sm { padding: 7px 12px 6px 16px; }
+.srv-desert.dash-themed .vs-panel-head::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--coyote);
+}
+.srv-desert.dash-themed .vs-panel-title,
+.srv-desert.dash-themed .vs-panel-head.sm .vs-panel-title {
+  font-family: var(--ds-display); font-weight: 600; font-size: 0.98rem; letter-spacing: 0.08em; color: var(--sand);
+}
+.srv-desert.dash-themed .vs-panel-head.sm .vs-panel-title { font-size: 0.9rem; }
+.srv-desert.dash-themed .vs-panel-count {
+  font-family: var(--ds-display); font-weight: 600; font-size: 0.85rem; color: var(--sand-2);
+  padding: 0 6px; background: var(--char-3); border: 1px solid var(--line);
+}
+.srv-desert.dash-themed .dash-subhead { position: relative; padding: 7px 12px 6px 16px; background: rgba(18,14,10,0.7); border-bottom: 1px solid var(--line); }
+.srv-desert.dash-themed .dash-subhead::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--rust); }
+.srv-desert.dash-themed .dash-subhead-title { font-family: var(--ds-display); font-weight: 600; font-size: 0.9rem; letter-spacing: 0.08em; color: var(--sand); }
+
+/* the old in-page section headings */
+.srv-desert.dash-themed .section-title,
+.srv-desert.dash-themed .vs-section-title { font-family: var(--ds-display); font-weight: 600; letter-spacing: 0.06em; color: var(--sand); }
+.srv-desert.dash-themed .lb-card-head { border-bottom-color: var(--line); }
+
+/* ── KPI strip: readouts, as on the campaign's page ── */
+.srv-desert.dash-themed .kpi-strip {
+  gap: 2px; padding: 2px; background: rgba(12,9,6,0.92) !important; border-bottom: 1px solid var(--line);
+}
+.srv-desert.dash-themed .kpi-cell {
+  padding: 10px 16px 11px; background: var(--char-2); border: none; border-left: 3px solid var(--coyote); gap: 5px;
+}
+.srv-desert.dash-themed .kpi-label { font-family: var(--ds-label); font-weight: 700; font-size: 0.72rem; letter-spacing: 0.18em; color: var(--sand-dim); }
+.srv-desert.dash-themed .kpi-value { font-family: var(--ds-display); font-weight: 600; font-size: 2rem; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+.srv-desert.dash-themed .kpi-sub { font-family: var(--ds-label); font-weight: 500; font-size: 0.8rem; letter-spacing: 0.04em; color: var(--sand-dim); }
+@media (max-width: 860px) {
+  .srv-desert.dash-themed .kpi-cell { border-right: none; border-bottom: none; padding-left: 10px; padding-right: 10px; }
+  .srv-desert.dash-themed .kpi-value { font-size: 1.6rem; }
+  .srv-desert.dash-themed .kpi-sub { font-size: 0.72rem; }
+}
+
+/* ── tables ── */
+.srv-desert.dash-themed .vs-table { font-variant-numeric: tabular-nums; }
+.srv-desert.dash-themed .vs-table th {
+  font-family: var(--ds-label); font-weight: 700; font-size: 0.76rem; letter-spacing: 0.16em; color: var(--sand-dim);
+  background: rgba(18,14,10,0.6); border-bottom: 2px solid var(--line);
+}
+.srv-desert.dash-themed .vs-table td { border-bottom: 1px solid rgba(58,47,34,0.7); color: var(--sand); }
+.srv-desert.dash-themed .vs-table tbody tr:hover { background: rgba(200,100,47,0.05); }
+.srv-desert.dash-themed .kill-row:hover { background: rgba(200,100,47,0.05) !important; }
+
+/* ── buttons: rust, heavy, square ── */
+.srv-desert.dash-themed .vs-btn {
+  border-radius: 0; font-family: var(--ds-display); font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+  color: #1a0d05; background: var(--rust); border: 2px solid var(--rust);
+}
+.srv-desert.dash-themed .vs-btn:hover { background: var(--rust-bright); border-color: var(--rust-bright); box-shadow: none; }
+.srv-desert.dash-themed .vs-btn-outline { color: var(--sand); background: rgba(21,17,12,0.5); border: 2px solid var(--sand-2); }
+.srv-desert.dash-themed .vs-btn-outline:hover { color: var(--char); background: var(--sand); border-color: var(--sand); }
+.srv-desert.dash-themed .vs-btn-ghost { color: var(--sand-2); background: transparent; border: 2px solid transparent; }
+.srv-desert.dash-themed .vs-btn-ghost:hover { color: var(--sand); background: var(--char-3); border-color: var(--line); }
+
+/* ── inputs ── */
+.srv-desert.dash-themed .vs-input {
+  border-radius: 0; background: var(--bg-input); border-color: var(--line); color: var(--sand);
+  font-family: var(--ds-body); font-size: 0.85rem; letter-spacing: 0.01em;
+}
+.srv-desert.dash-themed .vs-input:focus { border-color: var(--rust); box-shadow: 0 0 0 2px rgba(200,100,47,0.18); }
+.srv-desert.dash-themed .vs-input::placeholder { color: var(--sand-dim); }
+
+/* ── badges: strips of tape ── */
+.srv-desert.dash-themed .vs-badge {
+  border-radius: 0; font-family: var(--ds-label); font-weight: 700; font-size: 0.68rem; letter-spacing: 0.14em;
+  padding: 1px 8px; clip-path: var(--tape-cut); border: none;
+}
+.srv-desert.dash-themed .vs-badge-live { color: #121a06; background: var(--green); }
+.srv-desert.dash-themed .vs-badge-live > span { background: #121a06 !important; }
+.srv-desert.dash-themed .vs-badge-offline { color: var(--sand); background: #4a3c2b; }
+.srv-desert.dash-themed .vs-badge-degraded { color: #1d150c; background: var(--yellow); }
+.srv-desert.dash-themed .vs-badge-degraded > span { background: #1d150c !important; }
+.srv-desert.dash-themed .vs-badge-blue { color: #08131f; background: var(--blue); }
+.srv-desert.dash-themed .vs-badge-red { color: #1f0805; background: var(--red); }
+.srv-desert.dash-themed .vs-badge-neutral { color: #1d150c; background: var(--sand-2); }
+
+/* ── maps ── */
+.srv-desert.dash-themed .leaflet-container { background: var(--char) !important; }
+.srv-desert.dash-themed .leaflet-popup-content-wrapper { border-radius: 0 !important; border: 1px solid var(--line) !important; border-top: 3px solid var(--rust) !important; }
+.srv-desert.dash-themed .leaflet-control-zoom a { border-radius: 0 !important; }
+
+/* rank colours that suit the sand */
+.srv-desert.dash-themed .rank-gold   { color: #e0b04a; text-shadow: 0 0 12px rgba(224,176,74,0.35); }
+.srv-desert.dash-themed .rank-silver { color: #c4b08a; text-shadow: none; }
+.srv-desert.dash-themed .rank-bronze { color: #c8642f; text-shadow: none; }
+
+/* SITREP's own page and the About page: levant.css. */
+
+/* ═══ the sign-in page ═══ */
+.srv-desert .dash-login-card {
+  position: relative; border-radius: 0 !important; border: 1px solid var(--line) !important; border-top: 4px solid var(--rust) !important;
+  background: rgba(21,17,12,0.88) !important; box-shadow: 0 30px 60px -30px rgba(0,0,0,0.9);
+}
+.srv-desert .dash-login-card > .ds-tape { position: absolute; top: -13px; left: 18px; }
+.srv-desert .dash-login-name { font-family: var(--ds-display) !important; font-weight: 700; font-size: 2.3rem !important; letter-spacing: 0.04em !important; line-height: 0.95; text-transform: uppercase; color: var(--sand) !important; }
+.srv-desert .dash-login-name span { color: var(--rust-bright); }
+.dash-login-art { position: absolute; inset: 0; pointer-events: none; }
+.srv-desert .dash-login-art {
+  background:
+    linear-gradient(180deg, rgba(21,17,12,0.55) 0%, rgba(21,17,12,0.35) 40%, rgba(21,17,12,0.92) 100%),
+    linear-gradient(90deg, rgba(21,17,12,0.6), transparent 50%, rgba(21,17,12,0.6)),
+    url(/media/hero.jpg) center 40% / cover no-repeat;
+}
+
