@@ -2349,6 +2349,8 @@ impl Default for Cfg {
             logistics_exclusion: 10000,
             unit_cull_distance: 37040, // 20 nm
             ground_vehicle_cull_distance: 10000,
+            ai_air_wake_distance: None,
+            rear_area_distance: None,
             artillery: None,
             lr_cull_distance: 80_000,
             ewr_cull_distance: 300_000,

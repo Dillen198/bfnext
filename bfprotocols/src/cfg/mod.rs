@@ -279,6 +279,24 @@ pub struct Cfg {
     /// an objective will cull it's units if there are no enemy ground units
     /// within this distance (Meters)
     pub ground_vehicle_cull_distance: u32,
+    /// How close an AI aircraft (CAP, strike, drone) must come to wake an
+    /// objective (Meters). Unset, AI aircraft wake from unit_cull_distance,
+    /// like players. AI patrols orbiting near the front keep every base in
+    /// reach awake, and each one's garrison costs the server, so a shorter
+    /// distance here keeps fewer of them spawned. Special SAM sites still wake
+    /// from their own distances (special_sam_wake_distance, lr_cull_distance)
+    /// so they get to shoot at incoming AI, and players are not affected.
+    #[serde(default)]
+    pub ai_air_wake_distance: Option<u32>,
+    /// An objective with no enemy-held objective within this distance
+    /// (Meters) is in a quiet rear area, and AI aircraft don't wake it at all:
+    /// transit flights, tankers and patrols over territory the fighting has
+    /// left behind no longer spawn its garrison. Special SAM sites still wake
+    /// for AI aircraft, and players, player-deployed units, AI ground units
+    /// and artillery fire still wake it as before. Unset, there is no rear
+    /// area.
+    #[serde(default)]
+    pub rear_area_distance: Option<u32>,
     /// cull distance override for long-range ground units (LR tag) such as
     /// MLRS, HIMARS, Smerch. Defaults to 150 000 m so LR units fully threaten
     /// the objective map. Set to 0 to fall back to ground_vehicle_cull_distance.
