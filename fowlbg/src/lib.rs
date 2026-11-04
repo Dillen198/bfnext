@@ -14,11 +14,13 @@
 //!   bfdb tails.
 //! * [`netidx`]: the netidx client config, with opt-in TLS, and the
 //!   publisher with its bind retry.
+//! * [`pin`]: keeping the DLL loaded while its threads run.
 //!
 //! With `default-features = false` only [`netidx`]'s config half is built,
 //! for crates that carry the TLS block in their config types.
 
 pub mod netidx;
+pub mod pin;
 
 #[cfg(feature = "runtime")]
 pub mod jsonl;
@@ -32,5 +34,6 @@ pub mod runtime;
 #[cfg(feature = "runtime")]
 pub use crate::{
     log::{fallback_log, panic_msg, panic_payload_msg},
+    pin::pin_module,
     runtime::{Handler, Options, Task, heartbeat_age, init, sender},
 };

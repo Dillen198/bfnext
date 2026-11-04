@@ -7002,6 +7002,11 @@ fn bflib(lua: &Lua) -> LuaResult<LuaTable> {
     Context::borrow("module load")
         .and_then(|mut ctx| ctx.init_async_bg(lua.inner()))
         .map_err(dcso3::lua_err)?;
+    // Those threads run our code until the process ends: DCS must not unload
+    // the DLL under them when the Lua state closes.
+    if let Err(e) = fowlbg::pin_module() {
+        warn!("could not pin bflib.dll, DCS may crash unloading it: {e:?}");
+    }
     dcso3::create_root_module(lua, init_hooks, init_miz)
 }
 
