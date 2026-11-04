@@ -18,11 +18,15 @@ export interface EngineCredit {
   name:   string
   handle: string
   role:   string
+  /** A picture under public/ (e.g. /credits/name.png); the initials stand in without one. */
+  avatar?: string
 }
 
 export interface ServerCredit {
   name: string
   role: string
+  /** As on EngineCredit. */
+  avatar?: string
 }
 
 export interface CampaignConfig {
@@ -121,7 +125,9 @@ export const campaignDefaults: CampaignConfig = {
   ],
 
   serverCredits: [
-    { name: 'Hacker', role: 'Server Host — Founder, 61st ATP' },
+    { name: 'Hacker',    role: 'Server Host — Founder, 61st ATP' },
+    { name: 'KillerDog', role: 'Lead Developer' },
+    { name: 'EagleEye',  role: 'Tester & Contributor' },
   ],
 }
 

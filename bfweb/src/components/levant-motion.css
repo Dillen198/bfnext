@@ -77,10 +77,10 @@
 
   /* hover: a card lifts a little, by transform alone */
   @media (hover: hover) {
-    .srv-desert .lv-card, .srv-desert .lv-readout, .srv-desert .lb-pod, .srv-desert .ds-ev {
+    .srv-desert .lv-card, .srv-desert .lv-readout, .srv-desert .lb-pod, .srv-desert .ds-ev, .srv-desert .lv-diff {
       transition: transform 0.18s ease-out, border-color 0.18s ease-out;
     }
-    .srv-desert .lv-readout:hover, .srv-desert .lb-pod:hover, .srv-desert .ds-ev:hover { transform: translateY(-2px); }
+    .srv-desert .lv-readout:hover, .srv-desert .lb-pod:hover, .srv-desert .ds-ev:hover, .srv-desert .lv-diff:hover { transform: translateY(-2px); }
     .srv-desert .lv-att-row, .srv-desert .lv-shooters li, .srv-desert .lv-air-col li, .srv-desert .lv-eng li { transition: background-color 0.15s; }
   }
 }

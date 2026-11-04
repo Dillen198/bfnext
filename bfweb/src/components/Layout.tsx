@@ -667,7 +667,7 @@ export default function Layout() {
           {/* Footer */}
           <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6 }}>
             <Comms size={10} style={{ color: 'var(--accent)', opacity: 0.5 }} />
-            <span className="sidebar-footer-text" style={{ fontSize: '0.55rem', color: 'var(--text-dim)', letterSpacing: '0.08em' }}>FOWL ENGINE</span>
+            <span className="sidebar-footer-text" style={{ fontSize: '0.55rem', color: 'var(--text-dim)', letterSpacing: '0.08em' }}>POWERED BY FOWL ENGINE</span>
             <Aircraft size={9} style={{ color: 'var(--text-dim)', opacity: 0.4, marginLeft: 'auto' }} />
           </div>
 

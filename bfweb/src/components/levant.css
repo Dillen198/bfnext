@@ -446,8 +446,31 @@
 .lv-credit > div { display: grid; justify-items: start; gap: 6px; min-width: 0; }
 .lv-mono { flex-shrink: 0; width: 52px; height: 52px; display: flex; align-items: center; justify-content: center; font-family: var(--ds-display); font-weight: 700; font-size: 1.5rem; text-transform: uppercase; color: var(--sand); background: var(--char-3); border: 1px solid var(--line); clip-path: polygon(0 0, 100% 0, 100% 78%, 78% 100%, 0 100%); }
 .lv-credit.lead .lv-mono { color: #1a0d05; background: var(--rust); border-color: var(--rust); }
+/* a credit with a picture: a bigger, unclipped badge (logos are their own shape) */
+.lv-credit .lv-avatar { width: 72px; height: 72px; object-fit: contain; padding: 0; background: none; border: none; clip-path: none; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.6)); }
 .lv-credit strong { font-family: var(--ds-display); font-weight: 600; font-size: 1.3rem; letter-spacing: 0.03em; line-height: 1; color: var(--sand); }
 .lv-handle { font-family: var(--ds-label); font-size: 0.86rem; color: var(--sand-dim); }
+.lv-h3.first { margin-top: 0; }
+.lv-servers { list-style: none; margin: 0; padding: 8px 18px 18px; display: grid; gap: 2px; }
+.lv-servers li { display: grid; gap: 8px; padding: 11px 14px 12px; background: var(--char-3); border-left: 3px solid var(--coyote); }
+.lv-srv-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.lv-servers li.t-desert { border-left-color: var(--rust); }
+.lv-servers li.t-staff { border-left-color: var(--red); }
+.lv-servers li.t-chart { border-left-color: var(--blue); }
+.lv-servers strong { font-family: var(--ds-display); font-weight: 600; font-size: 1.15rem; letter-spacing: 0.03em; text-transform: uppercase; color: var(--sand); }
+.lv-srv-head > span { font-family: var(--ds-label); font-weight: 600; font-size: 0.8rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sand-dim); white-space: nowrap; }
+.lv-copy { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; align-items: center; }
+.lv-copy .ds-k { grid-column: 1 / -1; font-size: 0.64rem; }
+.lv-copy code {
+  min-width: 0; overflow-wrap: anywhere; padding: 5px 9px; line-height: 1.4;
+  font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.8rem; color: var(--sand); background: var(--char); border: 1px solid var(--line);
+}
+.lv-copy button {
+  cursor: pointer; padding: 5px 12px; font-family: var(--ds-label); font-weight: 700; font-size: 0.74rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--sand); background: transparent; border: 1px solid var(--sand-dim);
+}
+.lv-copy button:hover, .lv-copy button:focus-visible { color: #1a0d05; background: var(--rust); border-color: var(--rust); outline: none; }
+.lv-round b { color: var(--rust-bright); }
 .lv-h3 { margin: 34px 0 16px; font-family: var(--ds-display); font-weight: 700; font-size: 1.6rem; text-transform: uppercase; color: var(--sand); }
 
 .lv-thanks { display: grid; gap: 34px 20px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); align-items: start; }
@@ -506,6 +529,14 @@
   .lv-pagehead-sub { font-size: 0.76rem; letter-spacing: 0.08em; margin-top: 5px; }
   .lv-score-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* What makes us different: grouped tiles, a rust edge on each */
+.lv-diff-group + .lv-diff-group { margin-top: 30px; }
+.lv-diff-group > .lv-h3 { margin: 0 0 14px; font-size: 1.25rem; color: var(--rust-bright); letter-spacing: 0.06em; }
+.lv-diffs { display: grid; gap: 2px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }
+.lv-diff { display: grid; gap: 8px; align-content: start; padding: 18px 20px 20px; background: var(--char-2); border-left: 3px solid var(--rust); }
+.lv-diff h4 { margin: 0; font-family: var(--ds-display); font-weight: 600; font-size: 1.28rem; line-height: 1.05; letter-spacing: 0.02em; text-transform: uppercase; color: var(--sand); }
+.lv-diff p { margin: 0; font-size: 0.95rem; line-height: 1.6; color: var(--sand-2); }
 
 /* ── phones ───────────────────────────────────────────────────────────────── */
 

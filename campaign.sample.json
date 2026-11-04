@@ -68,13 +68,15 @@
   "_engine_note": "Gameplay/engine config (objectives, deployables, EWR, elint, player_recon, logistics, ...) is a SEPARATE file loaded by bflib, editable in-dashboard when bfdb is started with --engine-config <path> (e.g. miz/ODFv2_CFG). It is NOT this file.",
 
   "_section_credits": "──── CREDITS ─────────────────────────────────────────────────────────────",
-  "_credits_note": "engineCredits show on the ABOUT page as the Fowl Engine authors; serverCredits as the people running this server.",
+  "_credits_note": "engineCredits show on the ABOUT page as the Fowl Engine authors; serverCredits as the Vector Strike team running this server. 'avatar' is an optional picture under bfweb/public (initials without one).",
   "engineCredits": [
     { "name": "EvilKipper", "handle": "",                 "role": "Creator"              },
     { "name": "KillerDog",  "handle": "No15 | KillerDog",  "role": "Lead Developer"       },
     { "name": "EagleEye",   "handle": "[.ID] EagleEye",    "role": "Tester & Contributor" }
   ],
   "serverCredits": [
-    { "name": "Hacker", "role": "Server Host — Founder, 61st ATP" }
+    { "name": "Hacker",    "role": "Server Host — Founder, 61st ATP" },
+    { "name": "KillerDog", "role": "Lead Developer" },
+    { "name": "EagleEye",  "role": "Tester & Contributor" }
   ]
 }

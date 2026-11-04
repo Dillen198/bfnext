@@ -45,6 +45,12 @@ export interface ServerProfile {
   /** Exactly as it appears in the DCS multiplayer server browser. */
   browserName: string
   /**
+   * Where to connect directly (host:port), for the dashboard's About page.
+   * Unset until the server's public address is settled; the page then shows
+   * only the browser name.
+   */
+  address?: string
+  /**
    * The engine's `limited_lives`. It is the first thing a new pilot asks, so
    * the page says it plainly. Unset where there are no lives at all.
    */
