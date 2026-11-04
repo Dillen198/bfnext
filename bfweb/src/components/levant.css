@@ -381,6 +381,38 @@
   .lv-wx { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .lv-grid { padding: 22px 10px 14px; }
 }
+/* Wide and ultrawide screens. Stretched to the full width, each side's
+   card put its name a metre from its number and the front-line bar became
+   a strip; so the scoreboard keeps a readable width and sits at the right
+   of the band, where the art shows between it and the title. The side
+   panels over the map grow a little, and the weather keeps its figures
+   together. The map takes the rest. */
+@media (min-width: 1700px) {
+  .lv-board { justify-self: end; width: min(100%, 1480px); }
+  .lv-score-row { max-width: 440px; }
+  .lv-score.r .lv-score-row { margin-left: auto; }
+  .lv-wx { max-width: 680px; }
+}
+@media (min-width: 2200px) {
+  .lv-board { width: min(100%, 1640px); }
+  .lv-stage { grid-template-columns: clamp(280px, 18%, 460px) minmax(0, 1fr) clamp(290px, 19%, 480px); }
+  .lv-strip { grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 2.6fr); }
+}
+
+/* The pages' own content keeps the same readable width as the Kill Feed
+   (1560px) and centres on wider screens; their header bands still run the
+   full width. */
+.srv-desert .ob-page > :not(.page-header),
+.srv-desert .lb-page > :not(.page-header),
+.srv-desert .pl-page > :not(.page-header),
+.srv-desert .rd-page > :not(.page-header) {
+  width: 100%; max-width: 1560px; margin-left: auto; margin-right: auto; box-sizing: border-box;
+}
+/* and their band's title and controls line up with that column */
+.srv-desert.dash-themed .vs-main:has(.ob-page, .lb-page, .pl-page, .rd-page, .kf-body) .page-header.lv-pagehead {
+  padding-left: max(22px, calc((100% - 1560px) / 2)); padding-right: max(22px, calc((100% - 1560px) / 2));
+}
+
 /* a short window keeps the band to the name and the scoreboard */
 @media (max-height: 820px) and (min-width: 1101px) {
   .lv-top { padding-top: 10px; padding-bottom: 10px; }
