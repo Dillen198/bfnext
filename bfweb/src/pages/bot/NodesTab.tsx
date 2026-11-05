@@ -4,6 +4,7 @@
 
 import { useState } from 'react'
 import type { BotFleet, BotNode } from '../../api'
+import { cell } from '../../lib/botconsole'
 import { ActionForm, Btn, Card, ConfirmBtn, Empty, Pill, useAction, useRunner } from './ui'
 import { CELL, MONO, TH } from './style'
 import { Plus, RotateCw, Server, Square, Download, Trash2 } from '@icons'
@@ -29,8 +30,8 @@ function NodeCard({ n, fleet }: { n: BotNode; fleet: BotFleet }) {
       </>}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div className="flex gap-4" style={{ fontSize: '0.66rem', color: 'var(--text-muted)', flexWrap: 'wrap' }}>
-          <span>DCS <span style={MONO}>{n.dcs_version ?? '—'}</span>{n.dcs_branch ? ` (${n.dcs_branch})` : ''}</span>
-          <span>bot <span style={MONO}>{n.bot_version ?? '—'}</span></span>
+          <span>DCS <span style={MONO}>{cell(n.dcs_version)}</span>{n.dcs_branch ? ` (${cell(n.dcs_branch)})` : ''}</span>
+          <span>bot <span style={MONO}>{cell(n.bot_version)}</span></span>
           <span>{servers.length} server{servers.length === 1 ? '' : 's'}, {players} player{players === 1 ? '' : 's'}</span>
         </div>
         {n.online && (
@@ -51,10 +52,10 @@ function NodeCard({ n, fleet }: { n: BotNode; fleet: BotFleet }) {
             <tbody>
               {(n.instances ?? []).map(i => (
                 <tr key={i.name ?? ''}>
-                  <td style={{ ...CELL, ...MONO }}>{i.name}</td>
-                  <td style={CELL}>{i.server ?? '—'}</td>
-                  <td style={{ ...CELL, ...MONO }}>{i.dcs_port ?? '—'}</td>
-                  <td style={{ ...CELL, ...MONO }}>{i.webgui_port ?? '—'}</td>
+                  <td style={{ ...CELL, ...MONO }}>{cell(i.name)}</td>
+                  <td style={CELL}>{cell(i.server)}</td>
+                  <td style={{ ...CELL, ...MONO }}>{cell(i.dcs_port)}</td>
+                  <td style={{ ...CELL, ...MONO }}>{cell(i.webgui_port)}</td>
                   <td style={{ ...CELL, textAlign: 'right' }}>
                     {a.del && i.server && <ConfirmBtn label="" icon={<Trash2 size={10} />} confirm={`Delete server ${i.server}? DCS is shut down first.`}
                       onConfirm={() => void runner.act('delete_server', { server_name: i.server }, i.server ?? '')} />}

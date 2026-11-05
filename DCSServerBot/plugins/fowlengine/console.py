@@ -260,6 +260,12 @@ def jsonable(value: Any, depth: int = 0, _budget: Optional[list] = None, _path: 
         return value.name
     if isinstance(value, (bytes, bytearray, memoryview)):
         return {"bytes": len(value)}
+    if hasattr(type(value), "__index__") and not isinstance(value, (list, tuple, dict, set, frozenset)):
+        # a number that isn't an int: the bot's Port (core.data.const), numpy ints ...
+        try:
+            return int(value)
+        except Exception:  # noqa: BLE001
+            pass
     if _is_live(value):
         name = getattr(value, "name", None)
         return name if isinstance(name, str) else type(value).__name__
@@ -329,6 +335,15 @@ class Identity:
 def bot_roles(roles: frozenset[str]) -> frozenset[str]:
     """The bot's own role names for a dashboard caller."""
     return frozenset({"Admin"}) if "admin" in roles else frozenset({"DCS Admin"})
+
+
+def _port(value: Any) -> Optional[int]:
+    """A port as a number. DCSServerBot 3.0.5 hands out Port objects
+    (port, typ, public), which int() turns into the number."""
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _header(request: Any, name: str) -> Optional[str]:
@@ -663,7 +678,7 @@ class ConsoleApi:
             "managed_by": jsonable(locals_.get("managed_by")) if isinstance(locals_, dict) else None,
             "max_players": s(lambda: int(settings.get("maxPlayers"))) if isinstance(settings, dict) else None,
             "password": bool(isinstance(settings, dict) and settings.get("password")),
-            "port": s(lambda: server.instance.dcs_port),
+            "port": _port(s(lambda: server.instance.dcs_port)),
             "restart_time": restart.isoformat() if isinstance(restart, datetime) else None,
             "mission": None,
             "players": [self._player_row(p) for p in players],
@@ -700,8 +715,8 @@ class ConsoleApi:
             "instances": [{
                 "name": s(lambda i=i: i.name),
                 "server": s(lambda i=i: i.server.name),
-                "dcs_port": s(lambda i=i: i.dcs_port),
-                "webgui_port": s(lambda i=i: i.webgui_port),
+                "dcs_port": _port(s(lambda i=i: i.dcs_port)),
+                "webgui_port": _port(s(lambda i=i: i.webgui_port)),
             } for i in instances],
         }
 
@@ -715,7 +730,7 @@ class ConsoleApi:
             nodes = [self._node_row(n, v) for n, v in all_nodes.items()]
         elif own is not None:
             nodes = [self._node_row(getattr(own, "name", "node"), own)]
-        return {"generated": datetime.now(timezone.utc).isoformat(), "nodes": nodes, "servers": servers}
+        return jsonable({"generated": datetime.now(timezone.utc).isoformat(), "nodes": nodes, "servers": servers})
 
     # ---- the bot's audit trail --------------------------------------------------
 
@@ -889,7 +904,7 @@ class ConsoleApi:
             nodes = [self._node_row(getattr(own, "name", "node"), own)]
         else:
             nodes = []
-        return {"nodes": nodes, "servers": servers}
+        return jsonable({"nodes": nodes, "servers": servers})
 
     def stream_events(self, request, tick: float = STREAM_TICK, ping: float = STREAM_PING):
         """The event stream's body: `fleet` (the console/fleet document)

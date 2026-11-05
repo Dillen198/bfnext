@@ -107,3 +107,33 @@ def test_cluster_view():
     assert list(cl.servers) == ["vs1", "vs2"] and type(cl.servers) is dict
     assert cl.nodes == {"NODE": None}
     assert co._Cluster(object(), object()).servers == {}
+
+
+class Port:
+    """core/data/const.py's Port, as 3.0.5 hands it out for instance ports."""
+
+    def __init__(self, port, typ='udp', public=False):
+        self.port, self.typ, self.public = port, typ, public
+
+    def __int__(self):
+        return self.port
+
+    def __index__(self):
+        return self.port
+
+
+def test_ports_are_numbers(world):  # noqa: F811
+    assert co.jsonable({"p": Port(10308)}) == {"p": 10308}
+    assert co._port(Port(8088)) == 8088 and co._port(None) is None and co._port("x") is None
+    api, layer, c = _console_client(world)
+    inst = world.servers[0].instance
+    inst.dcs_port, inst.webgui_port = Port(10308), Port(8088)
+    world.cog.node.instances = {inst.name: inst}
+    try:
+        doc = c.get(f"{BASE}/console/fleet", headers=KEY).json()
+    finally:
+        del world.cog.node.instances
+    vs1 = next(s for s in doc["servers"] if s["name"] == "vs1")
+    assert vs1["port"] == 10308
+    node = doc["nodes"][0]
+    assert node["instances"][0]["dcs_port"] == 10308 and node["instances"][0]["webgui_port"] == 8088
