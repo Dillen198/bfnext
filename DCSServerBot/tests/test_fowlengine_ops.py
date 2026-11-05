@@ -57,7 +57,7 @@ if PKG.exists():
     shutil.rmtree(PKG)
 PKG.mkdir()
 (PKG / "__init__.py").write_text("")
-for name in ("autoupdate.py", "opsapi.py", "loganalyzer.py", "procman.py", "upload.py", "rangefeed.py",
+for name in ("autoupdate.py", "opsapi.py", "console.py", "botconfig.py", "loganalyzer.py", "procman.py", "upload.py", "rangefeed.py",
              "minisign.py", "icons.py", "heartbeat.py"):
     shutil.copy(PLUGIN / name, PKG / name)
 sys.path.insert(0, str(HERE))

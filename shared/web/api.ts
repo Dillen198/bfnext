@@ -47,6 +47,9 @@ export interface AuthUser {
   /** Coalition in the active round; null if the pilot has no side (or isn't
    *  linked). Gates access to the dashboard's recon intel page. */
   side:       'Blue' | 'Red' | null
+  /** Admin roles held (bfdb's admin::Role names: ops, content, moderation);
+   *  a full admin has all of them. Older bfdb builds leave it out. */
+  roles?:     string[]
 }
 
 /** `/api/instances`: the DCS servers one bfdb fronts. */

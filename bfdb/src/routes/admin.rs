@@ -252,7 +252,159 @@ pub(crate) async fn api_admin_bot_mission_unpause(
     api_admin_bot_action(session_id, db, bot_cfg, inst, "instance/mission/unpause").await
 }
 
-/// GET|POST /api/admin/ops/<tail>  — the dashboard OPS page (admin only).
+/// Which dashboard login an OPS-API path needs.
+///
+/// `console/*` is the bot console (console.py in the FowlEngine plugin):
+/// DCSServerBot's own actions, players and bans among them. A moderator may
+/// reach it -- the plugin then checks each action against the roles named in
+/// `X-Fowl-Roles` -- and everything else under `ops/` stays OPS-only.
+pub(crate) fn ops_path_allows(path: &str, s: &crate::db::SessionData) -> bool {
+    if path.starts_with("console/") {
+        admin::has_role(s, admin::Role::OPS)
+            || admin::has_role(s, admin::Role::MODERATION)
+    } else {
+        admin::has_role(s, admin::Role::OPS)
+    }
+}
+
+/// The bot console's two uploads (a .miz, a music track): the file is the
+/// body, and it may be far bigger than the 4 MB the rest of ops/ takes.
+pub(crate) fn is_upload_path(path: &str) -> bool {
+    matches!(path, "console/mission" | "console/music")
+}
+
+/// One server-sent event block from the bot (`event: x` / `data: y` lines,
+/// `: comment` lines), as warp's own Event.
+pub(crate) fn sse_block(block: &str) -> warp::sse::Event {
+    let mut ev = warp::sse::Event::default();
+    let mut data: Vec<&str> = Vec::new();
+    let mut comment: Option<&str> = None;
+    for line in block.lines() {
+        if let Some(v) = line.strip_prefix("event:") {
+            ev = ev.event(v.trim());
+        } else if let Some(v) = line.strip_prefix("data:") {
+            data.push(v.strip_prefix(' ').unwrap_or(v));
+        } else if let Some(v) = line.strip_prefix(':') {
+            comment = Some(v.trim());
+        }
+    }
+    if data.is_empty() {
+        return ev.comment(comment.unwrap_or("ping"));
+    }
+    ev.data(data.join("\n"))
+}
+
+/// GET /api/admin/ops/console/stream  — the bot console's live feed.
+///
+/// The plugin pushes the fleet whenever it changes (server-sent events); the
+/// ordinary proxy above reads a whole answer before replying, so this one
+/// passes the stream on as it comes, event by event, with no deadline.
+pub(crate) async fn api_admin_ops_stream(
+    query: String,
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<warp::reply::Response, Error> {
+    use warp::http::StatusCode;
+    let who = require_session(session_id, &db)?;
+    if !ops_path_allows("console/stream", &who) {
+        return Err(websec::forbidden("forbidden").into());
+    }
+    let json_err = |status: StatusCode, msg: String| {
+        warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({ "error": msg })),
+            status,
+        )
+        .into_response()
+    };
+    let Some(cfg) = bot_cfg.as_ref() else {
+        return Ok(json_err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "DCSServerBot is not configured -- the bot console needs the bot".into(),
+        ));
+    };
+    static STREAM_HTTP: std::sync::LazyLock<
+        std::result::Result<reqwest::Client, std::string::String>,
+    > = std::sync::LazyLock::new(|| {
+        reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| e.to_string())
+    });
+    let http = STREAM_HTTP.as_ref().map_err(|e| anyhow::anyhow!("http client: {e}"))?;
+    let mut url = format!("{}/fowlengine/ops/console/stream", cfg.base_url);
+    if !query.is_empty() {
+        url.push('?');
+        url.push_str(&query);
+    }
+    let mut req = http.get(&url).header("X-API-Key", &cfg.ops_key);
+    for (name, value) in fowl_headers(&who) {
+        req = req.header(name, value);
+    }
+    let resp = match req.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(json_err(
+                StatusCode::BAD_GATEWAY,
+                format!("the bot's WebService is not answering ({e})"),
+            ))
+        }
+    };
+    if !resp.status().is_success() {
+        let status = StatusCode::from_u16(resp.status().as_u16())
+            .unwrap_or(StatusCode::BAD_GATEWAY);
+        let text = resp.text().await.unwrap_or_default();
+        let msg = serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|v| v["error"].as_str().map(str::to_string))
+            .unwrap_or(text);
+        return Ok(json_err(status, msg));
+    }
+    let events = futures::stream::unfold(
+        (resp, Vec::<u8>::new()),
+        |(mut resp, mut buf)| async move {
+            loop {
+                if let Some(i) = buf.windows(2).position(|w| w == b"\n\n") {
+                    let block: Vec<u8> = buf.drain(..i + 2).collect();
+                    let ev = sse_block(&String::from_utf8_lossy(&block));
+                    return Some((Ok::<_, std::convert::Infallible>(ev), (resp, buf)));
+                }
+                match resp.chunk().await {
+                    Ok(Some(c)) => buf.extend_from_slice(
+                        &c.iter().copied().filter(|b| *b != b'\r').collect::<Vec<u8>>(),
+                    ),
+                    _ => return None,
+                }
+            }
+        },
+    );
+    let mut out =
+        warp::sse::reply(warp::sse::keep_alive().stream(events)).into_response();
+    out.headers_mut()
+        .insert("cache-control", warp::http::HeaderValue::from_static("no-store"));
+    Ok(out)
+}
+
+/// What the bot console is told about the caller, beside the key: who it
+/// is (for the bot's own audit trail) and which dashboard roles it holds.
+/// Header values must be visible ASCII, so the name is percent-encoded.
+pub(crate) fn fowl_headers(
+    s: &crate::db::SessionData,
+) -> [(&'static str, std::string::String); 3] {
+    let roles = if s.is_admin {
+        "admin".to_string()
+    } else {
+        admin::role_names(s.roles).join(",")
+    };
+    [
+        ("X-Fowl-Roles", roles),
+        ("X-Fowl-Actor", urlencoding::encode(&s.username).into_owned()),
+        ("X-Fowl-Subject", urlencoding::encode(&s.discord_id).into_owned()),
+    ]
+}
+
+/// GET|POST /api/admin/ops/<tail>  — the dashboard OPS page and the bot
+/// console (admin only; see `ops_path_allows`).
 ///
 /// Forwarded to the FowlEngine plugin's OPS API on DCSServerBot's WebService
 /// (`{--dcsserverbot-url}/fowlengine/ops/<tail>`, see
@@ -261,18 +413,23 @@ pub(crate) async fn api_admin_bot_mission_unpause(
 /// manages -- DCS, bfdb itself, staging dirs, fowlengine.yaml -- and stays up
 /// while bfdb restarts, so it answers, not bfdb. The key never reaches the
 /// browser; the dashboard admin login gates it here.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn api_admin_ops_proxy(
     method: warp::http::Method,
-    tail: warp::path::Tail,
+    path: std::string::String,
     query: String,
     session_id: Option<Uuid>,
+    content_type: Option<std::string::String>,
     body: bytes::Bytes,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<warp::reply::Response, Error> {
     use warp::http::StatusCode;
-    let who = require_role(session_id, db.clone(), admin::Role::OPS).await?;
-    let path = tail.as_str();
+    let who = require_session(session_id, &db)?;
+    let path = path.as_str();
+    if !ops_path_allows(path, &who) {
+        return Err(websec::forbidden("forbidden").into());
+    }
     let json_err = |status: StatusCode, msg: String| {
         warp::reply::with_status(
             warp::reply::json(&serde_json::json!({ "error": msg })),
@@ -313,13 +470,25 @@ pub(crate) async fn api_admin_ops_proxy(
             .map_err(|e| e.to_string())
     });
     let http = OPS_HTTP.as_ref().map_err(|e| anyhow::anyhow!("http client: {e}"))?;
-    let req = if method == warp::http::Method::POST {
-        http.post(&url)
-            .header("content-type", "application/json")
-            .body(if body.is_empty() { bytes::Bytes::from_static(b"{}") } else { body })
+    let mut req = if method == warp::http::Method::POST {
+        // A mission or music upload is the one body that isn't JSON: the file itself.
+        let ctype = match content_type.as_deref() {
+            Some("application/octet-stream") if is_upload_path(path) => {
+                "application/octet-stream"
+            }
+            _ => "application/json",
+        };
+        http.post(&url).header("content-type", ctype).body(if body.is_empty() {
+            bytes::Bytes::from_static(b"{}")
+        } else {
+            body
+        })
     } else {
         http.get(&url)
     };
+    for (name, value) in fowl_headers(&who) {
+        req = req.header(name, value);
+    }
     let resp = match req.header("X-API-Key", &cfg.ops_key).send().await {
         Ok(r) => r,
         Err(e) => {
@@ -338,6 +507,7 @@ pub(crate) async fn api_admin_ops_proxy(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("application/json")
         .to_string();
+    let disposition = resp.headers().get("content-disposition").cloned();
     let data = resp
         .bytes()
         .await
@@ -350,7 +520,8 @@ pub(crate) async fn api_admin_ops_proxy(
                 .into(),
         ));
     }
-    if method == warp::http::Method::POST {
+    // A console read changes nothing; the bot audits its own writes too.
+    if method == warp::http::Method::POST && !path.starts_with("console/read/") {
         audit(&db, &who, "OPS", Some(&format!("{path} -> {status}")), None);
     }
     let mut out = warp::reply::Response::new(data.to_vec().into());
@@ -362,6 +533,9 @@ pub(crate) async fn api_admin_ops_proxy(
     );
     out.headers_mut()
         .insert("cache-control", warp::http::HeaderValue::from_static("no-store"));
+    if let Some(d) = disposition {
+        out.headers_mut().insert("content-disposition", d);
+    }
     Ok(out)
 }
 

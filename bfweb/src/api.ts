@@ -1759,6 +1759,193 @@ export interface BotActionResult {
   status:  string
 }
 
+// ── Bot console (bfdb /api/admin/ops/console/* → the FowlEngine plugin's
+//    console.py → DCSServerBot's own @action functions) ────────────────────
+
+export type BotRole = 'ops' | 'moderation' | 'admin'
+
+/** One parameter of an action, read off the bot's own function signature. */
+export interface BotParam {
+  name: string
+  required: boolean
+  default?: unknown
+  /** The Python annotation as text ("str", "bool", "int | str", ...). */
+  type?: string
+}
+
+export interface BotActionInfo {
+  name: string
+  kind: 'read' | 'write'
+  /** The dashboard role it needs. */
+  role: BotRole
+  /** The DCSServerBot plugin that provides it. */
+  plugin: string
+  /** Loaded on this bot. */
+  available: boolean
+  /** The signed-in caller holds the role. */
+  allowed: boolean
+  params: BotParam[]
+}
+
+export interface BotCatalog {
+  available: boolean
+  reason?: string | null
+  bot_version: string | null
+  roles: string[]
+  actions: BotActionInfo[]
+}
+
+/** What any action answers: the bot's own message, and its data. */
+export interface BotResult<D = Record<string, unknown>> {
+  ok: boolean
+  message: string
+  data: D
+}
+
+export interface BotPlayer {
+  name: string | null
+  ucid: string | null
+  id: number | null
+  side: string | null
+  slot: number | null
+  sub_slot: number | null
+  unit_type: string | null
+  unit_callsign: string | null
+  unit_name: string | null
+  group_name: string | null
+  active: boolean
+  verified: boolean
+  watchlist: boolean
+  banned: boolean
+  muted: boolean
+  vip: boolean
+  /** The linked Discord member's display name. */
+  discord: string | null
+}
+
+export interface BotMission {
+  name: string | null
+  map: string | null
+  filename: string | null
+  date: string | null
+  start_time: number | null
+  /** Seconds since the mission started. */
+  mission_time: number | null
+  real_time: number | null
+}
+
+export interface BotServer {
+  name: string
+  display_name: string | null
+  /** DCSServerBot's Status name: RUNNING, PAUSED, STOPPED, SHUTDOWN, LOADING, ... */
+  status: string | null
+  node: string | null
+  instance: string | null
+  maintenance: boolean
+  is_remote: boolean
+  managed_by: unknown
+  max_players: number | null
+  password: boolean
+  port: number | null
+  restart_time: string | null
+  mission: BotMission | null
+  players: BotPlayer[]
+}
+
+export interface BotInstance {
+  name: string | null
+  server: string | null
+  dcs_port: number | null
+  webgui_port: number | null
+}
+
+export interface BotNode {
+  name: string
+  online: boolean
+  master?: boolean
+  dcs_version?: string | null
+  dcs_branch?: string | null
+  bot_version?: string | null
+  is_remote?: boolean
+  instances?: BotInstance[]
+}
+
+export interface BotFleet {
+  generated: string
+  nodes: BotNode[]
+  servers: BotServer[]
+}
+
+/** One of the bot's config files the Settings tab may edit. */
+export interface BotConfigFile {
+  /** Relative to the bot's config dir: main.yaml, plugins/scheduler.yaml, ... */
+  path: string
+  kind: 'main' | 'nodes' | 'servers' | 'presets' | 'plugin' | 'service' | string
+  size: number
+  mtime: number
+  /** services/<name>.yaml.disabled: the service is off. */
+  disabled: boolean
+  /** The bot has a schema for it, and checks every save against it. */
+  schema: boolean
+  /** When a save takes effect: the plugin reloads now, at the next mission launch, or at a bot restart. */
+  applies: 'reload' | 'launch' | 'restart'
+}
+
+export interface BotConfigDoc {
+  path: string
+  kind: string
+  /** sha256 of the file as read: a save sends it back, and is refused if the file moved since. */
+  revision: string
+  /** The file as text, secrets replaced by `secret_mask`. */
+  yaml: string
+  /** The same, parsed; null when the file doesn't parse (`parse_error`). */
+  doc: unknown
+  masked: number
+  secret_mask?: string
+  parse_error?: string
+  schema: boolean
+  applies: 'reload' | 'launch' | 'restart'
+}
+
+export interface BotConfigSaved {
+  ok: boolean
+  changed: boolean
+  revision: string
+  backup?: string
+  applies: 'reload' | 'launch' | 'restart'
+  /** For a plugin: whether the bot reloaded it (null: this bot can't; it applies at a restart). */
+  reloaded?: boolean | null
+}
+
+/** One action's row on the Access tab. */
+export interface BotAccessRow {
+  name: string
+  kind: 'read' | 'write'
+  plugin: string
+  default: BotRole
+  role: BotRole
+  /** Stays with full admins (whole nodes, servers added or deleted, ...). */
+  locked: boolean
+}
+
+/** What console/server adds to a fleet row: weather, extensions, schedule. */
+export interface BotServerOverview {
+  name: string
+  weather: Record<string, unknown> | null
+  clouds: Record<string, unknown> | null
+  /** Live visibility (m) from the running mission, when it answered. */
+  visibility: number | null
+  fog: Record<string, unknown> | null
+  /** The server's extensions as the bot renders them (SRS, Tacview, ...). */
+  extensions: { name?: string; value?: string; [k: string]: unknown }[]
+  /** scheduler.yaml's `schedule` for this server, e.g. {"00-24": "YYYYYYY"}. */
+  schedule: Record<string, string> | null
+  restart: unknown
+}
+
+/** A row of the bot's `audit` table (its columns vary by bot version). */
+export type BotAuditRow = Record<string, unknown> & { time?: string; event?: string }
+
 // ── OPS page (bfdb /api/admin/ops/* → the FowlEngine bot plugin's OPS API) ──
 
 /** A binary waiting in a staging dir (`<name>.pending` + its sidecar). */
@@ -2045,6 +2232,20 @@ function send(method: 'GET' | 'POST', path: string, body?: unknown): Promise<Res
     body: JSON.stringify(body),
     signal,
   })
+}
+
+/** POST a file as the raw body to the bot console (mission, music). */
+async function uploadFile(what: 'mission' | 'music', query: string, file: Blob): Promise<BotResult> {
+  if (transport) throw new Error('Uploads work from the web dashboard, not the Manager')
+  const res = await fetch(`${BASE}${withInstance(`/admin/ops/console/${what}?${query}`)}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/octet-stream' },
+    body: file,
+    signal: deadline(LONG_TIMEOUT_MS),
+  })
+  if (!res.ok) throw new Error(await errorMessage(res))
+  return res.json()
 }
 
 async function get<T>(path: string): Promise<T> {
@@ -2488,6 +2689,53 @@ export const api = {
     archiveRead: (source: string, date: string, lines = 1000, grep = '') =>
                    get<{ source: string; date: string; lines: string[] }>(
                      `/admin/ops/archive/read?source=${encodeURIComponent(source)}&date=${date}&lines=${lines}&grep=${encodeURIComponent(grep)}`),
+  },
+  /** The bot console: DCSServerBot's own actions, through bfdb and the
+   *  FowlEngine plugin (console.py). bfdb names the caller and its roles;
+   *  the plugin checks each action against them, and the bot audits it. */
+  bot: {
+    catalog: () => get<BotCatalog>('/admin/ops/console/catalog'),
+    read:    <D = Record<string, unknown>>(name: string, params: Record<string, unknown> = {}) =>
+               post<BotResult<D>>(`/admin/ops/console/read/${name}`, { params }),
+    act:     <D = Record<string, unknown>>(name: string, params: Record<string, unknown> = {}) =>
+               post<BotResult<D>>(`/admin/ops/console/act/${name}`, { params }),
+    fleet:   () => get<BotFleet>('/admin/ops/console/fleet'),
+    audit:   (q = '', limit = 200, before?: string) =>
+               get<{ rows: BotAuditRow[]; limit: number }>(
+                 `/admin/ops/console/audit?limit=${limit}&q=${encodeURIComponent(q)}${before ? `&before=${encodeURIComponent(before)}` : ''}`),
+    /** Where the browser downloads a mission file from (a plain link: the
+     *  session cookie goes along). */
+    missionUrl: (server: string, mission: number | string) =>
+      `${BASE}${withInstance(`/admin/ops/console/mission?server=${encodeURIComponent(server)}&mission=${encodeURIComponent(String(mission))}`)}`,
+    /** Upload a .miz into a server's missions folder, the file as the body. */
+    uploadMission: (server: string, file: Blob, name: string,
+                    opts: { force?: boolean; load?: boolean; autostart?: boolean } = {}): Promise<BotResult> =>
+      uploadFile('mission', `server=${encodeURIComponent(server)}&name=${encodeURIComponent(name)}` +
+        `&force=${!!opts.force}&load=${!!opts.load}&autostart=${!!opts.autostart}`, file),
+    /** Upload a .mp3/.ogg into the music library (a folder of it). */
+    uploadMusic: (file: Blob, name: string, folder = '', node = ''): Promise<BotResult> =>
+      uploadFile('music', `name=${encodeURIComponent(name)}&folder=${encodeURIComponent(folder)}&node=${encodeURIComponent(node)}`, file),
+    /** A screenshot screenshot_player took (`key` from its answer), as an <img> src. */
+    screenshotUrl: (server: string, key: string) =>
+      `${BASE}${withInstance(`/admin/ops/console/screenshot?server=${encodeURIComponent(server)}&key=${encodeURIComponent(key)}`)}`,
+    server:  (name: string) => get<BotServerOverview>(`/admin/ops/console/server?name=${encodeURIComponent(name)}`),
+    /** The live feed (server-sent events, `fleet`), or null where there is
+     *  none to open (the Manager talks to the bot another way). */
+    streamUrl: (): string | null => transport ? null : `${BASE}${withInstance('/admin/ops/console/stream')}`,
+    access:  () => get<{ actions: BotAccessRow[]; editable: boolean }>('/admin/ops/console/access'),
+    setAccess: (action: string, role: BotRole | null) =>
+      post<{ ok: boolean; action: string; role: BotRole }>('/admin/ops/console/access', { action, role }),
+    config: {
+      files:    () => get<{ files: BotConfigFile[] }>('/admin/ops/console/config/files'),
+      read:     (path: string) => get<BotConfigDoc>(`/admin/ops/console/config/file?path=${encodeURIComponent(path)}`),
+      /** Save the whole file as text, or (`set`/`delete`) replace or drop top-level keys and leave the rest. */
+      save:     (path: string, revision: string, change: { yaml: string } | { set?: Record<string, unknown>; delete?: string[] }) =>
+                  post<BotConfigSaved>('/admin/ops/console/config/file', { path, revision, ...change }),
+      validate: (path: string, revision: string, change: { yaml: string } | { set?: Record<string, unknown>; delete?: string[] }) =>
+                  post<{ ok: boolean; errors: string[] }>('/admin/ops/console/config/validate', { path, revision, ...change }),
+      service:  (name: string, enabled: boolean) =>
+                  post<{ ok: boolean; changed: boolean }>('/admin/ops/console/config/service', { name, enabled }),
+    },
   },
   cockpit: {
     // playerId comes from bfcockpit/Scripts/Hooks/bfcockpit.lua's net.get_my_player_id(),

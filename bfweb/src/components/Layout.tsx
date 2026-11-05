@@ -16,6 +16,7 @@ import { ErrorBoundary } from '@shared/web/ErrorBoundary'
 import NotificationBell from './NotificationBell'
 import { useWireframe } from '../lib/wireframe'
 import { getDevUser } from '../lib/devAuth'
+import { canSeeBotConsole } from '../lib/botconsole'
 import {
   Sitrep,
   Tacmap,
@@ -34,6 +35,7 @@ import {
   Config,
   Shield,
   Server,
+  Terminal,
   Comms,
   Aircraft,
   PlayCircle,
@@ -108,6 +110,7 @@ const ABOUT_NAV = { to: '/about', icon: Info, label: 'ABOUT' }
 const ADMIN_NAV = { to: '/admin', icon: Admin, label: 'ADMIN' }
 const CONFIG_NAV = { to: '/admin/config', icon: Config, label: 'CONFIG' }
 const SERVER_OPS_NAV = { to: '/admin/ops', icon: Server, label: 'OPS' }
+const BOT_NAV = { to: '/admin/bot', icon: Terminal, label: 'SERVER BOT' }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -372,6 +375,9 @@ export default function Layout() {
     [
       ABOUT_NAV,
       ...(user?.is_admin ? [ADMIN_NAV, CONFIG_NAV, SERVER_OPS_NAV] : []),
+      // ops and moderation roles get the bot console too: the plugin
+      // checks each action against the role it needs
+      ...(canSeeBotConsole(user) ? [BOT_NAV] : []),
     ],
   ].filter(g => g.length > 0)
 
