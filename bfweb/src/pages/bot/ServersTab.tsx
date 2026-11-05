@@ -5,6 +5,7 @@ import { useRef, useState } from 'react'
 import { api, type BotFleet, type BotServer } from '../../api'
 import { duration, getPath, scheduleRows, serverControls, statusTone, type ServerControl } from '../../lib/botconsole'
 import { useQuery } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import { Btn, Card, ConfirmBtn, Empty, LinkBtn, Pill, Table, useAction, useRead, useRunner } from './ui'
 import { CELL, DIM, INPUT, MONO, RED, TH, errText } from './style'
 import {
@@ -189,7 +190,7 @@ function MissionsCard({ s }: { s: BotServer }) {
                       confirm={s.players.length ? `Load it? ${s.players.length} on the server.` : 'Load it now?'}
                       onConfirm={() => act('load_mission', { mission: m.index, expected_name: m.name })} />}
                     {can.active && !m.active && <Btn onClick={() => act('set_active_mission', { mission: m.index, expected_name: m.name })}>Set start</Btn>}
-                    <LinkBtn href={api.bot.missionUrl(s.name, m.index)} title="Download"><Download size={10} /></LinkBtn>
+                    {api.bot.files() && <LinkBtn href={api.bot.missionUrl(s.name, m.index)} title="Download"><Download size={10} /></LinkBtn>}
                     {can.del && <ConfirmBtn label="" icon={<Trash2 size={10} />} confirm={fromDisk ? 'Remove and delete the file?' : 'Remove from the list?'}
                       onConfirm={() => act('delete_mission', { mission: m.index, expected_name: m.name, delete_from_disk: fromDisk })} />}
                   </span>
@@ -201,11 +202,13 @@ function MissionsCard({ s }: { s: BotServer }) {
       )}
       <div className="flex items-center gap-3" style={{ marginTop: 10, flexWrap: 'wrap' }}>
         {can.del && <Check checked={fromDisk} onChange={setFromDisk}>removing also deletes the file</Check>}
-        <span style={{ ...DIM, marginLeft: 'auto' }}>Upload .miz</span>
-        <input ref={file} type="file" accept=".miz,.sav" style={{ fontSize: '0.62rem', color: 'var(--text-muted)' }} />
-        <Check checked={upForce} onChange={setUpForce}>overwrite</Check>
-        <Check checked={upLoad} onChange={setUpLoad}>load it</Check>
-        <Btn disabled={uploading} onClick={() => void upload()}><Upload size={10} />{uploading ? 'Uploading…' : 'Upload'}</Btn>
+        {api.bot.files() ? <>
+          <span style={{ ...DIM, marginLeft: 'auto' }}>Upload .miz</span>
+          <input ref={file} type="file" accept=".miz,.sav" style={{ fontSize: '0.62rem', color: 'var(--text-muted)' }} />
+          <Check checked={upForce} onChange={setUpForce}>overwrite</Check>
+          <Check checked={upLoad} onChange={setUpLoad}>load it</Check>
+          <Btn disabled={uploading} onClick={() => void upload()}><Upload size={10} />{uploading ? 'Uploading…' : 'Upload'}</Btn>
+        </> : <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', marginLeft: 'auto' }}>Uploads and downloads: the web dashboard's SERVER BOT page.</span>}
       </div>
       {adding && (
         <div style={{ marginTop: 10 }}>
@@ -317,6 +320,7 @@ function num(v: unknown, digits = 0): string | null {
 }
 
 function OverviewCard({ s }: { s: BotServer }) {
+  const [, setParams] = useSearchParams()
   const q = useQuery({ queryKey: ['bot', 'server', s.name], queryFn: () => api.bot.server(s.name), refetchInterval: 60_000, retry: false })
   const d = q.data
   const w = d?.weather ?? {}
@@ -333,7 +337,7 @@ function OverviewCard({ s }: { s: BotServer }) {
   const sched = scheduleRows(d?.schedule)
   return (
     <Card icon={<Cloud size={13} style={{ color: 'var(--accent)' }} />} title={`Overview · ${s.name}`}
-      right={<LinkBtn href="?tab=settings&file=plugins/scheduler.yaml" title="Edit the scheduler's config">Edit schedule</LinkBtn>}>
+      right={<Btn onClick={() => setParams(p => { const n = new URLSearchParams(p); n.set('tab', 'settings'); n.set('file', 'plugins/scheduler.yaml'); return n })} title="Edit the scheduler's config">Edit schedule</Btn>}>
       {q.error && <Empty>{errText(q.error)}</Empty>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {shown.length > 0 && (

@@ -11,6 +11,7 @@ import {
 } from '../../lib/botconsole'
 import { Alert, CheckCircle2, Play, X } from '@icons'
 import { AMBER, CELL, DIM, INPUT, MONO, OK, RED, TH, errText } from './style'
+import { OpsTargetContext } from '../../context/OpsTarget'
 
 export function Card({ icon, title, right, children, pad = true }: {
   icon?: ReactNode; title: string; right?: ReactNode; children: ReactNode; pad?: boolean
@@ -57,12 +58,20 @@ export function ConfirmBtn({ label: text, icon, confirm, onConfirm, danger = tru
   title?: string
 }) {
   const [asking, setAsking] = useState(false)
+  // Fowl Engine Manager driving more than one box: say which one, loudly
+  const target = useContext(OpsTargetContext)
   if (!asking) return <Btn danger={danger} disabled={disabled} title={title} onClick={() => setAsking(true)}>{icon}{text}</Btn>
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', padding: '0.2rem 0.45rem',
       background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 3,
     }}>
+      {target && (
+        <span style={{
+          fontFamily: 'var(--font-display)', fontSize: '0.74rem', letterSpacing: '0.08em', color: AMBER,
+          border: `1px solid ${AMBER}`, padding: '0 6px', borderRadius: 2,
+        }}>ON {target}</span>
+      )}
       <span style={{ fontSize: '0.62rem', color: 'var(--text)' }}>{confirm}</span>
       <Btn danger onClick={() => { setAsking(false); onConfirm() }}>Yes</Btn>
       <Btn onClick={() => setAsking(false)}>No</Btn>

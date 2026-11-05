@@ -133,7 +133,7 @@ export function ActionsTab({ only, fleet }: { only?: string[]; fleet: BotFleet }
 /** Music: upload a track into the library, then every music action. */
 export function MusicTab({ fleet }: { fleet: BotFleet }) {
   const runner = useRunner()
-  const can = !!useAction('add_playlist_track')
+  const can = !!useAction('add_playlist_track') && api.bot.files()
   const file = useRef<HTMLInputElement>(null)
   const [folder, setFolder] = useState('')
   const [node, setNode] = useState('')

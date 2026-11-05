@@ -2700,6 +2700,10 @@ export const api = {
     act:     <D = Record<string, unknown>>(name: string, params: Record<string, unknown> = {}) =>
                post<BotResult<D>>(`/admin/ops/console/act/${name}`, { params }),
     fleet:   () => get<BotFleet>('/admin/ops/console/fleet'),
+    /** Whether files (mission and music uploads and downloads, screenshots)
+     *  can move here. Not in Fowl Engine Manager: its channel to the bot
+     *  carries text, so those stay on the web dashboard. */
+    files: (): boolean => !transport,
     audit:   (q = '', limit = 200, before?: string) =>
                get<{ rows: BotAuditRow[]; limit: number }>(
                  `/admin/ops/console/audit?limit=${limit}&q=${encodeURIComponent(q)}${before ? `&before=${encodeURIComponent(before)}` : ''}`),

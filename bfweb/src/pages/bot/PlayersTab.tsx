@@ -37,6 +37,10 @@ function PlayerActions({ s, p, onOpenRecord }: { s: BotServer; p: BotPlayer; onO
     try {
       const r = await runner.act('screenshot_player', { server_name: s.name, ucid }, `${s.name}/${ucid}`)
       const key = r?.ok ? r.data.screenshot : null
+      if (typeof key === 'string' && key && !api.bot.files()) {
+        runner.say(true, `Screenshot of ${p.name} taken -- the web dashboard's SERVER BOT page shows it (${key})`)
+        return
+      }
       setShot(typeof key === 'string' && key ? key : null)
     } finally {
       setShooting(false)
