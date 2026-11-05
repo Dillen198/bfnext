@@ -37,6 +37,7 @@ class FakeActionContext:
     def from_web(cls, identity, node, bus):
         ctx = cls()
         ctx.identity = identity
+        ctx.bus = bus
         ctx.audit_actor = f"[web:{identity.backend}/{identity.subject}]"
         return ctx
 

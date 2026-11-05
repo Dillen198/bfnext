@@ -294,6 +294,10 @@ pub(crate) fn sse_block(block: &str) -> warp::sse::Event {
     ev.data(data.join("\n"))
 }
 
+/// How long the bot has to start the live feed (send its headers).
+pub(crate) const STREAM_START_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(20);
+
 /// GET /api/admin/ops/console/stream  — the bot console's live feed.
 ///
 /// The plugin pushes the fleet whenever it changes (server-sent events); the
@@ -341,12 +345,24 @@ pub(crate) async fn api_admin_ops_stream(
     for (name, value) in fowl_headers(&who) {
         req = req.header(name, value);
     }
-    let resp = match req.send().await {
-        Ok(r) => r,
-        Err(e) => {
+    // The stream itself has no deadline, but its start does: a bot that
+    // accepts the connection and never answers would otherwise leave this
+    // request (and one more per browser reconnect) waiting here forever.
+    let resp = match tokio::time::timeout(STREAM_START_TIMEOUT, req.send()).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {
             return Ok(json_err(
                 StatusCode::BAD_GATEWAY,
                 format!("the bot's WebService is not answering ({e})"),
+            ))
+        }
+        Err(_) => {
+            return Ok(json_err(
+                StatusCode::GATEWAY_TIMEOUT,
+                format!(
+                    "the bot did not start the live feed within {} s -- is DCSServerBot responding?",
+                    STREAM_START_TIMEOUT.as_secs()
+                ),
             ))
         }
     };

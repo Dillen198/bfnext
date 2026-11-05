@@ -217,11 +217,35 @@ def may_use(roles: frozenset[str], role: str) -> bool:
     return role in roles
 
 
-def jsonable(value: Any, depth: int = 0) -> Any:
+# How much of an answer jsonable() turns into JSON before it stops. An action's
+# answer is a page of rows; anything far bigger is a mistake, and it is turned
+# into JSON on the bot's event loop, where a long walk stops the whole bot.
+JSON_MAX_DEPTH = 12
+JSON_MAX_NODES = 50_000
+
+
+def _is_live(value: Any) -> bool:
+    """A live bot object -- a Server, Player, Node, Instance, the bus... --
+    rather than data. Those hang together (a server holds its players, each
+    player its server) and are never sent: only their name is."""
+    module = type(value).__module__ or ""
+    return module.startswith(("core.data", "core.services", "services.", "discord")) or (
+        hasattr(value, "bus") and hasattr(value, "name"))
+
+
+def jsonable(value: Any, depth: int = 0, _budget: Optional[list] = None, _path: Optional[set] = None) -> Any:
     """`value` as something json.dumps takes: an action's result carries
-    dataclasses, datetimes, enums, Decimals and (in one place) bytes."""
-    if depth > 40:
-        return str(value)
+    dataclasses, datetimes, enums, Decimals and (in one place) bytes.
+
+    Bounded, because it runs on the bot's event loop: a live bot object is
+    named, not walked; a cycle, JSON_MAX_DEPTH levels or JSON_MAX_NODES values
+    end the walk with a string. (An unbounded walk of a server -> its players
+    -> their server ... froze a bot on 2026-11-05.)"""
+    budget = _budget if _budget is not None else [JSON_MAX_NODES]
+    path = _path if _path is not None else set()
+    budget[0] -= 1
+    if budget[0] < 0:
+        return "..."
     if value is None or isinstance(value, (bool, int, str)):
         return value
     if isinstance(value, float):
@@ -236,13 +260,24 @@ def jsonable(value: Any, depth: int = 0) -> Any:
         return value.name
     if isinstance(value, (bytes, bytearray, memoryview)):
         return {"bytes": len(value)}
-    if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return {f.name: jsonable(getattr(value, f.name, None), depth + 1) for f in dataclasses.fields(value)}
-    if isinstance(value, dict):
-        return {str(k): jsonable(v, depth + 1) for k, v in value.items()}
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return [jsonable(v, depth + 1) for v in value]
-    return str(value)
+    if _is_live(value):
+        name = getattr(value, "name", None)
+        return name if isinstance(name, str) else type(value).__name__
+    if depth > JSON_MAX_DEPTH or id(value) in path:
+        return str(value)[:200]
+    is_dc = dataclasses.is_dataclass(value) and not isinstance(value, type)
+    if not (is_dc or isinstance(value, (dict, list, tuple, set, frozenset))):
+        return str(value)[:2000]
+    path.add(id(value))
+    try:
+        if is_dc:
+            return {f.name: jsonable(getattr(value, f.name, None), depth + 1, budget, path)
+                    for f in dataclasses.fields(value)}
+        if isinstance(value, dict):
+            return {str(k): jsonable(v, depth + 1, budget, path) for k, v in list(value.items())}
+        return [jsonable(v, depth + 1, budget, path) for v in list(value)]
+    finally:
+        path.discard(id(value))
 
 
 def result_doc(result: Any) -> dict:
@@ -310,6 +345,38 @@ def _clean_name(value: Optional[str], fallback: str) -> str:
     from urllib.parse import unquote
     text = re.sub(r"[\x00-\x1f\x7f\[\]]", "_", unquote(str(value or ""))).strip()
     return text[:80] or fallback
+
+
+class _Cluster:
+    """The `bus` an action is handed: the servers as a plain {name: server}
+    dict and the nodes -- what DCSServerBot's own console hands its actions
+    (pages/actions._Cluster), and nothing else.
+
+    Not the ServiceBus itself: its `servers` is a ThreadSafeDict, whose
+    iteration yields (name, server) pairs and holds a lock until it ends. An
+    action written against the console's plain dict (list_bans:
+    `[name for name in ctx.servers]`) then put whole Server objects in its
+    answer."""
+
+    def __init__(self, bus: Any, node: Any):
+        self._bus = bus
+        self._node = node
+
+    @property
+    def servers(self) -> dict:
+        src = getattr(self._bus, "servers", None) or {}
+        try:
+            pairs = list(src.items())
+        except Exception:  # noqa: BLE001
+            return {}
+        return {str(name): server for name, server in pairs if name}
+
+    @property
+    def nodes(self) -> dict:
+        try:
+            return dict(getattr(self._node, "all_nodes", None) or {})
+        except Exception:  # noqa: BLE001
+            return {}
 
 
 class _Layer:
@@ -407,7 +474,7 @@ class ConsoleApi:
         actor = _clean_name(_header(request, "X-Fowl-Actor"), "dashboard")
         subject = _clean_name(_header(request, "X-Fowl-Subject"), actor)
         ident = Identity(roles=bot_roles(roles), shown_name=actor, subject=subject)
-        return layer.ActionContext.from_web(ident, self.cog.bot.node, self._bus())
+        return layer.ActionContext.from_web(ident, self.cog.bot.node, _Cluster(self._bus(), self.cog.bot.node))
 
     # ---- routes ---------------------------------------------------------------
 
