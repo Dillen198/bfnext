@@ -248,6 +248,8 @@ DEFAULT:
     intel_dir: ""                                # optional --intel-dir
     admin_username: "admin"                      # -> bfdb --admin-username
     admin_password: ""                           # -> bfdb --admin-password (falls back to the top-level admin_password)
+    log_read_token: ""                           # -> bfdb's BFDB_LOG_READ_TOKEN: turns on /api/logs/* (the issue
+                                                 #    report deploy/autofix and Claude read). A long random string.
     cors_origins:
       - "https://vectorstrike.org"
       - "https://dashboard.vectorstrike.org"

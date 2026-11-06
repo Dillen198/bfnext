@@ -1,0 +1,18 @@
+{
+  "_comment": "Copy to %LOCALAPPDATA%\\fowl-autofix\\config.json and fill in the first three. The Claude API key is not kept here: set ANTHROPIC_API_KEY.",
+  "report_url": "https://api.vectorstrike.org/api/logs/issues",
+  "report_token": "<bfdb --log-read-token>",
+  "discord_webhook": "<webhook URL of a private ops channel>",
+
+  "repo": "E:\\Github\\bfnext-vector",
+  "base_branch": "vector",
+  "model": "claude-opus-5-5",
+  "max_budget_usd": 6.0,
+  "max_runs_per_day": 3,
+  "min_count": 3,
+  "levels": ["ERROR", "CRASH"],
+  "sources": ["engine", "bot"],
+  "interval_minutes": 15,
+  "cargo_target_dir": "C:\\cargo-target\\fowl-autofix",
+  "publish_channel": "stable"
+}

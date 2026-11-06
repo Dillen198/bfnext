@@ -60,10 +60,11 @@ The server box looks after itself:
    open the OPS page, press **Check now**, and look at what it would stage.
    Then switch it on. The exact keys for the whole hands-off setup (engine,
    bot plugin and campaign packs) are in "Server checklist" below.
-5. **Claude's read access (optional but recommended):** start bfdb with
-   `--log-read-token <long random string>` (the `bfdb:` block gets a
-   `log_read_token:`, or add it to the args) and give Claude the public bfdb
-   URL + token. See section 5.
+5. **Claude's read access (optional but recommended):** give bfdb a log
+   read token: `log_read_token: <long random string>` in the `bfdb:` block
+   (procman hands it over as `BFDB_LOG_READ_TOKEN`, off the command line),
+   then give Claude the public bfdb URL + token. See section 5, and
+   `deploy/autofix/README.md` to have Claude fix new errors by itself.
 
 ## 2. Publishing a release
 

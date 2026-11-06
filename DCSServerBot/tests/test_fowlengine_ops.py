@@ -2698,3 +2698,15 @@ def test_backup_bridge_refuses_while_the_box_is_busy(world):
     assert c.post(f"{BASE}/backup/start", headers=H, json={}).status_code == 200
     (remote / "job-owner.json").unlink()
     assert c.post(f"{BASE}/backup/verify", headers=H, json={"zip": zip_path}).status_code == 200
+
+
+def test_log_read_token_reaches_bfdb_through_its_environment(world, monkeypatch):
+    # What deploy/autofix reads the issue report with: off the command line.
+    monkeypatch.delenv("BFDB_LOG_READ_TOKEN", raising=False)
+    pm = world.cog.procman
+    assert "BFDB_LOG_READ_TOKEN" not in pm._bfdb_env()
+    world.cfg["bfdb"]["log_read_token"] = "tok-123"
+    pm.reload_config(world.cfg)
+    assert pm._bfdb_env()["BFDB_LOG_READ_TOKEN"] == "tok-123"
+    assert "tok-123" not in " ".join(pm._build_args("pw", False))
+    assert oa.is_secret_key("log_read_token")
