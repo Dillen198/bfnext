@@ -474,6 +474,11 @@ struct Context {
     /// the attempts to call `DCS.exitProcess`. Nothing may save after this --
     /// a campaign reset has already removed the save file on purpose.
     exit_attempts: Option<u32>,
+    /// Since when the mission's DCS API has been broken (`dcso3::api_intact`),
+    /// and the part found missing. While it is, the campaign stands still and
+    /// nothing is saved: on 6 Nov it kept going on a half-empty API, read
+    /// every failed call as a death or a destroyed building, and saved that.
+    api_broken: Option<(DateTime<Utc>, std::string::String)>,
     /// After a shutdown: the background thread's "save and logs flushed"
     /// flag, and when we started waiting for it. `try_exit_dcs` holds off
     /// exiting until it is set (or `SHUTDOWN_WAIT` has passed).
@@ -1676,7 +1681,11 @@ fn mission_end(lua: MizLua, ctx: &mut Context) -> Result<()> {
     // shutdown (a campaign reset has deleted the save on purpose, and
     // admin_shutdown already saved otherwise), and never before a campaign
     // was actually loaded -- that would write an empty Db over the real save.
-    if ctx.db_loaded && ctx.exit_attempts.is_none() {
+    if ctx.api_broken.is_some() {
+        error!(
+            "mission ending with the DCS API broken: not saving, the last good save stands"
+        );
+    } else if ctx.db_loaded && ctx.exit_attempts.is_none() {
         info!("mission ending, saving the campaign");
         return_lives(lua, ctx, DateTime::<Utc>::MAX_UTC);
         ctx.db.close_open_sorties();
@@ -6376,6 +6385,10 @@ fn start_msgq_drain(lua: MizLua) -> Result<()> {
             };
             let ctx = &mut *ctx_guard;
             ctx.db.ephemeral.clock.advance(now.0);
+            if ctx.api_broken.is_some() {
+                // nothing to send with (the 1 s tick logged it once)
+                return Ok(Some(now + period));
+            }
             // Round up so a rate that does not divide evenly is never throttled
             // below its configured value.
             let per_pass =
@@ -6597,6 +6610,25 @@ fn start_timed_events(ctx: &mut Context, lua: MizLua, path: PathBuf) -> Result<(
                          stood still with it (see crate::clock)"
                     );
                 }
+            match (dcso3::api_intact(lua), &ctx.api_broken) {
+                (Ok(()), None) => (),
+                (Ok(()), Some((since, _))) => {
+                    error!(
+                        "the mission's DCS API is back after {}s, the campaign resumes",
+                        (wall - *since).num_seconds()
+                    );
+                    ctx.api_broken = None;
+                }
+                (Err(missing), broken) => {
+                    if broken.is_none() {
+                        error!(
+                            "the mission's DCS API is broken ({missing} is missing): the                              campaign stands still and nothing is saved until it is back, so                              the save keeps the state from before. DCS usually crashes soon                              after; if it doesn't, restart the mission"
+                        );
+                        ctx.api_broken = Some((wall, missing));
+                    }
+                    return Ok(Some(now + 1.));
+                }
+            }
             let res = catch_unwind(AssertUnwindSafe(|| run_timed_events(ctx, lua, &path)));
             if let Err(e) = catch_unwind(AssertUnwindSafe(|| drain_deferred_events(lua, ctx))) {
                 error!("handling deferred events panicked: {}", bg::panic_msg(&e))

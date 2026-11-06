@@ -338,4 +338,46 @@ mod gone_tests {
         let e = lookup(&lua_with_unit(true, None)).unwrap_err();
         assert!(!is_gone(&e), "{e:?}");
     }
+
+    /// The mission's API the way DCS sets it up, cut down to what
+    /// `api_intact` asks about; `broken` is run after it.
+    fn lua_with_api(broken: &str) -> Lua {
+        let lua = Lua::new();
+        lua.load(format!(
+            "Object = {{}}
+             Object.__index = Object
+             function Object.isExist(self) return true end
+             function Object.getPosition(self) return {{}} end
+             Unit = setmetatable({{}}, {{ __index = Object }})
+             Unit.__index = Unit
+             function Unit.getLife(self) return 1 end
+             trigger = {{ action = {{ outText = function() end }} }}
+             land = {{ getSurfaceType = function() end }}
+             world = {{ getAirbases = function() end }}
+             timer = {{ getTime = function() end }}
+             {broken}"
+        ))
+        .exec()
+        .unwrap();
+        lua
+    }
+
+    #[test]
+    fn a_broken_api_is_noticed() {
+        use crate::api_intact;
+        assert_eq!(api_intact(MizLua(&lua_with_api(""))), Ok(()));
+        // 6 Nov: these came back nil mid-mission
+        assert_eq!(
+            api_intact(MizLua(&lua_with_api("land = nil"))),
+            Err("land.getSurfaceType".into())
+        );
+        assert_eq!(
+            api_intact(MizLua(&lua_with_api("Unit.getLife = nil"))),
+            Err("Unit.getLife".into())
+        );
+        assert_eq!(
+            api_intact(MizLua(&lua_with_api("trigger.action.outText = nil"))),
+            Err("trigger.action".into())
+        );
+    }
 }

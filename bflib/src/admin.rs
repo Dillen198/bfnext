@@ -1268,6 +1268,10 @@ pub(super) fn admin_shutdown(
         ctx.do_bg_task(Task::ResetState(ctx.miz_state_path.clone()));
         ctx.do_bg_task(Task::Stat(se));
         ctx.do_bg_task(Task::Stat(Stat::RoundEnd { winner }));
+    } else if ctx.api_broken.is_some() {
+        // the campaign stood still on a broken DCS API: the last good save stands
+        error!("shutdown with the DCS API broken: not saving, the last good save stands");
+        ctx.do_bg_task(Task::Stat(se));
     } else {
         return_lives(lua, ctx, DateTime::<Utc>::MAX_UTC);
         ctx.db.close_open_sorties();
