@@ -418,7 +418,8 @@ Chat commands are `-admin <command>` from an admin UCID; `-admin help` lists the
 | 14.22 | whythreat | `-admin whythreat <objective>` | Why it isn't repairing: threat units, capture timer, logistics, supply, next pulse | |
 | 14.23 | ghosts | `-admin ghosts`, then `-admin purge-ghosts` | Units with no DCS object listed, then marked dead | |
 | 14.24 | supply | `-admin reduce <objective> 50`, `-admin transfer <from> <to>`, `-admin tick`, `-admin deliver` | Supplies drop by half; move between objectives; a logistics tick and a delivery run now | |
-| 14.25 | repair | `-admin repair <airbase>` | One repair step at that airbase | |
+| 14.25 | repair | `-admin repair <airbase>` | The airbase rebuilt: every damaged group, and its logistics buildings counted as standing | |
+| 14.25a | repair all | `-admin repair all` | Every objective rebuilt the same way; the reply counts objectives, groups and buildings | |
 | 14.26 | log-desc | `-admin log-desc` in a slot | getDesc of your aircraft written to the log | |
 | 14.27 | shutdown confirm | `-admin shutdown` | Asks for `confirm` within 30 s; nothing else happens (see 22.4) | |
 

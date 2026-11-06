@@ -17,7 +17,7 @@ use crate::{
     object::{DcsObject, DcsOid},
     simple_enum, wrapped_table, LuaEnv, LuaVec3, MizLua, Position3,
 };
-use anyhow::{bail, Result};
+use anyhow::Result;
 use mlua::{prelude::*, Value};
 use serde_derive::Serialize;
 use std::{marker::PhantomData, ops::Deref};
@@ -273,7 +273,7 @@ impl DcsObject for Weapon {
         t.raw_set("id_", id.id)?;
         let t = Weapon { t, lua: lua.inner().clone() };
         if !t.is_exist()? {
-            bail!("{} is an invalid weapon", id.id)
+            return Err(crate::Gone(format!("{} is an invalid weapon", id.id)).into());
         }
         Ok(t)
     }
@@ -287,7 +287,7 @@ impl DcsObject for Weapon {
     fn change_instance(self, id: &DcsOid<Self::Class>) -> Result<Self> {
         self.raw_set("id_", id.id)?;
         if !self.is_exist()? {
-            bail!("{} is an invalid weapon", id.id)
+            return Err(crate::Gone(format!("{} is an invalid weapon", id.id)).into());
         }
         Ok(self)
     }
@@ -296,7 +296,7 @@ impl DcsObject for Weapon {
         id.check_implements(MizLua(&self.lua), "Weapon")?;
         self.t.raw_set("id_", id.id)?;
         if !self.is_exist()? {
-            bail!("{} is an invalid weapon", id.id)
+            return Err(crate::Gone(format!("{} is an invalid weapon", id.id)).into());
         }
         Ok(self)
     }

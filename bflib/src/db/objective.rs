@@ -795,6 +795,36 @@ impl CaptureDiagnosis {
     }
 }
 
+/// What an admin repair put back: groups rebuilt, and logistics buildings
+/// counted as standing again.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AdminRepair {
+    pub groups: usize,
+    pub buildings: u32,
+}
+
+impl std::fmt::Display for AdminRepair {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let plural = |n: u64, one: &str, many: &str| {
+            if n == 1 { format!("1 {one}") } else { format!("{n} {many}") }
+        };
+        match (self.groups, self.buildings) {
+            (0, 0) => f.write_str("nothing to repair"),
+            (g, 0) => write!(f, "{}", plural(g as u64, "group", "groups")),
+            (0, b) => write!(
+                f,
+                "{}",
+                plural(b as u64, "logistics building", "logistics buildings")
+            ),
+            (g, b) => write!(
+                f,
+                "{}, {}",
+                plural(g as u64, "group", "groups"),
+                plural(b as u64, "logistics building", "logistics buildings")
+            ),
+        }
+    }
+}
 impl Db {
     pub fn objective(&self, id: &ObjectiveId) -> Result<&Objective> {
         objective!(self, id)
@@ -1443,7 +1473,7 @@ impl Db {
         &mut self,
         oid: ObjectiveId,
         now: DateTime<Utc>,
-    ) -> Result<usize> {
+    ) -> Result<AdminRepair> {
         let mut repaired = 0;
         // Bounded: one iteration per damaged group, and the loop only
         // continues while a group actually got fixed, but don't let a
@@ -1454,7 +1484,19 @@ impl Db {
                 break;
             }
         }
-        Ok(repaired)
+        // With logi_from_scenery the base's logistics are buildings, which
+        // the group loop above never touches: an admin repair puts them back
+        // in the count too. (6 Nov: a broken mission API counted every base's
+        // buildings as destroyed, and only a restore could undo it.) The DCS
+        // rubble stays until the next mission load rescans the base.
+        let buildings = self.persisted.scenery_destroyed.get(&oid).copied().unwrap_or(0);
+        if buildings > 0 {
+            self.ephemeral.scenery_destroyed_by_objective.remove(&oid);
+            self.persisted.scenery_destroyed.remove_cow(&oid);
+            self.ephemeral.dirty();
+            self.update_objective_status(&oid, now)?;
+        }
+        Ok(AdminRepair { groups: repaired, buildings })
     }
 
     /// `free` skips both the affordability check and the charge -- see

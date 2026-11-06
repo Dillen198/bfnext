@@ -282,6 +282,29 @@ impl IntoLua for Color {
     }
 }
 
+/// An instance lookup found the object gone: it no longer exists in DCS, or
+/// it is dead. Distinct from the lookup itself failing. On 6 Nov the mission's
+/// DCS API broke (`getLife`, `land`, `world` all nil), and bflib took every
+/// failed lookup for a death: units were killed off and every base's
+/// logistics buildings counted as destroyed, then saved. Check with
+/// [`is_gone`] before treating an error as a death.
+#[derive(Debug)]
+pub struct Gone(pub std::string::String);
+
+impl std::fmt::Display for Gone {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Gone {}
+
+/// Whether `e` says the object is gone (see [`Gone`]), as opposed to DCS
+/// failing to answer.
+pub fn is_gone(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| c.is::<Gone>())
+}
+
 pub fn wrap_f<'lua, L: LuaEnv<'lua>, R: Default, F: FnOnce(L) -> Result<R>>(
     name: &str,
     lua: L,

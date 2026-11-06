@@ -142,7 +142,8 @@ Admins only; anyone else gets no reply. `-admin help` lists them in game.
 | `-admin lives <player> <standard\|intercept\|logistics\|attack\|recon> <n>` | Set how many lives of a type a player has left |
 | `-admin reset-lives <player>` / `-admin reset-lives-all` | Restore one player's / everyone's lives |
 | `-admin capture <objective> <blue\|red\|neutral>` | Force an objective to change hands |
-| `-admin repair <airbase>` | Repair one step |
+| `-admin repair <airbase>` | Rebuild the airbase outright: its groups and its logistics buildings |
+| `-admin repair all` | The same at every objective |
 | `-admin reduce <objective> <percent>` | Cut an objective's supplies by a percentage |
 | `-admin transfer <from-objective> <to-objective>` | Move supplies between objectives |
 | `-admin reinit-warehouse <airbase>` | Reinitialise a warehouse |

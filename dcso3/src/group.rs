@@ -18,7 +18,7 @@ use crate::{
     object::{DcsObject, DcsOid, Object},
     simple_enum, wrapped_table, LuaEnv, MizLua, Sequence,
 };
-use anyhow::{bail, Result};
+use anyhow::Result;
 use mlua::{prelude::*, Value};
 use serde_derive::Serialize;
 use std::{marker::PhantomData, ops::Deref};
@@ -68,7 +68,7 @@ impl Group {
         // work around for dcs bug that can cause getByName to return
         // a group even though the group is dead
         if g.get_size()? == 0 {
-            bail!("{} is dead", name)
+            return Err(crate::Gone(format!("{} is dead", name)).into());
         }
         Ok(g)
     }
@@ -142,12 +142,12 @@ impl DcsObject for Group {
         t.raw_set("id_", id.id)?;
         let t = Group { t, lua: lua.inner().clone() };
         if !t.is_exist()? {
-            bail!("{} is an invalid group", id.id)
+            return Err(crate::Gone(format!("{} is an invalid group", id.id)).into());
         }
         // work around for dcs bug that can cause isExist to return
         // true even though the group is dead
         if t.get_size()? == 0 {
-            bail!("{} is dead", id.id)
+            return Err(crate::Gone(format!("{} is dead", id.id)).into());
         }
         Ok(t)
     }
@@ -161,12 +161,12 @@ impl DcsObject for Group {
     fn change_instance(self, id: &DcsOid<Self::Class>) -> Result<Self> {
         self.raw_set("id_", id.id)?;
         if !self.is_exist()? {
-            bail!("{} is an invalid group", id.id)
+            return Err(crate::Gone(format!("{} is an invalid group", id.id)).into());
         }
         // work around for dcs bug that can cause isExist to return
         // true even though the group is dead
         if self.get_size()? == 0 {
-            bail!("{} is dead", id.id)
+            return Err(crate::Gone(format!("{} is dead", id.id)).into());
         }
         Ok(self)
     }
@@ -175,12 +175,12 @@ impl DcsObject for Group {
         id.check_implements(MizLua(&self.lua), "Group")?;
         self.t.raw_set("id_", id.id)?;
         if !self.is_exist()? {
-            bail!("{} is an invalid group", id.id)
+            return Err(crate::Gone(format!("{} is an invalid group", id.id)).into());
         }
         // work around for dcs bug that can cause isExist to return
         // true even though the group is dead
         if self.get_size()? == 0 {
-            bail!("{} is dead", id.id)
+            return Err(crate::Gone(format!("{} is dead", id.id)).into());
         }
         Ok(self)
     }

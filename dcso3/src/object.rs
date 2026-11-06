@@ -147,7 +147,7 @@ impl DcsObject for Object {
         t.raw_set("id_", id.id)?;
         let t = Object { t, lua: lua.inner().clone() };
         if !t.is_exist()? {
-            bail!("{} is an invalid object", id.id)
+            return Err(crate::Gone(format!("{} is an invalid object", id.id)).into());
         }
         Ok(t)
     }
@@ -161,7 +161,7 @@ impl DcsObject for Object {
     fn change_instance(self, id: &DcsOid<Self::Class>) -> Result<Self> {
         self.raw_set("id_", id.id)?;
         if !self.is_exist()? {
-            bail!("{} is an invalid object", id.id)
+            return Err(crate::Gone(format!("{} is an invalid object", id.id)).into());
         }
         Ok(self)
     }
@@ -170,7 +170,7 @@ impl DcsObject for Object {
         id.check_implements(MizLua(&self.lua), "Object")?;
         self.t.raw_set("id_", id.id)?;
         if !self.is_exist()? {
-            bail!("{} is an invalid object", id.id)
+            return Err(crate::Gone(format!("{} is an invalid object", id.id)).into());
         }
         Ok(self)
     }

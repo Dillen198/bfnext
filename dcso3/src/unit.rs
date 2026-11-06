@@ -20,7 +20,7 @@ use crate::{
     record_perf, simple_enum_unknown, wrapped_table, LuaEnv, LuaVec2, LuaVec3, MizLua,
     Position3, Sequence,
 };
-use anyhow::{bail, Result};
+use anyhow::Result;
 use log::debug;
 use mlua::{prelude::*, Value};
 use na::Vector2;
@@ -255,12 +255,12 @@ impl DcsObject for Unit {
         let t = Unit { t, lua: lua.inner().clone() };
         if !t.is_exist()? {
             debug!("{} is an invalid unit", id.id);
-            bail!("{} is an invalid unit", id.id)
+            return Err(crate::Gone(format!("{} is an invalid unit", id.id)).into());
         }
         // work around DCS bug that results in isExist => true for dead units
         if t.get_life()? < 1. {
             debug!("{} is dead", id.id);
-            bail!("{} is dead", id.id)
+            return Err(crate::Gone(format!("{} is dead", id.id)).into());
         }
         Ok(t)
     }
@@ -275,12 +275,12 @@ impl DcsObject for Unit {
         self.raw_set("id_", id.id)?;
         if !self.is_exist()? {
             debug!("{} is an invalid unit", id.id);
-            bail!("{} is an invalid unit", id.id)
+            return Err(crate::Gone(format!("{} is an invalid unit", id.id)).into());
         }
         // work around DCS bug that results in isExist => true for dead units
         if self.get_life()? < 1. {
             debug!("{} is dead", id.id);
-            bail!("{} is dead", id.id)
+            return Err(crate::Gone(format!("{} is dead", id.id)).into());
         }
         Ok(self)
     }
@@ -290,13 +290,52 @@ impl DcsObject for Unit {
         self.t.raw_set("id_", id.id)?;
         if !self.is_exist()? {
             debug!("{} is an invalid unit", id.id);
-            bail!("{} is an invalid unit", id.id)
+            return Err(crate::Gone(format!("{} is an invalid unit", id.id)).into());
         }
         // work around DCS bug that results in isExist => true for dead units
         if self.get_life()? < 1. {
             debug!("{} is dead", id.id);
-            bail!("{} is dead", id.id)
+            return Err(crate::Gone(format!("{} is dead", id.id)).into());
         }
         Ok(self)
+    }
+}
+
+#[cfg(test)]
+mod gone_tests {
+    use super::*;
+    use crate::{is_gone, MizLua};
+
+    /// A `Unit` class the way DCS defines one, with `isExist` and `getLife`
+    /// answering as given; `life: None` leaves `getLife` out, as on 6 Nov.
+    fn lua_with_unit(exists: bool, life: Option<f64>) -> Lua {
+        let lua = Lua::new();
+        let life = life.map(|l| format!("function Unit.getLife(self) return {l} end"));
+        lua.load(format!(
+            "Unit = {{}}
+             Unit.__index = Unit
+             function Unit.isExist(self) return {exists} end
+             {}",
+            life.unwrap_or_default()
+        ))
+        .exec()
+        .unwrap();
+        lua
+    }
+
+    fn lookup(lua: &Lua) -> Result<Unit> {
+        let id = DcsOid { id: 7, class: "Unit".into(), t: PhantomData };
+        Unit::get_instance(MizLua(lua), &id)
+    }
+
+    #[test]
+    fn only_a_real_answer_is_gone() {
+        assert!(lookup(&lua_with_unit(true, Some(1.))).is_ok());
+        // DCS says so: the unit is gone
+        assert!(is_gone(&lookup(&lua_with_unit(false, Some(1.))).unwrap_err()));
+        assert!(is_gone(&lookup(&lua_with_unit(true, Some(0.))).unwrap_err()));
+        // DCS fails to answer: nothing is known about the unit
+        let e = lookup(&lua_with_unit(true, None)).unwrap_err();
+        assert!(!is_gone(&e), "{e:?}");
     }
 }

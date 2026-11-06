@@ -5130,6 +5130,16 @@ impl Db {
                             deployable_name
                         )))
                     }
+                    Err(e) if super::group::failed_in_water(&e) => {
+                        // Landed in (or next to) the sea. No sibling crate
+                        // changes that: tell the player on the crate's marker
+                        // and back off, rather than an error every tick.
+                        Ok(self.c130_crate_blocked(
+                            crate_name,
+                            crate_data,
+                            format!("{deployable_name} can't be set up in water: move the crates onto dry land"),
+                        ))
+                    }
                     Err(e) => {
                         error!(
                             "[C130_CARGO] Failed to spawn group '{}' from crate: {:?}",

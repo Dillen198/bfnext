@@ -1033,7 +1033,15 @@ fn spawn_dismount(lua: MizLua, ctx: &mut Context, info: Option<DismountInfo>) {
         info.heading,
         info.from_group,
     ) {
-        error!("failed to spawn dismount group: {:?}", e)
+        if db::group::failed_in_water(&e) {
+            // the vehicle died over water (a bridge, a beach): nobody gets out
+            info!(
+                "no dismount from {} at ({:.0}, {:.0}): water",
+                info.vehicle_typ, info.pos.x, info.pos.y
+            );
+        } else {
+            error!("failed to spawn dismount group: {:?}", e)
+        }
     }
 }
 
