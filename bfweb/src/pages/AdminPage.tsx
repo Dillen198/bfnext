@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext'
 import { useOffline } from '@shared/web/snapshot'
 import PageHeader from '../components/PageHeader'
 import CommandersPanel from '../components/CommandersPanel'
+import EngineCommands from '../components/admin/EngineCommands'
 import { useTableSort, SortTh } from '../components/SortableTh'
 import { Navigate } from 'react-router-dom'
 import {
@@ -774,7 +775,8 @@ export default function AdminPage() {
   const [banReason,     setBanReason]     = useState('')
   const [banUntil,      setBanUntil]      = useState('')
   const [unbanTarget,   setUnbanTarget]   = useState<string | null>(null)
-  const [kickInfo,      setKickInfo]      = useState<{ name: string } | null>(null)
+  const [kickInfo,      setKickInfo]      = useState<{ name: string; ucid: string } | null>(null)
+  const [kickState,     setKickState]     = useState<{ busy: boolean; result: string | null; failed: boolean }>({ busy: false, result: null, failed: false })
   const [perfTab,       setPerfTab]       = useState<'charts' | 'table-engine' | 'table-api'>('charts')
 
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery({ queryKey: ['admin', 'sessions'],     queryFn: api.admin.sessions,    refetchInterval: 15_000 })
@@ -838,6 +840,20 @@ export default function AdminPage() {
     setBanTarget(null); setBanReason(''); setBanUntil('')
   }
 
+  // Kicks through the engine's own `-admin kick` (bfdb /api/admin/command):
+  // this used to hand over a chat command to paste in game.
+  async function handleKick() {
+    if (!kickInfo) return
+    setKickState({ busy: true, result: null, failed: false })
+    try {
+      const r = await api.admin.command(`kick ${kickInfo.ucid}`)
+      setKickState({ busy: false, result: r.lines.join('\n') || 'kicked', failed: !r.ok })
+      if (r.ok) queryClient.invalidateQueries({ queryKey: ['online'] })
+    } catch (e) {
+      setKickState({ busy: false, result: e instanceof Error ? e.message : String(e), failed: true })
+    }
+  }
+
   async function handleUnban(ucid: string) {
     await api.admin.unban(ucid)
     queryClient.invalidateQueries({ queryKey: ['admin', 'banned'] })
@@ -849,6 +865,9 @@ export default function AdminPage() {
       <PageHeader art="apache" icon={Admin} title="ADMIN PANEL" sub="Server management — restricted access" />
 
       <div className="flex-1 overflow-auto p-4 space-y-4">
+
+        {/* ── Engine commands: the in-game -admin commands, from here ── */}
+        <EngineCommands />
 
         {/* ── Online players ── */}
         <div className="vs-card">
@@ -889,8 +908,8 @@ export default function AdminPage() {
                     <td style={{ ...CELL }}>
                       <div className="flex gap-2">
                         <button
-                          title="Copy kick chat command"
-                          onClick={() => setKickInfo({ name: p.name })}
+                          title="Kick player"
+                          onClick={() => { setKickInfo({ name: p.name, ucid: p.ucid }); setKickState({ busy: false, result: null, failed: false }) }}
                           style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', padding: 0 }}
                         >
                           <UserX size={12} />
@@ -917,22 +936,25 @@ export default function AdminPage() {
                onClick={e => { if (e.target === e.currentTarget) setKickInfo(null) }}>
             <div role="dialog" aria-modal="true" aria-label="Kick player" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 3, padding: '1.5rem', minWidth: 380, maxWidth: 480 }}>
               <div style={{ ...DIM, marginBottom: '0.75rem', color: '#f59e0b' }}>Kick Player</div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text)', marginBottom: '0.5rem' }}>
-                Run this command in the DCS server F10 admin chat:
+              <div style={{ fontSize: '0.75rem', color: 'var(--text)', marginBottom: '1rem' }}>
+                Kick <span style={{ ...MONO, color: 'var(--accent)' }}>{kickInfo.name}</span> off the server?
+                They can rejoin; use Ban to keep them out.
               </div>
-              <div style={{ ...MONO, fontSize: '0.72rem', background: 'var(--bg-card)', border: '1px solid var(--border)', padding: '0.5rem 0.75rem', borderRadius: 2, color: 'var(--accent)', marginBottom: '1rem', wordBreak: 'break-all' }}>
-                .kick {kickInfo.name}
-              </div>
-              <div style={{ fontSize: '0.62rem', color: 'var(--text-dim)', marginBottom: '1rem' }}>
-                Kick requires direct DCS engine access. Live kick via netidx is available when bfdb is configured with <code>--base</code>.
-              </div>
+              {kickState.result && (
+                <div role="status" style={{ ...MONO, fontSize: '0.66rem', color: kickState.failed ? 'var(--red)' : 'var(--text)', marginBottom: '1rem', whiteSpace: 'pre-wrap' }}>
+                  {kickState.result}
+                </div>
+              )}
               <div className="flex justify-end gap-2">
-                <button
-                  onClick={() => { navigator.clipboard.writeText(`.kick ${kickInfo.name}`); setKickInfo(null) }}
-                  style={{ fontSize: '0.68rem', color: 'var(--accent)', background: 'none', border: '1px solid var(--accent)', padding: '0.4rem 1rem', borderRadius: 2, cursor: 'pointer' }}
-                >
-                  Copy & Close
-                </button>
+                {!kickState.result && (
+                  <button
+                    onClick={handleKick}
+                    disabled={kickState.busy}
+                    style={{ fontSize: '0.68rem', color: '#f59e0b', background: 'none', border: '1px solid #f59e0b', padding: '0.4rem 1rem', borderRadius: 2, cursor: 'pointer', opacity: kickState.busy ? 0.5 : 1 }}
+                  >
+                    {kickState.busy ? 'Kicking…' : 'Kick now'}
+                  </button>
+                )}
                 <button
                   onClick={() => setKickInfo(null)}
                   style={{ fontSize: '0.68rem', color: 'var(--text-dim)', background: 'none', border: '1px solid var(--border)', padding: '0.4rem 0.8rem', borderRadius: 2, cursor: 'pointer' }}

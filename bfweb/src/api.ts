@@ -2627,6 +2627,10 @@ export const api = {
     /** Give every player all their lives back (proxies bflib's reset-lives-all
      *  RPC, so it needs a live engine connection). */
     resetLivesAll: () => post<{ ok: boolean; message: string }>('/admin/reset-lives-all', {}),
+    /** Run an `-admin` chat command on the selected server without being in
+     *  the game (bfdb /api/admin/command; lib/adminCommands has the forms).
+     *  Its replies, one per line; `ok` is false when the engine refused. */
+    command: (command: string) => post<{ ok: boolean; lines: string[] }>('/admin/command', { command }),
     perf:        () => get<PerfData>('/admin/perf'),
     perfHistory: () => get<PerfHistory>('/admin/perf-history'),
     banned:      () => get<BanRecord[]>('/admin/banned'),

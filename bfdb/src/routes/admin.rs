@@ -84,6 +84,100 @@ pub(crate) async fn api_admin_repair_all(
 }
 
 #[derive(serde::Deserialize)]
+pub(crate) struct AdminCommandBody {
+    /// As typed after `-admin` in chat, e.g. `repair all`, `kick D4n`.
+    pub(crate) command: std::string::String,
+}
+
+/// The role an `-admin` command needs from the dashboard. Moderation for
+/// the ones aimed at a player; full admin for handing out admin; operations
+/// for the rest (logistics, repairs, spawns, marks, points, lives).
+pub(crate) fn command_role(command: &str) -> u8 {
+    let command = command.trim();
+    let command = command.strip_prefix("-admin").map(str::trim_start).unwrap_or(command);
+    let word = command.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+    match word.as_str() {
+        "add-admin" | "remove-admin" => admin::Role::ALL,
+        "switch" | "ban" | "unban" | "kick" | "deslot" | "blacklist" | "whitelist" => {
+            admin::Role::MODERATION
+        }
+        _ => admin::Role::OPS,
+    }
+}
+
+/// POST /api/admin/command  {command}  -- run an `-admin` command on one
+/// server (`?server=` picks the instance) without being in the game, and get
+/// its replies back, one per line, as chat would show them. The engine parses
+/// it exactly as chat does (bflib `admin::remote_command`) and refuses
+/// `reset`, `shutdown` and `log-desc`: the first two have their own buttons.
+pub(crate) async fn api_admin_command(
+    session_id: Option<Uuid>,
+    body: AdminCommandBody,
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let command = body.command.trim();
+    if command.is_empty() {
+        return Err(Error(websec::bad_request("no command")));
+    }
+    if command.len() > 500 {
+        return Err(Error(websec::bad_request("command too long")));
+    }
+    let who = require_role(session_id, db.clone(), command_role(command)).await?;
+    if inst.cfg.is_range() {
+        return Err(Error(websec::bad_request(format!(
+            "{} is a training range: it runs no campaign admin commands",
+            inst.id
+        ))));
+    }
+    let (lines, failed) = call_engine_rpc_lines(
+        &db,
+        &inst,
+        "admin-command",
+        vec![("command", netidx::publisher::Value::from(command.to_string()))],
+    )
+    .await?;
+    audit(
+        &db,
+        &who,
+        &format!("-admin {command}"),
+        lines.first().map(|s| s.as_str()),
+        Some(&inst.id),
+    );
+    Ok(warp::reply::json(&serde_json::json!({"ok": !failed, "lines": lines})))
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+
+    #[test]
+    fn each_command_asks_for_its_role() {
+        assert_eq!(command_role("repair all"), admin::Role::OPS);
+        assert_eq!(command_role("-admin tick"), admin::Role::OPS);
+        assert_eq!(command_role("KICK D4n"), admin::Role::MODERATION);
+        assert_eq!(command_role("ban forever D4n"), admin::Role::MODERATION);
+        assert_eq!(command_role("switch blue D4n"), admin::Role::MODERATION);
+        assert_eq!(command_role("add-admin D4n"), admin::Role::ALL);
+        assert_eq!(command_role("  remove-admin D4n"), admin::Role::ALL);
+    }
+
+    #[test]
+    fn several_replies_come_back_as_lines() {
+        use netidx::publisher::Value;
+        let v = Value::Array(
+            vec![Value::from("a\nb".to_string()), Value::Error("no".into())].into(),
+        );
+        let mut out = vec![];
+        assert!(reply_lines(&v, &mut out));
+        assert_eq!(out, ["a", "b", "no"]);
+        let mut out = vec![];
+        assert!(!reply_lines(&Value::from("done".to_string()), &mut out));
+        assert_eq!(out, ["done"]);
+    }
+}
+
+#[derive(serde::Deserialize)]
 pub(crate) struct SideSwitchBody {
     /// Name (case-insensitive, as the engine's `-admin switch` takes it),
     /// in-game player id, or UCID.

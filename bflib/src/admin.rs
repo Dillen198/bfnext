@@ -488,6 +488,31 @@ fn parse_life_type(s: &str) -> Result<LifeType> {
     }
 }
 
+/// An `-admin` command typed somewhere other than the game's chat (the
+/// dashboard's command console, by way of bfdb's /api/admin/command), parsed
+/// the way chat parses it.
+///
+/// Refused here: `reset` and `shutdown`, which have their own confirmed
+/// buttons and full-admin checks on the dashboard (chat asks for a `confirm`
+/// that a one-shot call has no way to give), and `log-desc`, which reads
+/// the plane the caller is sitting in.
+pub(crate) fn remote_command(text: &str) -> Result<AdminCommand> {
+    let text = text.trim();
+    let text = text.strip_prefix("-admin").map(str::trim_start).unwrap_or(text);
+    let cmd: AdminCommand = text.parse()?;
+    match cmd {
+        AdminCommand::Reset { .. } | AdminCommand::Shutdown => {
+            bail!(
+                "reset and shutdown are not run from here: use their own buttons on the admin page"
+            )
+        }
+        AdminCommand::Logdesc => {
+            bail!("log-desc reads the plane you are in: run it in game")
+        }
+        cmd => Ok(cmd),
+    }
+}
+
 impl FromStr for AdminCommand {
     type Err = anyhow::Error;
 
@@ -4152,6 +4177,22 @@ fn run_admin_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_commands_parse_like_chat_and_refuse_the_risky_ones() {
+        assert!(matches!(remote_command("repair all"), Ok(AdminCommand::RepairAll)));
+        // pasted from chat, prefix and all
+        assert!(matches!(
+            remote_command("-admin  Repair all "),
+            Ok(AdminCommand::RepairAll)
+        ));
+        assert!(matches!(remote_command("help"), Ok(AdminCommand::Help)));
+        assert!(remote_command("reset").is_err());
+        assert!(remote_command("reset blue").is_err());
+        assert!(remote_command("shutdown").is_err());
+        assert!(remote_command("log-desc").is_err());
+        assert!(remote_command("no-such-command").is_err());
+    }
 
     #[test]
     fn repair_all_is_its_own_command() {
