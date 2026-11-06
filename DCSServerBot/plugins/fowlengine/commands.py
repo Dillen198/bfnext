@@ -24,6 +24,7 @@ from . import rangefeed
 from . import mapsnap
 from . import serverinfo
 from . import branding
+from . import netfail
 from .common import (ENGINE_LOG_RECONNECT_SECS, NO_PINGS, SHUTDOWN_REQUEST_FILE, STATUS_MAP_FILE, bfdb_admin_get,
                      bfdb_login, srv_params, srv_path)
 from .views import StagedApplyView
@@ -141,6 +142,7 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
         self._range_fail_counts = {}     # server name -> consecutive feed/status failures
         self._range_warned = set()       # (server name, reason) already logged once
         self._bfdb_down = {}             # api_url -> when it was first found unreachable
+        self._other_down = {}            # host other than bfdb's -> when that was last logged
         self._briefing_down = {}         # (server name, side) -> why /api/situation is 503
         self._news_fail_counts = {}      # server name -> consecutive news feed failures
         self._gci_relay_tasks = {}  # server name -> asyncio.Task (GCI transcript relay)
@@ -293,6 +295,22 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
         ) or str(ex) == "engine log websocket closed"
         if not outage:
             return False
+        # The same loop posts to Discord: a failure to reach discord.com is
+        # not bfdb being down, and saying so sent people looking at bfdb
+        # during a DNS outage. Logged once per host per 10 minutes instead.
+        other = netfail.elsewhere(api_url, ex)
+        if other is not None and not restarting:
+            last = self._other_down.get(other)
+            if last is None or time.time() - last >= 600:
+                self._other_down[other] = time.time()
+                self.log.warning(
+                    f"FowlEngine: {where}: could not reach {other} "
+                    f"({type(ex).__name__}: {ex or '(no message)'}); bfdb is not the problem, "
+                    f"retrying quietly"
+                )
+            else:
+                self.log.debug(f"FowlEngine: {where}: {other} still unreachable ({type(ex).__name__})")
+            return True
         if api_url not in self._bfdb_down:
             self._bfdb_down[api_url] = time.time()
             why = "being restarted" if restarting else f"{type(ex).__name__}: {ex or '(no message)'}"
