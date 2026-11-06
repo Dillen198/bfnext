@@ -336,7 +336,7 @@ class PlayerCommandsMixin:
                 detail = (data or {}).get("error") or (data or {}).get("message") or ""
                 await interaction.followup.send(
                     f"{icon('bad')} Repair all failed (HTTP {status}){': ' + str(detail) if detail else ''}"
-                    + (" -- the engine has to be running a build with repair-all (engine 2026.11.06-1812 or later)."
+                    + (" -- this bfdb has no repair-all yet: install the engine release that adds it, then try again."
                        if status == 404 else ""),
                     allowed_mentions=NO_PINGS)
         except Exception as ex:
