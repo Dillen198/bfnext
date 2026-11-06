@@ -84,7 +84,7 @@ export default function AboutPage() {
 
   // In the campaign's look the page is laid out like SITREP and the site.
   const look = useDashLook()
-  if (look.profile) return <LevantAbout build={build} />
+  if (look.profile) return <LevantAbout build={build} theme={look.profile.theme} />
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -405,7 +405,7 @@ const ROLE_TAPE: Record<string, 'rust' | undefined> = { Creator: 'rust' }
  * community and its servers, first; Fowl Engine, the campaign engine they all
  * run on, second; then the people behind both.
  */
-function LevantAbout({ build }: { build?: { git: string; version: string; built: string } }) {
+function LevantAbout({ build, theme }: { build?: { git: string; version: string; built: string }; theme: string }) {
   // The live server's own name, as the DCS browser lists it; the config's
   // is a fallback for a bfdb that does not report one.
   const { current } = useInstance()
@@ -414,7 +414,9 @@ function LevantAbout({ build }: { build?: { git: string; version: string; built:
   return (
     <div className="lv-page">
       <header className="lv-hero">
-        <div className="lv-hero-img" role="img" aria-label="Two jets fighting low over a burning battlefield at dusk" />
+        <div className="lv-hero-img" {...(theme === 'desert'
+          ? { role: 'img', 'aria-label': 'Two jets fighting low over a burning battlefield at dusk' }
+          : { 'aria-hidden': true })} />
         <div className="lv-hero-scrim" />
         <div className="lv-wrap lv-hero-body">
           <div className="lv-hero-top lv-about-top">

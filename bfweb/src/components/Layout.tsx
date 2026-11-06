@@ -10,6 +10,7 @@ import { useInstance } from '../context/InstanceContext'
 import { LogoMark } from '@shared/web/LogoMark'
 import Backdrop from './Backdrop'
 import { useDashLook } from '../lib/look'
+import { elsewhere, handOffUrl, onAdminPage } from '../lib/elsewhere'
 import StatusBanner from './StatusBanner'
 import { useOffline } from '@shared/web/snapshot'
 import { ErrorBoundary } from '@shared/web/ErrorBoundary'
@@ -295,7 +296,9 @@ export default function Layout() {
   // what "go and look at that campaign" actually means.
   const { instances, selected: selectedInstance, current, multi, select } = useInstance()
   const { data: rounds = [] } = useQuery({
-    queryKey: ['rounds', multi],
+    // Its own key: this list spans every server and survives a switch
+    // (InstanceContext), where the pages' ['rounds'] are one server's.
+    queryKey: ['rounds-all', multi],
     queryFn: () => api.rounds(multi),
     refetchInterval: 60_000,
   })
@@ -333,6 +336,13 @@ export default function Layout() {
 
   function onSelectCampaign(value: string) {
     const [inst, round] = value.split('|')
+    // A campaign with a dashboard of its own opens there, on the same page
+    // (lib/elsewhere); the admin pages look at every server here.
+    const away = elsewhere(inst)
+    if (away && !onAdminPage(location.pathname)) {
+      window.location.assign(handOffUrl(away, location))
+      return
+    }
     if (inst && inst !== current?.id) select(inst)
     setSelectedRound(round === '' ? undefined : Number(round))
   }

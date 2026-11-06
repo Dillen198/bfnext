@@ -32,6 +32,7 @@ import { useWireframe } from '../lib/wireframe'
 import { pressable } from '@shared/web/a11y'
 import LevantSitrep from './LevantSitrep'
 import { useDashLook } from '../lib/look'
+import { useInstance } from '../context/InstanceContext'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -392,6 +393,7 @@ function TerritoryTrend({ roundId }: { roundId: number | null }) {
 export default function Dashboard() {
   const navigate = useNavigate()
   const { selectedRound } = useRound()
+  const { current } = useInstance()
   // A Hornet in wireframe over the stat row. The territory panel keeps the
   // selected server's flags: it is the one place they say whose ground is whose.
   const kpiArt = useWireframe('hornet', { base: 'var(--bg-chrome)', strength: 'faint' })
@@ -433,11 +435,16 @@ export default function Dashboard() {
     const recent = feed.filter(k => now - Date.parse(k.time) < 3_600_000)
     return { all: recent.length, blue: recent.filter(k => k.killer?.side === 'Blue').length, red: recent.filter(k => k.killer?.side === 'Red').length }
   }, [feed, now])
-  const roundId = selectedRound ?? rounds.find(r => r.active)?.id ?? null
+  // The rounds query is shared with the top bar, which lists every server's
+  // rounds once there is more than one; SITREP's own round is its server's.
+  const ownRounds = rounds.filter(r => !r.instance || !current || r.instance === current.id)
+  const roundId = selectedRound ?? ownRounds.find(r => r.active)?.id ?? null
   // The round on show, for the masthead: the picked one, else the open one.
   const shownRound = rounds.find(r => r.id === roundId)
   const look = useDashLook()
-  const masthead = look.onCampaign && look.profile?.slug === 'syria' ? look.profile : undefined
+  // Each campaign with a look of its own gets SITREP laid out in it (Levant
+  // Ablaze in the desert, Southern Flank on staff paper).
+  const masthead = look.onCampaign ? look.profile : undefined
 
   const blueDelta = useDelta(blueObj)
   const redDelta  = useDelta(redObj)

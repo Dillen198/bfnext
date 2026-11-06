@@ -10,7 +10,8 @@ import { api, roundNo } from '../api'
  */
 export function useRoundNo(): (id: number) => number {
   const { data } = useQuery({
-    queryKey: ['rounds', 'all'],
+    // Every server's rounds, so it survives a server switch (InstanceContext).
+    queryKey: ['rounds-all', 'lookup'],
     queryFn: () => api.rounds(true),
     staleTime: 5 * 60_000,
   })

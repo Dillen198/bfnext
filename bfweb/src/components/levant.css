@@ -2,7 +2,7 @@
    and About (pages/AboutPage.tsx), laid out like the campaign's page on the
    site. The tape, buttons, headings and hero are the site's own names
    (bfsite/src/servers/syria.css), so the two read as one campaign. Only ever
-   rendered inside .srv-desert, whose palette (shared/servers/themes.css)
+   rendered inside .lv-look, whose palette (shared/servers/themes.css)
    every rule here reads. */
 
 /* ── shared parts ─────────────────────────────────────────────────────────── */
@@ -10,23 +10,23 @@
 .ds-tape {
   display: inline-block; padding: 3px 12px 2px; transform: rotate(-1.2deg);
   font-family: var(--ds-label); font-weight: 700; font-size: 0.76rem; letter-spacing: 0.16em; text-transform: uppercase; line-height: 1.4;
-  color: #1d150c; background: var(--tape, #d8c7a0);
+  color: var(--on-tape); background: var(--tape, var(--tape-sand));
   clip-path: var(--tape-cut); white-space: nowrap;
 }
-.ds-tape.rust { --tape: var(--rust); color: #1a0d05; }
-.ds-tape.b { --tape: var(--blue); color: #08131f; }
-.ds-tape.r { --tape: var(--red); color: #1f0805; }
-.ds-tape.warn { --tape: var(--yellow); color: #1d150c; }
-.ds-tape.n { --tape: #4a3c2b; color: var(--sand); }
+.ds-tape.rust { --tape: var(--rust); color: var(--on-rust); }
+.ds-tape.b { --tape: var(--blue); color: var(--on-blue); }
+.ds-tape.r { --tape: var(--red); color: var(--on-red); }
+.ds-tape.warn { --tape: var(--yellow); color: var(--on-tape); }
+.ds-tape.n { --tape: var(--edge); color: var(--sand); }
 .ds-tape.sm { padding: 1px 8px 0; font-size: 0.68rem; letter-spacing: 0.1em; transform: rotate(-0.8deg); }
 
 .ds-btn {
   display: inline-flex; align-items: center; gap: 8px; padding: 11px 20px;
   font-family: var(--ds-display); font-weight: 600; font-size: 1.02rem; letter-spacing: 0.1em; text-transform: uppercase; text-decoration: none;
-  color: #1a0d05; background: var(--rust); border: 2px solid var(--rust); cursor: pointer;
+  color: var(--on-rust); background: var(--rust); border: 2px solid var(--rust); cursor: pointer;
 }
 .ds-btn:hover { background: var(--rust-bright); border-color: var(--rust-bright); }
-.ds-btn.ghost { color: var(--sand); background: rgba(21,17,12,0.5); border-color: var(--sand-2); }
+.ds-btn.ghost { color: var(--sand); background: rgba(var(--char-rgb),0.5); border-color: var(--sand-2); }
 .ds-btn.ghost:hover { background: var(--sand); color: var(--char); }
 .ds-link { display: inline-flex; align-items: center; gap: 6px; font-family: var(--ds-label); font-weight: 700; font-size: 0.92rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--rust-bright); text-decoration: none; border-bottom: 1px solid currentColor; }
 .ds-link:hover { color: var(--sand); }
@@ -36,7 +36,7 @@
 .ds-h span { font-family: var(--ds-label); font-weight: 700; font-size: 0.42em; letter-spacing: 0.1em; color: var(--rust); }
 .ds-toc { position: relative; display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
 .ds-toc::-webkit-scrollbar { display: none; }
-.ds-toc a { flex-shrink: 0; padding: 12px 16px; font-family: var(--ds-label); font-weight: 600; font-size: 0.9rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sand-2); text-decoration: none; background: rgba(21,17,12,0.8); border-top: 3px solid var(--line); }
+.ds-toc a { flex-shrink: 0; padding: 12px 16px; font-family: var(--ds-label); font-weight: 600; font-size: 0.9rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sand-2); text-decoration: none; background: rgba(var(--char-rgb),0.8); border-top: 3px solid var(--line); }
 .ds-toc a:hover, .ds-toc a:focus-visible { color: var(--sand); border-top-color: var(--rust); outline: none; }
 
 /* the page: scrolls inside the shell, dust over everything */
@@ -53,9 +53,9 @@
 .lv-hero-scrim {
   position: absolute; inset: 0;
   background:
-    linear-gradient(180deg, rgba(21,17,12,0.3) 0%, rgba(21,17,12,0.15) 28%, rgba(21,17,12,0.8) 70%, var(--char) 100%),
-    linear-gradient(90deg, rgba(21,17,12,0.85) 0%, rgba(21,17,12,0.3) 55%, transparent 100%),
-    radial-gradient(ellipse at 80% 25%, rgba(224,122,63,0.25), transparent 55%);
+    linear-gradient(180deg, rgba(var(--char-rgb),0.3) 0%, rgba(var(--char-rgb),0.15) 28%, rgba(var(--char-rgb),0.8) 70%, var(--char) 100%),
+    linear-gradient(90deg, rgba(var(--char-rgb),0.85) 0%, rgba(var(--char-rgb),0.3) 55%, transparent 100%),
+    radial-gradient(ellipse at 80% 25%, rgba(var(--rust2-rgb),0.25), transparent 55%);
 }
 .lv-hero-body { position: relative; padding-bottom: 22px; }
 .lv-title {
@@ -70,7 +70,7 @@
 .lv-hero-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px 32px; flex-wrap: wrap; }
 
 .lv-section { padding: 52px 0; border-top: 1px solid var(--line); }
-.lv-band { background: rgba(29,24,18,0.72); }
+.lv-band { background: rgba(var(--char2-rgb),0.72); }
 .lv-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 0 0 30px; }
 
 /* cards: a name on tape across the top edge, as the site's orders and events */
@@ -111,15 +111,15 @@
 .lv-top > .lv-top-scrim {
   position: absolute; inset: 0; z-index: 0;
   background:
-    linear-gradient(90deg, rgba(21,17,12,0.92) 0%, rgba(21,17,12,0.6) 38%, rgba(21,17,12,0.72) 100%),
-    radial-gradient(ellipse at 30% 0%, rgba(224,122,63,0.22), transparent 60%);
+    linear-gradient(90deg, rgba(var(--char-rgb),0.92) 0%, rgba(var(--char-rgb),0.6) 38%, rgba(var(--char-rgb),0.72) 100%),
+    radial-gradient(ellipse at 30% 0%, rgba(var(--rust2-rgb),0.22), transparent 60%);
 }
 .lv-top > :not(.lv-top-art):not(.lv-top-scrim) { position: relative; z-index: 1; }
 .lv-top .lv-title { margin-top: 8px; font-size: clamp(2.2rem, 3.4vw, 3.3rem); line-height: 0.86; white-space: nowrap; }
 .lv-top .lv-round { margin-top: 7px; font-size: 0.9rem; }
 
 .lv-board { display: grid; gap: 2px; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr) minmax(0, 1fr); min-width: 0; }
-.lv-score { display: grid; gap: 7px; padding: 9px 12px 8px; background: rgba(21,17,12,0.7); border: 1px solid var(--line); border-top: 3px solid var(--side); min-width: 0; }
+.lv-score { display: grid; gap: 7px; padding: 9px 12px 8px; background: rgba(var(--char-rgb),0.7); border: 1px solid var(--line); border-top: 3px solid var(--side); min-width: 0; }
 .lv-score.b { --side: var(--blue); }
 .lv-score.r { --side: var(--red); }
 .lv-score-id { display: flex; align-items: center; gap: 9px; min-width: 0; }
@@ -133,29 +133,29 @@
 .lv-score.r::before { background-position: right center; }
 .lv-score::after {
   content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
-  background: linear-gradient(90deg, rgba(21,17,12,0.05) 0%, rgba(21,17,12,0.45) 42%, rgba(21,17,12,0.82) 100%);
+  background: linear-gradient(90deg, rgba(var(--char-rgb),0.05) 0%, rgba(var(--char-rgb),0.45) 42%, rgba(var(--char-rgb),0.82) 100%);
 }
-.lv-score.r::after { background: linear-gradient(270deg, rgba(21,17,12,0.05) 0%, rgba(21,17,12,0.45) 42%, rgba(21,17,12,0.82) 100%); }
+.lv-score.r::after { background: linear-gradient(270deg, rgba(var(--char-rgb),0.05) 0%, rgba(var(--char-rgb),0.45) 42%, rgba(var(--char-rgb),0.82) 100%); }
 /* mirrored: each side's name on its own flag at the outer edge, both
    numbers facing the front line in the middle */
 .lv-score.r .lv-score-id { flex-direction: row-reverse; }
 .lv-score.r .lv-score-big { margin-left: 0; margin-right: auto; }
 .lv-score-id strong, .lv-score-big { text-shadow: 0 2px 12px rgba(0,0,0,0.85); }
 /* the side's name on a dark plate, so it reads over any cloth */
-.lv-score-id strong { padding: 3px 9px 2px; background: rgba(15,12,8,0.82); border-bottom: 2px solid var(--side); text-shadow: none; }
+.lv-score-id strong { padding: 3px 9px 2px; background: rgba(var(--deep2-rgb),0.82); border-bottom: 2px solid var(--side); text-shadow: none; }
 .lv-score-id strong { font-family: var(--ds-display); font-weight: 700; font-size: 1.2rem; letter-spacing: 0.04em; line-height: 1; color: var(--side); text-transform: uppercase; }
 .lv-score-big { display: flex; align-items: baseline; gap: 7px; margin-left: auto; }
 .lv-score-big .v { font-family: var(--ds-display); font-weight: 700; font-size: 2.2rem; line-height: 0.85; color: var(--sand); font-variant-numeric: tabular-nums; }
 .lv-score-big .k { font-family: var(--ds-label); font-weight: 700; font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--sand-2); }
 .lv-score-big em { margin-left: 6px; padding: 0 5px; font-style: normal; font-family: var(--ds-display); font-weight: 600; letter-spacing: 0.02em; }
-.lv-score-big em.up { color: #121a06; background: var(--green); }
-.lv-score-big em.down { color: #1f0805; background: var(--red); }
+.lv-score-big em.up { color: var(--on-green); background: var(--green); }
+.lv-score-big em.down { color: var(--on-red); background: var(--red); }
 .lv-score-row { margin: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; }
-.lv-score-row > div { padding: 3px 7px 2px; background: rgba(38,32,23,0.8); border-left: 2px solid color-mix(in srgb, var(--side) 60%, transparent); min-width: 0; }
+.lv-score-row > div { padding: 3px 7px 2px; background: rgba(var(--char3-rgb),0.8); border-left: 2px solid color-mix(in srgb, var(--side) 60%, transparent); min-width: 0; }
 .lv-score-row dt { font-family: var(--ds-label); font-weight: 600; font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sand-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lv-score-row dd { margin: 0; font-family: var(--ds-display); font-weight: 600; font-size: 1.05rem; line-height: 1.1; color: var(--sand); font-variant-numeric: tabular-nums; }
 
-.lv-tug { display: flex; flex-direction: column; justify-content: center; gap: 5px; padding: 8px 14px; background: rgba(21,17,12,0.8); border: 1px solid var(--line); border-top: 3px solid var(--coyote); min-width: 0; }
+.lv-tug { display: flex; flex-direction: column; justify-content: center; gap: 5px; padding: 8px 14px; background: rgba(var(--char-rgb),0.8); border: 1px solid var(--line); border-top: 3px solid var(--coyote); min-width: 0; }
 .lv-tug-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .lv-tug-head .ds-k { font-size: 0.66rem; text-align: center; }
 .lv-tug-head .b, .lv-tug-head .r { font-family: var(--ds-display); font-weight: 700; font-size: 1.5rem; line-height: 1; }
@@ -164,7 +164,7 @@
 .lv-tug-bar { position: relative; display: flex; height: 12px; background: var(--char-3); border: 1px solid var(--line); }
 .lv-tug-bar i { display: block; height: 100%; transition: width 0.4s ease; }
 .lv-tug-bar i.b { background: linear-gradient(90deg, color-mix(in srgb, var(--blue) 70%, #000), var(--blue)); }
-.lv-tug-bar i.n { background: #4a3c2b; }
+.lv-tug-bar i.n { background: var(--edge); }
 .lv-tug-bar i.r { background: linear-gradient(90deg, var(--red), color-mix(in srgb, var(--red) 70%, #000)); }
 .lv-tug-bar .mid { position: absolute; left: 50%; top: -4px; bottom: -4px; width: 2px; background: var(--sand); opacity: 0.7; }
 .lv-trend { display: grid; }
@@ -177,26 +177,26 @@
    right edge, so the two meet at the front. A slow light sweeps along each
    side and the front itself, where the blue ground ends, glows. Every loop
    here moves by transform or opacity only, so it never repaints the bar. */
-.srv-desert .fx { position: relative; overflow: visible; }
-.srv-desert .fx > i { position: relative; overflow: hidden; transition: none; }
-.srv-desert .fx > i.r { margin-left: auto; }
-.srv-desert .fx > i.b::after, .srv-desert .fx > i.r::after {
+.lv-look .fx { position: relative; overflow: visible; }
+.lv-look .fx > i { position: relative; overflow: hidden; transition: none; }
+.lv-look .fx > i.r { margin-left: auto; }
+.lv-look .fx > i.b::after, .lv-look .fx > i.r::after {
   content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 40%;
   background: linear-gradient(90deg, transparent, rgba(255,245,225,0.28), transparent);
   transform: translateX(-100%);
 }
-.srv-desert .fx > .front {
+.lv-look .fx > .front {
   position: absolute; top: -5px; bottom: -5px; width: 3px; margin-left: -1.5px; z-index: 2; pointer-events: none;
-  background: var(--sand); box-shadow: 0 0 0 1px rgba(21,17,12,0.8);
+  background: var(--sand); box-shadow: 0 0 0 1px rgba(var(--char-rgb),0.8);
 }
-.srv-desert .fx > .front::after {
+.lv-look .fx > .front::after {
   content: ''; position: absolute; inset: -2px -6px; pointer-events: none;
-  background: radial-gradient(closest-side, rgba(224,122,63,0.85), transparent); opacity: 0.4;
+  background: radial-gradient(closest-side, rgba(var(--rust2-rgb),0.85), transparent); opacity: 0.4;
 }
 @media (prefers-reduced-motion: no-preference) {
-  .srv-desert .fx > i.b::after { animation: fx-sweep 4.2s ease-in-out 1.3s infinite; }
-  .srv-desert .fx > i.r::after { animation: fx-sweep-r 4.2s ease-in-out 3.4s infinite; }
-  .srv-desert .fx > .front::after { animation: fx-front 2.4s ease-in-out 1.2s infinite; }
+  .lv-look .fx > i.b::after { animation: fx-sweep 4.2s ease-in-out 1.3s infinite; }
+  .lv-look .fx > i.r::after { animation: fx-sweep-r 4.2s ease-in-out 3.4s infinite; }
+  .lv-look .fx > .front::after { animation: fx-front 2.4s ease-in-out 1.2s infinite; }
 }
 /* the light crosses the fill (250% of its own 40% width) and waits */
 @keyframes fx-sweep { 0% { transform: translateX(-100%); } 55%, 100% { transform: translateX(260%); } }
@@ -204,7 +204,7 @@
 @keyframes fx-front { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
 
 /* the strip of readouts */
-.lv-strip { flex-shrink: 0; display: grid; gap: 2px; padding: 2px; grid-template-columns: repeat(2, minmax(0, 1fr)); background: rgba(12,9,6,0.92); border-bottom: 1px solid var(--line); }
+.lv-strip { flex-shrink: 0; display: grid; gap: 2px; padding: 2px; grid-template-columns: repeat(2, minmax(0, 1fr)); background: rgba(var(--deep-rgb),0.92); border-bottom: 1px solid var(--line); }
 /* five across only where the column is wide enough to say each one in full;
    between that and a phone, four across with the weather on its own row */
 @media (min-width: 700px) { .lv-strip { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
@@ -249,9 +249,9 @@
 .lv-stage > .lv-stage-fade {
   position: absolute; inset: 0; z-index: 0; pointer-events: none;
   background:
-    linear-gradient(180deg, rgba(12,9,6,0.85) 0, transparent 70px),
-    linear-gradient(0deg, rgba(21,17,12,0.7) 0, transparent 60px),
-    linear-gradient(90deg, rgba(21,17,12,0.78) 0, rgba(21,17,12,0.25) 30%, transparent 40%, transparent 62%, rgba(21,17,12,0.25) 70%, rgba(21,17,12,0.8) 100%);
+    linear-gradient(180deg, rgba(var(--deep-rgb),0.85) 0, transparent 70px),
+    linear-gradient(0deg, rgba(var(--char-rgb),0.7) 0, transparent 60px),
+    linear-gradient(90deg, rgba(var(--char-rgb),0.78) 0, rgba(var(--char-rgb),0.25) 30%, transparent 40%, transparent 62%, rgba(var(--char-rgb),0.25) 70%, rgba(var(--char-rgb),0.8) 100%);
 }
 .lv-stage > .lv-left { grid-column: 1; grid-row: 1; z-index: 1; }
 .lv-stage > .lv-right { grid-column: 3; grid-row: 1; z-index: 1; }
@@ -259,9 +259,9 @@
   grid-column: 2; grid-row: 1; z-index: 1; align-self: start; justify-self: start; margin-top: -10px;
   display: flex; align-items: center; gap: 10px; pointer-events: none;
 }
-.lv-stage-label .lv-live { padding: 1px 8px; background: rgba(21,17,12,0.85); border: 1px solid var(--line); }
-.lv-stage .lv-card { background: rgba(29,24,18,0.84); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); box-shadow: 0 16px 40px -20px rgba(0,0,0,0.9); }
-.lv-stage .lv-gcol .lv-card-right { background: rgba(29,24,18,0.95); }
+.lv-stage-label .lv-live { padding: 1px 8px; background: rgba(var(--char-rgb),0.85); border: 1px solid var(--line); }
+.lv-stage .lv-card { background: rgba(var(--char2-rgb),0.84); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); box-shadow: 0 16px 40px -20px rgba(0,0,0,0.9); }
+.lv-stage .lv-gcol .lv-card-right { background: rgba(var(--char2-rgb),0.95); }
 
 /* needs attention */
 .lv-att { list-style: none; margin: 0; padding: 0; }
@@ -316,7 +316,7 @@
 .lv-ground { display: grid; gap: 5px; padding: 7px 10px 9px; border-top: 1px dashed var(--line); }
 .lv-ground .ds-k { font-size: 0.64rem; }
 .lv-ground > div { display: flex; flex-wrap: wrap; gap: 3px; }
-.lv-chip { padding: 0 6px; font-family: var(--ds-label); font-weight: 600; font-size: 0.74rem; letter-spacing: 0.02em; color: var(--sand-2); background: var(--char-3); border-left: 2px solid var(--side, #4a3c2b); cursor: pointer; }
+.lv-chip { padding: 0 6px; font-family: var(--ds-label); font-weight: 600; font-size: 0.74rem; letter-spacing: 0.02em; color: var(--sand-2); background: var(--char-3); border-left: 2px solid var(--side, var(--edge)); cursor: pointer; }
 .lv-chip.b { --side: var(--blue); }
 .lv-chip.r { --side: var(--red); }
 .lv-chip:hover { color: var(--sand); }
@@ -343,11 +343,11 @@
 /* engagement log */
 .lv-eng { list-style: none; margin: 0; padding: 0; }
 .lv-eng li { position: relative; display: grid; grid-template-columns: 44px 44px minmax(0, 1fr); align-items: start; gap: 7px; padding: 6px 12px 6px 14px; border-bottom: 1px solid var(--line); }
-.lv-eng li::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--side, #4a3c2b); }
+.lv-eng li::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--side, var(--edge)); }
 .lv-eng li.b { --side: var(--blue); }
 .lv-eng li.r { --side: var(--red); }
 .lv-eng time { padding-top: 1px; font-family: var(--ds-display); font-weight: 500; font-size: 0.8rem; color: var(--sand-dim); font-variant-numeric: tabular-nums; }
-.lv-eng .cls { justify-self: start; margin-top: 1px; padding: 0 5px; font-family: var(--ds-label); font-weight: 700; font-size: 0.64rem; letter-spacing: 0.08em; text-transform: uppercase; color: #1d150c; background: var(--sand-2); clip-path: var(--tape-cut); }
+.lv-eng .cls { justify-self: start; margin-top: 1px; padding: 0 5px; font-family: var(--ds-label); font-weight: 700; font-size: 0.64rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--on-tape); background: var(--sand-2); clip-path: var(--tape-cut); }
 .lv-eng .what { min-width: 0; }
 .lv-eng .by { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.8rem; color: var(--sand-2); }
 .lv-eng .by b { font-family: var(--ds-display); font-weight: 600; font-size: 0.92rem; letter-spacing: 0.02em; color: var(--side, var(--sand)); }
@@ -402,14 +402,14 @@
 /* The pages' own content keeps the same readable width as the Kill Feed
    (1560px) and centres on wider screens; their header bands still run the
    full width. */
-.srv-desert .ob-page > :not(.page-header),
-.srv-desert .lb-page > :not(.page-header),
-.srv-desert .pl-page > :not(.page-header),
-.srv-desert .rd-page > :not(.page-header) {
+.lv-look .ob-page > :not(.page-header),
+.lv-look .lb-page > :not(.page-header),
+.lv-look .pl-page > :not(.page-header),
+.lv-look .rd-page > :not(.page-header) {
   width: 100%; max-width: 1560px; margin-left: auto; margin-right: auto; box-sizing: border-box;
 }
 /* and their band's title and controls line up with that column */
-.srv-desert.dash-themed .vs-main:has(.ob-page, .lb-page, .pl-page, .rd-page, .kf-body) .page-header.lv-pagehead {
+.lv-look.dash-themed .vs-main:has(.ob-page, .lb-page, .pl-page, .rd-page, .kf-body) .page-header.lv-pagehead {
   padding-left: max(22px, calc((100% - 1560px) / 2)); padding-right: max(22px, calc((100% - 1560px) / 2));
 }
 
@@ -445,7 +445,7 @@
 .lv-credit.lead { border-left-color: var(--rust); }
 .lv-credit > div { display: grid; justify-items: start; gap: 6px; min-width: 0; }
 .lv-mono { flex-shrink: 0; width: 52px; height: 52px; display: flex; align-items: center; justify-content: center; font-family: var(--ds-display); font-weight: 700; font-size: 1.5rem; text-transform: uppercase; color: var(--sand); background: var(--char-3); border: 1px solid var(--line); clip-path: polygon(0 0, 100% 0, 100% 78%, 78% 100%, 0 100%); }
-.lv-credit.lead .lv-mono { color: #1a0d05; background: var(--rust); border-color: var(--rust); }
+.lv-credit.lead .lv-mono { color: var(--on-rust); background: var(--rust); border-color: var(--rust); }
 /* a credit with a picture: a bigger, unclipped badge (logos are their own shape) */
 .lv-credit .lv-avatar { width: 72px; height: 72px; object-fit: contain; padding: 0; background: none; border: none; clip-path: none; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.6)); }
 .lv-credit strong { font-family: var(--ds-display); font-weight: 600; font-size: 1.3rem; letter-spacing: 0.03em; line-height: 1; color: var(--sand); }
@@ -469,7 +469,7 @@
   cursor: pointer; padding: 5px 12px; font-family: var(--ds-label); font-weight: 700; font-size: 0.74rem; letter-spacing: 0.14em; text-transform: uppercase;
   color: var(--sand); background: transparent; border: 1px solid var(--sand-dim);
 }
-.lv-copy button:hover, .lv-copy button:focus-visible { color: #1a0d05; background: var(--rust); border-color: var(--rust); outline: none; }
+.lv-copy button:hover, .lv-copy button:focus-visible { color: var(--on-rust); background: var(--rust); border-color: var(--rust); outline: none; }
 .lv-round b { color: var(--rust-bright); }
 .lv-h3 { margin: 34px 0 16px; font-family: var(--ds-display); font-weight: 700; font-size: 1.6rem; text-transform: uppercase; color: var(--sand); }
 
@@ -485,16 +485,16 @@
 
 /* PageHeader in the campaign's look: a strip of the battle art with the
    page's name in heavy capitals, its sidebar group on tape above. */
-.srv-desert .page-header.lv-pagehead {
+.lv-look .page-header.lv-pagehead {
   align-items: flex-end; gap: 14px 24px; padding: 16px 22px 14px; min-height: 104px; box-sizing: border-box;
   background:
-    linear-gradient(90deg, rgba(21,17,12,0.95) 0%, rgba(21,17,12,0.78) 45%, rgba(21,17,12,0.6) 100%),
-    radial-gradient(ellipse at 25% 0%, rgba(224,122,63,0.2), transparent 60%),
+    linear-gradient(90deg, rgba(var(--char-rgb),0.95) 0%, rgba(var(--char-rgb),0.78) 45%, rgba(var(--char-rgb),0.6) 100%),
+    radial-gradient(ellipse at 25% 0%, rgba(var(--rust2-rgb),0.2), transparent 60%),
     url(/media/hero.jpg) center 38% / cover no-repeat !important;
   border-bottom: 2px solid var(--rust);
 }
-.srv-desert .page-header.lv-pagehead::after { display: none; }
-.srv-desert .page-header.lv-pagehead::before {
+.lv-look .page-header.lv-pagehead::after { display: none; }
+.lv-look .page-header.lv-pagehead::before {
   content: ''; position: absolute; inset: 0; pointer-events: none; opacity: 0.08; mix-blend-mode: screen; background-image: var(--dust);
 }
 .lv-pagehead > * { position: relative; z-index: 1; }
@@ -509,22 +509,22 @@
 .lv-pagehead-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 /* Panel: the name on tape, inline in the header */
-.srv-desert .vs-panel-head.lv-panel-head { padding: 9px 14px 8px; background: rgba(18,14,10,0.45); }
-.srv-desert .vs-panel-head.lv-panel-head.sm { padding: 7px 12px 6px; }
-.srv-desert .vs-panel-head.lv-panel-head::before { display: none; }
-.srv-desert .lv-panel-head .ds-tape { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.lv-look .vs-panel-head.lv-panel-head { padding: 9px 14px 8px; background: rgba(var(--chrome-rgb),0.45); }
+.lv-look .vs-panel-head.lv-panel-head.sm { padding: 7px 12px 6px; }
+.lv-look .vs-panel-head.lv-panel-head::before { display: none; }
+.lv-look .lv-panel-head .ds-tape { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 
 /* every card wears the coyote edge the campaign's cards have */
-.srv-desert.dash-themed .vs-card { border-top: 3px solid var(--coyote); }
-.srv-desert.dash-themed .vs-card-accent { border-top-color: var(--rust); }
+.lv-look.dash-themed .vs-card { border-top: 3px solid var(--coyote); }
+.lv-look.dash-themed .vs-card-accent { border-top-color: var(--rust); }
 
 @media (max-width: 860px) {
-  .srv-desert .page-header.lv-pagehead { min-height: 0; padding: 12px 14px; }
+  .lv-look .page-header.lv-pagehead { min-height: 0; padding: 12px 14px; }
   .lv-pagehead-title { font-size: 1.9rem; }
 }
 /* very narrow phones: a slimmer band, and the side cards' stats in two rows */
 @media (max-width: 420px) {
-  .srv-desert .page-header.lv-pagehead { padding: 10px 12px; gap: 8px 14px; }
+  .lv-look .page-header.lv-pagehead { padding: 10px 12px; gap: 8px 14px; }
   .lv-pagehead-title { font-size: 1.65rem; margin-top: 6px; }
   .lv-pagehead-sub { font-size: 0.76rem; letter-spacing: 0.08em; margin-top: 5px; }
   .lv-score-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }

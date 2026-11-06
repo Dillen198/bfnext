@@ -428,7 +428,9 @@ export default function LevantSitrep(p: LevantSitrepProps) {
   const inset = useInset(stageRef, leftRef, rightRef, !stacked)
   const flags = useFlagPair()
   const day = p.round ? roundDay(p.round.start, p.round.end) : undefined
-  const [first, ...rest] = p.profile.title.split(' ')
+  // The last word is the one in colour: ABLAZE, 1985.
+  const words = p.profile.title.split(' ')
+  const last = words.pop()
   const total = p.objectives.length
   const recent = useMemo(() => p.feed.filter(k => p.now - Date.parse(k.time) < 3_600_000), [p.feed, p.now])
   const score = (side: SideKey, delta: number | null): SideScore => ({
@@ -447,11 +449,13 @@ export default function LevantSitrep(p: LevantSitrepProps) {
   return (
     <div className="lv-fit">
       <header className="lv-top">
-        <div className="lv-top-art" role="img" aria-label="Two jets fighting low over a burning battlefield at dusk" />
+        <div className="lv-top-art" {...(p.profile.theme === 'desert'
+          ? { role: 'img', 'aria-label': 'Two jets fighting low over a burning battlefield at dusk' }
+          : { 'aria-hidden': true })} />
         <div className="lv-top-scrim" />
         <div className="lv-top-title">
           <Tape tone="rust">{p.round?.active === false ? 'Round ended' : 'Situation report'}</Tape>
-          <h1 className="lv-title">{first} <span>{rest.join(' ')}</span></h1>
+          <h1 className="lv-title">{words.join(' ')} <span>{last}</span></h1>
           <div className="lv-round">
             {p.round ? <>Round <b>{roundNo(p.round)}</b>{day != null && <> · Day <b>{day}</b></>}</> : 'Between rounds'}
           </div>

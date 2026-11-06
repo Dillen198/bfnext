@@ -11,77 +11,77 @@
 @media (prefers-reduced-motion: no-preference) {
 
   /* a page arrives: the shell's content fades up as the route changes */
-  .srv-desert.dash-themed .vs-main > :not([role]) { animation: lv-page 0.32s ease-out backwards; }
+  .lv-look.dash-themed .vs-main > :not([role]) { animation: lv-page 0.32s ease-out backwards; }
 
   /* cards rise into place, a beat apart */
-  .srv-desert .lv-card,
-  .srv-desert .lv-readout,
-  .srv-desert .lv-score,
-  .srv-desert .lv-tug,
-  .srv-desert.dash-themed .vs-card {
+  .lv-look .lv-card,
+  .lv-look .lv-readout,
+  .lv-look .lv-score,
+  .lv-look .lv-tug,
+  .lv-look.dash-themed .vs-card {
     animation: lv-rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
   }
-  .srv-desert :nth-child(2) > .lv-card, .srv-desert .lv-card:nth-child(2), .srv-desert .lv-readout:nth-child(2), .srv-desert .lv-board > :nth-child(2), .srv-desert.dash-themed .vs-card:nth-child(2) { animation-delay: 0.06s; }
-  .srv-desert :nth-child(3) > .lv-card, .srv-desert .lv-card:nth-child(3), .srv-desert .lv-readout:nth-child(3), .srv-desert .lv-board > :nth-child(3), .srv-desert.dash-themed .vs-card:nth-child(3) { animation-delay: 0.12s; }
-  .srv-desert .lv-card:nth-child(4), .srv-desert .lv-readout:nth-child(4), .srv-desert.dash-themed .vs-card:nth-child(4) { animation-delay: 0.18s; }
-  .srv-desert .lv-card:nth-child(n+5), .srv-desert .lv-readout:nth-child(n+5), .srv-desert.dash-themed .vs-card:nth-child(n+5) { animation-delay: 0.24s; }
+  .lv-look :nth-child(2) > .lv-card, .lv-look .lv-card:nth-child(2), .lv-look .lv-readout:nth-child(2), .lv-look .lv-board > :nth-child(2), .lv-look.dash-themed .vs-card:nth-child(2) { animation-delay: 0.06s; }
+  .lv-look :nth-child(3) > .lv-card, .lv-look .lv-card:nth-child(3), .lv-look .lv-readout:nth-child(3), .lv-look .lv-board > :nth-child(3), .lv-look.dash-themed .vs-card:nth-child(3) { animation-delay: 0.12s; }
+  .lv-look .lv-card:nth-child(4), .lv-look .lv-readout:nth-child(4), .lv-look.dash-themed .vs-card:nth-child(4) { animation-delay: 0.18s; }
+  .lv-look .lv-card:nth-child(n+5), .lv-look .lv-readout:nth-child(n+5), .lv-look.dash-themed .vs-card:nth-child(n+5) { animation-delay: 0.24s; }
 
   /* the name on a card is slapped on like tape, just after the card lands */
-  .srv-desert .lv-card > .ds-tape,
-  .srv-desert .lv-pagehead .ds-tape,
-  .srv-desert .lv-top-title .ds-tape,
-  .srv-desert .lv-hero .ds-tape {
+  .lv-look .lv-card > .ds-tape,
+  .lv-look .lv-pagehead .ds-tape,
+  .lv-look .lv-top-title .ds-tape,
+  .lv-look .lv-hero .ds-tape {
     animation: lv-tape 0.42s cubic-bezier(0.3, 1.4, 0.5, 1) 0.18s backwards;
   }
 
   /* the big titles slide in from the left */
-  .srv-desert .lv-pagehead-title,
-  .srv-desert .lv-top .lv-title,
-  .srv-desert .lv-hero .lv-title { animation: lv-title 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) 0.05s backwards; }
+  .lv-look .lv-pagehead-title,
+  .lv-look .lv-top .lv-title,
+  .lv-look .lv-hero .lv-title { animation: lv-title 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) 0.05s backwards; }
 
   /* bars and meters fill from their start, once */
-  .srv-desert .lv-meter i,
-  .srv-desert .lv-shooters .bar i,
-  .srv-desert .ob-hb-track i,
-  .srv-desert .ob-hold-bar i,
-  .srv-desert .ob-dr-cond .bar i,
-  .srv-desert .ob-sbar-track i,
-  .srv-desert .kf-ex-bar i,
-  .srv-desert .kf-rank .bar i,
-  .srv-desert .pl-bar i,
-  .srv-desert .pl-af td.bar i,
-  .srv-desert .pl-cmp-grid .bar i,
-  .srv-desert .pl-sd-wpn .bar i,
-  .srv-desert .lb-xp-bar i,
-  .srv-desert .lb-cs-bar i,
-  .srv-desert .lb-pe-bar i,
-  .srv-desert .sq-bar i,
-  .srv-desert .rd-cont .bar i {
+  .lv-look .lv-meter i,
+  .lv-look .lv-shooters .bar i,
+  .lv-look .ob-hb-track i,
+  .lv-look .ob-hold-bar i,
+  .lv-look .ob-dr-cond .bar i,
+  .lv-look .ob-sbar-track i,
+  .lv-look .kf-ex-bar i,
+  .lv-look .kf-rank .bar i,
+  .lv-look .pl-bar i,
+  .lv-look .pl-af td.bar i,
+  .lv-look .pl-cmp-grid .bar i,
+  .lv-look .pl-sd-wpn .bar i,
+  .lv-look .lb-xp-bar i,
+  .lv-look .lb-cs-bar i,
+  .lv-look .lb-pe-bar i,
+  .lv-look .sq-bar i,
+  .lv-look .rd-cont .bar i {
     transform-origin: left center;
     animation: lv-fill 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) 0.2s backwards;
   }
   /* the blue half of the kill feed's butterfly grows leftward, from the middle */
-  .srv-desert .kf-ex-bar.b i { transform-origin: right center; }
+  .lv-look .kf-ex-bar.b i { transform-origin: right center; }
 
   /* a new kill drops into the top of the engagement log */
-  .srv-desert .lv-eng li { animation: lv-drop 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+  .lv-look .lv-eng li { animation: lv-drop 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
 
   /* something at risk: the readout's edge breathes red (a pseudo-element's
      opacity, so the card itself never repaints) */
-  .srv-desert .lv-readout.alarm { position: relative; }
-  .srv-desert .lv-readout.alarm::before {
+  .lv-look .lv-readout.alarm { position: relative; }
+  .lv-look .lv-readout.alarm::before {
     content: ''; position: absolute; left: -3px; top: 0; bottom: 0; width: 3px; pointer-events: none;
-    background: var(--red); box-shadow: 0 0 12px 2px rgba(217,73,59,0.7);
+    background: var(--red); box-shadow: 0 0 12px 2px rgba(var(--red-rgb),0.7);
     animation: lv-alarm 2.2s ease-in-out infinite;
   }
 
   /* hover: a card lifts a little, by transform alone */
   @media (hover: hover) {
-    .srv-desert .lv-card, .srv-desert .lv-readout, .srv-desert .lb-pod, .srv-desert .ds-ev, .srv-desert .lv-diff {
+    .lv-look .lv-card, .lv-look .lv-readout, .lv-look .lb-pod, .lv-look .ds-ev, .lv-look .lv-diff {
       transition: transform 0.18s ease-out, border-color 0.18s ease-out;
     }
-    .srv-desert .lv-readout:hover, .srv-desert .lb-pod:hover, .srv-desert .ds-ev:hover, .srv-desert .lv-diff:hover { transform: translateY(-2px); }
-    .srv-desert .lv-att-row, .srv-desert .lv-shooters li, .srv-desert .lv-air-col li, .srv-desert .lv-eng li { transition: background-color 0.15s; }
+    .lv-look .lv-readout:hover, .lv-look .lb-pod:hover, .lv-look .ds-ev:hover, .lv-look .lv-diff:hover { transform: translateY(-2px); }
+    .lv-look .lv-att-row, .lv-look .lv-shooters li, .lv-look .lv-air-col li, .lv-look .lv-eng li { transition: background-color 0.15s; }
   }
 }
 

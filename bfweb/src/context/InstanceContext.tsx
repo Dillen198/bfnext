@@ -5,24 +5,21 @@ import { useInstanceSelection, type InstanceSelection } from '@shared/web/instan
 import { useAuth } from './AuthContext'
 import { campaign } from '../config/campaign'
 import { SERVERS } from '@shared/servers/profiles'
-import { VS_URLS } from '@shared/web/urls'
+import { elsewhere, handOffUrl, onAdminPage } from '../lib/elsewhere'
 
-/**
- * Campaigns with a dashboard of their own (Red Storm: bfrsr-web). This one is
- * the modern campaign's, so they are left out of its server list for players.
- * Admins keep them: the config editor and server ops work per instance.
- */
-const OWN_DASHBOARD = new Set(
-  SERVERS.filter(s => s.instanceId && s.site.url !== VS_URLS.dashboard).map(s => s.instanceId),
-)
-
-// A ?instance= link (or a remembered choice) to one of them is dropped before
-// the first request, not once the server list arrives: until then every page
-// would load that campaign under this dashboard's look. An admin picks it
-// from the selector instead.
+// A server with a dashboard of its own (Red Storm: bfrsr-web) is on this
+// one's list, but picking it hands over to that dashboard (Layout). Arriving
+// with it already chosen does the same for a ?instance= link, and forgets a
+// remembered choice -- before the first request, so no page loads that
+// campaign under this dashboard's look. The admin pages work on every
+// server here, so on them the choice stands.
 {
   const start = instanceStore.get()
-  if (start && OWN_DASHBOARD.has(start)) instanceStore.set(undefined)
+  const to = elsewhere(start)
+  if (to && !onAdminPage(location.pathname)) {
+    instanceStore.set(undefined)
+    if (new URLSearchParams(location.search).has('instance')) location.replace(handOffUrl(to, location))
+  }
 }
 
 /**
@@ -64,16 +61,17 @@ let configLabels: { blue: string; red: string } | null = null
  */
 function applySideLabels(inst: ServerInstance | undefined): string {
   configLabels ??= { blue: campaign.blueLabel, red: campaign.redLabel }
-  // A server that names neither side still has the names its page on the
-  // site gives it (vs1: NATO and RSII), so the dashboard says the same.
+  // A server with a page on the site goes by the short names that page gives
+  // its sides (NATO and RSII, NATO and Soviet), the ones a scoreboard can
+  // carry; the instance's own may be prose ("the Soviet Union").
   const profile = inst && SERVERS.find(s => s.instanceId === inst.id)
-  campaign.blueLabel = inst?.blue_label || profile?.blueLabel || configLabels.blue
-  campaign.redLabel = inst?.red_label || profile?.redLabel || configLabels.red
+  campaign.blueLabel = profile?.blueLabel || inst?.blue_label || configLabels.blue
+  campaign.redLabel = profile?.redLabel || inst?.red_label || configLabels.red
   return `${campaign.blueLabel}|${campaign.redLabel}`
 }
 
 /** Query keys whose responses span every server, not one of them. */
-const INSTANCE_AGNOSTIC = new Set(['instances', 'rounds'])
+const INSTANCE_AGNOSTIC = new Set(['instances', 'rounds-all'])
 
 const InstanceContext = createContext<InstanceContextValue>({
   instances: [],
@@ -104,17 +102,15 @@ export function InstanceProvider({ children }: { children: React.ReactNode }) {
   // Everything cached belongs to the server we just left -- except the two
   // queries that are about the whole bfdb rather than one server. Keeping
   // those stops the server selector itself blanking out mid-switch.
-  // A dropped id (removed, or a campaign with its own dashboard reached by a
-  // ?instance= link) drops those too: they were fetched scoped to it.
+  // A dropped id (a server no longer on the list) drops those too: they were
+  // fetched scoped to it.
   const onSwitch = useCallback((reason: 'select' | 'stale') => {
     if (reason === 'stale') qc.removeQueries()
     else qc.removeQueries({ predicate: q => !INSTANCE_AGNOSTIC.has(q.queryKey[0] as string) })
   }, [qc])
-  const list = useMemo(
-    () => (data && !isAdmin ? { ...data, instances: data.instances.filter(i => !OWN_DASHBOARD.has(i.id)) } : data),
-    [data, isAdmin],
-  )
-  const value = useInstanceSelection(instanceStore, list, onSwitch)
+  // Every campaign is on the list: picking one switches the dashboard's look
+  // with it (lib/look).
+  const value = useInstanceSelection(instanceStore, data, onSwitch)
   const { current } = value
 
   // Applied while rendering, so the pages below read the new names on this
