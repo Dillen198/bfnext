@@ -61,6 +61,28 @@ pub(crate) async fn api_admin_reset_lives_all(
     Ok(warp::reply::json(&serde_json::json!({"ok": true, "message": reply})))
 }
 
+/// POST /api/admin/repair-all  — rebuild every objective on one server
+/// (`?server=` picks the instance): its groups and its logistics buildings,
+/// as `-admin repair all` in game. Proxies bflib's repair-all RPC; needs the
+/// engine running. For undoing damage like 6 Nov's, when the engine took a
+/// broken DCS API for every unit dying, without getting into DCS.
+pub(crate) async fn api_admin_repair_all(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let who = require_role(session_id, db.clone(), admin::Role::OPS).await?;
+    if inst.cfg.is_range() {
+        return Err(Error(websec::bad_request(format!(
+            "{} is a training range: it has no objectives to repair",
+            inst.id
+        ))));
+    }
+    let reply = call_engine_rpc_str(&db, &inst, "repair-all", vec![]).await?;
+    audit(&db, &who, "repair all objectives", Some(&reply), Some(&inst.id));
+    Ok(warp::reply::json(&serde_json::json!({"ok": true, "message": reply})))
+}
+
 #[derive(serde::Deserialize)]
 pub(crate) struct SideSwitchBody {
     /// Name (case-insensitive, as the engine's `-admin switch` takes it),

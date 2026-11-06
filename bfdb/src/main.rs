@@ -2208,6 +2208,13 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(with_instance(db.clone()))
         .then(api_admin_reset_lives_all);
 
+    let admin_repair_all = warp::path!("api" / "admin" / "repair-all")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_admin_repair_all);
+
     let admin_side_switch = warp::path!("api" / "admin" / "side-switch")
         .and(warp::post())
         .and(extract_session_cookie())
@@ -3201,6 +3208,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .or(admin_rebuild_stats)
         .or(admin_news_regenerate_image)
         .or(admin_reset_lives_all)
+        .or(admin_repair_all)
         .or(admin_side_switch)
         .or(admin_ban_route)
         .or(admin_unban_route)

@@ -46,6 +46,7 @@ pub struct Rpcs {
     _log_warehouse: Proc,
     _reset_lives: Proc,
     _reset_lives_all: Proc,
+    _repair_all: Proc,
     _add_admin: Proc,
     _remove_admin: Proc,
     _balance: Proc,
@@ -433,6 +434,19 @@ impl Rpcs {
             |c: RpcCall, _: Value| {
                 let (tx, rx) = oneshot::channel();
                 _q.push((AdminCommand::ResetLivesAll, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            arg: Value = Value::Null; ""
+        )?;
+        let _q = Arc::clone(q);
+        let repair_all = define_rpc!(
+            publisher,
+            base.append("repair-all"),
+            "Rebuild every objective: its groups and its logistics buildings",
+            |c: RpcCall, _: Value| {
+                let (tx, rx) = oneshot::channel();
+                _q.push((AdminCommand::RepairAll, tx));
                 Some((c, rx))
             },
             Some(wait.clone()),
@@ -1555,6 +1569,7 @@ impl Rpcs {
             _log_warehouse: log_warehouse,
             _reset_lives: reset_lives,
             _reset_lives_all: reset_lives_all,
+            _repair_all: repair_all,
             _add_admin: add_admin,
             _remove_admin: remove_admin,
             _balance: balance,

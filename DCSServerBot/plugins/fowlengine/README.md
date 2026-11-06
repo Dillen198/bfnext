@@ -111,6 +111,7 @@ live on the web dashboard now -- `/fe_dashboard` points there.
 ### Commander & Admin (`DCS Admin`)
 - `/fe_terminal` - interactive Commander Terminal: drop cargo/infantry at an airbase, and set/clear objective priority.
 - `/fe_ban <ucid> <name> [reason] [until]` / `/fe_unban <ucid>` - campaign ban management.
+- `/fe_repair_all <server> [confirm]` - rebuild every objective on that server, its groups and logistics buildings, as `-admin repair all` does in game. Says what it will do unless `confirm: True`.
 - `/fe_rotation_vote <server> [hours]` - open a Discord poll on the next theatre (default 24 h, max 168).
 - `/fe_rotation_advance <server>` - record that the server has moved on to the next theatre, once its mission and config are switched.
 - `/feops bfdb_restart` - restart bfdb (re-renders `gci.json`, picks up a staged `bfdb.exe`).
