@@ -1,0 +1,79 @@
+{
+  "Aircraft": "AH64D",
+  "Upload": {
+    "Waypoints": false,
+    "ControlMeasures": false,
+    "Targets": false,
+    "Routes": false,
+    "TSD": false,
+    "DeleteWaypoints": false,
+    "DeleteControlMeasures": false,
+    "DeleteTargets": false,
+    "Kneeboard": false,
+    "LaserCodes": false,
+    "Radios": false
+  },
+  "WaypointsCapture": {
+    "NavPointsMode": 0,
+    "TgtPointsMode": 0,
+    "NavPointsRangeFrom": 1,
+    "TgtPointsRangeFrom": 1
+  },
+  "Waypoints": {
+    "Waypoints": []
+  },
+  "ControlMeasures": {
+    "Waypoints": []
+  },
+  "Targets": {
+    "Waypoints": []
+  },
+  "Routes": {
+    "Routes": []
+  },
+  "TSD": {
+    "ShowPresentPosition": false,
+    "ShowCentered": false,
+    "MapType": 0,
+    "MapOrientation": 0,
+    "MapShowGrid": false,
+    "MapElevationColorBand": 0,
+    "MapElevationGray": false,
+    "NavPhaseShowWptData": false,
+    "NavPhaseShowInactiveZones": false,
+    "NavPhaseShowObstacles": false,
+    "NavPhaseShowOtherStationCursor": false,
+    "NavPhaseShowCursorInfo": false,
+    "NavPhaseShowHSI": false,
+    "NavPhaseShowEndurance": false,
+    "NavPhaseShowWind": false,
+    "NavPhaseShowControlMeasures": false,
+    "NavPhaseShowFriendlyUnits": false,
+    "NavPhaseShowEnemyUnits": false,
+    "NavPhaseShowTargets": false,
+    "AttkPhaseShowCurrentRoute": false,
+    "AttkPhaseShowInactiveZones": false,
+    "AttkPhaseShowObstacles": false,
+    "AttkPhaseShowOtherStationCursor": false,
+    "AttkPhaseShowCursorInfo": false,
+    "AttkPhaseShowHSI": false,
+    "AttkPhaseShowEndurance": false,
+    "AttkPhaseShowWind": false,
+    "AttkPhaseShowControlMeasures": false,
+    "AttkPhaseShowFriendlyUnits": false,
+    "AttkPhaseShowEnemyUnits": false,
+    "AttkPhaseShowTargets": false,
+    "AttkPhaseShowShot": false,
+    "ShowASEThreats": false,
+    "ShowThreatRings": false
+  },
+  "LaserCodes": {},
+  "Radios": {
+    "Radio": {
+      "Presets": null,
+      "SelectedModes": null
+    }
+  },
+  "Version": 2,
+  "KneeboardNotes": null
+}

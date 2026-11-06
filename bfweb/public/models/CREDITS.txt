@@ -1,0 +1,20 @@
+3D models used by the dashboard's flight replay (bfweb/src/replay/theater.ts),
+the dashboard's wireframe art (public/media/wire, from scripts/gen-wireframes.py)
+and the range site's 3D debriefs.
+
+Every *.glb in this folder is based on the 3D meshes of Tacview by Raia
+Software Inc. (https://www.tacview.net), published at
+https://github.com/Vyrtuoz/Tacview ("3D Models/Data/Meshes") under the GNU
+General Public License version 3. Each file keeps the name of the Tacview
+mesh it comes from (FixedWing.F-16.glb is FixedWing.F-16.obj).
+
+Changes: converted from OBJ to GLB by bfweb/scripts/build-tacview-models.mjs
+(re-oriented nose +Y / up +Z, recentred, positions only). These files are
+themselves licensed under the GPL-3.0: see LICENSE-GPL-3.0.txt in this folder.
+The source meshes are at the address above, and the conversion script is in
+this repository.
+
+Which DCS unit type is drawn with which mesh, and the names and engagement
+ranges the replay shows, come from Tacview's object database
+(https://github.com/Vyrtuoz/Tacview, "Database/Default Properties", GPL-3.0),
+made into shared/models/tacview.json by bfweb/scripts/gen-tacview-db.py.

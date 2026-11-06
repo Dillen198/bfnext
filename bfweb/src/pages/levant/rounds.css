@@ -1,0 +1,243 @@
+/* Rounds (pages/RoundsPage.tsx, rd-) and Squadrons (pages/SquadronsPage.tsx,
+   sq-) in Levant Ablaze's desert look. Only rendered when useDashLook() has a
+   profile, inside .lv-look, whose palette every rule here reads. The
+   cards, tape and readouts are levant.css's; this is what is particular to
+   the two pages. */
+
+/* ── Rounds ───────────────────────────────────────────────────────────────── */
+
+.lv-look .rd-page { padding: 30px 18px 28px; }
+.lv-look .rd-layout { display: grid; gap: 30px 18px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+@media (min-width: 1200px) {
+  .lv-look .rd-layout { grid-template-columns: 300px minmax(0, 1fr); }
+  .lv-look .rd-list-card { position: sticky; top: 16px; }
+}
+.lv-look .rd-main { min-width: 0; }
+
+/* the round list */
+.lv-look .rd-list { max-height: 620px; overflow-y: auto; padding-top: 4px; }
+.lv-look .rd-row {
+  all: unset; box-sizing: border-box; width: 100%; cursor: pointer; position: relative;
+  display: grid; grid-template-columns: 42px minmax(0, 1fr); align-items: center; gap: 10px;
+  padding: 8px 12px 8px 10px; border-bottom: 1px solid var(--line);
+}
+.lv-look .rd-row:last-child { border-bottom: none; }
+.lv-look .rd-row::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: transparent; }
+.lv-look .rd-row:hover { background: var(--char-3); }
+.lv-look .rd-row:focus-visible { background: var(--char-3); outline: 1px solid var(--rust); outline-offset: -1px; }
+.lv-look .rd-row.on { background: var(--char-3); }
+.lv-look .rd-row.on::before { background: var(--rust); }
+.lv-look .rd-no { font-family: var(--ds-display); font-weight: 700; font-size: 1.7rem; line-height: 1; text-align: center; color: var(--sand-dim); font-variant-numeric: tabular-nums; }
+.lv-look .rd-row.live .rd-no { color: var(--sand); }
+.lv-look .rd-row.on .rd-no { color: var(--rust-bright); }
+.lv-look .rd-row-main { display: grid; gap: 5px; min-width: 0; }
+.lv-look .rd-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.lv-look .rd-row-top strong {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--ds-display); font-weight: 600; font-size: 1rem; line-height: 1.05; letter-spacing: 0.03em; text-transform: uppercase; color: var(--sand);
+}
+.lv-look .rd-row-top > :last-child { flex-shrink: 0; }
+.lv-look .rd-dates {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--ds-label); font-weight: 500; font-size: 0.78rem; letter-spacing: 0.03em; color: var(--sand-dim); font-variant-numeric: tabular-nums;
+}
+
+/* the report */
+.lv-look .rd-report { display: grid; gap: 30px; min-width: 0; }
+.lv-look .rd-hero.live { --side: var(--rust); }
+.lv-look .rd-hero-top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 14px 28px; padding: 10px 20px 18px; }
+.lv-look .rd-hero-id { display: grid; gap: 7px; min-width: 0; }
+.lv-look .rd-hero-name {
+  margin: 0; overflow-wrap: anywhere;
+  font-family: var(--ds-display); font-weight: 700; font-size: clamp(1.9rem, 3.6vw, 3rem); line-height: 0.9; letter-spacing: 0.01em; text-transform: uppercase; color: var(--sand);
+}
+.lv-look .rd-hero-dates { font-family: var(--ds-label); font-weight: 600; font-size: 0.88rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--sand-dim); font-variant-numeric: tabular-nums; }
+.lv-look .rd-hero-dates b { font-weight: 700; color: var(--sand-2); }
+.lv-look .rd-hero-result { display: grid; gap: 5px; justify-items: end; text-align: right; }
+.lv-look .rd-hero-result strong {
+  font-family: var(--ds-display); font-weight: 700; font-size: clamp(2.2rem, 4.4vw, 3.6rem); line-height: 0.86; letter-spacing: 0.01em; text-transform: uppercase; color: var(--sand-dim);
+}
+.lv-look .rd-hero-result.b strong { color: var(--blue); }
+.lv-look .rd-hero-result.r strong { color: var(--red); }
+.lv-look .rd-hero-result.live strong { color: var(--rust-bright); }
+.lv-look .rd-won { font-family: var(--ds-label); font-weight: 700; font-size: 0.82rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--sand-2); }
+
+.lv-look .rd-readouts {
+  margin: 0; display: grid; gap: 2px; padding: 2px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 104px), 1fr));
+  background: rgba(var(--deep-rgb), 0.6); border-top: 1px solid var(--line);
+}
+.lv-look .rd-readouts dd { margin: 0; }
+.lv-look .rd-leaders { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); border-top: 1px dashed var(--line); }
+.lv-look .rd-leaders > div { display: grid; gap: 4px; padding: 10px 16px 11px; min-width: 0; border-right: 1px dashed var(--line); }
+.lv-look .rd-leaders > div:last-child { border-right: none; }
+.lv-look .rd-leaders dd { margin: 0; display: grid; gap: 2px; min-width: 0; }
+.lv-look .rd-leaders strong {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--ds-display); font-weight: 600; font-size: 1.12rem; line-height: 1.05; letter-spacing: 0.03em; color: var(--sand);
+}
+
+/* charts and the lower row */
+.lv-look .rd-grid { display: grid; gap: 30px 18px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); }
+.lv-look .rd-grid.start { align-items: start; }
+.lv-look .rd-chart { padding: 4px 14px 12px; }
+.lv-look .rd-sum { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 18px; margin-bottom: 8px; padding: 0 2px 8px; border-bottom: 1px dashed var(--line); }
+.lv-look .rd-sum-i { display: inline-flex; align-items: baseline; gap: 6px; }
+.lv-look .rd-sum-i.b { --side: var(--blue); }
+.lv-look .rd-sum-i.r { --side: var(--red); }
+.lv-look .rd-sum-i b { font-family: var(--ds-display); font-weight: 700; font-size: 1.6rem; line-height: 1; color: var(--side); font-variant-numeric: tabular-nums; }
+.lv-look .rd-sum-i span, .lv-look .rd-sum-of { font-family: var(--ds-label); font-weight: 600; font-size: 0.74rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sand-2); }
+.lv-look .rd-sum-of { margin-left: auto; color: var(--sand-dim); }
+.lv-look .rd-chart .recharts-cartesian-axis-tick text { font-family: var(--ds-label); font-weight: 600; letter-spacing: 0.06em; }
+.lv-look .rd-legend {
+  display: flex; flex-wrap: wrap; gap: 2px 16px; margin-top: 8px;
+  font-family: var(--ds-label); font-weight: 600; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--sand-2);
+}
+.lv-look .rd-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.lv-look .rd-legend i { display: inline-block; width: 10px; height: 10px; }
+.lv-look .rd-fine { margin: 6px 0 0; font-family: var(--ds-body); font-size: 0.76rem; line-height: 1.5; color: var(--sand-dim); }
+
+/* the chart tooltip */
+.lv-look .rd-tip {
+  display: grid; gap: 4px; min-width: 150px; padding: 7px 10px 8px;
+  background: var(--char); border: 1px solid var(--line); border-top: 2px solid var(--rust);
+  box-shadow: 0 10px 24px -14px rgba(0, 0, 0, 0.9);
+}
+.lv-look .rd-tip .ds-k { font-size: 0.68rem; }
+.lv-look .rd-tip-row { display: flex; align-items: center; gap: 8px; }
+.lv-look .rd-tip-row i { flex-shrink: 0; width: 3px; height: 14px; }
+.lv-look .rd-tip-row b { font-family: var(--ds-display); font-weight: 600; font-size: 0.98rem; line-height: 1.1; color: var(--sand); font-variant-numeric: tabular-nums; }
+.lv-look .rd-tip-row span { font-family: var(--ds-label); font-weight: 500; font-size: 0.76rem; letter-spacing: 0.04em; color: var(--sand-2); }
+
+/* most contested */
+.lv-look .rd-cont-body { padding: 2px 14px 14px; }
+.lv-look .rd-cont-k { display: block; margin-bottom: 6px; text-align: right; font-size: 0.64rem; }
+.lv-look .rd-cont { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.lv-look .rd-cont li { display: grid; grid-template-columns: minmax(90px, 40%) minmax(0, 1fr) 30px; align-items: center; gap: 10px; }
+.lv-look .rd-cont .nm {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--ds-label); font-weight: 600; font-size: 0.86rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sand-2);
+}
+.lv-look .rd-cont .bar { display: block; height: 8px; background: var(--char-3); }
+.lv-look .rd-cont .bar i { display: block; height: 100%; background: var(--coyote); }
+.lv-look .rd-cont b { text-align: right; font-family: var(--ds-display); font-weight: 600; font-size: 1rem; color: var(--sand-2); font-variant-numeric: tabular-nums; }
+.lv-look .rd-cont li.first .nm { color: var(--sand); }
+.lv-look .rd-cont li.first .bar i { background: var(--rust); }
+.lv-look .rd-cont li.first b { color: var(--rust-bright); }
+
+/* who carried it */
+.lv-look .rd-mvp {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 22px;
+  margin: 4px 14px 0; padding: 10px 14px 12px; background: var(--char-3); border-left: 3px solid var(--rust);
+}
+.lv-look .rd-mvp-id { display: grid; justify-items: start; gap: 7px; min-width: 0; }
+.lv-look .rd-mvp-name {
+  overflow-wrap: anywhere; text-decoration: none;
+  font-family: var(--ds-display); font-weight: 700; font-size: 1.9rem; line-height: 0.95; letter-spacing: 0.02em; text-transform: uppercase; color: var(--sand);
+}
+.lv-look .rd-mvp-name:hover, .lv-look .rd-mvp-name:focus-visible { color: var(--rust-bright); }
+.lv-look .rd-mvp-stats { margin: 0 0 0 auto; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.lv-look .rd-mvp-stats dt { font-family: var(--ds-label); font-weight: 600; font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sand-dim); }
+.lv-look .rd-mvp-stats dd { margin: 0; font-family: var(--ds-display); font-weight: 600; font-size: 1.2rem; line-height: 1.1; color: var(--sand); font-variant-numeric: tabular-nums; }
+.lv-look .rd-table-wrap { overflow-x: auto; padding-top: 10px; }
+.lv-look .rd-table, .lv-look .sq-members { width: 100%; border-collapse: collapse; }
+.lv-look .rd-table { min-width: 460px; }
+.lv-look .rd-table th, .lv-look .sq-members th {
+  padding: 5px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line);
+  font-family: var(--ds-label); font-weight: 600; font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--sand-dim);
+}
+.lv-look .rd-table td, .lv-look .sq-members td {
+  padding: 5px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line);
+  font-family: var(--ds-display); font-weight: 500; font-size: 0.92rem; color: var(--sand-2); font-variant-numeric: tabular-nums;
+}
+.lv-look .rd-table .l, .lv-look .sq-members .l { text-align: left; }
+.lv-look .rd-table tbody tr:hover td, .lv-look .sq-members tbody tr:hover td { background: var(--char-3); }
+.lv-look .rd-table td.rk { width: 34px; font-weight: 700; font-size: 1.05rem; color: var(--sand-dim); }
+.lv-look .rd-table tr.first td.rk { color: var(--rust-bright); }
+.lv-look .rd-table td.who a, .lv-look .sq-members td.who a { font-family: var(--ds-body); font-weight: 600; font-size: 0.88rem; color: var(--sand); text-decoration: none; }
+.lv-look .rd-table td.who a:hover, .lv-look .sq-members td.who a:hover { color: var(--rust-bright); }
+.lv-look .rd-pilots .rd-fine { margin: 0; padding: 8px 14px 12px; }
+
+@media (max-width: 1199px) {
+  .lv-look .rd-list { max-height: 300px; }
+}
+@media (max-width: 767px) {
+  .lv-look .rd-page { padding: 26px 10px 20px; }
+}
+@media (max-width: 560px) {
+  .lv-look .rd-hero-top { padding: 8px 14px 14px; }
+  .lv-look .rd-hero-result { justify-items: start; text-align: left; }
+  .lv-look .rd-mvp-stats { margin-left: 0; }
+  .lv-look .rd-leaders > div { border-right: none; border-bottom: 1px dashed var(--line); }
+  .lv-look .rd-leaders > div:last-child { border-bottom: none; }
+}
+
+/* ── Squadrons ────────────────────────────────────────────────────────────── */
+
+.lv-look .sq-page { padding: 30px 18px 28px; }
+.lv-look .sq-wrap { display: grid; gap: 30px; max-width: 1180px; }
+
+/* your squadron, or found one */
+.lv-look .sq-me-body { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 8px 18px 16px; }
+.lv-look .sq-me-body p { margin: 0; font-family: var(--ds-body); font-size: 0.95rem; line-height: 1.6; color: var(--sand-2); }
+.lv-look .sq-me-body code { padding: 0 5px; font-size: 0.88em; color: var(--sand); background: var(--char-3); border: 1px solid var(--line); }
+.lv-look .sq-me-id { display: grid; gap: 6px; justify-items: start; min-width: 0; margin-right: auto; }
+.lv-look .sq-me-name { font-family: var(--ds-display); font-weight: 700; font-size: 1.7rem; line-height: 0.95; letter-spacing: 0.02em; text-transform: uppercase; color: var(--sand); overflow-wrap: anywhere; }
+.lv-look .sq-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; }
+.lv-look .sq-form .sq-tag { width: 90px; text-transform: uppercase; }
+.lv-look .sq-form .sq-name-in { flex: 1 1 200px; min-width: 0; }
+.lv-look .sq-or { font-family: var(--ds-label); font-weight: 600; font-size: 0.82rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--sand-dim); }
+.lv-look .sq-hint { width: 100%; font-family: var(--ds-label); font-weight: 500; font-size: 0.82rem; letter-spacing: 0.03em; color: var(--sand-dim); }
+.lv-look .sq-err { width: 100%; font-family: var(--ds-label); font-weight: 600; font-size: 0.88rem; letter-spacing: 0.03em; color: var(--red); }
+
+.lv-look .ds-btn.sq-btn { padding: 6px 14px; font-size: 0.86rem; }
+.lv-look .ds-btn.sq-btn.sm { padding: 3px 10px; font-size: 0.76rem; border-width: 1px; }
+.lv-look .ds-btn.sq-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.lv-look .ds-btn.sq-btn:disabled:hover { background: var(--rust); border-color: var(--rust); }
+.lv-look .ds-btn.sq-btn:focus-visible { outline: 2px solid var(--sand); outline-offset: 2px; }
+
+/* the standings */
+.lv-look .sq-list { list-style: none; margin: 0; padding: 4px 0 0; }
+.lv-look .sq-row { position: relative; border-bottom: 1px solid var(--line); }
+.lv-look .sq-row:last-child { border-bottom: none; }
+.lv-look .sq-row::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: transparent; }
+.lv-look .sq-row.mine { background: color-mix(in srgb, var(--rust) 7%, transparent); }
+.lv-look .sq-row.mine::before { background: var(--rust); }
+.lv-look .sq-line {
+  display: grid; align-items: center; gap: 8px 18px; padding: 11px 14px 11px 12px;
+  grid-template-columns: 48px minmax(0, 1fr) auto auto; grid-template-areas: 'rk id stats acts';
+}
+.lv-look .sq-rk { grid-area: rk; text-align: center; font-family: var(--ds-display); font-weight: 700; font-size: 1.8rem; line-height: 1; color: var(--sand-dim); font-variant-numeric: tabular-nums; }
+.lv-look .sq-row.first .sq-rk { font-size: 2.1rem; color: var(--rust-bright); }
+.lv-look .sq-id { grid-area: id; display: grid; gap: 6px; justify-items: start; min-width: 0; }
+.lv-look .sq-id-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.lv-look .sq-yours { font-family: var(--ds-label); font-weight: 700; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--rust-bright); }
+.lv-look .sq-name {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--ds-display); font-weight: 700; font-size: 1.3rem; line-height: 1; letter-spacing: 0.02em; text-transform: uppercase; color: var(--sand);
+}
+.lv-look .sq-bar { display: block; width: 100%; max-width: 320px; height: 3px; background: var(--char-3); }
+.lv-look .sq-bar i { display: block; height: 100%; background: var(--coyote); }
+.lv-look .sq-row.first .sq-bar i { background: var(--rust); }
+.lv-look .sq-id .lv-sub { max-width: 100%; }
+.lv-look .sq-stats { grid-area: stats; margin: 0; display: flex; gap: 2px; }
+.lv-look .sq-stats > div { min-width: 78px; padding: 4px 12px 3px; background: var(--char-3); border-left: 2px solid var(--coyote); }
+.lv-look .sq-stats dt { font-family: var(--ds-label); font-weight: 600; font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sand-dim); }
+.lv-look .sq-stats dd { margin: 0; font-family: var(--ds-display); font-weight: 600; font-size: 1.25rem; line-height: 1.1; color: var(--sand); font-variant-numeric: tabular-nums; }
+.lv-look .sq-acts { grid-area: acts; display: flex; gap: 6px; justify-content: flex-end; }
+
+/* a squadron's members */
+.lv-look .sq-detail { padding: 0 14px 14px 78px; }
+.lv-look .sq-members-wrap { overflow-x: auto; border-top: 1px dashed var(--line); padding-top: 6px; }
+.lv-look .sq-members { min-width: 360px; }
+.lv-look .sq-members td.who > span { display: inline-flex; align-items: center; gap: 8px; }
+.lv-look .sq-members td.act { width: 1%; }
+
+@media (max-width: 767px) {
+  .lv-look .sq-page { padding: 26px 10px 20px; }
+  .lv-look .sq-line { grid-template-columns: 38px minmax(0, 1fr); grid-template-areas: 'rk id' 'rk stats' 'rk acts'; padding: 10px 10px 10px 8px; }
+  .lv-look .sq-rk { align-self: start; padding-top: 4px; }
+  .lv-look .sq-acts { justify-content: flex-start; }
+  .lv-look .sq-detail { padding: 0 10px 12px; }
+  .lv-look .sq-me-body { padding: 8px 14px 14px; }
+}

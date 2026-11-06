@@ -1,0 +1,660 @@
+/*
+ * The Allied Dispatch: a 1985 wire paper. One ink on off-white newsprint, a
+ * newspaper serif, typewriter datelines and kickers off the wire, stacked
+ * decks and ruled columns. Paper in both themes on purpose: the sheet lies
+ * on the desk whatever the room's lights are doing.
+ *
+ * Beside it, when the day has one, the Front Bulletin (.fb): the Soviet
+ * front communique on greyer stock, under a red band.
+ *
+ * Everything is scoped under .np / .fb so none of it leaks into the app.
+ */
+.np-desk {
+  /* The sheet lays itself out by its own width, not the window's: the
+     sidebar and the drawer both eat into the page. */
+  container: desk / inline-size;
+  height: 100%;
+  overflow-y: auto;
+  padding: 24px 16px 48px;
+}
+/* Faces the dispatch borrows from the room: the wire's typewriter. */
+.np-desk { --np-wire: 'Courier Prime', 'Courier New', monospace; }
+
+.np {
+  --np-paper: #ece8dc;
+  --np-ink: #1a1916;
+  --np-ink-faint: #5a564b;
+  --np-hair: #858072;
+  --np-type: 'Old Standard TT', 'Times New Roman', Times, serif;
+  --np-fell: 'Old Standard TT', 'Times New Roman', Times, serif;
+  --np-mast: 'Old Standard TT', 'Times New Roman', Times, serif;
+
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 20px 28px 26px;
+  color: var(--np-ink);
+  font-family: var(--np-type);
+  font-variant-numeric: lining-nums;
+  /* Fresh newsprint: a fine fibre, a faint fold across the middle. */
+  background-color: var(--np-paper);
+  background-image:
+    linear-gradient(180deg, transparent 49.6%, rgba(60, 50, 30, 0.07) 50%, transparent 50.4%),
+    radial-gradient(ellipse at 50% 40%, transparent 60%, rgba(80, 70, 40, 0.12) 100%),
+    radial-gradient(rgba(60, 50, 30, 0.05) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 4px 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 14px 40px rgba(0, 0, 0, 0.4);
+  /* Ink sits a touch soft on newsprint. */
+  text-shadow: 0 0 0.6px rgba(31, 27, 20, 0.35);
+}
+
+.np p { margin: 0; }
+.np h1, .np h2, .np h3 { margin: 0; font-weight: 700; }
+.np button { font: inherit; color: inherit; text-shadow: inherit; }
+
+/* A short centred rule between decks and between stories. */
+.np-dash {
+  width: 34%;
+  margin: 7px auto;
+  border: none;
+  border-top: 1px solid var(--np-ink);
+}
+.np-dash--long { width: 70%; }
+
+/* ── Masthead ─────────────────────────────────────────────────────────── */
+
+.np-mast {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 16px;
+  padding-bottom: 4px;
+}
+
+.np-ear {
+  max-width: 150px;
+  padding: 5px 7px;
+  border: 1px solid var(--np-ink);
+  outline: 1px solid var(--np-ink);
+  outline-offset: 2px;
+  font-size: 0.62rem;
+  line-height: 1.3;
+  text-align: center;
+}
+.np-ear strong {
+  display: block;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.np-ear em { font-family: var(--np-fell); font-style: italic; font-size: 0.74rem; line-height: 1.2; }
+.np-ear strong { font-family: var(--np-wire); }
+.np-ear--right { justify-self: end; }
+
+.np-title {
+  font-family: var(--np-mast);
+  font-weight: 700 !important;
+  font-size: clamp(2rem, 6.2cqi, 4.6rem);
+  line-height: 1;
+  letter-spacing: -0.01em;
+  text-transform: uppercase;
+  text-align: center;
+  text-wrap: balance;
+}
+
+/* Thin rule over a thick one, top and bottom: the classic dateline band. */
+.np-dateline {
+  margin: 4px 0 6px;
+  padding: 3px 2px;
+  border-top: 3px double var(--np-ink);
+  border-bottom: 3px double var(--np-ink);
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-family: var(--np-wire);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.np-dateline span:nth-child(2) { flex: 1; text-align: center; }
+
+.np-backissue {
+  margin: 6px 0 0;
+  font-family: var(--np-fell);
+  font-style: italic;
+  font-size: 0.84rem;
+  text-align: center;
+}
+
+/* ── Banner ───────────────────────────────────────────────────────────── */
+
+.np-banner {
+  padding: 8px 0 6px;
+  border-bottom: 4px double var(--np-ink);
+  text-align: center;
+}
+.np-headline {
+  font-size: clamp(1.5rem, 4.2vw, 3rem);
+  line-height: 1.04;
+  letter-spacing: -0.01em;
+  text-transform: uppercase;
+  text-wrap: balance;
+}
+
+/* ── The front: ruled columns ─────────────────────────────────────────── */
+
+.np-front {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-areas: 'lead mid side';
+  border-bottom: 1px solid var(--np-ink);
+}
+.np-front--nomid {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-areas: 'lead side';
+}
+.np-col { padding: 10px 12px 14px; min-width: 0; border-left: 1px solid var(--np-ink); }
+.np-col--lead { grid-area: lead; border-left: none; padding-left: 0; }
+.np-col--mid { grid-area: mid; }
+.np-col--side { grid-area: side; padding-right: 0; }
+
+/* Stacked decks, the way a lead story used to be headed. */
+.np-decks { text-align: center; margin-bottom: 8px; }
+.np-deck1 {
+  font-size: 1.02rem;
+  line-height: 1.18;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  text-wrap: balance;
+}
+.np-deck2 {
+  font-family: var(--np-fell);
+  font-size: 0.98rem;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+.np-deck3 {
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.np-special {
+  font-family: var(--np-fell);
+  font-style: italic;
+  font-size: 0.8rem;
+  text-align: center;
+  margin-bottom: 6px;
+}
+
+.np-body {
+  columns: 13em 2;
+  column-gap: 20px;
+  column-rule: 1px solid var(--np-hair);
+  font-size: 0.86rem;
+  line-height: 1.42;
+  text-align: justify;
+  hyphens: auto;
+}
+.np-body p { text-indent: 1.1em; margin-bottom: 0.25em; }
+.np-body p:first-child { text-indent: 0; }
+.np-inline-date {
+  font-family: var(--np-wire);
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+.np-developing {
+  margin-top: 8px;
+  font-family: var(--np-fell);
+  font-style: italic;
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+/* Pictures, printed as a coarse halftone. */
+.np-photo { margin: 0 0 8px; }
+.np-photo-frame {
+  position: relative;
+  display: block;
+  border: 1px solid var(--np-ink);
+  padding: 2px;
+}
+.np-photo-frame img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: cover;
+  filter: grayscale(1) contrast(1.3) brightness(0.98);
+  mix-blend-mode: multiply;
+}
+.np-photo-frame::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  pointer-events: none;
+  background: radial-gradient(rgba(30, 25, 15, 0.38) 0.7px, transparent 1.2px) 0 0 / 3px 3px;
+  mix-blend-mode: multiply;
+}
+.np-photo--lead { margin: 2px 0 10px; }
+.np-photo--lead img { max-height: 440px; }
+.np-photo--small { margin: 4px 0 6px; }
+.np-photo--small img { aspect-ratio: 16 / 9; }
+.np-thumb { margin: 4px 0 6px; }
+.np-thumb img { aspect-ratio: 16 / 9; }
+.np-photo figcaption {
+  margin-top: 4px;
+  font-family: var(--np-fell);
+  font-size: 0.76rem;
+  line-height: 1.3;
+  text-align: center;
+}
+.np-photo figcaption small {
+  display: block;
+  font-family: var(--np-type);
+  font-size: 0.56rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--np-ink-faint);
+}
+
+/* Where the day's picture will go, once it is drawn. */
+.np-photo-pending {
+  margin: 2px 0 10px;
+  padding: 28px 12px;
+  border: 1px solid var(--np-ink);
+  outline: 1px solid var(--np-ink);
+  outline-offset: 2px;
+  background: repeating-linear-gradient(45deg, transparent 0 6px, rgba(31, 27, 20, 0.06) 6px 7px);
+  text-align: center;
+}
+.np-photo-pending span {
+  display: block;
+  font-size: 0.9rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.np-photo-pending small { font-family: var(--np-fell); font-style: italic; font-size: 0.78rem; }
+
+/* Short stories: the analysis's own sentences. */
+.np-brief { text-align: justify; hyphens: auto; }
+.np-brief h3 {
+  font-family: var(--np-wire);
+  font-size: 0.72rem;
+  line-height: 1.2;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: center;
+  margin-bottom: 3px;
+}
+.np-brief p { font-size: 0.82rem; line-height: 1.38; }
+
+/* ── The bulletin column ──────────────────────────────────────────────── */
+
+.np-box {
+  border: 1px solid var(--np-ink);
+  outline: 1px solid var(--np-ink);
+  outline-offset: 2px;
+  margin: 3px 3px 14px;
+  padding: 6px 8px 8px;
+}
+.np-box-title {
+  font-size: 0.8rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: center;
+  line-height: 1.15;
+}
+.np-box-sub {
+  font-family: var(--np-fell);
+  font-style: italic;
+  font-size: 0.76rem;
+  text-align: center;
+  margin-bottom: 4px;
+}
+
+/* Label, dotted leader, figure -- shared by the returns and the ledger. */
+.np-returns,
+.np-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.np-returns { font-size: 0.78rem; }
+.np-table { font-size: 0.76rem; }
+.np-returns th,
+.np-table thead th {
+  font-weight: 400;
+  font-size: 0.56rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: right;
+  border-bottom: 1px solid var(--np-ink);
+  padding: 0 0 1px 6px;
+}
+.np-returns td,
+.np-table td { padding: 2px 0 2px 6px; text-align: right; white-space: nowrap; }
+.np-returns th:first-child,
+.np-returns td:first-child,
+.np-table th:first-child,
+.np-table td:first-child { text-align: left; padding-left: 0; }
+.np-returns td:first-child,
+.np-table tbody td:first-child {
+  white-space: normal;
+  background: radial-gradient(var(--np-ink-faint) 0.6px, transparent 0.9px) 0 82% / 4px 2px repeat-x;
+}
+.np-leader { background: var(--np-paper); padding-right: 3px; }
+
+.np-table caption {
+  caption-side: top;
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding-bottom: 3px;
+}
+.np-table thead tr:not(:last-child) th {
+  border-bottom: none;
+  font-family: var(--np-fell);
+  font-style: italic;
+  text-transform: none;
+  font-size: 0.74rem;
+  letter-spacing: 0;
+}
+.np-table thead tr:not(:last-child) th[colspan] { border-bottom: 1px solid var(--np-hair); text-align: center; }
+.np-table tfoot td { border-top: 1px solid var(--np-ink); font-weight: 700; }
+.np-dim { color: var(--np-ink-faint); }
+
+.np-list { list-style: none; margin: 0; padding: 0; font-size: 0.8rem; line-height: 1.35; }
+.np-list li { display: flex; justify-content: space-between; gap: 6px; padding: 1px 0; }
+.np-list li span:last-child { font-family: var(--np-fell); font-style: italic; white-space: nowrap; }
+
+.np-quiet { font-family: var(--np-fell); font-style: italic; font-size: 0.8rem; text-align: center; }
+
+/* ── Section heads ────────────────────────────────────────────────────── */
+
+.np-section-head {
+  margin: 14px 0 8px;
+  padding: 3px 0;
+  border-top: 3px double var(--np-ink);
+  border-bottom: 1px solid var(--np-ink);
+  font-size: 0.92rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  text-align: center;
+}
+.np-section-head::before,
+.np-section-head::after {
+  content: '\25A0';
+  display: inline-block;
+  letter-spacing: 0;
+  margin: 0 0.7em;
+  font-size: 0.6em;
+  vertical-align: 0.2em;
+}
+
+/* ── The ledger ───────────────────────────────────────────────────────── */
+
+.np-tables {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+}
+.np-tables > div { min-width: 0; overflow-x: auto; padding: 0 14px; border-left: 1px solid var(--np-ink); }
+.np-tables > div:first-child { border-left: none; padding-left: 0; }
+.np-tables > div:last-child { padding-right: 0; }
+.np-tables--one { grid-template-columns: 1fr; }
+
+/* ── Previous editions ────────────────────────────────────────────────── */
+
+.np-issues { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.np-issue {
+  /* A button centres its content by default; a column of type starts at the top. */
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  width: 100%;
+  text-align: center;
+  background: none;
+  border: none;
+  border-left: 1px solid var(--np-ink);
+  padding: 2px 12px 12px;
+  cursor: pointer;
+}
+.np-issue:nth-child(4n + 1) { border-left: none; padding-left: 0; }
+.np-issue:nth-child(4n) { padding-right: 0; }
+.np-issue:hover .np-issue-head,
+.np-issue:focus-visible .np-issue-head { text-decoration: underline; text-underline-offset: 3px; }
+.np-issue:focus-visible { outline: 1px dotted var(--np-ink); outline-offset: 2px; }
+.np-issue-date {
+  font-family: var(--np-wire);
+  font-style: italic;
+  font-size: 0.76rem;
+}
+.np-issue-head {
+  font-weight: 700;
+  font-size: 0.86rem;
+  line-height: 1.15;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+.np-issue-snip {
+  font-size: 0.78rem;
+  line-height: 1.38;
+  text-align: justify;
+  hyphens: auto;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.np-back {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ── Colophon ─────────────────────────────────────────────────────────── */
+
+.np-colophon {
+  margin-top: 10px;
+  padding-top: 6px;
+  border-top: 3px double var(--np-ink);
+  font-family: var(--np-fell);
+  font-size: 0.76rem;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.np-notice {
+  padding: 40px 10px;
+  text-align: center;
+  font-family: var(--np-fell);
+  font-style: italic;
+  font-size: 1.1rem;
+}
+
+/* ── Two voices ───────────────────────────────────────────────────────
+   A digest with `alt`: the wire on the left, the Front Bulletin on the
+   right, two sheets on the desk. A narrow desk gets two tabs instead (the
+   container queries below). */
+
+.np-voice-tabs { display: none; }
+.np-dual {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+  max-width: 1560px;
+  margin: 0 auto;
+}
+.np-voice { min-width: 0; }
+.np-voice--alt { position: sticky; top: 0; }
+/* The wire's front is narrower beside the communique: lead across the top,
+   the short stories and the returns under it. */
+.np-dual .np-front {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-areas: 'lead lead' 'mid side';
+}
+.np-dual .np-front--nomid { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'lead' 'side'; }
+.np-dual .np-col--lead { padding-right: 0; border-bottom: 1px solid var(--np-ink); }
+.np-dual .np-col--mid { border-left: none; padding-left: 0; }
+.np-dual .np-front--nomid .np-col--side { border-left: none; padding-left: 0; }
+.np-dual .np-issues { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.np-dual .np-issue:nth-child(n) { border-left: 1px solid var(--np-ink); padding: 2px 12px 12px; }
+.np-dual .np-issue:nth-child(2n + 1) { border-left: none; padding-left: 0; }
+.np-dual .np-issue:nth-child(2n) { padding-right: 0; }
+
+/* The Front Bulletin: greyer stock, a red band, a block sans for the
+   headings and a typewritten communique. */
+.fb {
+  --fb-paper: #e2dccd;
+  --fb-ink: #1c1a17;
+  --fb-red: #9e1c14;
+  --fb-head: 'Russo One', 'Arial Black', sans-serif;
+  --fb-type: 'Special Elite', 'Courier Prime', 'Courier New', monospace;
+  padding: 0 0 18px;
+  color: var(--fb-ink);
+  background-color: var(--fb-paper);
+  background-image:
+    radial-gradient(ellipse at 50% 30%, transparent 60%, rgba(70, 55, 40, 0.16) 100%),
+    radial-gradient(rgba(60, 45, 30, 0.07) 1px, transparent 1px);
+  background-size: 100% 100%, 3px 3px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 14px 40px rgba(0, 0, 0, 0.4);
+  text-shadow: 0 0 0.6px rgba(28, 26, 23, 0.4);
+  transform: rotate(0.35deg);
+}
+.fb p { margin: 0; }
+.fb h2, .fb h3 { margin: 0; }
+.fb-mast {
+  padding: 12px 18px 10px;
+  background: var(--fb-red);
+  color: #f6efe2;
+  text-align: center;
+  text-shadow: none;
+  border-bottom: 4px double #f6efe2;
+}
+.fb-flag {
+  font-family: var(--fb-type);
+  font-size: 0.66rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+.fb-title {
+  font-family: var(--fb-head);
+  font-weight: 400;
+  font-size: clamp(1.8rem, 4.6cqi, 3rem);
+  line-height: 1.02;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.fb-sub {
+  margin-top: 4px !important;
+  font-family: var(--fb-type);
+  font-size: 0.64rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.fb-headline {
+  padding: 14px 18px 8px;
+  font-family: var(--fb-head);
+  font-weight: 400;
+  font-size: clamp(1.1rem, 2.4cqi, 1.5rem);
+  line-height: 1.15;
+  text-transform: uppercase;
+  text-align: center;
+  text-wrap: balance;
+  border-bottom: 2px solid var(--fb-red);
+  margin: 0 18px 10px !important;
+  padding-left: 0;
+  padding-right: 0;
+}
+.fb-body {
+  padding: 0 18px;
+  font-family: var(--fb-type);
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+.fb-body p { margin-bottom: 0.7em; }
+.fb-dateline { color: var(--fb-red); font-weight: 700; }
+.fb-foot {
+  margin: 10px 18px 0 !important;
+  padding-top: 6px;
+  border-top: 1px solid var(--fb-red);
+  font-family: 'Old Standard TT', 'Times New Roman', serif;
+  font-style: italic;
+  font-size: 0.76rem;
+  line-height: 1.4;
+  text-align: center;
+}
+
+/* The tabs, for a narrow desk. */
+.np-voice-tab {
+  flex: 1;
+  padding: 8px 8px;
+  background: var(--bg-card-solid);
+  border: 1px solid var(--border-light);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.np-voice-tab + .np-voice-tab { border-left: none; }
+.np-voice-tab[aria-selected='true'] { background: #1a1916; color: #ece8dc; border-color: #1a1916; }
+.np-voice-tab--alt[aria-selected='true'] { background: #9e1c14; color: #f6efe2; border-color: #9e1c14; }
+.np-voice-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── Narrower sheets ──────────────────────────────────────────────────── */
+
+@container desk (max-width: 960px) {
+  .np-front {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas: 'lead lead' 'mid side';
+  }
+  .np-col--lead { padding-right: 0; border-bottom: 1px solid var(--np-ink); }
+  .np-col--mid { border-left: none; padding-left: 0; }
+  .np-front--nomid { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'lead' 'side'; }
+  .np-front--nomid .np-col--side { border-left: none; padding-left: 0; }
+  .np-issues { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .np-issue:nth-child(n) { border-left: 1px solid var(--np-ink); padding: 2px 12px 12px; }
+  .np-issue:nth-child(2n + 1) { border-left: none; padding-left: 0; }
+  .np-issue:nth-child(2n) { padding-right: 0; }
+}
+
+@container desk (max-width: 900px) {
+  .np-voice-tabs { display: flex; margin: 0 0 10px; position: sticky; top: -24px; z-index: 5; }
+  .np-dual { grid-template-columns: minmax(0, 1fr); }
+  .np-voice[data-active='false'] { display: none; }
+  .np-voice--alt { position: static; }
+  .fb { transform: none; }
+}
+
+@container desk (max-width: 640px) {
+  .np { padding: 14px 14px 20px; }
+  .np-mast { grid-template-columns: 1fr; gap: 6px; }
+  .np-ear { display: none; }
+  .np-title { white-space: normal; }
+  .np-dateline span:nth-child(2) { text-align: left; flex-basis: 100%; order: -1; }
+  .np-front { grid-template-columns: 1fr; grid-template-areas: 'lead' 'mid' 'side'; }
+  .np-col { border-left: none; padding-left: 0; padding-right: 0; }
+  .np-col--mid { border-bottom: 1px solid var(--np-ink); }
+  .np-tables { grid-template-columns: 1fr; }
+  .np-tables > div { border-left: none; padding: 0 0 10px; }
+  .np-issues { grid-template-columns: 1fr; }
+  .np-issue:nth-child(n) { border-left: none; padding: 8px 0; border-top: 1px solid var(--np-hair); }
+  .np-dual .np-front,
+  .np-dual .np-front--nomid { grid-template-columns: 1fr; grid-template-areas: 'lead' 'mid' 'side'; }
+  .np-dual .np-col--mid { border-bottom: 1px solid var(--np-ink); }
+  .np-dual .np-col--side { border-left: none; padding-left: 0; }
+  .np-dual .np-issues { grid-template-columns: 1fr; }
+  .np-dual .np-issue:nth-child(n) { border-left: none; padding: 8px 0; border-top: 1px solid var(--np-hair); }
+  .fb-mast { padding: 10px 12px 8px; }
+  .fb-body { padding: 0 12px; }
+  .fb-headline { margin: 0 12px 10px !important; }
+}

@@ -2,23 +2,35 @@
 name = "bfprotocols"
 version = "0.1.0"
 edition = "2021"
+# No license file of its own (see NOTICE): it is upstream's code and is
+# linked into bflib, so it is distributed under bflib's AGPL-3.0-or-later.
+license = "AGPL-3.0-or-later"
+publish = false
 
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true }
 compact_str = { workspace = true }
-dcso3 = { version = "0.1", path = "../dcso3" }
+# `dcso3` here is dcso3-core under dcso3's name: the same types at the same
+# paths (dcso3::net::Ucid, dcso3::coalition::Side, ...) without mlua, so
+# this crate builds and runs without DCS's lua.dll. Code that needs the Lua
+# side of dcso3 depends on dcso3 itself.
+dcso3 = { package = "dcso3-core", version = "0.1", path = "../dcso3-core" }
 enumflags2 = { workspace = true }
+# Only the netidx TLS config type (`netidx_tls` in both engine configs);
+# no runtime.
+fowlbg = { version = "0.1", path = "../fowlbg", default-features = false, features = ["schemars"] }
 fxhash = { workspace = true }
-hdrhistogram = { workspace = true }
 immutable-chunkmap = { workspace = true }
 indexmap = { workspace = true }
 log = { workspace = true }
-mlua = { version = "0.9.9", features = ["lua51", "serialize"] }
 netidx = { workspace = true }
-paste = { workspace = true }
 regex = { workspace = true }
+schemars = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
 smallvec = { workspace = true }
+
+[lints]
+workspace = true

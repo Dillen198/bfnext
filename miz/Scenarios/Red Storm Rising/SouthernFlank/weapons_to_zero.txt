@@ -1,0 +1,28 @@
+RSR_SF warehouse: weapons
+
+Zeroed now (identified from wsTypes.lua; plugin weapons show as 'unidentified'):
+  BINVENTORY (NATO): 16 rows zeroed: AGM_154, AGM_84E, AIM_120, AIM_120C, AIM_9X, AN_AAQ_28_LITENING, CBU_103, CBU_105, CBU_97, GBU_31, GBU_31_V_3B, GBU_38, P_77, X_31A, X_31P, X_59M
+  RINVENTORY (USSR): 16 rows zeroed: AGM_154, AGM_84E, AIM_120, AIM_120C, AIM_9X, AN_AAQ_28_LITENING, CBU_103, CBU_105, CBU_97, GBU_31, GBU_31_V_3B, GBU_38, P_77, X_31A, X_31P, X_59M
+
+Still to zero by hand in the Mission Editor (open build/rsr_sf_warehouse.miz,
+BINVENTORY and RINVENTORY, set each to 0, save, run rebuild-all.ps1).
+These are plugin weapons with no fixed wsType, so no offline tool can find
+their rows. Until then era.banned_weapons enforces them by name:
+  - AIM-120B / AIM-120C (all variants, incl. plugin rows not matched below)
+  - AIM-9X
+  - R-77 (RVV-AE)
+  - GBU-31 / GBU-32 / GBU-38 (JDAM, all variants)
+  - GBU-54 (laser JDAM)
+  - AGM-154A/B/C (JSOW)
+  - AGM-84E SLAM, AGM-84H SLAM-ER
+  - APKWS (AGR-20 / M282)
+  - Kh-38
+  - KAB-500S
+  - AN/AAQ-28 LITENING
+  - AN/ASQ-228 ATFLIR
+  - AN/AAQ-33 Sniper XR
+  - AIM-54C (1986), AIM-7P
+  - CBU-97/103/105 (SFW/WCMD)
+  - GBU-39 SDB
+  - Kh-31A/P (1988)
+  - Kh-59M

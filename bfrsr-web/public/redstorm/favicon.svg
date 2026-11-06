@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Campaign emblem: a storm front over a compass ring">
+  <defs>
+    <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="128" height="128">
+      <rect width="128" height="128" fill="#fff"/>
+      <path d="M10 90C42 58 84 78 118 34" fill="none" stroke="#000" stroke-width="13" stroke-linecap="round"/>
+      <path d="M18.37 82.9L29.94 89.71L29.73 76.35ZM38.29 72.99L47.8 82.62L50.94 69.41ZM59.88 67.3L69.27 77.38L72.54 64.08ZM81.53 61.14L92.38 69.63L93.21 55.77ZM101.14 50.68L114.14 55.62L111.01 42.07Z" fill="#000" stroke="#000" stroke-width="5" stroke-linejoin="round"/>
+    </mask>
+  </defs>
+  <circle cx="64" cy="64" r="63" fill="#101316"/>
+  <g mask="url(#cut)">
+    <circle cx="64" cy="64" r="53" fill="none" stroke="#b9c2ca" stroke-width="5"/>
+    <circle cx="64" cy="64" r="43" fill="none" stroke="#b9c2ca" stroke-width="1.5"/>
+    <path d="M76.16 18.6L77.2 14.74M87.5 23.3L89.5 19.83M95.47 32.53L100.06 27.94M104.7 40.5L108.17 38.5M109.4 51.84L113.26 50.8M109.4 76.16L113.26 77.2M104.7 87.5L108.17 89.5M95.47 95.47L100.06 100.06M87.5 104.7L89.5 108.17M76.16 109.4L77.2 113.26M51.84 109.4L50.8 113.26M40.5 104.7L38.5 108.17M32.53 95.47L27.94 100.06M23.3 87.5L19.83 89.5M18.6 76.16L14.74 77.2M18.6 51.84L14.74 50.8M23.3 40.5L19.83 38.5M32.53 32.53L27.94 27.94M40.5 23.3L38.5 19.83M51.84 18.6L50.8 14.74" stroke="#b9c2ca" stroke-width="2"/>
+    <path d="M64 64L64 57L88.04 39.96L71 64ZM64 64L71 64L88.04 88.04L64 71ZM64 64L64 71L39.96 88.04L57 64ZM64 64L57 64L39.96 39.96L64 57Z" fill="#6f7a84"/>
+    <path d="M64 64L64 3L56.93 56.93ZM64 64L125 64L71.07 56.93ZM64 64L64 125L71.07 71.07ZM64 64L3 64L56.93 71.07Z" fill="#b9c2ca"/>
+    <path d="M64 64L64 3L71.07 56.93ZM64 64L125 64L71.07 71.07ZM64 64L64 125L56.93 71.07ZM64 64L3 64L56.93 56.93Z" fill="#6f7a84"/>
+    <circle cx="64" cy="64" r="4" fill="#d4ab45"/>
+  </g>
+  <path d="M18.37 82.9L29.94 89.71L29.73 76.35ZM38.29 72.99L47.8 82.62L50.94 69.41ZM59.88 67.3L69.27 77.38L72.54 64.08ZM81.53 61.14L92.38 69.63L93.21 55.77ZM101.14 50.68L114.14 55.62L111.01 42.07Z" fill="#e04a3f" stroke="#e04a3f" stroke-width="1" stroke-linejoin="round"/>
+  <path d="M10 90C42 58 84 78 118 34" fill="none" stroke="#e04a3f" stroke-width="6" stroke-linecap="round"/>
+</svg>

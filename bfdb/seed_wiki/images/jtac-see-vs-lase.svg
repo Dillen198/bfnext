@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 480" width="800" height="480" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect x="0" y="0" width="800" height="480" fill="#0d1009"/>
+  <text x="24" y="34" fill="#cdd4be" font-size="16" font-weight="bold">What a JTAC sees, and what it lases</text>
+
+  <!-- detection ring -->
+  <circle cx="260" cy="260" r="200" fill="#141910" stroke="#7d8a6a" stroke-width="2" stroke-dasharray="8 6"/>
+  <text x="260" y="78" fill="#7d8a6a" font-size="13" text-anchor="middle">detection range (set per JTAC type)</text>
+
+  <!-- laser ring -->
+  <circle cx="260" cy="260" r="115" fill="#18200f" stroke="#6aab1f" stroke-width="2"/>
+  <text x="260" y="398" fill="#8ec83f" font-size="13" text-anchor="middle">laser limit: 18.5 km (10 nm)</text>
+
+  <!-- focus circle -->
+  <circle cx="315" cy="205" r="38" fill="none" stroke="#c9a227" stroke-width="2" stroke-dasharray="4 4"/>
+  <path d="M315 196 l0 -16 l12 5 l-12 5" fill="#c9a227" stroke="#c9a227" stroke-width="1.5"/>
+  <text x="372" y="164" fill="#c9a227" font-size="13">your map mark, 5 km focus</text>
+
+  <!-- JTAC -->
+  <polygon points="260,248 272,268 248,268" fill="#4a8fd4"/>
+  <text x="260" y="288" fill="#cdd4be" font-size="13" text-anchor="middle">JTAC</text>
+
+  <!-- laser line to target -->
+  <line x1="260" y1="258" x2="300" y2="214" stroke="#8ec83f" stroke-width="2" stroke-dasharray="6 3 2 3"/>
+
+  <!-- lased target -->
+  <circle cx="300" cy="214" r="7" fill="#cc4444" stroke="#8ec83f" stroke-width="3"/>
+  <!-- other contacts in focus -->
+  <circle cx="330" cy="226" r="6" fill="#cc4444"/>
+  <!-- in laser range, outside focus -->
+  <circle cx="200" cy="310" r="6" fill="#cc4444" opacity="0.45"/>
+  <!-- seen, out of laser range -->
+  <circle cx="110" cy="190" r="6" fill="none" stroke="#cc4444" stroke-width="2"/>
+  <circle cx="400" cy="350" r="6" fill="none" stroke="#cc4444" stroke-width="2"/>
+  <!-- not seen -->
+  <circle cx="520" cy="120" r="6" fill="none" stroke="#7d8a6a" stroke-width="2" stroke-dasharray="2 2"/>
+
+  <!-- legend panel -->
+  <rect x="500" y="200" width="284" height="250" rx="6" fill="#141910" stroke="#262e1d"/>
+  <text x="516" y="226" fill="#cdd4be" font-size="14" font-weight="bold">Legend</text>
+  <circle cx="526" cy="250" r="7" fill="#cc4444" stroke="#8ec83f" stroke-width="3"/>
+  <text x="544" y="255" fill="#cdd4be" font-size="13">being lased (nearest the mark)</text>
+  <circle cx="526" cy="280" r="6" fill="#cc4444"/>
+  <text x="544" y="285" fill="#cdd4be" font-size="13">lasable, next for Shift</text>
+  <circle cx="526" cy="310" r="6" fill="#cc4444" opacity="0.45"/>
+  <text x="544" y="315" fill="#cdd4be" font-size="13">in range, outside the focus</text>
+  <circle cx="526" cy="340" r="6" fill="none" stroke="#cc4444" stroke-width="2"/>
+  <text x="544" y="345" fill="#cdd4be" font-size="13">seen, out of laser range</text>
+  <circle cx="526" cy="370" r="6" fill="none" stroke="#7d8a6a" stroke-width="2" stroke-dasharray="2 2"/>
+  <text x="544" y="375" fill="#cdd4be" font-size="13">not seen at all</text>
+  <text x="516" y="406" fill="#7d8a6a" font-size="13">No focus set: it works the whole</text>
+  <text x="516" y="424" fill="#7d8a6a" font-size="13">green ring, nearest the JTAC first.</text>
+  <text x="516" y="442" fill="#7d8a6a" font-size="13">The status names the nearest contact.</text>
+</svg>

@@ -12,9 +12,9 @@ FITNESS FOR A PARTICULAR PURPOSE.
 */
 
 use crate::{
-    as_tbl, coalition::Side, controller::MissionPoint, country, is_hooks_env, net::SlotId,
-    string_enum, wrapped_prim, wrapped_table, Color, DcsTableExt, LuaEnv, LuaVec2, Path, Quad2,
-    Sequence, String,
+    as_tbl, coalition::Side, controller::MissionPoint, country, is_hooks_env,
+    net::SlotId, string_enum, wrapped_prim, wrapped_table, Color, DcsTableExt, LuaEnv,
+    LuaVec2, Path, Quad2, Sequence, String,
 };
 use anyhow::{bail, Result};
 use fxhash::FxHashMap;
@@ -24,27 +24,9 @@ use std::{cmp::max, collections::hash_map::Entry, ops::Deref};
 
 wrapped_table!(Weather, None);
 
-wrapped_prim!(UnitId, i64, Hash, Copy);
+pub use dcso3_core::env::miz::UnitId;
 
-impl Default for UnitId {
-    fn default() -> Self {
-        UnitId(0)
-    }
-}
-
-impl UnitId {
-    pub fn next(&mut self) {
-        self.0 += 1
-    }
-}
-
-wrapped_prim!(GroupId, i64, Hash, Copy);
-
-impl Default for GroupId {
-    fn default() -> Self {
-        GroupId(0)
-    }
-}
+wrapped_prim!(GroupId, i64, Hash, Copy, Default);
 
 impl GroupId {
     pub fn next(&mut self) {
@@ -67,13 +49,10 @@ pub struct Property {
     pub value: String,
 }
 
-impl<'lua> FromLua<'lua> for Property {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for Property {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl = LuaTable::from_lua(value, lua)?;
-        Ok(Self {
-            key: tbl.raw_get("key")?,
-            value: tbl.raw_get("value")?,
-        })
+        Ok(Self { key: tbl.raw_get("key")?, value: tbl.raw_get("value")? })
     }
 }
 
@@ -87,23 +66,18 @@ wrapped_prim!(TriggerZoneId, i64, Copy, Hash);
 
 wrapped_table!(TriggerZone, None);
 
-impl<'lua> TriggerZone<'lua> {
+impl TriggerZone {
     pub fn name(&self) -> Result<String> {
         Ok(self.raw_get("name")?)
     }
 
     pub fn pos(&self) -> Result<na::base::Vector2<f64>> {
-        Ok(na::base::Vector2::new(
-            self.raw_get("x")?,
-            self.raw_get("y")?,
-        ))
+        Ok(na::base::Vector2::new(self.raw_get("x")?, self.raw_get("y")?))
     }
 
     pub fn typ(&self) -> Result<TriggerZoneTyp> {
         Ok(match self.raw_get("type")? {
-            0 => TriggerZoneTyp::Circle {
-                radius: self.raw_get("radius")?,
-            },
+            0 => TriggerZoneTyp::Circle { radius: self.raw_get("radius")? },
             2 => TriggerZoneTyp::Quad(self.raw_get("verticies")?),
             n => bail!("unknown trigger zone type {}", n),
         })
@@ -117,7 +91,7 @@ impl<'lua> TriggerZone<'lua> {
         Ok(self.raw_get("zoneId")?)
     }
 
-    pub fn properties(&self) -> Result<Sequence<'lua, Property>> {
+    pub fn properties(&self) -> Result<Sequence<Property>> {
         Ok(self.raw_get("properties")?)
     }
 }
@@ -128,8 +102,8 @@ wrapped_table!(Task, None);
 
 wrapped_table!(Route, None);
 
-impl<'lua> Route<'lua> {
-    pub fn points(&self) -> Result<Sequence<'lua, MissionPoint<'_>>> {
+impl Route {
+    pub fn points(&self) -> Result<Sequence<MissionPoint>> {
         Ok(self.t.raw_get("points")?)
     }
 
@@ -140,7 +114,7 @@ impl<'lua> Route<'lua> {
 
 wrapped_table!(Unit, None);
 
-impl<'lua> Unit<'lua> {
+impl Unit {
     pub fn name(&self) -> Result<String> {
         Ok(self.raw_get("name")?)
     }
@@ -162,10 +136,7 @@ impl<'lua> Unit<'lua> {
     }
 
     pub fn pos(&self) -> Result<na::base::Vector2<f64>> {
-        Ok(na::base::Vector2::new(
-            self.raw_get("x")?,
-            self.raw_get("y")?,
-        ))
+        Ok(na::base::Vector2::new(self.raw_get("x")?, self.raw_get("y")?))
     }
 
     pub fn set_pos(&self, pos: na::base::Vector2<f64>) -> Result<()> {
@@ -191,18 +162,85 @@ impl<'lua> Unit<'lua> {
         Ok(self.raw_set("alt", a)?)
     }
 
+    /// "BARO" or "RADIO". DCS wants BARO on a unit that is starting from a
+    /// parking spot -- the alt is then the field elevation.
+    pub fn set_alt_type(&self, t: &str) -> Result<()> {
+        Ok(self.raw_set("alt_type", t)?)
+    }
+
+    /// Assign this unit to a specific parking spot. `term_index` is the
+    /// `Term_Index` of a spot from `Airbase::get_parking_spots`.
+    ///
+    /// DCS reads `parking` alongside a `TakeOffParking*` waypoint 0; the unit's
+    /// x/y/alt must also be set to that spot, or DCS discards the ground start
+    /// and puts the flight in the air instead.
+    pub fn set_parking(&self, term_index: i64) -> Result<()> {
+        self.raw_set("parking", term_index)?;
+        // `parking_id` is the mission-editor-side spot *name*. At runtime DCS
+        // resolves the spot from `parking` alone, and a stale name inherited
+        // from the template points at a spot on a different airfield.
+        Ok(self.raw_set("parking_id", Value::Nil)?)
+    }
+
+    /// Drop any parking assignment (template leftovers included) so DCS is free
+    /// to pick spots itself.
+    pub fn clear_parking(&self) -> Result<()> {
+        self.raw_set("parking", Value::Nil)?;
+        Ok(self.raw_set("parking_id", Value::Nil)?)
+    }
+
     pub fn typ(&self) -> Result<String> {
         Ok(self.raw_get("type")?)
+    }
+
+    pub fn set_typ(&self, typ: String) -> Result<()> {
+        Ok(self.raw_set("type", typ)?)
+    }
+
+    /// Set the DCS static-object mass in kg. Only meaningful for Cargo-category
+    /// statics (e.g. crates) -- this is the weight DCS uses for sling-load and
+    /// cargo-bay transport, not a general unit property.
+    pub fn set_mass(&self, mass: u32) -> Result<()> {
+        Ok(self.raw_set("mass", mass)?)
     }
 
     pub fn skill(&self) -> Result<Skill> {
         Ok(self.raw_get("skill")?)
     }
+
+    /// Set the linkUnit and linkOffset fields to link this static object to a ship/carrier unit.
+    /// When set, the static object will move with the linked unit.
+    /// The link_unit_name should be the DCS unit name of the ship to link to (e.g. "CVN73").
+    /// linkOffset = true tells DCS that the x/y coordinates are relative offsets from the ship,
+    /// not absolute world coordinates. The offset_x/offset_y specify where to place the object
+    /// relative to the ship's position (in meters).
+    pub fn set_link_unit(
+        &self,
+        link_unit_name: &str,
+        offset_x: f64,
+        offset_y: f64,
+    ) -> Result<()> {
+        self.raw_set("linkUnit", link_unit_name)?;
+        self.raw_set("linkOffset", true)?;
+        self.raw_set("x", offset_x)?;
+        self.raw_set("y", offset_y)?;
+        Ok(())
+    }
+
+    /// Clear the linkUnit field (unlink from any ship)
+    pub fn clear_link_unit(&self) -> Result<()> {
+        Ok(self.raw_set("linkUnit", Value::Nil)?)
+    }
+
+    /// Get the linkUnit field if set (unit name string)
+    pub fn link_unit(&self) -> Result<Option<String>> {
+        Ok(self.raw_get("linkUnit")?)
+    }
 }
 
 wrapped_table!(Group, None);
 
-impl<'lua> Group<'lua> {
+impl Group {
     pub fn name(&self) -> Result<String> {
         Ok(self.raw_get("name")?)
     }
@@ -212,10 +250,7 @@ impl<'lua> Group<'lua> {
     }
 
     pub fn pos(&self) -> Result<na::base::Vector2<f64>> {
-        Ok(na::base::Vector2::new(
-            self.t.raw_get("x")?,
-            self.t.raw_get("y")?,
-        ))
+        Ok(na::base::Vector2::new(self.t.raw_get("x")?, self.t.raw_get("y")?))
     }
 
     pub fn set_pos(&self, pos: na::base::Vector2<f64>) -> Result<()> {
@@ -244,11 +279,11 @@ impl<'lua> Group<'lua> {
         Ok(self.raw_set("groupId", id)?)
     }
 
-    pub fn tasks(&self) -> Result<Sequence<'lua, Task<'_>>> {
+    pub fn tasks(&self) -> Result<Sequence<Task>> {
         Ok(self.raw_get("tasks")?)
     }
 
-    pub fn route(&self) -> Result<Route<'_>> {
+    pub fn route(&self) -> Result<Route> {
         Ok(self.raw_get("route")?)
     }
 
@@ -260,7 +295,7 @@ impl<'lua> Group<'lua> {
         self.raw_get("hidden").unwrap_or(false)
     }
 
-    pub fn units(&self) -> Result<Sequence<'lua, Unit<'lua>>> {
+    pub fn units(&self) -> Result<Sequence<Unit>> {
         Ok(self.raw_get("units")?)
     }
 
@@ -271,7 +306,7 @@ impl<'lua> Group<'lua> {
 
 wrapped_table!(Country, None);
 
-impl<'lua> Country<'lua> {
+impl Country {
     pub fn id(&self) -> Result<country::Country> {
         Ok(self.raw_get("id")?)
     }
@@ -280,45 +315,40 @@ impl<'lua> Country<'lua> {
         Ok(self.raw_get("name")?)
     }
 
-    pub fn planes(&self) -> Result<Sequence<'lua, Group<'lua>>> {
+    pub fn planes(&self) -> Result<Sequence<Group>> {
         let g: Option<mlua::Table> = self.raw_get("plane")?;
-        g.map(|g| Ok(g.raw_get("group")?))
-            .unwrap_or_else(|| Sequence::empty(self.lua))
+        g.map(|g| Ok(g.raw_get("group")?)).unwrap_or_else(|| Sequence::empty(&self.lua))
     }
 
-    pub fn helicopters(&self) -> Result<Sequence<'lua, Group<'lua>>> {
+    pub fn helicopters(&self) -> Result<Sequence<Group>> {
         let g: Option<mlua::Table> = self.raw_get("helicopter")?;
-        g.map(|g| Ok(g.raw_get("group")?))
-            .unwrap_or_else(|| Sequence::empty(self.lua))
+        g.map(|g| Ok(g.raw_get("group")?)).unwrap_or_else(|| Sequence::empty(&self.lua))
     }
 
-    pub fn ships(&self) -> Result<Sequence<'lua, Group<'lua>>> {
+    pub fn ships(&self) -> Result<Sequence<Group>> {
         let g: Option<mlua::Table> = self.raw_get("ship")?;
-        g.map(|g| Ok(g.raw_get("group")?))
-            .unwrap_or_else(|| Sequence::empty(self.lua))
+        g.map(|g| Ok(g.raw_get("group")?)).unwrap_or_else(|| Sequence::empty(&self.lua))
     }
 
-    pub fn vehicles(&self) -> Result<Sequence<'lua, Group<'lua>>> {
+    pub fn vehicles(&self) -> Result<Sequence<Group>> {
         let g: Option<mlua::Table> = self.raw_get("vehicle")?;
-        g.map(|g| Ok(g.raw_get("group")?))
-            .unwrap_or_else(|| Sequence::empty(self.lua))
+        g.map(|g| Ok(g.raw_get("group")?)).unwrap_or_else(|| Sequence::empty(&self.lua))
     }
 
-    pub fn statics(&self) -> Result<Sequence<'lua, Group<'lua>>> {
+    pub fn statics(&self) -> Result<Sequence<Group>> {
         let g: Option<mlua::Table> = self.raw_get("static")?;
-        g.map(|g| Ok(g.raw_get("group")?))
-            .unwrap_or_else(|| Sequence::empty(self.lua))
+        g.map(|g| Ok(g.raw_get("group")?)).unwrap_or_else(|| Sequence::empty(&self.lua))
     }
 }
 
 wrapped_table!(Coalition, None);
 
-impl<'lua> Coalition<'lua> {
+impl Coalition {
     pub fn bullseye(&self) -> Result<LuaVec2> {
         Ok(self.t.raw_get("bullseye")?)
     }
 
-    pub fn nav_points(&self) -> Result<Sequence<'lua, NavPoint<'lua>>> {
+    pub fn nav_points(&self) -> Result<Sequence<NavPoint>> {
         Ok(self.t.raw_get("nav_points")?)
     }
 
@@ -326,18 +356,18 @@ impl<'lua> Coalition<'lua> {
         Ok(self.t.raw_get("name")?)
     }
 
-    pub fn countries(&self) -> Result<Sequence<'lua, Country<'lua>>> {
+    pub fn countries(&self) -> Result<Sequence<Country>> {
         Ok(self.t.raw_get("country")?)
     }
 
-    pub fn country(&self, country: country::Country) -> Result<Option<Country<'lua>>> {
+    pub fn country(&self, country: country::Country) -> Result<Option<Country>> {
         for c in self.countries()? {
             let c = c?;
             if c.id()? == country {
                 return Ok(Some(c));
             }
         }
-        return Ok(None);
+        Ok(None)
     }
 
     fn index(&self, side: Side, base: Path) -> Result<CoalitionIndex> {
@@ -379,9 +409,12 @@ impl<'lua> Coalition<'lua> {
                             let base = base.append(["units"]).append([i + 1]);
                             let name = unit.name()?;
                             let uid = unit.id()?;
-                            idx.max_uid = UnitId(max(idx.max_uid.0, uid.0));
+                            idx.max_uid =
+                                UnitId::from(max(idx.max_uid.inner(), uid.inner()));
                             match idx.units.entry(uid) {
-                                Entry::Occupied(_) => bail!("duplicate unit id {:?}", uid),
+                                Entry::Occupied(_) => {
+                                    bail!("duplicate unit id {:?}", uid)
+                                }
                                 Entry::Vacant(e) => e.insert(IndexedUnit {
                                     side,
                                     country: cid,
@@ -393,7 +426,9 @@ impl<'lua> Coalition<'lua> {
                                 Entry::Vacant(e) => e.insert(uid),
                             };
                             match idx.groups_by_unit.entry(uid) {
-                                Entry::Occupied(_) => bail!("guplicate unit id {:?}", uid),
+                                Entry::Occupied(_) => {
+                                    bail!("guplicate unit id {:?}", uid)
+                                }
                                 Entry::Vacant(e) => e.insert(gid),
                             };
                         }
@@ -417,8 +452,8 @@ pub struct Role {
     pub blue: u8,
 }
 
-impl<'lua> FromLua<'lua> for Role {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for Role {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl: LuaTable = FromLua::from_lua(value, lua)?;
         Ok(Self {
             neutrals: tbl.raw_get("neutrals")?,
@@ -430,7 +465,7 @@ impl<'lua> FromLua<'lua> for Role {
 
 wrapped_table!(Roles, None);
 
-impl<'lua> Roles<'lua> {
+impl Roles {
     pub fn artillery_commander(&self) -> Result<Role> {
         Ok(self.raw_get("artillery_commander")?)
     }
@@ -450,8 +485,8 @@ impl<'lua> Roles<'lua> {
 
 wrapped_table!(GroundControl, None);
 
-impl<'lua> GroundControl<'lua> {
-    pub fn roles(&self) -> Result<Roles<'lua>> {
+impl GroundControl {
+    pub fn roles(&self) -> Result<Roles> {
         Ok(self.raw_get("roles")?)
     }
 }
@@ -495,23 +530,19 @@ pub struct MizIndex {
 
 impl MizIndex {
     pub fn max_uid(&self) -> UnitId {
-        self.by_side
-            .iter()
-            .fold(UnitId::default(), |muid, (_, cidx)| {
-                UnitId(max(muid.0, cidx.max_uid.0))
-            })
+        self.by_side.iter().fold(UnitId::default(), |muid, (_, cidx)| {
+            UnitId::from(max(muid.inner(), cidx.max_uid.inner()))
+        })
     }
 
     pub fn max_gid(&self) -> GroupId {
-        self.by_side
-            .iter()
-            .fold(GroupId::default(), |mgid, (_, cidx)| {
-                GroupId(max(mgid.0, cidx.max_gid.0))
-            })
+        self.by_side.iter().fold(GroupId::default(), |mgid, (_, cidx)| {
+            GroupId(max(mgid.0, cidx.max_gid.0))
+        })
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum GroupKind {
     Any,
     Plane,
@@ -522,24 +553,24 @@ pub enum GroupKind {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct GroupInfo<'lua> {
+pub struct GroupInfo {
     pub side: Side,
     pub country: country::Country,
     pub category: GroupKind,
-    pub group: Group<'lua>,
+    pub group: Group,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct UnitInfo<'lua> {
+pub struct UnitInfo {
     pub side: Side,
     pub country: country::Country,
-    pub unit: Unit<'lua>,
+    pub unit: Unit,
 }
 
 wrapped_table!(Miz, None);
 
-impl<'lua> Miz<'lua> {
-    pub fn singleton<L: LuaEnv<'lua> + Copy>(lua: L) -> Result<Self> {
+impl Miz {
+    pub fn singleton<'lua, L: LuaEnv<'lua> + Copy>(lua: L) -> Result<Self> {
         if is_hooks_env(lua.inner()) {
             let current: mlua::Table = lua.inner().globals().get("_current_mission")?;
             Ok(current.get("mission")?)
@@ -549,25 +580,25 @@ impl<'lua> Miz<'lua> {
         }
     }
 
-    pub fn ground_control(&self) -> Result<GroundControl<'_>> {
+    pub fn ground_control(&self) -> Result<GroundControl> {
         Ok(self.raw_get("groundControl")?)
     }
 
-    pub fn coalition(&self, side: Side) -> Result<Coalition<'lua>> {
+    pub fn coalition(&self, side: Side) -> Result<Coalition> {
         let coa: mlua::Table = self.raw_get("coalition")?;
         Ok(coa.raw_get(side.to_str())?)
     }
 
-    pub fn triggers(&self) -> Result<Sequence<'lua, TriggerZone<'lua>>> {
+    pub fn triggers(&self) -> Result<Sequence<TriggerZone>> {
         let triggers: mlua::Table = self.t.raw_get("triggers")?;
         Ok(triggers.raw_get("zones")?)
     }
 
-    pub fn weather(&self) -> Result<Weather<'lua>> {
+    pub fn weather(&self) -> Result<Weather> {
         Ok(self.t.raw_get("weather")?)
     }
 
-    pub fn get_group(&self, idx: &MizIndex, id: &GroupId) -> Result<Option<GroupInfo<'lua>>> {
+    pub fn get_group(&self, idx: &MizIndex, id: &GroupId) -> Result<Option<GroupInfo>> {
         idx.by_side
             .iter()
             .find_map(|(_, idx)| idx.groups.get(id))
@@ -588,7 +619,7 @@ impl<'lua> Miz<'lua> {
         kind: GroupKind,
         side: Side,
         name: &str,
-    ) -> Result<Option<GroupInfo<'lua>>> {
+    ) -> Result<Option<GroupInfo>> {
         idx.by_side
             .get(&side)
             .and_then(|cidx| match kind {
@@ -603,7 +634,7 @@ impl<'lua> Miz<'lua> {
             .transpose()
     }
 
-    pub fn get_unit(&self, idx: &MizIndex, id: &UnitId) -> Result<Option<UnitInfo<'lua>>> {
+    pub fn get_unit(&self, idx: &MizIndex, id: &UnitId) -> Result<Option<UnitInfo>> {
         idx.by_side
             .iter()
             .find_map(|(_, idx)| idx.units.get(id))
@@ -617,10 +648,16 @@ impl<'lua> Miz<'lua> {
             .transpose()
     }
 
-    pub fn get_unit_by_name(&self, idx: &MizIndex, name: &str) -> Result<Option<UnitInfo<'lua>>> {
+    pub fn get_unit_by_name(
+        &self,
+        idx: &MizIndex,
+        name: &str,
+    ) -> Result<Option<UnitInfo>> {
         idx.by_side
             .iter()
-            .find_map(|(_, idx)| idx.units_by_name.get(name).and_then(|id| idx.units.get(id)))
+            .find_map(|(_, idx)| {
+                idx.units_by_name.get(name).and_then(|id| idx.units.get(id))
+            })
             .map(|ifo| {
                 self.raw_get_path(&ifo.path).map(|unit| UnitInfo {
                     side: ifo.side,
@@ -635,7 +672,7 @@ impl<'lua> Miz<'lua> {
         &self,
         idx: &MizIndex,
         id: &UnitId,
-    ) -> Result<Option<GroupInfo<'lua>>> {
+    ) -> Result<Option<GroupInfo>> {
         idx.by_side
             .iter()
             .find_map(|(_, idx)| idx.groups_by_unit.get(id))
@@ -647,13 +684,11 @@ impl<'lua> Miz<'lua> {
         &self,
         idx: &MizIndex,
         name: &str,
-    ) -> Result<Option<GroupInfo<'lua>>> {
+    ) -> Result<Option<GroupInfo>> {
         idx.by_side
             .iter()
             .find_map(|(_, idx)| {
-                idx.units_by_name
-                    .get(name)
-                    .and_then(|uid| idx.groups_by_unit.get(uid))
+                idx.units_by_name.get(name).and_then(|uid| idx.groups_by_unit.get(uid))
             })
             .and_then(|gid| self.get_group(idx, gid).transpose())
             .transpose()
@@ -663,11 +698,8 @@ impl<'lua> Miz<'lua> {
         &self,
         idx: &MizIndex,
         name: &str,
-    ) -> Result<Option<TriggerZone<'lua>>> {
-        idx.triggers
-            .get(name)
-            .map(|path| self.raw_get_path(path))
-            .transpose()
+    ) -> Result<Option<TriggerZone>> {
+        idx.triggers.get(name).map(|path| self.raw_get_path(path)).transpose()
     }
 
     pub fn sortie(&self) -> Result<String> {
@@ -691,9 +723,7 @@ impl<'lua> Miz<'lua> {
         }
         for side in Side::ALL {
             let base = base.append(["coalition", side.to_str()]);
-            idx.by_side
-                .entry(side)
-                .or_insert(self.coalition(side)?.index(side, base)?);
+            idx.by_side.entry(side).or_insert(self.coalition(side)?.index(side, base)?);
         }
         Ok(idx)
     }

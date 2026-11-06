@@ -1,0 +1,1939 @@
+{
+  "code": "AH64D",
+  "label": "AH-64D Apache",
+  "sections": [
+    {
+      "path": "Upload",
+      "label": "Upload Settings",
+      "help": "Which systems an upload types into the cockpit (pilot or CPG right MFD + KU). Write it with the flags you want: a partial object loads the missing flags as false.",
+      "nullCrashesEditor": true
+    },
+    {
+      "path": "WaypointsCapture",
+      "label": "Capture Settings",
+      "help": "Where F10-map captured points are placed in the lists. App-side only, never uploaded.",
+      "nullCrashesEditor": true
+    },
+    {
+      "path": "Waypoints",
+      "label": "Waypoints",
+      "help": "Waypoints and hazards, sequence 1..50 (W/H on the jet). Filled from the dashboard route. AH64DPage.GetPages recreates this one if null."
+    },
+    {
+      "path": "ControlMeasures",
+      "label": "Control Measures",
+      "help": "General/friendly/enemy control measures, sequence 51..99 (C51..C99).",
+      "nullCrashesEditor": true
+    },
+    {
+      "path": "Targets",
+      "label": "Targets",
+      "help": "Targets and threats, sequence 1..50 (T01..T50).",
+      "nullCrashesEditor": true
+    },
+    {
+      "path": "Routes",
+      "label": "Routes",
+      "help": "RTM routes built from Waypoints/ControlMeasures sequence numbers. Routes.Routes must not be null either (RoutePage calls GetByCode on it).",
+      "nullCrashesEditor": true
+    },
+    {
+      "path": "TSD",
+      "label": "TSD",
+      "help": "TSD map and phase display options. Also crashes the uploader when null with Upload.TSD set.",
+      "nullCrashesEditor": true
+    },
+    {
+      "path": "LaserCodes",
+      "label": "Laser Codes",
+      "help": "Laser code table A..R (no I/O).",
+      "nullCrashesEditor": true
+    },
+    {
+      "path": "Radios",
+      "label": "Radios",
+      "help": "Radio6System: one \"Radio\" object holding up to 10 presets with 6 frequencies each (UHF, VHF, FM1, FM2, HF1, HF2) and the selected channel per radio. Radios.Radio must not be null either.",
+      "nullCrashesEditor": true
+    }
+  ],
+  "fields": [
+    {
+      "path": "Aircraft",
+      "label": "Aircraft",
+      "kind": "string",
+      "readonly": true,
+      "help": "Always \"AH64D\". DCS-DTC picks the C# configuration type from this value; the Load/Save page ignores files whose Aircraft differs from the open aircraft."
+    },
+    {
+      "path": "Version",
+      "label": "Format version",
+      "kind": "int",
+      "readonly": true,
+      "help": "Always 2. Without it (and without Upload) the loader tries the V1 converter, which throws for the AH-64D."
+    },
+    {
+      "path": "KneeboardNotes",
+      "label": "Kneeboard notes",
+      "kind": "string",
+      "multiline": true,
+      "help": "Free text shown (and editable) in the in-game DCS-DTC kneeboard dialog; sent with the generated waypoint kneeboard when Upload.Kneeboard is set. Not a system: Load/Save never copies it, only a whole preset file carries it."
+    },
+    {
+      "path": "Upload.Waypoints",
+      "label": "Waypoints",
+      "kind": "bool",
+      "help": "Upload the Waypoints list (WP/HZ) to TSD > POINT. Full sync: jet waypoints/hazards in slots DCS-DTC has no entry for are deleted."
+    },
+    {
+      "path": "Upload.ControlMeasures",
+      "label": "Control Measures",
+      "kind": "bool",
+      "help": "Upload the ControlMeasures list (GC/FC/EC, C51..C99)."
+    },
+    {
+      "path": "Upload.Targets",
+      "label": "Targets",
+      "kind": "bool",
+      "help": "Upload the Targets list (TG/TH, T01..T50)."
+    },
+    {
+      "path": "Upload.Routes",
+      "label": "Routes",
+      "kind": "bool",
+      "help": "Build the route(s) in TSD > RTE > RTM from the Routes list."
+    },
+    {
+      "path": "Upload.TSD",
+      "label": "TSD",
+      "kind": "bool",
+      "help": "Set every TSD display option (each one toggled to the stored state, so false actively turns it off). Crashes the uploader if TSD is null."
+    },
+    {
+      "path": "Upload.DeleteWaypoints",
+      "label": "Waypoints: Delete all",
+      "kind": "bool",
+      "help": "DESTRUCTIVE: delete every waypoint/hazard on the jet before uploading."
+    },
+    {
+      "path": "Upload.DeleteControlMeasures",
+      "label": "Control Measures: Delete all",
+      "kind": "bool",
+      "help": "DESTRUCTIVE: delete every control measure on the jet before uploading."
+    },
+    {
+      "path": "Upload.DeleteTargets",
+      "label": "Targets: Delete all",
+      "kind": "bool",
+      "help": "DESTRUCTIVE: delete every target/threat on the jet before uploading."
+    },
+    {
+      "path": "Upload.Kneeboard",
+      "label": "Kneeboard",
+      "kind": "bool",
+      "help": "Send a generated waypoint table (Waypoints list only) plus KneeboardNotes to the in-game kneeboard."
+    },
+    {
+      "path": "Upload.LaserCodes",
+      "label": "Laser Codes",
+      "kind": "bool",
+      "help": "Type the laser code table (WPN > CODE page) for every letter that has a 4-digit code."
+    },
+    {
+      "path": "Upload.Radios",
+      "label": "Radios",
+      "kind": "bool",
+      "help": "Program the COM page: selected manual frequencies, presets 1..10, then the selected presets."
+    },
+    {
+      "path": "WaypointsCapture.NavPointsMode",
+      "label": "Navigation points: placement",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Add to end of the list"
+        },
+        {
+          "value": 1,
+          "label": "Add to end of the first gap"
+        },
+        {
+          "value": 2,
+          "label": "Add to specific range, starting from"
+        }
+      ],
+      "managed": "route",
+      "help": "SteerpointCaptureMode for F10-map captures of WP/HZ points into the Waypoints list (app-side only, never uploaded). A route export can leave the default (0, end of list). Control measures captured always go to the end of the ControlMeasures list."
+    },
+    {
+      "path": "WaypointsCapture.TgtPointsMode",
+      "label": "Target points: placement",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Add to end of the list"
+        },
+        {
+          "value": 1,
+          "label": "Add to end of the first gap"
+        },
+        {
+          "value": 2,
+          "label": "Add to specific range, starting from"
+        }
+      ],
+      "managed": "route",
+      "help": "SteerpointCaptureMode for F10-map captures of TG/TH points into the Targets list (app-side only). Leave 0 unless the dashboard reserves target slots."
+    },
+    {
+      "path": "WaypointsCapture.NavPointsRangeFrom",
+      "label": "Navigation points: range start",
+      "kind": "int",
+      "min": 1,
+      "max": 99,
+      "managed": "route",
+      "help": "First sequence used when NavPointsMode = 2 (AddToRange). Set it just past the last exported route waypoint if pilots should capture extra points without overwriting the route. Default 1."
+    },
+    {
+      "path": "WaypointsCapture.TgtPointsRangeFrom",
+      "label": "Target points: range start",
+      "kind": "int",
+      "min": 1,
+      "max": 99,
+      "managed": "route",
+      "help": "First sequence used when TgtPointsMode = 2 (AddToRange). Default 1."
+    },
+    {
+      "path": "Waypoints.Waypoints",
+      "label": "Waypoints",
+      "kind": "list",
+      "maxItems": 50,
+      "managed": "route",
+      "item": {
+        "Sequence": 1,
+        "Name": "STPT 1",
+        "Latitude": null,
+        "Longitude": null,
+        "Elevation": 0,
+        "TimeOverSteerpoint": null,
+        "Target": false,
+        "PointType": "WP",
+        "Identifier": "WP",
+        "Free": null
+      },
+      "help": "Navigation points and hazards (TSD > POINT > WPTHZ). Sequence 1..50, shared by waypoints (W) and hazards (H): W03 and H03 cannot both exist. Route waypoints map here: sequence = 1..n in route order (max 50), PointType \"WP\", Identifier \"WP\" (or SP for the first, RP for the last, LZ for landing zones, CC for comm checks), Hazards as PointType \"HZ\". Name is not uploaded (kneeboard only), no length limit; Free (max 3 uppercase alphanumerics) is shown on the TSD next to the point, so a 3-char short name of the route point is a good fit. Keep the list sorted by Sequence (the uploader walks slots up to the last element's sequence); sequences must be unique within the list. A new point in the app gets PointType \"WP\", Identifier \"WP\", Name \"STPT <seq>\". Jet ids: W01..W50 (waypoints) / H01..H50 (hazards)."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Sequence",
+      "label": "Sequence",
+      "kind": "int",
+      "min": 1,
+      "max": 50,
+      "managed": "route",
+      "help": "Point number, 1..50, unique within this list. Typed into the jet as W01..W50 (waypoints) / H01..H50 (hazards)."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Name",
+      "label": "Name",
+      "kind": "string",
+      "managed": "route",
+      "help": "Required by the editor (non-empty). Not uploaded to the Apache: only shown in DCS-DTC and on the generated kneeboard. Use the route point name."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Latitude",
+      "label": "Latitude",
+      "kind": "coord-lat",
+      "managed": "route",
+      "pattern": "^[NS] \\d{2}°\\d{2}\\.\\d{3}’$",
+      "help": "DDM thousandths, e.g. \"N 42°10.583’\" (U+00B0 degree, U+2019 minute mark). Converted to 8-digit MGRS (10 m, truncated) when uploaded."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Longitude",
+      "label": "Longitude",
+      "kind": "coord-lon",
+      "managed": "route",
+      "pattern": "^[EW] \\d{3}°\\d{2}\\.\\d{3}’$",
+      "help": "DDM thousandths with 3-digit zero-padded degrees, e.g. \"E 042°28.950’\"."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Elevation",
+      "label": "Elevation",
+      "kind": "int",
+      "min": 0,
+      "max": 59999,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Feet MSL, 0..59999 in the editor. Typed into the ALT field. Use the route point ground/terrain elevation (not the flight altitude)."
+    },
+    {
+      "path": "Waypoints.Waypoints[].TimeOverSteerpoint",
+      "label": "Time over point",
+      "kind": "time",
+      "managed": "route",
+      "pattern": "^\\d{2}:\\d{2}:\\d{2}$",
+      "help": "HH:MM:SS or null. Not uploaded: only printed on the kneeboard (Waypoints list). Fill from the planned route TOT/ETA."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Target",
+      "label": "Target",
+      "kind": "bool",
+      "managed": "route",
+      "help": "Shows \"TGT\" in the list only; not uploaded. Leave false (route target points belong in the Targets list)."
+    },
+    {
+      "path": "Waypoints.Waypoints[].PointType",
+      "label": "Point type",
+      "kind": "enum",
+      "managed": "route",
+      "options": [
+        {
+          "value": "WP",
+          "label": "Waypoint"
+        },
+        {
+          "value": "HZ",
+          "label": "Hazard"
+        }
+      ],
+      "help": "Required. Allowed in this list: WP, HZ. An unknown value makes the uploader and kneeboard throw; a type not offered by this list crashes the edit dialog."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Identifier",
+      "label": "Identifier",
+      "kind": "enum",
+      "managed": "route",
+      "options": [
+        {
+          "value": "CC",
+          "label": "CC - Communications Check Point",
+          "group": "WP",
+          "help": "A radio message should be sent upon arrival/crossing"
+        },
+        {
+          "value": "LZ",
+          "label": "LZ - Landing Zone",
+          "group": "WP",
+          "help": "Helicopter landing or pickup location of ground troops"
+        },
+        {
+          "value": "PP",
+          "label": "PP - Passage Point",
+          "group": "WP",
+          "help": "Passage across friendly front line positions"
+        },
+        {
+          "value": "RP",
+          "label": "RP - Release Point",
+          "group": "WP",
+          "help": "Final point of navigation route"
+        },
+        {
+          "value": "SP",
+          "label": "SP - Start Point",
+          "group": "WP",
+          "help": "First point of navigation route"
+        },
+        {
+          "value": "WP",
+          "label": "WP - Waypoint",
+          "group": "WP",
+          "help": "Point used for navigation or routing"
+        },
+        {
+          "value": "TO",
+          "label": "TO - Tower, Over 1000’",
+          "group": "HZ",
+          "help": "Vertical tower hazard >1000 feet AGL"
+        },
+        {
+          "value": "TU",
+          "label": "TU - Tower, Under 1000’",
+          "group": "HZ",
+          "help": "Vertical tower hazard <1000 feet AGL"
+        },
+        {
+          "value": "WL",
+          "label": "WL - Wires, Power",
+          "group": "HZ",
+          "help": "Tall linear wire hazard"
+        },
+        {
+          "value": "WS",
+          "label": "WS - Wires, Telephone/Electric",
+          "group": "HZ",
+          "help": "Short linear wire Hazards"
+        }
+      ],
+      "dependsOn": "Waypoints.Waypoints[].PointType",
+      "help": "Code from the identifier list of the chosen PointType (option.group = PointType). Typed into the IDENT field; determines the TSD symbol. A code not in the PointType's list crashes the edit dialog."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Free",
+      "label": "Free text",
+      "kind": "string",
+      "managed": "route",
+      "maxLength": 3,
+      "pattern": "^[A-Z0-9]{0,3}$",
+      "help": "Up to 3 uppercase letters/digits (UI mask \"AAA\", saved upper-cased), typed into the FREE field and shown beside the symbol on the TSD. Null or \"\" for none. Lowercase or other characters throw during upload."
+    },
+    {
+      "path": "ControlMeasures.Waypoints",
+      "label": "Control Measures",
+      "kind": "list",
+      "maxItems": 49,
+      "managed": "route",
+      "item": {
+        "Sequence": 51,
+        "Name": "STPT 51",
+        "Latitude": null,
+        "Longitude": null,
+        "Elevation": 0,
+        "TimeOverSteerpoint": null,
+        "Target": false,
+        "PointType": "GC",
+        "Identifier": "CP",
+        "Free": null
+      },
+      "help": "Control measures (TSD > POINT > CTRLM): general (GC), friendly (FC) and enemy (EC) unit/area markers. Sequence 51..99 (jet ids C51..C99). Map dashboard markers such as FARPs (GC/FC \"FARP\"), battle positions (GC/BP), holding areas (GC/HA), friendly/enemy unit positions here. Routes can include control measures by sequence. Keep the list sorted by Sequence (the uploader walks slots up to the last element's sequence); sequences must be unique within the list. A new point in the app gets PointType \"GC\", Identifier \"CP\", Name \"STPT <seq>\". Jet ids: C51..C99."
+    },
+    {
+      "path": "ControlMeasures.Waypoints[].Sequence",
+      "label": "Sequence",
+      "kind": "int",
+      "min": 51,
+      "max": 99,
+      "managed": "route",
+      "help": "Point number, 51..99, unique within this list. Typed into the jet as C51..C99."
+    },
+    {
+      "path": "ControlMeasures.Waypoints[].Name",
+      "label": "Name",
+      "kind": "string",
+      "managed": "route",
+      "help": "Required by the editor (non-empty). Not uploaded to the Apache: only shown in DCS-DTC and on the generated kneeboard. Use the route point name."
+    },
+    {
+      "path": "ControlMeasures.Waypoints[].Latitude",
+      "label": "Latitude",
+      "kind": "coord-lat",
+      "managed": "route",
+      "pattern": "^[NS] \\d{2}°\\d{2}\\.\\d{3}’$",
+      "help": "DDM thousandths, e.g. \"N 42°10.583’\" (U+00B0 degree, U+2019 minute mark). Converted to 8-digit MGRS (10 m, truncated) when uploaded."
+    },
+    {
+      "path": "ControlMeasures.Waypoints[].Longitude",
+      "label": "Longitude",
+      "kind": "coord-lon",
+      "managed": "route",
+      "pattern": "^[EW] \\d{3}°\\d{2}\\.\\d{3}’$",
+      "help": "DDM thousandths with 3-digit zero-padded degrees, e.g. \"E 042°28.950’\"."
+    },
+    {
+      "path": "ControlMeasures.Waypoints[].Elevation",
+      "label": "Elevation",
+      "kind": "int",
+      "min": 0,
+      "max": 59999,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Feet MSL, 0..59999 in the editor. Typed into the ALT field. Use the route point ground/terrain elevation (not the flight altitude)."
+    },
+    {
+      "path": "ControlMeasures.Waypoints[].TimeOverSteerpoint",
+      "label": "Time over point",
+      "kind": "time",
+      "managed": "route",
+      "pattern": "^\\d{2}:\\d{2}:\\d{2}$",
+      "help": "HH:MM:SS or null. Not uploaded: only printed on the kneeboard (Waypoints list). Fill from the planned route TOT/ETA."
+    },
+    {
+      "path": "ControlMeasures.Waypoints[].Target",
+      "label": "Target",
+      "kind": "bool",
+      "managed": "route",
+      "help": "Shows \"TGT\" in the list only; not uploaded. Leave false (route target points belong in the Targets list)."
+    },
+    {
+      "path": "ControlMeasures.Waypoints[].PointType",
+      "label": "Point type",
+      "kind": "enum",
+      "managed": "route",
+      "options": [
+        {
+          "value": "GC",
+          "label": "General Control Measure"
+        },
+        {
+          "value": "FC",
+          "label": "Friendly Control Measure"
+        },
+        {
+          "value": "EC",
+          "label": "Enemy Control Measure"
+        }
+      ],
+      "help": "Required. Allowed in this list: GC, FC, EC. An unknown value makes the uploader and kneeboard throw; a type not offered by this list crashes the edit dialog."
+    },
+    {
+      "path": "ControlMeasures.Waypoints[].Identifier",
+      "label": "Identifier",
+      "kind": "enum",
+      "managed": "route",
+      "options": [
+        {
+          "value": "AP",
+          "label": "AP - Air Control Point",
+          "group": "GC",
+          "help": "Point used for control or timing of aircraft movement"
+        },
+        {
+          "value": "AG",
+          "label": "AG - Airfield, General",
+          "group": "GC",
+          "help": "Large airfield without navigational aids"
+        },
+        {
+          "value": "AI",
+          "label": "AI - Airfield, Instrumented",
+          "group": "GC",
+          "help": "Large airfield with navigational aids"
+        },
+        {
+          "value": "F1",
+          "label": "F1 - Artillery Firing Point 1",
+          "group": "GC",
+          "help": "1st portion of Artillery Firing Point (i.e., AB1___)"
+        },
+        {
+          "value": "F2",
+          "label": "F2 - Artillery Firing Point 2",
+          "group": "GC",
+          "help": "2nd portion of Artillery Firing Point (i.e., ___234)"
+        },
+        {
+          "value": "AA",
+          "label": "AA - Assembly Area",
+          "group": "GC",
+          "help": "Rear area for assembly of friendly forces"
+        },
+        {
+          "value": "BN",
+          "label": "BN - Battalion",
+          "group": "GC",
+          "help": "Battalion echelon, below Brigade but above Company"
+        },
+        {
+          "value": "BP",
+          "label": "BP - Battle Position",
+          "group": "GC",
+          "help": "Position used for engaging enemy forces"
+        },
+        {
+          "value": "BR",
+          "label": "BR - Bridge/Gap",
+          "group": "GC",
+          "help": "Bridge across an obstacle or a passable gap in terrain"
+        },
+        {
+          "value": "BD",
+          "label": "BD - Brigade",
+          "group": "GC",
+          "help": "Brigade echelon, below Division but above Battalion"
+        },
+        {
+          "value": "CP",
+          "label": "CP - Checkpoint",
+          "group": "GC",
+          "help": "Reference point used for maneuver and orientation"
+        },
+        {
+          "value": "CO",
+          "label": "CO - Company",
+          "group": "GC",
+          "help": "Company echelon, below Battalion but above Platoon"
+        },
+        {
+          "value": "CR",
+          "label": "CR - Corps",
+          "group": "GC",
+          "help": "Corps echelon, above Division but below U.S. Army"
+        },
+        {
+          "value": "ID",
+          "label": "ID - Datalink Subscriber",
+          "group": "GC",
+          "help": "ID and position of datalink network subscriber"
+        },
+        {
+          "value": "DI",
+          "label": "DI - Division",
+          "group": "GC",
+          "help": "Division echelon, above Brigade but below Corps"
+        },
+        {
+          "value": "FM",
+          "label": "FM - FARP, Ammo only",
+          "group": "GC",
+          "help": "Forward Arming & Refueling Point with munitions"
+        },
+        {
+          "value": "FC",
+          "label": "FC - FARP, Fuel and Ammo",
+          "group": "GC",
+          "help": "Forward Arming & Refueling Point with fuel/munitions"
+        },
+        {
+          "value": "FF",
+          "label": "FF - FARP, Fuel only",
+          "group": "GC",
+          "help": "Forward Arming & Refueling Point with fuel"
+        },
+        {
+          "value": "FA",
+          "label": "FA - Forward Assembly Area",
+          "group": "GC",
+          "help": "Forward area for assembly of friendly forces"
+        },
+        {
+          "value": "GL",
+          "label": "GL - Ground Light/Small Town",
+          "group": "GC",
+          "help": "Visual reference point used for navigation/orientation"
+        },
+        {
+          "value": "HA",
+          "label": "HA - Holding Area",
+          "group": "GC",
+          "help": "Brief holding area while enroute to/from mission area"
+        },
+        {
+          "value": "AL",
+          "label": "AL - Lighted Airport",
+          "group": "GC",
+          "help": "Small lighted airfield"
+        },
+        {
+          "value": "NB",
+          "label": "NB - NBC Area",
+          "group": "GC",
+          "help": "Nuclear, Biological, or Chemical contaminated area"
+        },
+        {
+          "value": "BE",
+          "label": "BE - NDB Symbol",
+          "group": "GC",
+          "help": "Non-Directional Beacon navigational aid"
+        },
+        {
+          "value": "RH",
+          "label": "RH - Railhead Point",
+          "group": "GC",
+          "help": "Location for loading/unloading cargo from trains"
+        },
+        {
+          "value": "GP",
+          "label": "GP - Regiment/Group",
+          "group": "GC",
+          "help": "Regiment echelon, above Battalion but below Division"
+        },
+        {
+          "value": "US",
+          "label": "US - U.S. Army",
+          "group": "GC",
+          "help": "U.S. Army echelon, above Corps"
+        },
+        {
+          "value": "AS",
+          "label": "AS - Friendly Air Assault",
+          "group": "FC",
+          "help": "Friendly helicopter-borne infantry unit position"
+        },
+        {
+          "value": "AV",
+          "label": "AV - Friendly Air Cavalry",
+          "group": "FC",
+          "help": "Friendly scout/cavalry helicopter position"
+        },
+        {
+          "value": "AD",
+          "label": "AD - Friendly Air Defense",
+          "group": "FC",
+          "help": "Friendly air defense unit/command position"
+        },
+        {
+          "value": "AB",
+          "label": "AB - Friendly Airborne",
+          "group": "FC",
+          "help": "Friendly paratrooper unit position"
+        },
+        {
+          "value": "AM",
+          "label": "AM - Friendly Armor",
+          "group": "FC",
+          "help": "Friendly armor unit position"
+        },
+        {
+          "value": "CA",
+          "label": "CA - Friendly Armored Cavalry",
+          "group": "FC",
+          "help": "Friendly recon/cavalry ground unit position"
+        },
+        {
+          "value": "AH",
+          "label": "AH - Friendly Attack Helicopter",
+          "group": "FC",
+          "help": "Friendly attack helicopter position"
+        },
+        {
+          "value": "MA",
+          "label": "MA - Friendly Aviation Maintenance",
+          "group": "FC",
+          "help": "Friendly helicopter maintenance unit position"
+        },
+        {
+          "value": "CF",
+          "label": "CF - Friendly Chemical",
+          "group": "FC",
+          "help": "Friendly chemical unit position"
+        },
+        {
+          "value": "DF",
+          "label": "DF - Friendly Decontamination",
+          "group": "FC",
+          "help": "Friendly decontamination site"
+        },
+        {
+          "value": "FW",
+          "label": "FW - Friendly Electronic Warfare",
+          "group": "FC",
+          "help": "Friendly electronic warfare unit position"
+        },
+        {
+          "value": "EN",
+          "label": "EN - Friendly Engineers",
+          "group": "FC",
+          "help": "Friendly engineer unit position"
+        },
+        {
+          "value": "FL",
+          "label": "FL - Friendly Field Artillery",
+          "group": "FC",
+          "help": "Friendly artillery/MLRS firing position"
+        },
+        {
+          "value": "WF",
+          "label": "WF - Friendly Fixed Wing",
+          "group": "FC",
+          "help": "Friendly fixed-wing airbase/staging area"
+        },
+        {
+          "value": "FG",
+          "label": "FG - Friendly Helicopter, General",
+          "group": "FC",
+          "help": "Friendly cargo/utility helicopter position"
+        },
+        {
+          "value": "HO",
+          "label": "HO - Friendly Hospital",
+          "group": "FC",
+          "help": "Friendly medical facility/trauma care station"
+        },
+        {
+          "value": "FI",
+          "label": "FI - Friendly Infantry",
+          "group": "FC",
+          "help": "Friendly infantry unit position"
+        },
+        {
+          "value": "MI",
+          "label": "MI - Friendly Mechanized Infantry",
+          "group": "FC",
+          "help": "Friendly mechanized infantry/motor rifle unit position"
+        },
+        {
+          "value": "MD",
+          "label": "MD - Friendly Medical",
+          "group": "FC",
+          "help": "Friendly medical unit position/aid station"
+        },
+        {
+          "value": "TF",
+          "label": "TF - Friendly Tactical Operations Center",
+          "group": "FC",
+          "help": "Friendly headquarters/command unit position"
+        },
+        {
+          "value": "FU",
+          "label": "FU - Friendly Unit",
+          "group": "FC",
+          "help": "Generic friendly unit position/marker"
+        },
+        {
+          "value": "ES",
+          "label": "ES - Enemy Air Assault",
+          "group": "EC",
+          "help": "Enemy helicopter-borne infantry unit position"
+        },
+        {
+          "value": "EV",
+          "label": "EV - Enemy Air Cavalry",
+          "group": "EC",
+          "help": "Enemy scout/cavalry helicopter position"
+        },
+        {
+          "value": "ED",
+          "label": "ED - Enemy Air Defense",
+          "group": "EC",
+          "help": "Enemy air defense unit/command position"
+        },
+        {
+          "value": "EB",
+          "label": "EB - Enemy Airborne",
+          "group": "EC",
+          "help": "Enemy paratrooper unit position"
+        },
+        {
+          "value": "AE",
+          "label": "AE - Enemy Armor",
+          "group": "EC",
+          "help": "Enemy armor unit position"
+        },
+        {
+          "value": "EC",
+          "label": "EC - Enemy Armored Cavalry",
+          "group": "EC",
+          "help": "Enemy recon/cavalry ground unit position"
+        },
+        {
+          "value": "EK",
+          "label": "EK - Enemy Attack Helicopter",
+          "group": "EC",
+          "help": "Enemy attack helicopter position"
+        },
+        {
+          "value": "ME",
+          "label": "ME - Enemy Aviation Maintenance",
+          "group": "EC",
+          "help": "Enemy helicopter maintenance unit position"
+        },
+        {
+          "value": "CE",
+          "label": "CE - Enemy Chemical",
+          "group": "EC",
+          "help": "Enemy chemical unit position"
+        },
+        {
+          "value": "DE",
+          "label": "DE - Enemy Decontamination",
+          "group": "EC",
+          "help": "Enemy decontamination site"
+        },
+        {
+          "value": "WR",
+          "label": "WR - Enemy Electronic Warfare",
+          "group": "EC",
+          "help": "Enemy electronic warfare unit position"
+        },
+        {
+          "value": "EE",
+          "label": "EE - Enemy Engineers",
+          "group": "EC",
+          "help": "Enemy engineer unit position"
+        },
+        {
+          "value": "EF",
+          "label": "EF - Enemy Field Artillery",
+          "group": "EC",
+          "help": "Enemy artillery/MLRS firing position"
+        },
+        {
+          "value": "WE",
+          "label": "WE - Enemy Fixed Wing",
+          "group": "EC",
+          "help": "Enemy fixed-wing airbase/staging area"
+        },
+        {
+          "value": "HG",
+          "label": "HG - Enemy Helicopter, General",
+          "group": "EC",
+          "help": "Enemy cargo/utility helicopter position"
+        },
+        {
+          "value": "EH",
+          "label": "EH - Enemy Hospital",
+          "group": "EC",
+          "help": "Enemy medical facility/trauma care station"
+        },
+        {
+          "value": "EI",
+          "label": "EI - Enemy Infantry",
+          "group": "EC",
+          "help": "Enemy infantry unit position"
+        },
+        {
+          "value": "EM",
+          "label": "EM - Enemy Mechanized Infantry",
+          "group": "EC",
+          "help": "Enemy mechanized infantry/motor rifle unit position"
+        },
+        {
+          "value": "EX",
+          "label": "EX - Enemy Medical",
+          "group": "EC",
+          "help": "Enemy medical unit position/aid station"
+        },
+        {
+          "value": "ET",
+          "label": "ET - Enemy Tactical Operations Center",
+          "group": "EC",
+          "help": "Enemy headquarters/command unit position"
+        },
+        {
+          "value": "EU",
+          "label": "EU - Enemy Unit",
+          "group": "EC",
+          "help": "Generic enemy unit position/marker"
+        }
+      ],
+      "dependsOn": "ControlMeasures.Waypoints[].PointType",
+      "help": "Code from the identifier list of the chosen PointType (option.group = PointType). Typed into the IDENT field; determines the TSD symbol. A code not in the PointType's list crashes the edit dialog."
+    },
+    {
+      "path": "ControlMeasures.Waypoints[].Free",
+      "label": "Free text",
+      "kind": "string",
+      "managed": "route",
+      "maxLength": 3,
+      "pattern": "^[A-Z0-9]{0,3}$",
+      "help": "Up to 3 uppercase letters/digits (UI mask \"AAA\", saved upper-cased), typed into the FREE field and shown beside the symbol on the TSD. Null or \"\" for none. Lowercase or other characters throw during upload."
+    },
+    {
+      "path": "Targets.Waypoints",
+      "label": "Targets",
+      "kind": "list",
+      "maxItems": 50,
+      "managed": "route",
+      "item": {
+        "Sequence": 1,
+        "Name": "STPT 1",
+        "Latitude": null,
+        "Longitude": null,
+        "Elevation": 0,
+        "TimeOverSteerpoint": null,
+        "Target": false,
+        "PointType": "TG",
+        "Identifier": "TG",
+        "Free": null
+      },
+      "help": "Targets (TG) and threats (TH) (TSD > POINT > TGT/THRT). Sequence 1..50 (jet ids T01..T50; the source comment saying 100..149 is stale). Route points flagged as targets map here with PointType \"TG\", Identifier \"TG\" and Target true; known SAM/AAA sites map as PointType \"TH\" with the matching threat Identifier (e.g. \"8\" = SA-8, \"15\" = SA-15), which draws the threat ring. Targets cannot be part of a route. Keep the list sorted by Sequence (the uploader walks slots up to the last element's sequence); sequences must be unique within the list. A new point in the app gets PointType \"TG\", Identifier \"TG\", Name \"STPT <seq>\". Jet ids: T01..T50."
+    },
+    {
+      "path": "Targets.Waypoints[].Sequence",
+      "label": "Sequence",
+      "kind": "int",
+      "min": 1,
+      "max": 50,
+      "managed": "route",
+      "help": "Point number, 1..50, unique within this list. Typed into the jet as T01..T50."
+    },
+    {
+      "path": "Targets.Waypoints[].Name",
+      "label": "Name",
+      "kind": "string",
+      "managed": "route",
+      "help": "Required by the editor (non-empty). Not uploaded to the Apache: only shown in DCS-DTC and on the generated kneeboard. Use the route point name."
+    },
+    {
+      "path": "Targets.Waypoints[].Latitude",
+      "label": "Latitude",
+      "kind": "coord-lat",
+      "managed": "route",
+      "pattern": "^[NS] \\d{2}°\\d{2}\\.\\d{3}’$",
+      "help": "DDM thousandths, e.g. \"N 42°10.583’\" (U+00B0 degree, U+2019 minute mark). Converted to 8-digit MGRS (10 m, truncated) when uploaded."
+    },
+    {
+      "path": "Targets.Waypoints[].Longitude",
+      "label": "Longitude",
+      "kind": "coord-lon",
+      "managed": "route",
+      "pattern": "^[EW] \\d{3}°\\d{2}\\.\\d{3}’$",
+      "help": "DDM thousandths with 3-digit zero-padded degrees, e.g. \"E 042°28.950’\"."
+    },
+    {
+      "path": "Targets.Waypoints[].Elevation",
+      "label": "Elevation",
+      "kind": "int",
+      "min": 0,
+      "max": 59999,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Feet MSL, 0..59999 in the editor. Typed into the ALT field. Use the route point ground/terrain elevation (not the flight altitude)."
+    },
+    {
+      "path": "Targets.Waypoints[].TimeOverSteerpoint",
+      "label": "Time over point",
+      "kind": "time",
+      "managed": "route",
+      "pattern": "^\\d{2}:\\d{2}:\\d{2}$",
+      "help": "HH:MM:SS or null. Not uploaded: only printed on the kneeboard (Waypoints list). Fill from the planned route TOT/ETA."
+    },
+    {
+      "path": "Targets.Waypoints[].Target",
+      "label": "Target",
+      "kind": "bool",
+      "managed": "route",
+      "help": "Shows \"TGT\" in the list; set true for points in this list (capture does). Not uploaded: the PointType decides."
+    },
+    {
+      "path": "Targets.Waypoints[].PointType",
+      "label": "Point type",
+      "kind": "enum",
+      "managed": "route",
+      "options": [
+        {
+          "value": "TG",
+          "label": "Target"
+        },
+        {
+          "value": "TH",
+          "label": "Threat"
+        }
+      ],
+      "help": "Required. Allowed in this list: TG, TH. An unknown value makes the uploader and kneeboard throw; a type not offered by this list crashes the edit dialog."
+    },
+    {
+      "path": "Targets.Waypoints[].Identifier",
+      "label": "Identifier",
+      "kind": "enum",
+      "managed": "route",
+      "options": [
+        {
+          "value": "TG",
+          "label": "TG - Target Point",
+          "group": "TG",
+          "help": "Target reference point"
+        },
+        {
+          "value": "S6",
+          "label": "S6 - 2S6/SA-19 Air Defense Unit",
+          "group": "TH",
+          "help": "2S6M Tunguska SAM/SPAAA vehicle"
+        },
+        {
+          "value": "AA",
+          "label": "AA - Air Defense Gun",
+          "group": "TH",
+          "help": "S-60 57mm AA battery w/ SON-9 fire control radar"
+        },
+        {
+          "value": "AX",
+          "label": "AX - AMX-13 Air Defense Gun",
+          "group": "TH"
+        },
+        {
+          "value": "AS",
+          "label": "AS - Aspide SAM System",
+          "group": "TH"
+        },
+        {
+          "value": "SR",
+          "label": "SR - Battlefield Surveillance Radar",
+          "group": "TH",
+          "help": "Early warning/search radar, 100km threat ring"
+        },
+        {
+          "value": "BH",
+          "label": "BH - Bloodhound SAM System",
+          "group": "TH"
+        },
+        {
+          "value": "BP",
+          "label": "BP - Blowpipe SAM System",
+          "group": "TH"
+        },
+        {
+          "value": "CH",
+          "label": "CH - Chapparal SAM System",
+          "group": "TH",
+          "help": "M48 SAM vehicle"
+        },
+        {
+          "value": "CT",
+          "label": "CT - Crotale SAM System",
+          "group": "TH",
+          "help": "HQ-7 SAM battery"
+        },
+        {
+          "value": "C2",
+          "label": "C2 - CSA-2/1/X SAM System",
+          "group": "TH"
+        },
+        {
+          "value": "AD",
+          "label": "AD - Friendly Air Defense Unit",
+          "group": "TH",
+          "help": "Generic 8 km threat ring"
+        },
+        {
+          "value": "GU",
+          "label": "GU - Generic Air Defense Unit",
+          "group": "TH",
+          "help": "Generic 5 km threat ring"
+        },
+        {
+          "value": "GP",
+          "label": "GP - Gepard Air Defense Gun",
+          "group": "TH",
+          "help": "Flakpanzer Gepard 30mm SPAAA vehicle"
+        },
+        {
+          "value": "G1",
+          "label": "G1 - Growth 1",
+          "group": "TH",
+          "help": "Generic 1 km threat ring"
+        },
+        {
+          "value": "G2",
+          "label": "G2 - Growth 2",
+          "group": "TH",
+          "help": "Generic 2 km threat ring"
+        },
+        {
+          "value": "G3",
+          "label": "G3 - Growth 3",
+          "group": "TH",
+          "help": "Generic 3 km threat ring"
+        },
+        {
+          "value": "G4",
+          "label": "G4 - Growth 4",
+          "group": "TH",
+          "help": "Generic 4 km threat ring"
+        },
+        {
+          "value": "HK",
+          "label": "HK - Hawk SAM System",
+          "group": "TH",
+          "help": "MIM-23B SAM battery"
+        },
+        {
+          "value": "JA",
+          "label": "JA - Javelin SAM System",
+          "group": "TH"
+        },
+        {
+          "value": "83",
+          "label": "83 - M1983 Air Defense Gun",
+          "group": "TH"
+        },
+        {
+          "value": "MK",
+          "label": "MK - Marksman Air Defense Gun",
+          "group": "TH"
+        },
+        {
+          "value": "NV",
+          "label": "NV - Naval Air Defense System",
+          "group": "TH"
+        },
+        {
+          "value": "PT",
+          "label": "PT - Patriot SAM System",
+          "group": "TH",
+          "help": "MIM-104C SAM battery"
+        },
+        {
+          "value": "RA",
+          "label": "RA - Rapier SAM System",
+          "group": "TH",
+          "help": "Rapier FSA SAM battery"
+        },
+        {
+          "value": "70",
+          "label": "70 - RBS-70 SAM System",
+          "group": "TH"
+        },
+        {
+          "value": "RE",
+          "label": "RE - Redeye SAM System",
+          "group": "TH"
+        },
+        {
+          "value": "RO",
+          "label": "RO - Roland SAM System",
+          "group": "TH",
+          "help": "Marder Roland SAM vehicle"
+        },
+        {
+          "value": "1",
+          "label": "1 - SA-1 SAM System",
+          "group": "TH"
+        },
+        {
+          "value": "10",
+          "label": "10 - SA-10 SAM System",
+          "group": "TH",
+          "help": "S-300PS SAM battery"
+        },
+        {
+          "value": "11",
+          "label": "11 - SA-11 SAM System",
+          "group": "TH",
+          "help": "9K37M Buk-M1 battery"
+        },
+        {
+          "value": "12",
+          "label": "12 - SA-12 SAM System",
+          "group": "TH"
+        },
+        {
+          "value": "13",
+          "label": "13 - SA-13 SAM System",
+          "group": "TH",
+          "help": "9K13 Strela-10M3 SAM vehicle"
+        },
+        {
+          "value": "14",
+          "label": "14 - SA-14 SAM System",
+          "group": "TH"
+        },
+        {
+          "value": "15",
+          "label": "15 - SA-15 SAM System",
+          "group": "TH",
+          "help": "9K331 Tor-M1 SAM vehicle"
+        },
+        {
+          "value": "16",
+          "label": "16 - SA-16 SAM System",
+          "group": "TH",
+          "help": "Igla/Igla-S MANPADS position [used for SA-18 threat]"
+        },
+        {
+          "value": "17",
+          "label": "17 - SA-17 SAM System",
+          "group": "TH"
+        },
+        {
+          "value": "2",
+          "label": "2 - SA-2 SAM System",
+          "group": "TH",
+          "help": "S-75 SAM battery"
+        },
+        {
+          "value": "3",
+          "label": "3 - SA-3 SAM System",
+          "group": "TH",
+          "help": "S-125 SAM battery"
+        },
+        {
+          "value": "4",
+          "label": "4 - SA-4 SAM System",
+          "group": "TH"
+        },
+        {
+          "value": "5",
+          "label": "5 - SA-5 SAM System",
+          "group": "TH",
+          "help": "S-200 SAM battery"
+        },
+        {
+          "value": "6",
+          "label": "6 - SA-6 SAM System",
+          "group": "TH",
+          "help": "2K12 Kub SAM battery"
+        },
+        {
+          "value": "7",
+          "label": "7 - SA-7 SAM System",
+          "group": "TH"
+        },
+        {
+          "value": "8",
+          "label": "8 - SA-8 SAM System",
+          "group": "TH",
+          "help": "9K33 Osa SAM vehicle"
+        },
+        {
+          "value": "9",
+          "label": "9 - SA-9 SAM System",
+          "group": "TH",
+          "help": "9K31 Strela-1 SAM vehicle"
+        },
+        {
+          "value": "SB",
+          "label": "SB - Sabre Air Defense Gun",
+          "group": "TH"
+        },
+        {
+          "value": "SM",
+          "label": "SM - SAMP SAM System",
+          "group": "TH"
+        },
+        {
+          "value": "SC",
+          "label": "SC - SATCP SAM System",
+          "group": "TH"
+        },
+        {
+          "value": "GS",
+          "label": "GS - Self-Propelled Air Defense Gun",
+          "group": "TH",
+          "help": "ZSU-57-2 57mm SPAAA vehicle"
+        },
+        {
+          "value": "SP",
+          "label": "SP - Self-Propelled SAM System",
+          "group": "TH"
+        },
+        {
+          "value": "SH",
+          "label": "SH - Shahine/R440 SAM System",
+          "group": "TH"
+        },
+        {
+          "value": "SD",
+          "label": "SD - Spada SAM System",
+          "group": "TH"
+        },
+        {
+          "value": "SS",
+          "label": "SS - Starstreak SAM System",
+          "group": "TH"
+        },
+        {
+          "value": "ST",
+          "label": "ST - Stinger SAM System",
+          "group": "TH",
+          "help": "Avenger SAM vehicle/Stinger MANPADS position"
+        },
+        {
+          "value": "TR",
+          "label": "TR - Target Acquisition Radar",
+          "group": "TH",
+          "help": "PPRU-M1 Sborka air defense coordination radar"
+        },
+        {
+          "value": "TC",
+          "label": "TC - Tigercat SAM System",
+          "group": "TH"
+        },
+        {
+          "value": "GT",
+          "label": "GT - Towed Air Defense Gun",
+          "group": "TH",
+          "help": "ZU-23-2 23mm AA emplacement"
+        },
+        {
+          "value": "SA",
+          "label": "SA - Towed SAM System",
+          "group": "TH",
+          "help": "NASAMS 2 SAM battery"
+        },
+        {
+          "value": "U",
+          "label": "U - Unknown Air Defense Unit",
+          "group": "TH",
+          "help": "Insurgent technical vehicle w/ 23mm AA gun"
+        },
+        {
+          "value": "VU",
+          "label": "VU - Vulcan Air Defense Gun",
+          "group": "TH",
+          "help": "M163 Vulcan SPAAA vehicle"
+        },
+        {
+          "value": "ZU",
+          "label": "ZU - ZSU-23-4 Air Defense Gun",
+          "group": "TH",
+          "help": "ZSU-23-4 23mm SPAAA vehicle"
+        }
+      ],
+      "dependsOn": "Targets.Waypoints[].PointType",
+      "help": "Code from the identifier list of the chosen PointType (option.group = PointType). Typed into the IDENT field; determines the TSD symbol. A code not in the PointType's list crashes the edit dialog."
+    },
+    {
+      "path": "Targets.Waypoints[].Free",
+      "label": "Free text",
+      "kind": "string",
+      "managed": "route",
+      "maxLength": 3,
+      "pattern": "^[A-Z0-9]{0,3}$",
+      "help": "Up to 3 uppercase letters/digits (UI mask \"AAA\", saved upper-cased), typed into the FREE field and shown beside the symbol on the TSD. Null or \"\" for none. Lowercase or other characters throw during upload."
+    },
+    {
+      "path": "Routes.Routes",
+      "label": "Routes",
+      "kind": "list",
+      "maxItems": 10,
+      "managed": "route",
+      "item": {
+        "Code": 0,
+        "Mode": 0,
+        "Waypoints": null,
+        "IncludeAllWaypoints": false,
+        "IncludeAllHazards": false,
+        "IncludeAllControlMeasures": false
+      },
+      "help": "One entry per enabled route (the UI checkbox adds/removes it); at most one entry per Code. A planned route maps to one entry, typically Code 0 (Alpha), Mode 3 (UseSpecific) with Waypoints = the Waypoints-list sequences in fly order (control measure sequences 51..99 may be mixed in), or Mode 1 (UseAll) + IncludeAllWaypoints for \"every WP in list order\". Targets cannot be in routes. Upload with Upload.Routes."
+    },
+    {
+      "path": "Routes.Routes[].Code",
+      "label": "Route",
+      "kind": "enum",
+      "managed": "route",
+      "options": [
+        {
+          "value": 0,
+          "label": "Alpha"
+        },
+        {
+          "value": 1,
+          "label": "Bravo"
+        },
+        {
+          "value": 2,
+          "label": "Delta"
+        },
+        {
+          "value": 3,
+          "label": "Echo"
+        },
+        {
+          "value": 4,
+          "label": "Hotel"
+        },
+        {
+          "value": 5,
+          "label": "India"
+        },
+        {
+          "value": 6,
+          "label": "Lima"
+        },
+        {
+          "value": 7,
+          "label": "Oscar"
+        },
+        {
+          "value": 8,
+          "label": "Romeo"
+        },
+        {
+          "value": 9,
+          "label": "Tango"
+        }
+      ],
+      "help": "RouteCode: the RTM route letter (A B D E H I L O R T; no C/F/G)."
+    },
+    {
+      "path": "Routes.Routes[].Mode",
+      "label": "Points",
+      "kind": "enum",
+      "managed": "route",
+      "options": [
+        {
+          "value": 1,
+          "label": "UseAll"
+        },
+        {
+          "value": 2,
+          "label": "UseRange"
+        },
+        {
+          "value": 3,
+          "label": "UseSpecific"
+        }
+      ],
+      "allowDefaultOutOfRange": true,
+      "help": "RouteMode. UseAll: every point selected by the IncludeAll* flags, in list order. UseRange: Waypoints = [from] or [from, to], inclusive over both Waypoints and ControlMeasures sequences (missing \"to\" = 50); a null/empty list throws in the uploader. UseSpecific: Waypoints = sequences in fly order, looked up in Waypoints first then ControlMeasures, unknown ones skipped. A route ticked but never edited has 0 and uploads empty."
+    },
+    {
+      "path": "Routes.Routes[].Waypoints",
+      "label": "Point numbers",
+      "kind": "list",
+      "nullable": true,
+      "managed": "route",
+      "item": 1,
+      "help": "null for UseAll; [from] or [from, to] for UseRange; ordered unique sequences for UseSpecific (UI text \"1,2,3,51\"). Built from the route: the Waypoints-list sequence numbers assigned to the route points, in order."
+    },
+    {
+      "path": "Routes.Routes[].Waypoints[]",
+      "label": "Point number",
+      "kind": "int",
+      "min": 1,
+      "max": 99,
+      "managed": "route",
+      "help": "1..50 = Waypoints list (W/H), 51..99 = ControlMeasures list (C). The range text boxes accept up to 999."
+    },
+    {
+      "path": "Routes.Routes[].IncludeAllWaypoints",
+      "label": "All waypoints",
+      "kind": "bool",
+      "managed": "route",
+      "help": "UseAll only: include every WP-type point of the Waypoints list."
+    },
+    {
+      "path": "Routes.Routes[].IncludeAllHazards",
+      "label": "All hazards",
+      "kind": "bool",
+      "managed": "route",
+      "help": "UseAll only: include every HZ-type point of the Waypoints list."
+    },
+    {
+      "path": "Routes.Routes[].IncludeAllControlMeasures",
+      "label": "All control measures",
+      "kind": "bool",
+      "managed": "route",
+      "help": "UseAll only: include every point of the ControlMeasures list."
+    },
+    {
+      "path": "TSD.ShowPresentPosition",
+      "label": "Present Position",
+      "kind": "bool",
+      "help": "General: present-position (PP) map centering mode. Uploaded as a toggle-to-state."
+    },
+    {
+      "path": "TSD.ShowCentered",
+      "label": "Centered",
+      "kind": "bool",
+      "help": "General: ownship centered (CTR) instead of decentered. Uploaded as a toggle-to-state."
+    },
+    {
+      "path": "TSD.MapType",
+      "label": "Map type",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Chart"
+        },
+        {
+          "value": 1,
+          "label": "Elevation"
+        },
+        {
+          "value": 2,
+          "label": "Satellite"
+        },
+        {
+          "value": 3,
+          "label": "Stick"
+        }
+      ],
+      "help": "MapType (Elevation = DIG)."
+    },
+    {
+      "path": "TSD.MapOrientation",
+      "label": "Map orientation",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "HeadingUp"
+        },
+        {
+          "value": 1,
+          "label": "TrackUp"
+        },
+        {
+          "value": 2,
+          "label": "NorthUp"
+        }
+      ],
+      "help": "MapOrientation."
+    },
+    {
+      "path": "TSD.MapShowGrid",
+      "label": "Grid",
+      "kind": "bool",
+      "help": "Map: show the MGRS grid. Uploaded as a toggle-to-state."
+    },
+    {
+      "path": "TSD.MapElevationColorBand",
+      "label": "Color band",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "None"
+        },
+        {
+          "value": 1,
+          "label": "Aircraft"
+        },
+        {
+          "value": 2,
+          "label": "Elevation"
+        }
+      ],
+      "help": "ColorBand (Aircraft = A/C)."
+    },
+    {
+      "path": "TSD.MapElevationGray",
+      "label": "Gray Shading",
+      "kind": "bool",
+      "help": "Map: gray shading; only applied when MapType = Elevation (DIG). Uploaded as a toggle-to-state."
+    },
+    {
+      "path": "TSD.NavPhaseShowWptData",
+      "label": "Nav phase: Waypoint Data",
+      "kind": "bool",
+      "help": "Nav Phase Settings > SHOW: Waypoint Data. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.NavPhaseShowInactiveZones",
+      "label": "Nav phase: Inactive Zones",
+      "kind": "bool",
+      "help": "Nav Phase Settings > SHOW: Inactive Zones. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.NavPhaseShowObstacles",
+      "label": "Nav phase: Obstacles",
+      "kind": "bool",
+      "help": "Nav Phase Settings > SHOW: Obstacles. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.NavPhaseShowOtherStationCursor",
+      "label": "Nav phase: Other Station Cursor",
+      "kind": "bool",
+      "help": "Nav Phase Settings > SHOW: Other Station Cursor. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.NavPhaseShowCursorInfo",
+      "label": "Nav phase: Cursor Info",
+      "kind": "bool",
+      "help": "Nav Phase Settings > SHOW: Cursor Info. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.NavPhaseShowHSI",
+      "label": "Nav phase: HSI",
+      "kind": "bool",
+      "help": "Nav Phase Settings > SHOW: HSI. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.NavPhaseShowEndurance",
+      "label": "Nav phase: Endurance",
+      "kind": "bool",
+      "help": "Nav Phase Settings > SHOW: Endurance. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.NavPhaseShowWind",
+      "label": "Nav phase: Wind",
+      "kind": "bool",
+      "help": "Nav Phase Settings > SHOW: Wind. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.NavPhaseShowControlMeasures",
+      "label": "Nav phase: Control Measures",
+      "kind": "bool",
+      "help": "Nav Phase Settings > SHOW: Control Measures. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.NavPhaseShowFriendlyUnits",
+      "label": "Nav phase: Friendly Units",
+      "kind": "bool",
+      "help": "Nav Phase Settings > SHOW: Friendly Units. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.NavPhaseShowEnemyUnits",
+      "label": "Nav phase: Enemy Units",
+      "kind": "bool",
+      "help": "Nav Phase Settings > SHOW: Enemy Units. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.NavPhaseShowTargets",
+      "label": "Nav phase: Targets",
+      "kind": "bool",
+      "help": "Nav Phase Settings > SHOW: Targets. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.AttkPhaseShowCurrentRoute",
+      "label": "Attack phase: Current Route",
+      "kind": "bool",
+      "help": "Attack Phase Settings > SHOW: Current Route. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.AttkPhaseShowInactiveZones",
+      "label": "Attack phase: Inactive Zones",
+      "kind": "bool",
+      "help": "Attack Phase Settings > SHOW: Inactive Zones. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.AttkPhaseShowObstacles",
+      "label": "Attack phase: Obstacles",
+      "kind": "bool",
+      "help": "Attack Phase Settings > SHOW: Obstacles. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.AttkPhaseShowOtherStationCursor",
+      "label": "Attack phase: Other Station Cursor",
+      "kind": "bool",
+      "help": "Attack Phase Settings > SHOW: Other Station Cursor. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.AttkPhaseShowCursorInfo",
+      "label": "Attack phase: Cursor Info",
+      "kind": "bool",
+      "help": "Attack Phase Settings > SHOW: Cursor Info. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.AttkPhaseShowHSI",
+      "label": "Attack phase: HSI",
+      "kind": "bool",
+      "help": "Attack Phase Settings > SHOW: HSI. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.AttkPhaseShowEndurance",
+      "label": "Attack phase: Endurance",
+      "kind": "bool",
+      "help": "Attack Phase Settings > SHOW: Endurance. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.AttkPhaseShowWind",
+      "label": "Attack phase: Wind",
+      "kind": "bool",
+      "help": "Attack Phase Settings > SHOW: Wind. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.AttkPhaseShowControlMeasures",
+      "label": "Attack phase: Control Measures",
+      "kind": "bool",
+      "help": "Attack Phase Settings > SHOW: Control Measures. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.AttkPhaseShowFriendlyUnits",
+      "label": "Attack phase: Friendly Units",
+      "kind": "bool",
+      "help": "Attack Phase Settings > SHOW: Friendly Units. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.AttkPhaseShowEnemyUnits",
+      "label": "Attack phase: Enemy Units",
+      "kind": "bool",
+      "help": "Attack Phase Settings > SHOW: Enemy Units. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.AttkPhaseShowTargets",
+      "label": "Attack phase: Targets",
+      "kind": "bool",
+      "help": "Attack Phase Settings > SHOW: Targets. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.AttkPhaseShowShot",
+      "label": "Attack phase: Shot",
+      "kind": "bool",
+      "help": "Attack Phase Settings > SHOW: Shot. Uploaded as a toggle-to-state (false turns it off)."
+    },
+    {
+      "path": "TSD.ShowASEThreats",
+      "label": "Show ASE Threats",
+      "kind": "bool",
+      "help": "Show ASE (aircraft survivability equipment) threats. Uploaded as a toggle-to-state."
+    },
+    {
+      "path": "TSD.ShowThreatRings",
+      "label": "Show Threat Rings",
+      "kind": "bool",
+      "help": "Show threat rings around TH points. Uploaded as a toggle-to-state."
+    },
+    {
+      "path": "LaserCodes",
+      "label": "Laser codes",
+      "kind": "dict",
+      "keys": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G",
+        "H",
+        "J",
+        "K",
+        "L",
+        "M",
+        "N",
+        "P",
+        "Q",
+        "R"
+      ],
+      "item": "",
+      "help": "Object keyed by code letter (A-H, J-N, P-R; an \"I\" property exists in the class but is never shown or uploaded). Each property has DefaultValueHandling.Ignore with default \"\", so unset letters are simply absent ({} when none). Writing \"\" is also accepted."
+    },
+    {
+      "path": "LaserCodes{}",
+      "label": "Code",
+      "kind": "string",
+      "pattern": "^(\\d{4})?$",
+      "allowedRanges": [
+        [
+          1111,
+          1788
+        ],
+        [
+          2111,
+          2888
+        ],
+        [
+          4111,
+          4288
+        ],
+        [
+          4311,
+          4488
+        ],
+        [
+          4511,
+          4688
+        ],
+        [
+          4711,
+          4888
+        ],
+        [
+          5111,
+          5288
+        ],
+        [
+          5311,
+          5488
+        ],
+        [
+          5511,
+          5688
+        ],
+        [
+          5711,
+          5888
+        ]
+      ],
+      "help": "4-digit laser PRF code as a string, e.g. \"1688\". The UI only accepts codes inside allowedRanges (and keep digits 2-4 in 1..8); loading does not validate and the uploader types any 4 characters."
+    },
+    {
+      "path": "Radios.Radio.Presets",
+      "label": "Presets",
+      "kind": "list",
+      "nullable": true,
+      "maxItems": 10,
+      "item": {
+        "Number": 1,
+        "Name": null,
+        "Frequencies": [
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "help": "COM presets 1..10 (null when none). Each preset carries one frequency per radio. A preset is removed by the UI when all 6 frequencies are empty."
+    },
+    {
+      "path": "Radios.Radio.Presets[].Number",
+      "label": "Preset #",
+      "kind": "int",
+      "min": 1,
+      "max": 10,
+      "help": "Preset number 1..10, unique. Required (constructor parameter)."
+    },
+    {
+      "path": "Radios.Radio.Presets[].Name",
+      "label": "Name",
+      "kind": "string",
+      "maxLength": 8,
+      "help": "Callsign/unit id, null for none. Upper-cased and trimmed by the uploader; if character 4 is a space (\"ATC KUTAISI\") the first 3 chars go to the unit id field and the rest (max 8) to the callsign, otherwise the first 8 chars go to the callsign. KU characters only (A-Z 0-9 . space - + / *)."
+    },
+    {
+      "path": "Radios.Radio.Presets[].Frequencies",
+      "label": "Frequencies",
+      "kind": "list",
+      "fixedLength": 6,
+      "help": "Exactly 6 strings, by radio: [0] UHF 225.000-399.975, [1] VHF 118.000-151.975, [2] FM1 30.000-87.975, [3] FM2 30.000-87.975, [4] HF1 3.000-29.999, [5] HF2 3.000-29.999. \"\" for an unset slot. The uploader indexes [0]..[5] without a bounds check, so never write fewer than 6."
+    },
+    {
+      "path": "Radios.Radio.Presets[].Frequencies[]",
+      "label": "Frequency",
+      "kind": "freq",
+      "unit": "MHz",
+      "pattern": "^(\\d{1,3}\\.\\d{3})?$",
+      "help": "Invariant-culture decimal with 3 fraction digits in 0.005 steps (e.g. \"251.000\", \"5.500\"), or \"\". Range depends on the index (see Frequencies)."
+    },
+    {
+      "path": "Radios.Radio.SelectedModes",
+      "label": "Selected channel per radio",
+      "kind": "list",
+      "nullable": true,
+      "maxItems": 5,
+      "item": {
+        "Number": 1,
+        "SelectedFrequency": "",
+        "SelectedMode": 1,
+        "SelectedPreset": ""
+      },
+      "help": "One entry per radio whose selection is set, matched by Number (order irrelevant): 1 UHF, 2 VHF, 3 FM1, 4 FM2, 5 HF1 (HF2 has no selected mode). Entries in Frequency mode with empty frequency and preset are dropped on save/read. null when none."
+    },
+    {
+      "path": "Radios.Radio.SelectedModes[].Number",
+      "label": "Radio",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "UHF"
+        },
+        {
+          "value": 2,
+          "label": "VHF"
+        },
+        {
+          "value": 3,
+          "label": "FM1"
+        },
+        {
+          "value": 4,
+          "label": "FM2"
+        },
+        {
+          "value": 5,
+          "label": "HF1"
+        }
+      ],
+      "help": "Radio index."
+    },
+    {
+      "path": "Radios.Radio.SelectedModes[].SelectedFrequency",
+      "label": "Selected frequency",
+      "kind": "freq",
+      "unit": "MHz",
+      "pattern": "^(\\d{1,3}\\.\\d{3})?$",
+      "help": "Manual frequency for this radio (\"\" for none), same format and per-radio band as the preset frequencies."
+    },
+    {
+      "path": "Radios.Radio.SelectedModes[].SelectedMode",
+      "label": "Mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "Freq"
+        },
+        {
+          "value": 2,
+          "label": "Preset"
+        }
+      ],
+      "help": "RadioMode: 1 Frequency (manual), 2 Preset."
+    },
+    {
+      "path": "Radios.Radio.SelectedModes[].SelectedPreset",
+      "label": "Selected preset",
+      "kind": "string",
+      "pattern": "^([1-9]|10)?$",
+      "help": "Preset number as a string \"1\"..\"10\", or \"\". Parsed with int.Parse by the uploader, so it must be numeric when non-empty."
+    }
+  ]
+}

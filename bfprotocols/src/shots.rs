@@ -76,6 +76,7 @@ pub struct Shot {
     pub weapon_name: Option<String>,
     pub weapon: Option<DcsOid<ClassWeapon>>,
     pub shooter: Who,
+    pub shooter_typ: Option<String>,
     pub target: Who,
     pub target_typ: String,
     pub time: DateTime<Utc>,

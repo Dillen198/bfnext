@@ -1,0 +1,247 @@
+{
+  "name": "PersianGulf",
+  "center": [
+    26.04352940246587,
+    55.23479072885287
+  ],
+  "airports": [
+    {
+      "name": "Abu Musa Island",
+      "position": [
+        25.875991474980935,
+        55.032918352743245
+      ],
+      "heli": false
+    },
+    {
+      "name": "Bandar Abbas Intl",
+      "position": [
+        27.217686874135605,
+        56.378961854138026
+      ],
+      "heli": false
+    },
+    {
+      "name": "Bandar Lengeh",
+      "position": [
+        26.53226376838107,
+        54.824667223221894
+      ],
+      "heli": false
+    },
+    {
+      "name": "Al Dhafra AFB",
+      "position": [
+        24.24828784868506,
+        54.5476990971881
+      ],
+      "heli": false
+    },
+    {
+      "name": "Dubai Intl",
+      "position": [
+        25.256375873365915,
+        55.365261212224226
+      ],
+      "heli": false
+    },
+    {
+      "name": "Al Maktoum Intl",
+      "position": [
+        24.89705665767077,
+        55.16023901638748
+      ],
+      "heli": false
+    },
+    {
+      "name": "Fujairah Intl",
+      "position": [
+        25.110940175043314,
+        56.32735119702506
+      ],
+      "heli": false
+    },
+    {
+      "name": "Tunb Island AFB",
+      "position": [
+        26.258887588131877,
+        55.315781654485335
+      ],
+      "heli": false
+    },
+    {
+      "name": "Havadarya",
+      "position": [
+        27.158224470362878,
+        56.17201858505257
+      ],
+      "heli": false
+    },
+    {
+      "name": "Khasab",
+      "position": [
+        26.169825901810828,
+        56.240170078635764
+      ],
+      "heli": false
+    },
+    {
+      "name": "Lar",
+      "position": [
+        27.674732443101174,
+        54.38314474975616
+      ],
+      "heli": false
+    },
+    {
+      "name": "Al Minhad AFB",
+      "position": [
+        25.026881393116263,
+        55.36575776200436
+      ],
+      "heli": false
+    },
+    {
+      "name": "Qeshm Island",
+      "position": [
+        26.754669193351653,
+        55.90238420600786
+      ],
+      "heli": false
+    },
+    {
+      "name": "Sharjah Intl",
+      "position": [
+        25.33067526521358,
+        55.51826295734324
+      ],
+      "heli": false
+    },
+    {
+      "name": "Sirri Island",
+      "position": [
+        25.909602942746968,
+        54.539254480375746
+      ],
+      "heli": false
+    },
+    {
+      "name": "Tunb Kochak",
+      "position": [
+        26.24332226313402,
+        55.14556789952405
+      ],
+      "heli": false
+    },
+    {
+      "name": "Sir Abu Nuayr",
+      "position": [
+        25.216870595740186,
+        54.233649676084895
+      ],
+      "heli": false
+    },
+    {
+      "name": "Kerman",
+      "position": [
+        30.27311018978057,
+        56.951551333355674
+      ],
+      "heli": false
+    },
+    {
+      "name": "Shiraz Intl",
+      "position": [
+        29.540909964066106,
+        52.59107375150161
+      ],
+      "heli": false
+    },
+    {
+      "name": "Sas Al Nakheel",
+      "position": [
+        24.441109498565424,
+        54.51702313971648
+      ],
+      "heli": false
+    },
+    {
+      "name": "Bandar-e-Jask",
+      "position": [
+        25.654672565132156,
+        57.801435692491665
+      ],
+      "heli": false
+    },
+    {
+      "name": "Abu Dhabi Intl",
+      "position": [
+        24.453707857534162,
+        54.654267836044724
+      ],
+      "heli": false
+    },
+    {
+      "name": "Al-Bateen",
+      "position": [
+        24.428077352771624,
+        54.45858027715224
+      ],
+      "heli": false
+    },
+    {
+      "name": "Kish Intl",
+      "position": [
+        26.528148486398084,
+        53.98104899035062
+      ],
+      "heli": false
+    },
+    {
+      "name": "Al Ain Intl",
+      "position": [
+        24.261427609262974,
+        55.60924529308644
+      ],
+      "heli": false
+    },
+    {
+      "name": "Lavan Island",
+      "position": [
+        26.81110778368675,
+        53.3532930992645
+      ],
+      "heli": false
+    },
+    {
+      "name": "Jiroft",
+      "position": [
+        28.723516960665645,
+        57.67509513993458
+      ],
+      "heli": false
+    },
+    {
+      "name": "Ras Al Khaimah Intl",
+      "position": [
+        25.613494250727715,
+        55.938797307631226
+      ],
+      "heli": false
+    },
+    {
+      "name": "Liwa AFB",
+      "position": [
+        23.650775423946865,
+        53.824429274005766
+      ],
+      "heli": false
+    }
+  ],
+  "projection": {
+    "centralMeridian": 57,
+    "falseEasting": 75755.99999999645,
+    "falseNorthing": -2894933.0000000377,
+    "scaleFactor": 0.9996
+  }
+}

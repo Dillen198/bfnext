@@ -26,7 +26,9 @@ pub const PATH: &str = "/stats";
 
 pub type MapS<K, V> = immutable_chunkmap::map::Map<K, V, 16>;
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
+)]
 pub enum EnId {
     Player(Ucid),
     Unit(UnitId),
@@ -120,6 +122,14 @@ pub enum Stat {
         by: Ucid,
         gid: GroupId,
         deployable: String,
+        /// Delivering aircraft's DCS type name, when known (physical C-130/
+        /// helo cargo deploys only -- None for instant/admin-triggered ones).
+        #[serde(default)]
+        aircraft: Option<String>,
+        /// "AirDrop" (auto-unpacked on landing) or "ManualUnpack" (player
+        /// had to walk up and trigger it), when known.
+        #[serde(default)]
+        method: Option<String>,
     },
     DeployFarp {
         by: Ucid,
@@ -215,4 +225,150 @@ pub enum Stat {
         id: Ucid,
         token: String,
     },
+    ConvoyDestroyed {
+        from: ObjectiveId,
+        to: ObjectiveId,
+        side: Side,
+        killer: Option<Ucid>,
+    },
+    AirRouteDelivered {
+        from: ObjectiveId,
+        to: ObjectiveId,
+        side: Side,
+    },
+    AirRouteDestroyed {
+        from: ObjectiveId,
+        to: ObjectiveId,
+        side: Side,
+    },
+    SeaRouteDelivered {
+        from: ObjectiveId,
+        to: ObjectiveId,
+        side: Side,
+    },
+    SeaRouteDestroyed {
+        from: ObjectiveId,
+        to: ObjectiveId,
+        side: Side,
+    },
+    CampaignEvent {
+        event_type: String,
+        side: Side,
+    },
+    PilotXp {
+        id: Ucid,
+        xp: u32,
+        reason: String,
+    },
+    Weather {
+        temp_c: f64,
+        wind_speed_kts: f64,
+        wind_from_deg: f64,
+        cloud_base_m: f64,
+        qnh_hpa: f64,
+        /// Cloud density 0–10 (0 = clear, 10 = overcast). None if not available.
+        #[serde(default)]
+        cloud_density: Option<u8>,
+        /// Horizontal visibility in metres (capped at 10 000 = unlimited). None if no fog.
+        #[serde(default)]
+        visibility_m: Option<f64>,
+    },
+    GciPicture(crate::gci::GciPicture),
+    /// One line of a side's combat log (the command map's feed: contacts,
+    /// battles, losses, captures, orders, garrison reactions, naval
+    /// hunters). bfdb keeps every one for the whole round, so the log
+    /// survives restarts and is only cleared by a campaign reset. Appended
+    /// last: bfdb's bincode records number variants by position.
+    CombatLog {
+        side: Side,
+        kind: String,
+        text: String,
+        /// [lat, lon], where it happened.
+        #[serde(default)]
+        pos: Option<[f64; 2]>,
+        #[serde(default)]
+        formation: Option<u32>,
+    },
+    /// Both sides' war will (`Cfg::war_will`), sent when it moves (at most
+    /// about once a minute unless a side moves by a point or more) and now
+    /// and then while it doesn't. bfdb keeps the latest per round for
+    /// `/api/stats`. Appended last: bfdb's bincode records number variants
+    /// by position.
+    WarWill(WarWillStat),
+    /// A story event fired (`Cfg::story`, ENGINE.md 3.4): what happened,
+    /// who caused it and what it changed. Sent once per firing; bfdb keeps
+    /// the round's events for `/api/stats` and the news. Appended last:
+    /// bfdb's bincode records number variants by position.
+    StoryEvent(StoryEventStat),
+    /// Each side's air order of battle (`Cfg::ai_air_stock`, ENGINE.md
+    /// 3.1): its airframes in stock by type and those lost this round. Sent
+    /// when it changes, at most about once a minute, and now and then while
+    /// it doesn't. bfdb keeps the latest per round for `/api/oob`. Appended
+    /// last: bfdb's bincode records number variants by position.
+    AirOrderOfBattle(AirOobStat),
+}
+
+/// One `Stat::AirOrderOfBattle`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AirOobStat {
+    pub blue: Vec<AirframeCount>,
+    pub red: Vec<AirframeCount>,
+}
+
+/// One aircraft type in a side's order of battle.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AirframeCount {
+    /// The DCS type name: "F-14A", "Tu-22M3".
+    pub typ: String,
+    /// In the warehouses of the bases the side holds, unlimited ones left
+    /// out.
+    pub stock: u32,
+    /// Lost this round: player aircraft, and AI aircraft that came out of
+    /// the stock.
+    pub lost: u32,
+    /// An `unlimited_aircraft` base of the side holds the type: it never
+    /// runs out whatever `stock` says.
+    pub unlimited: bool,
+}
+
+/// One `Stat::StoryEvent`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StoryEventStat {
+    /// The event's id in the config: "tuapse_burns".
+    pub id: String,
+    pub time: DateTime<Utc>,
+    pub title: String,
+    /// The story as players were told it, placeholders filled in.
+    pub text: String,
+    /// The pilots (or AI) credited with setting it off.
+    pub caused_by: Vec<String>,
+    /// The side the event concerns, if any.
+    pub side: Option<Side>,
+    /// What it changed, one line each: "Red fuel output -40%".
+    pub effects: Vec<String>,
+}
+
+/// One `Stat::WarWill`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct WarWillStat {
+    pub blue: f64,
+    pub red: f64,
+    /// Change over the last 3 h (or as much of it as is known, at least
+    /// 1 h); None until then.
+    pub blue_trend: Option<f64>,
+    pub red_trend: Option<f64>,
+    /// Below this a side is breaking; held for `hold_hours`, it asks for
+    /// terms.
+    pub threshold: f64,
+    /// The biggest recent causes, newest first.
+    pub causes: Vec<WillCause>,
+}
+
+/// Something that moved a side's will: "Tuapse refinery destroyed", -5.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WillCause {
+    pub side: Side,
+    pub text: String,
+    pub delta: f64,
+    pub time: DateTime<Utc>,
 }

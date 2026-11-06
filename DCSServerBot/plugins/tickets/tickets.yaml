@@ -1,0 +1,4 @@
+DEFAULT:
+  admin_role: "Staff"
+  forum_channel_id: 1450843793942380626  # Replace with your Forum Channel ID
+  # forum_tag: "Support"  # tag new ticket posts get; needed when the forum requires tags (default: a Ticket/Support tag, else the first one)

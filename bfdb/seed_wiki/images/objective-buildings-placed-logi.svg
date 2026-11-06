@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" width="800" height="500" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect x="0" y="0" width="800" height="500" fill="#0d1009"/>
+  <text x="30" y="34" font-size="18" font-weight="700" fill="#cdd4be">Placed logistics statics</text>
+  <text x="30" y="54" font-size="13" fill="#7d8a6a">Illustration, not an in-game screenshot. On servers that do not use map buildings.</text>
+  <polygon points="360.0,150.0 654.4,320.0 394.6,470.0 100.2,300.0" fill="#2b2a1f" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="360.0,170.0 619.8,320.0 394.6,450.0 134.8,300.0" fill="#38382f" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="295.0,227.5 381.7,277.5 381.7,239.5 295.0,189.5" fill="#717164" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="446.6,240.0 381.7,277.5 381.7,239.5 446.6,202.0" fill="#56564c" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="360.0,152.0 446.6,202.0 381.7,239.5 295.0,189.5" fill="#9a9a8a" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="303.7,214.5 312.4,219.5 312.4,207.5 303.7,202.5" fill="#2a3a44" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="319.3,223.5 328.0,228.5 328.0,216.5 319.3,211.5" fill="#2a3a44" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="334.9,232.5 343.5,237.5 343.5,225.5 334.9,220.5" fill="#2a3a44" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="350.5,241.5 359.1,246.5 359.1,234.5 350.5,229.5" fill="#2a3a44" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="366.1,250.5 374.7,255.5 374.7,243.5 366.1,238.5" fill="#2a3a44" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="364.3,267.5 376.5,274.5 376.5,252.5 364.3,245.5" fill="#3d3a33" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <line x1="403.3" y1="197.0" x2="403.3" y2="125.0" stroke="#a8a89a" stroke-width="2"/>
+  <line x1="395.3" y1="175.0" x2="411.3" y2="175.0" stroke="#a8a89a" stroke-width="1.5"/>
+  <line x1="395.3" y1="155.0" x2="411.3" y2="155.0" stroke="#a8a89a" stroke-width="1.5"/>
+  <line x1="395.3" y1="135.0" x2="411.3" y2="135.0" stroke="#a8a89a" stroke-width="1.5"/>
+  <polygon points="416.3,297.5 511.6,352.5 511.6,310.5 444.0,271.5" fill="#5e6a3c" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="576.5,315.0 511.6,352.5 511.6,310.5 548.8,289.0" fill="#4a542f" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="481.2,250.0 548.8,289.0 511.6,310.5 444.0,271.5" fill="#6c7a45" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="443.1,317.0 477.8,337.0 477.8,317.0 443.1,297.0" fill="#757367" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="483.0,334.0 477.8,337.0 477.8,317.0 483.0,314.0" fill="#59574e" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="448.3,294.0 483.0,314.0 477.8,317.0 443.1,297.0" fill="#9a9788" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="451.8,322.0 469.1,332.0 469.1,317.0 451.8,307.0" fill="#24221d" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <ellipse cx="243.1" cy="270.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="253.5" cy="276.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="270.8" cy="286.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <polygon points="237.9,266.5 265.6,282.5 265.6,278.5 237.9,262.5" fill="#30312a" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="279.5,274.5 265.6,282.5 265.6,278.5 279.5,270.5" fill="#242520" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="251.7,254.5 279.5,270.5 265.6,278.5 237.9,262.5" fill="#3f4137" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="238.8,263.0 264.7,278.0 264.7,262.0 238.8,247.0" fill="#4a5134" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="278.6,270.0 264.7,278.0 264.7,262.0 278.6,254.0" fill="#383d28" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="252.6,239.0 278.6,254.0 264.7,262.0 238.8,247.0" fill="#616b45" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="268.2,283.0 278.6,289.0 278.6,271.0 268.2,265.0" fill="#515939" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="290.7,282.0 278.6,289.0 278.6,271.0 290.7,264.0" fill="#3d442b" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="280.3,258.0 290.7,264.0 278.6,271.0 268.2,265.0" fill="#6b764c" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="289.0,273.0 278.6,279.0 278.6,273.0 289.0,267.0" fill="#2a3a44" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <ellipse cx="289.9" cy="305.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="300.2" cy="311.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="317.6" cy="321.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <polygon points="284.7,301.5 312.4,317.5 312.4,313.5 284.7,297.5" fill="#30312a" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="326.2,309.5 312.4,317.5 312.4,313.5 326.2,305.5" fill="#242520" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="298.5,289.5 326.2,305.5 312.4,313.5 284.7,297.5" fill="#3f4137" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="286.4,297.5 312.4,312.5 312.4,298.5 286.4,283.5" fill="#7e7f73" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="324.5,305.5 312.4,312.5 312.4,298.5 324.5,291.5" fill="#5f6057" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="298.5,276.5 324.5,291.5 312.4,298.5 286.4,283.5" fill="#a6a797" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="315.0,318.0 325.4,324.0 325.4,306.0 315.0,300.0" fill="#595c42" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="337.5,317.0 325.4,324.0 325.4,306.0 337.5,299.0" fill="#444532" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="327.1,293.0 337.5,299.0 325.4,306.0 315.0,300.0" fill="#767956" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="335.8,308.0 325.4,314.0 325.4,308.0 335.8,302.0" fill="#2a3a44" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <ellipse cx="336.6" cy="340.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="347.0" cy="346.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="364.3" cy="356.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <polygon points="331.4,336.5 359.1,352.5 359.1,348.5 331.4,332.5" fill="#30312a" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="373.0,344.5 359.1,352.5 359.1,348.5 373.0,340.5" fill="#242520" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="345.3,324.5 373.0,340.5 359.1,348.5 331.4,332.5" fill="#3f4137" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="332.3,333.0 358.3,348.0 358.3,332.0 332.3,317.0" fill="#595743" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="372.1,340.0 358.3,348.0 358.3,332.0 372.1,324.0" fill="#444233" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="346.1,309.0 372.1,324.0 358.3,332.0 332.3,317.0" fill="#767259" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="361.7,353.0 372.1,359.0 372.1,341.0 361.7,335.0" fill="#62604a" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="384.2,352.0 372.1,359.0 372.1,341.0 384.2,334.0" fill="#4a4938" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="373.9,328.0 384.2,334.0 372.1,341.0 361.7,335.0" fill="#827e61" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="382.5,343.0 372.1,349.0 372.1,343.0 382.5,337.0" fill="#2a3a44" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <ellipse cx="383.4" cy="375.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="393.8" cy="381.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="411.1" cy="391.5" rx="5" ry="4" fill="#15170f" stroke="#0d1009" stroke-width="1"/>
+  <polygon points="378.2,371.5 405.9,387.5 405.9,383.5 378.2,367.5" fill="#30312a" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="419.8,379.5 405.9,387.5 405.9,383.5 419.8,375.5" fill="#242520" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="392.0,359.5 419.8,375.5 405.9,383.5 378.2,367.5" fill="#3f4137" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="379.9,367.5 405.9,382.5 405.9,368.5 379.9,353.5" fill="#7e7f73" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="418.0,375.5 405.9,382.5 405.9,368.5 418.0,361.5" fill="#5f6057" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="392.0,346.5 418.0,361.5 405.9,368.5 379.9,353.5" fill="#a6a797" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="408.5,388.0 418.9,394.0 418.9,376.0 408.5,370.0" fill="#595c42" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="431.0,387.0 418.9,394.0 418.9,376.0 431.0,369.0" fill="#444532" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="420.6,363.0 431.0,369.0 418.9,376.0 408.5,370.0" fill="#767956" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="429.3,378.0 418.9,384.0 418.9,378.0 429.3,372.0" fill="#2a3a44" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <line x1="371.3" y1="195.5" x2="241.0" y2="105.0" stroke="#7d8a6a" stroke-width="1"/>
+  <circle cx="371.3" cy="195.5" r="3.5" fill="#8ec83f" stroke="#0d1009" stroke-width="1.5"/>
+  <text x="235.0" y="110.0" font-size="14" fill="#cdd4be" text-anchor="end" font-weight="600">Command centre</text>
+  <text x="235.0" y="131.0" font-size="12.5" fill="#7d8a6a" text-anchor="end">.Command Center: a command</text>
+  <text x="235.0" y="148.0" font-size="12.5" fill="#7d8a6a" text-anchor="end">building, often with a mast.</text>
+  <line x1="496.0" y1="280.5" x2="584.0" y2="115.0" stroke="#7d8a6a" stroke-width="1"/>
+  <circle cx="496.0" cy="280.5" r="3.5" fill="#8ec83f" stroke="#0d1009" stroke-width="1.5"/>
+  <text x="590.0" y="120.0" font-size="14" fill="#cdd4be" font-weight="600">Ammunition depot</text>
+  <text x="590.0" y="141.0" font-size="12.5" fill="#7d8a6a">.Ammunition depot: an</text>
+  <text x="590.0" y="158.0" font-size="12.5" fill="#7d8a6a">earth-covered store.</text>
+  <line x1="381.7" y1="359.5" x2="584.0" y2="285.0" stroke="#7d8a6a" stroke-width="1"/>
+  <circle cx="381.7" cy="359.5" r="3.5" fill="#8ec83f" stroke="#0d1009" stroke-width="1.5"/>
+  <text x="590.0" y="290.0" font-size="14" fill="#cdd4be" font-weight="600">Logistics trucks</text>
+  <text x="590.0" y="311.0" font-size="12.5" fill="#7d8a6a">Ural, ATZ, HEMTT, M939 and</text>
+  <text x="590.0" y="328.0" font-size="12.5" fill="#7d8a6a">similar, parked together.</text>
+  <text x="30.0" y="482.0" font-size="13" fill="#7d8a6a">Logi is the share of this group still alive. A lone placed fuel tank counts toward Health instead.</text>
+</svg>

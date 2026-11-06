@@ -1,0 +1,1911 @@
+{
+  "code": "F16C",
+  "label": "F-16C Viper",
+  "sections": [
+    {
+      "path": "Upload",
+      "label": "Upload Settings",
+      "help": "Which systems \"Upload to jet\" types into the cockpit. All false in a new preset. A flagged system must be non-null (MFD/HARM/HTS are dereferenced without null checks).",
+      "nullCrashesEditor": false,
+      "nullable": true,
+      "nullNote": "F16Page.GetPages replaces a null system with new(); null is safe in a preset file and means \"not included\" in a Load/Save export."
+    },
+    {
+      "path": "WaypointsCapture",
+      "label": "Capture Settings",
+      "help": "Where DTC puts points captured from the F10 map. App-side only, never uploaded.",
+      "nullCrashesEditor": false,
+      "nullable": true,
+      "nullNote": "F16Page.GetPages replaces a null system with new(); null is safe in a preset file and means \"not included\" in a Load/Save export."
+    },
+    {
+      "path": "Waypoints",
+      "label": "Steerpoints",
+      "help": "Route steerpoints with TOS, offset aimpoints, VIP and VRP. Filled from the planned route.",
+      "nullCrashesEditor": false,
+      "nullable": true,
+      "nullNote": "F16Page.GetPages replaces a null system with new(); null is safe in a preset file and means \"not included\" in a Load/Save export."
+    },
+    {
+      "path": "CMS",
+      "label": "CMS",
+      "help": "Countermeasure programs 1-6 and chaff/flare bingo.",
+      "nullCrashesEditor": false,
+      "nullable": true,
+      "nullNote": "F16Page.GetPages replaces a null system with new(); null is safe in a preset file and means \"not included\" in a Load/Save export."
+    },
+    {
+      "path": "Radios",
+      "label": "Radios",
+      "help": "COM1 (UHF, Radio1) and COM2 (VHF/FM, Radio2): 20 presets each plus the active channel.",
+      "nullCrashesEditor": false,
+      "nullable": true,
+      "nullNote": "F16Page.GetPages replaces a null system with new(); null is safe in a preset file and means \"not included\" in a Load/Save export."
+    },
+    {
+      "path": "MFD",
+      "label": "MFDs",
+      "help": "MFD formats per master mode (NAV, AA, AG, DGFT, MSL) and FCR settings.",
+      "nullCrashesEditor": false,
+      "nullable": true,
+      "nullNote": "F16Page.GetPages replaces a null system with new(); null is safe in a preset file and means \"not included\" in a Load/Save export."
+    },
+    {
+      "path": "HARM",
+      "label": "HARM",
+      "help": "HARM ALIC threat tables 1-3 (5 emitters each).",
+      "nullCrashesEditor": false,
+      "nullable": true,
+      "nullNote": "F16Page.GetPages replaces a null system with new(); null is safe in a preset file and means \"not included\" in a Load/Save export."
+    },
+    {
+      "path": "HTS",
+      "label": "HTS",
+      "help": "HTS manual threat table and enabled threat classes.",
+      "nullCrashesEditor": false,
+      "nullable": true,
+      "nullNote": "F16Page.GetPages replaces a null system with new(); null is safe in a preset file and means \"not included\" in a Load/Save export."
+    },
+    {
+      "path": "Datalink",
+      "label": "Datalink",
+      "help": "Link 16 own callsign, flight lead, team STNs, TDOA and XMIT mode. All members nullable; null = not set.",
+      "nullCrashesEditor": false,
+      "nullable": true,
+      "nullNote": "F16Page.GetPages replaces a null system with new(); null is safe in a preset file and means \"not included\" in a Load/Save export."
+    },
+    {
+      "path": "Misc",
+      "label": "Misc",
+      "help": "Bingo, bullseye steerpoint, CARA ALOW, MSL floor, laser codes, TACAN, ILS. Each group has its own *ToBeUpdated flag.",
+      "nullCrashesEditor": false,
+      "nullable": true,
+      "nullNote": "F16Page.GetPages replaces a null system with new(); null is safe in a preset file and means \"not included\" in a Load/Save export."
+    }
+  ],
+  "fields": [
+    {
+      "path": "Aircraft",
+      "label": "Aircraft code",
+      "kind": "string",
+      "readonly": true,
+      "help": "Always \"F16C\". ConfigLoader picks the C# type from this value; Load/Save import is ignored if it differs."
+    },
+    {
+      "path": "Version",
+      "label": "Preset format version",
+      "kind": "int",
+      "readonly": true,
+      "help": "Always 2. Missing/1 together with a missing Upload sends the file through the V1 converter."
+    },
+    {
+      "path": "KneeboardNotes",
+      "label": "Kneeboard notes",
+      "kind": "string",
+      "multiline": true,
+      "help": "Free text sent to the in-game DTC kneeboard when Upload.Kneeboard is true. Not a system: never copied by Load/Save \"Load from file\", only by whole-preset files."
+    },
+    {
+      "path": "Upload.Waypoints",
+      "label": "Upload Steerpoints",
+      "kind": "bool",
+      "help": "Steerpoints incl. TOS, OA1/OA2, VIP and VRP."
+    },
+    {
+      "path": "Upload.CMS",
+      "label": "Upload CMS",
+      "kind": "bool",
+      "help": "Chaff/flare bingo and every CMS program with ToBeUpdated=true."
+    },
+    {
+      "path": "Upload.Radios",
+      "label": "Upload Radios",
+      "kind": "bool",
+      "help": "COM1/COM2 presets, COM1 guard and the active preset/manual frequency."
+    },
+    {
+      "path": "Upload.MFDs",
+      "label": "Upload MFDs",
+      "kind": "bool",
+      "help": "MFD formats (and FCR mode/az/bars/range) for each master mode with ToBeUpdated=true."
+    },
+    {
+      "path": "Upload.HARMHTS",
+      "label": "Upload HARM / HTS",
+      "kind": "bool",
+      "help": "HARM tables with ToBeUpdated=true, then the HTS manual table and HAD threat classes (always, ignoring the HTS *ToBeUpdated flags). Needs HARM/HTS carried on the jet."
+    },
+    {
+      "path": "Upload.Datalink",
+      "label": "Upload Datalink",
+      "kind": "bool",
+      "help": "Own callsign, flight lead, ownship index, member STNs, TDOA flags and XMIT mode."
+    },
+    {
+      "path": "Upload.Misc",
+      "label": "Upload Misc",
+      "kind": "bool",
+      "help": "Bingo, bullseye, CARA ALOW, MSL floor, laser codes, TACAN, ILS: each only when its own *ToBeUpdated flag is true."
+    },
+    {
+      "path": "Upload.Kneeboard",
+      "label": "Upload Kneeboard",
+      "kind": "bool",
+      "help": "Send the preset summary and KneeboardNotes to the DTC in-game kneeboard after uploading."
+    },
+    {
+      "path": "WaypointsCapture.NavPointsMode",
+      "label": "Navigation points",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Add to end of the list"
+        },
+        {
+          "value": 1,
+          "label": "Add to end of the first gap"
+        },
+        {
+          "value": 2,
+          "label": "Add to specific range, starting from"
+        }
+      ],
+      "managed": "route",
+      "help": "Where DTC places steerpoints captured from the F10 map (SteerpointCaptureMode). App-side only, never uploaded. Exporter: leave 0, or 2 with NavPointsRangeFrom set past the last route sequence so captures do not overwrite the planned route."
+    },
+    {
+      "path": "WaypointsCapture.TgtPointsMode",
+      "label": "Target points",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Add to end of the list"
+        },
+        {
+          "value": 2,
+          "label": "Add to specific range, starting from"
+        }
+      ],
+      "allowedValuesNote": "UI offers only 0 and 2 for target points",
+      "managed": "route",
+      "help": "Placement of captured target points (F10 \"Add TGT\"). 0 = end of list, 2 = range starting at TgtPointsRangeFrom. App-side only."
+    },
+    {
+      "path": "WaypointsCapture.NavPointsRangeFrom",
+      "label": "Nav range start",
+      "kind": "int",
+      "min": 1,
+      "max": 699,
+      "managed": "route",
+      "help": "First steerpoint number used when NavPointsMode = 2."
+    },
+    {
+      "path": "WaypointsCapture.TgtPointsRangeFrom",
+      "label": "Target range start",
+      "kind": "int",
+      "min": 1,
+      "max": 699,
+      "managed": "route",
+      "help": "First steerpoint number used when TgtPointsMode = 2."
+    },
+    {
+      "path": "Waypoints",
+      "label": "Steerpoints",
+      "kind": "object",
+      "managed": "route",
+      "help": "Filled from the planned route. See Waypoints.Waypoints."
+    },
+    {
+      "path": "Waypoints.Waypoints",
+      "label": "Steerpoint list",
+      "kind": "list",
+      "maxItems": 699,
+      "nullCrashesEditor": true,
+      "managed": "route",
+      "item": {
+        "Sequence": 1,
+        "Name": "STPT 1",
+        "Latitude": "N 00°00.000’",
+        "Longitude": "E 000°00.000’",
+        "Elevation": 0,
+        "TimeOverSteerpoint": null,
+        "Target": false,
+        "UseOA": false,
+        "OffsetAimpoint1": null,
+        "OffsetAimpoint2": null,
+        "UseVIP": false,
+        "VIPtoTGT": null,
+        "VIPtoPUP": null,
+        "UseVRP": false,
+        "TGTtoVRP": null,
+        "TGTtoPUP": null
+      },
+      "help": "One entry per route point, in fly order, sorted by Sequence. Map route point i (1-based) to Sequence i. Keep the route within steerpoints 1-24: 25 is the default bullseye steerpoint (Misc.BullseyeWP) and 26+ are markpoints/HSD lines/alt-list in the jet; DTC itself allows 1-699 and uploads in list order via the DED STPT page. Must never be null (AfterLoadFromJson iterates it). The six Offset objects stay null while their Use* flag is false (the editor nulls them on save)."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Sequence",
+      "label": "Steerpoint #",
+      "kind": "int",
+      "min": 1,
+      "max": 699,
+      "managed": "route",
+      "help": "Route index (1-based). Unique. Recommended 1-24 (see list help)."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Name",
+      "label": "Name",
+      "kind": "string",
+      "managed": "route",
+      "help": "Route point name. Required (non-empty) by the editor; default \"STPT n\". Not uploaded to the jet (kneeboard/list only), so no length limit applies, but keep it short (<= 12 chars) for the kneeboard."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Latitude",
+      "label": "Latitude",
+      "kind": "coord-lat",
+      "pattern": "^[NS] \\d{2}°\\d{2}\\.\\d{3}’$",
+      "managed": "route",
+      "help": "DDM thousandths, e.g. \"N 42°10.630’\" (2-digit degrees, U+00B0, U+2019). The uploader types the digits; any other format throws."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Longitude",
+      "label": "Longitude",
+      "kind": "coord-lon",
+      "pattern": "^[EW] \\d{3}°\\d{2}\\.\\d{3}’$",
+      "managed": "route",
+      "help": "DDM thousandths, e.g. \"E 042°28.840’\" (3-digit zero-padded degrees)."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Elevation",
+      "label": "Elevation",
+      "kind": "int",
+      "min": -1500,
+      "max": 80000,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Feet MSL (route altitude or ground elevation for targets). Uploaded."
+    },
+    {
+      "path": "Waypoints.Waypoints[].TimeOverSteerpoint",
+      "label": "TOS",
+      "kind": "time",
+      "pattern": "^\\d{2}:\\d{2}:\\d{2}$",
+      "nullable": true,
+      "managed": "route",
+      "help": "Route time-over-steerpoint HH:MM:SS, or null. Uploaded when not null. Never write \"\" (the uploader indexes the string)."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Target",
+      "label": "Target",
+      "kind": "bool",
+      "managed": "route",
+      "help": "Set true for route points flagged as targets. Display/kneeboard only on the F-16 (not uploaded)."
+    },
+    {
+      "path": "Waypoints.Waypoints[].UseOA",
+      "label": "Use offset aimpoints",
+      "kind": "bool",
+      "managed": "route",
+      "help": "Upload OA1/OA2 for this steerpoint. OffsetAimpoint1 and 2 must then be non-null. Not derived from the route; default false."
+    },
+    {
+      "path": "Waypoints.Waypoints[].OffsetAimpoint1",
+      "label": "OA1",
+      "kind": "object",
+      "nullable": true,
+      "item": {
+        "Range": 0,
+        "Bearing": 0,
+        "Elevation": 0
+      },
+      "managed": "route",
+      "help": "Offset {Range, Bearing, Elevation} (decimals). Null unless UseOA is true; the editor creates new Offset() (all 0) when UseOA is ticked and nulls it when unticked."
+    },
+    {
+      "path": "Waypoints.Waypoints[].OffsetAimpoint1.Range",
+      "label": "OA1 range",
+      "kind": "number",
+      "min": 0,
+      "max": 99999,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Range in feet (integer part typed)."
+    },
+    {
+      "path": "Waypoints.Waypoints[].OffsetAimpoint1.Bearing",
+      "label": "OA1 bearing",
+      "kind": "number",
+      "min": 0,
+      "max": 359.9,
+      "unit": "deg",
+      "managed": "route",
+      "help": "True bearing, 1 decimal."
+    },
+    {
+      "path": "Waypoints.Waypoints[].OffsetAimpoint1.Elevation",
+      "label": "OA1 elevation",
+      "kind": "number",
+      "min": 0,
+      "max": 80000,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Elevation feet MSL."
+    },
+    {
+      "path": "Waypoints.Waypoints[].OffsetAimpoint2",
+      "label": "OA2",
+      "kind": "object",
+      "nullable": true,
+      "item": {
+        "Range": 0,
+        "Bearing": 0,
+        "Elevation": 0
+      },
+      "managed": "route",
+      "help": "Offset {Range, Bearing, Elevation} (decimals). Null unless UseOA is true; the editor creates new Offset() (all 0) when UseOA is ticked and nulls it when unticked."
+    },
+    {
+      "path": "Waypoints.Waypoints[].OffsetAimpoint2.Range",
+      "label": "OA2 range",
+      "kind": "number",
+      "min": 0,
+      "max": 99999,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Range in feet (integer part typed)."
+    },
+    {
+      "path": "Waypoints.Waypoints[].OffsetAimpoint2.Bearing",
+      "label": "OA2 bearing",
+      "kind": "number",
+      "min": 0,
+      "max": 359.9,
+      "unit": "deg",
+      "managed": "route",
+      "help": "True bearing, 1 decimal."
+    },
+    {
+      "path": "Waypoints.Waypoints[].OffsetAimpoint2.Elevation",
+      "label": "OA2 elevation",
+      "kind": "number",
+      "min": 0,
+      "max": 80000,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Elevation feet MSL."
+    },
+    {
+      "path": "Waypoints.Waypoints[].UseVIP",
+      "label": "Is VIP",
+      "kind": "bool",
+      "managed": "route",
+      "help": "This steerpoint is the visual initial point (only one; the uploader uses the last flagged). Mutually exclusive with UseVRP in the UI. VIPtoTGT and VIPtoPUP must then be non-null. Not derived from the route; default false."
+    },
+    {
+      "path": "Waypoints.Waypoints[].VIPtoTGT",
+      "label": "VIP to TGT",
+      "kind": "object",
+      "nullable": true,
+      "item": {
+        "Range": 0,
+        "Bearing": 0,
+        "Elevation": 0
+      },
+      "managed": "route",
+      "help": "Offset {Range, Bearing, Elevation} (decimals). Null unless UseVIP is true; the editor creates new Offset() (all 0) when UseVIP is ticked and nulls it when unticked."
+    },
+    {
+      "path": "Waypoints.Waypoints[].VIPtoTGT.Range",
+      "label": "VIP to TGT range",
+      "kind": "number",
+      "min": 0,
+      "max": 99.9,
+      "unit": "NM",
+      "managed": "route",
+      "help": "Range in NM, 1 decimal."
+    },
+    {
+      "path": "Waypoints.Waypoints[].VIPtoTGT.Bearing",
+      "label": "VIP to TGT bearing",
+      "kind": "number",
+      "min": 0,
+      "max": 359.9,
+      "unit": "deg",
+      "managed": "route",
+      "help": "True bearing, 1 decimal."
+    },
+    {
+      "path": "Waypoints.Waypoints[].VIPtoTGT.Elevation",
+      "label": "VIP to TGT elevation",
+      "kind": "number",
+      "min": 0,
+      "max": 80000,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Target elevation feet MSL."
+    },
+    {
+      "path": "Waypoints.Waypoints[].VIPtoPUP",
+      "label": "VIP to PUP",
+      "kind": "object",
+      "nullable": true,
+      "item": {
+        "Range": 0,
+        "Bearing": 0,
+        "Elevation": 0
+      },
+      "managed": "route",
+      "help": "Offset {Range, Bearing, Elevation} (decimals). Null unless UseVIP is true; the editor creates new Offset() (all 0) when UseVIP is ticked and nulls it when unticked."
+    },
+    {
+      "path": "Waypoints.Waypoints[].VIPtoPUP.Range",
+      "label": "VIP to PUP range",
+      "kind": "number",
+      "min": 0,
+      "max": 99.9,
+      "unit": "NM",
+      "managed": "route",
+      "help": "Range in NM, 1 decimal."
+    },
+    {
+      "path": "Waypoints.Waypoints[].VIPtoPUP.Bearing",
+      "label": "VIP to PUP bearing",
+      "kind": "number",
+      "min": 0,
+      "max": 359.9,
+      "unit": "deg",
+      "managed": "route",
+      "help": "True bearing, 1 decimal."
+    },
+    {
+      "path": "Waypoints.Waypoints[].VIPtoPUP.Elevation",
+      "label": "VIP to PUP elevation",
+      "kind": "number",
+      "min": 0,
+      "max": 80000,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Pull-up point elevation feet MSL."
+    },
+    {
+      "path": "Waypoints.Waypoints[].UseVRP",
+      "label": "Is VRP target",
+      "kind": "bool",
+      "managed": "route",
+      "help": "This steerpoint is the target for a visual reference point (only one). TGTtoVRP and TGTtoPUP must then be non-null. Not derived from the route; default false."
+    },
+    {
+      "path": "Waypoints.Waypoints[].TGTtoVRP",
+      "label": "TGT to VRP",
+      "kind": "object",
+      "nullable": true,
+      "item": {
+        "Range": 0,
+        "Bearing": 0,
+        "Elevation": 0
+      },
+      "managed": "route",
+      "help": "Offset {Range, Bearing, Elevation} (decimals). Null unless UseVRP is true; the editor creates new Offset() (all 0) when UseVRP is ticked and nulls it when unticked."
+    },
+    {
+      "path": "Waypoints.Waypoints[].TGTtoVRP.Range",
+      "label": "TGT to VRP range",
+      "kind": "number",
+      "min": 0,
+      "max": 486090,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Range in feet (integer)."
+    },
+    {
+      "path": "Waypoints.Waypoints[].TGTtoVRP.Bearing",
+      "label": "TGT to VRP bearing",
+      "kind": "number",
+      "min": 0,
+      "max": 359.9,
+      "unit": "deg",
+      "managed": "route",
+      "help": "True bearing, 1 decimal."
+    },
+    {
+      "path": "Waypoints.Waypoints[].TGTtoVRP.Elevation",
+      "label": "TGT to VRP elevation",
+      "kind": "number",
+      "min": 0,
+      "max": 80000,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Elevation feet MSL."
+    },
+    {
+      "path": "Waypoints.Waypoints[].TGTtoPUP",
+      "label": "TGT to PUP",
+      "kind": "object",
+      "nullable": true,
+      "item": {
+        "Range": 0,
+        "Bearing": 0,
+        "Elevation": 0
+      },
+      "managed": "route",
+      "help": "Offset {Range, Bearing, Elevation} (decimals). Null unless UseVRP is true; the editor creates new Offset() (all 0) when UseVRP is ticked and nulls it when unticked."
+    },
+    {
+      "path": "Waypoints.Waypoints[].TGTtoPUP.Range",
+      "label": "TGT to PUP range",
+      "kind": "number",
+      "min": 0,
+      "max": 486090,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Range in feet (integer)."
+    },
+    {
+      "path": "Waypoints.Waypoints[].TGTtoPUP.Bearing",
+      "label": "TGT to PUP bearing",
+      "kind": "number",
+      "min": 0,
+      "max": 359.9,
+      "unit": "deg",
+      "managed": "route",
+      "help": "True bearing, 1 decimal."
+    },
+    {
+      "path": "Waypoints.Waypoints[].TGTtoPUP.Elevation",
+      "label": "TGT to PUP elevation",
+      "kind": "number",
+      "min": 0,
+      "max": 80000,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Elevation feet MSL."
+    },
+    {
+      "path": "CMS.Programs",
+      "label": "CMS programs",
+      "kind": "list",
+      "fixedLength": 6,
+      "nullCrashesEditor": true,
+      "help": "Exactly 6 programs (MAN 1-6). A 5-element array gets program 6 appended on load; null throws in AfterLoadFromJson. All ten members of each program must be present (constructor-bound)."
+    },
+    {
+      "path": "CMS.Programs[].Number",
+      "label": "Program",
+      "kind": "int",
+      "min": 1,
+      "max": 6,
+      "readonly": true,
+      "help": "Program number 1-6, equals array index + 1."
+    },
+    {
+      "path": "CMS.Programs[].ChaffBurstQty",
+      "label": "Chaff burst qty",
+      "kind": "int",
+      "min": 0,
+      "max": 99,
+      "unit": "",
+      "help": "Chaff cartridges per burst (BQ)."
+    },
+    {
+      "path": "CMS.Programs[].ChaffBurstInterval",
+      "label": "Chaff burst interval",
+      "kind": "number",
+      "min": 0.02,
+      "max": 10,
+      "step": 0.001,
+      "unit": "s",
+      "help": "Chaff burst interval (BI), seconds, 3 decimals (mask 00.000)."
+    },
+    {
+      "path": "CMS.Programs[].ChaffSalvoQty",
+      "label": "Chaff salvo qty",
+      "kind": "int",
+      "min": 0,
+      "max": 99,
+      "unit": "",
+      "help": "Chaff number of salvos (SQ)."
+    },
+    {
+      "path": "CMS.Programs[].ChaffSalvoInterval",
+      "label": "Chaff salvo interval",
+      "kind": "number",
+      "min": 0.5,
+      "max": 150,
+      "step": 0.01,
+      "unit": "s",
+      "help": "Chaff salvo interval (SI), seconds, 2 decimals (mask 000.00)."
+    },
+    {
+      "path": "CMS.Programs[].FlareBurstQty",
+      "label": "Flare burst qty",
+      "kind": "int",
+      "min": 0,
+      "max": 99,
+      "unit": "",
+      "help": "Flare cartridges per burst (BQ)."
+    },
+    {
+      "path": "CMS.Programs[].FlareBurstInterval",
+      "label": "Flare burst interval",
+      "kind": "number",
+      "min": 0.02,
+      "max": 10,
+      "step": 0.001,
+      "unit": "s",
+      "help": "Flare burst interval (BI), seconds, 3 decimals (mask 00.000)."
+    },
+    {
+      "path": "CMS.Programs[].FlareSalvoQty",
+      "label": "Flare salvo qty",
+      "kind": "int",
+      "min": 0,
+      "max": 99,
+      "unit": "",
+      "help": "Flare number of salvos (SQ)."
+    },
+    {
+      "path": "CMS.Programs[].FlareSalvoInterval",
+      "label": "Flare salvo interval",
+      "kind": "number",
+      "min": 0.5,
+      "max": 150,
+      "step": 0.01,
+      "unit": "s",
+      "help": "Flare salvo interval (SI), seconds, 2 decimals (mask 000.00)."
+    },
+    {
+      "path": "CMS.Programs[].ToBeUpdated",
+      "label": "Upload this program",
+      "kind": "bool",
+      "help": "Only programs with true are typed in (others are skipped)."
+    },
+    {
+      "path": "CMS.ChaffBingo",
+      "label": "Chaff bingo",
+      "kind": "int",
+      "min": 0,
+      "max": 99,
+      "help": "Always uploaded when Upload.CMS is true."
+    },
+    {
+      "path": "CMS.FlareBingo",
+      "label": "Flare bingo",
+      "kind": "int",
+      "min": 0,
+      "max": 99,
+      "help": "Always uploaded when Upload.CMS is true."
+    },
+    {
+      "path": "Radios.Radio1.Presets",
+      "label": "COM1 (UHF) presets",
+      "kind": "list",
+      "nullable": true,
+      "maxItems": 20,
+      "item": {
+        "Number": 1,
+        "Name": null,
+        "Frequency": null
+      },
+      "help": "Preset channels 1-20 (null or [] = none). Only filled channels are present; Number identifies the channel. UHF 225.000-399.975 MHz."
+    },
+    {
+      "path": "Radios.Radio1.Presets[].Number",
+      "label": "Channel",
+      "kind": "int",
+      "min": 1,
+      "max": 20,
+      "help": "Preset channel number; unique within the radio. Always include it (constructor-bound)."
+    },
+    {
+      "path": "Radios.Radio1.Presets[].Name",
+      "label": "Name",
+      "kind": "string",
+      "nullable": true,
+      "help": "Label for the channel (kneeboard only, not uploaded)."
+    },
+    {
+      "path": "Radios.Radio1.Presets[].Frequency",
+      "label": "Frequency",
+      "kind": "freq",
+      "pattern": "^(2[2-9]\\d|3\\d\\d)\\.\\d{3}$",
+      "unit": "MHz",
+      "bands": [
+        {
+          "name": "UHF",
+          "min": 225,
+          "max": 399.975
+        }
+      ],
+      "help": "UHF 225.000-399.975 MHz; \"ddd.ddd\" with a dot (the uploader splits on \".\"); last digit 0/2/5/7. 2-decimal values get a 0 appended on load."
+    },
+    {
+      "path": "Radios.Radio1.SelectedFrequency",
+      "label": "Manual frequency",
+      "kind": "freq",
+      "pattern": "^(2[2-9]\\d|3\\d\\d)\\.\\d{3}$",
+      "nullable": true,
+      "unit": "MHz",
+      "bands": [
+        {
+          "name": "UHF",
+          "min": 225,
+          "max": 399.975
+        }
+      ],
+      "help": "Frequency set when Mode = 1 (Frequency). UHF 225.000-399.975 MHz."
+    },
+    {
+      "path": "Radios.Radio1.SelectedPreset",
+      "label": "Active preset",
+      "kind": "string",
+      "nullable": true,
+      "pattern": "^([1-9]|1\\d|20)$",
+      "help": "Preset channel selected when Mode = 2, as a STRING \"1\"..\"20\"."
+    },
+    {
+      "path": "Radios.Radio1.EnableGuard",
+      "label": "Guard",
+      "kind": "bool",
+      "help": "Enable UHF guard receiver (COM1 only)."
+    },
+    {
+      "path": "Radios.Radio1.Mode",
+      "label": "Mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(not set)"
+        },
+        {
+          "value": 1,
+          "label": "Frequency"
+        },
+        {
+          "value": 2,
+          "label": "Preset"
+        }
+      ],
+      "help": "RadioMode: 1 = tune SelectedFrequency, 2 = select SelectedPreset, 0 = leave the active channel alone. A radio with everything default is skipped."
+    },
+    {
+      "path": "Radios.Radio2.Presets",
+      "label": "COM2 (VHF/FM) presets",
+      "kind": "list",
+      "nullable": true,
+      "maxItems": 20,
+      "item": {
+        "Number": 1,
+        "Name": null,
+        "Frequency": null
+      },
+      "help": "Preset channels 1-20 (null or [] = none). Only filled channels are present; Number identifies the channel. VHF 108.000-151.975 MHz or FM 30.00-87.97 MHz."
+    },
+    {
+      "path": "Radios.Radio2.Presets[].Number",
+      "label": "Channel",
+      "kind": "int",
+      "min": 1,
+      "max": 20,
+      "help": "Preset channel number; unique within the radio. Always include it (constructor-bound)."
+    },
+    {
+      "path": "Radios.Radio2.Presets[].Name",
+      "label": "Name",
+      "kind": "string",
+      "nullable": true,
+      "help": "Label for the channel (kneeboard only, not uploaded)."
+    },
+    {
+      "path": "Radios.Radio2.Presets[].Frequency",
+      "label": "Frequency",
+      "kind": "freq",
+      "pattern": "^\\d{2,3}\\.\\d{2,3}$",
+      "unit": "MHz",
+      "bands": [
+        {
+          "name": "FM",
+          "min": 30,
+          "max": 87.97
+        },
+        {
+          "name": "VHF",
+          "min": 108,
+          "max": 151.975
+        }
+      ],
+      "help": "VHF 108.000-151.975 MHz or FM 30.00-87.97 MHz; \"ddd.ddd\" with a dot (the uploader splits on \".\"); last digit 0/2/5/7. 2-decimal values get a 0 appended on load."
+    },
+    {
+      "path": "Radios.Radio2.SelectedFrequency",
+      "label": "Manual frequency",
+      "kind": "freq",
+      "pattern": "^\\d{2,3}\\.\\d{2,3}$",
+      "nullable": true,
+      "unit": "MHz",
+      "bands": [
+        {
+          "name": "FM",
+          "min": 30,
+          "max": 87.97
+        },
+        {
+          "name": "VHF",
+          "min": 108,
+          "max": 151.975
+        }
+      ],
+      "help": "Frequency set when Mode = 1 (Frequency). VHF 108.000-151.975 MHz or FM 30.00-87.97 MHz."
+    },
+    {
+      "path": "Radios.Radio2.SelectedPreset",
+      "label": "Active preset",
+      "kind": "string",
+      "nullable": true,
+      "pattern": "^([1-9]|1\\d|20)$",
+      "help": "Preset channel selected when Mode = 2, as a STRING \"1\"..\"20\"."
+    },
+    {
+      "path": "Radios.Radio2.EnableGuard",
+      "label": "Guard",
+      "kind": "bool",
+      "help": "Not offered for COM2 in the UI; leave false."
+    },
+    {
+      "path": "Radios.Radio2.Mode",
+      "label": "Mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(not set)"
+        },
+        {
+          "value": 1,
+          "label": "Frequency"
+        },
+        {
+          "value": 2,
+          "label": "Preset"
+        }
+      ],
+      "help": "RadioMode: 1 = tune SelectedFrequency, 2 = select SelectedPreset, 0 = leave the active channel alone. A radio with everything default is skipped."
+    },
+    {
+      "path": "MFD.Configurations",
+      "label": "MFD formats per master mode",
+      "kind": "list",
+      "fixedLength": 5,
+      "nullCrashesEditor": true,
+      "help": "Exactly 5 entries in order NAV, AA, AG, DGFT, MSL. Null throws in AfterLoadFromJson."
+    },
+    {
+      "path": "MFD.Configurations[].Mode",
+      "label": "Master mode",
+      "kind": "enum",
+      "readonly": true,
+      "options": [
+        {
+          "value": 1,
+          "label": "NAV"
+        },
+        {
+          "value": 2,
+          "label": "AA"
+        },
+        {
+          "value": 3,
+          "label": "AG"
+        },
+        {
+          "value": 4,
+          "label": "DGFT"
+        },
+        {
+          "value": 5,
+          "label": "MSL"
+        }
+      ],
+      "help": "Fixed by array position."
+    },
+    {
+      "path": "MFD.Configurations[].ToBeUpdated",
+      "label": "Upload this mode",
+      "kind": "bool",
+      "help": "Only modes with true are uploaded (non-NAV first, NAV last)."
+    },
+    {
+      "path": "MFD.Configurations[].LeftMFD",
+      "label": "Left MFD",
+      "kind": "object",
+      "help": "MFDConfiguration (constructor-bound; keep all members)."
+    },
+    {
+      "path": "MFD.Configurations[].LeftMFD.SelectedPage",
+      "label": "Left MFD selected page",
+      "kind": "int",
+      "min": 1,
+      "max": 3,
+      "help": "Which of Page1-3 is shown; must point at a non-BLANK page."
+    },
+    {
+      "path": "MFD.Configurations[].LeftMFD.Page1",
+      "label": "Left MFD page 1",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "BLANK"
+        },
+        {
+          "value": 2,
+          "label": "FCR"
+        },
+        {
+          "value": 3,
+          "label": "HSD"
+        },
+        {
+          "value": 4,
+          "label": "SMS"
+        },
+        {
+          "value": 5,
+          "label": "TGP"
+        },
+        {
+          "value": 6,
+          "label": "WPN"
+        },
+        {
+          "value": 7,
+          "label": "HAD"
+        },
+        {
+          "value": 8,
+          "label": "FLCS"
+        },
+        {
+          "value": 9,
+          "label": "DTE"
+        },
+        {
+          "value": 10,
+          "label": "TEST"
+        },
+        {
+          "value": 11,
+          "label": "FLIR"
+        },
+        {
+          "value": 12,
+          "label": "TFR"
+        },
+        {
+          "value": 13,
+          "label": "RCCE"
+        }
+      ],
+      "help": "MFD format on OSB 12/13/14. A page may not repeat on one MFD (except BLANK)."
+    },
+    {
+      "path": "MFD.Configurations[].LeftMFD.Page2",
+      "label": "Left MFD page 2",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "BLANK"
+        },
+        {
+          "value": 2,
+          "label": "FCR"
+        },
+        {
+          "value": 3,
+          "label": "HSD"
+        },
+        {
+          "value": 4,
+          "label": "SMS"
+        },
+        {
+          "value": 5,
+          "label": "TGP"
+        },
+        {
+          "value": 6,
+          "label": "WPN"
+        },
+        {
+          "value": 7,
+          "label": "HAD"
+        },
+        {
+          "value": 8,
+          "label": "FLCS"
+        },
+        {
+          "value": 9,
+          "label": "DTE"
+        },
+        {
+          "value": 10,
+          "label": "TEST"
+        },
+        {
+          "value": 11,
+          "label": "FLIR"
+        },
+        {
+          "value": 12,
+          "label": "TFR"
+        },
+        {
+          "value": 13,
+          "label": "RCCE"
+        }
+      ],
+      "help": "MFD format on OSB 12/13/14. A page may not repeat on one MFD (except BLANK)."
+    },
+    {
+      "path": "MFD.Configurations[].LeftMFD.Page3",
+      "label": "Left MFD page 3",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "BLANK"
+        },
+        {
+          "value": 2,
+          "label": "FCR"
+        },
+        {
+          "value": 3,
+          "label": "HSD"
+        },
+        {
+          "value": 4,
+          "label": "SMS"
+        },
+        {
+          "value": 5,
+          "label": "TGP"
+        },
+        {
+          "value": 6,
+          "label": "WPN"
+        },
+        {
+          "value": 7,
+          "label": "HAD"
+        },
+        {
+          "value": 8,
+          "label": "FLCS"
+        },
+        {
+          "value": 9,
+          "label": "DTE"
+        },
+        {
+          "value": 10,
+          "label": "TEST"
+        },
+        {
+          "value": 11,
+          "label": "FLIR"
+        },
+        {
+          "value": 12,
+          "label": "TFR"
+        },
+        {
+          "value": 13,
+          "label": "RCCE"
+        }
+      ],
+      "help": "MFD format on OSB 12/13/14. A page may not repeat on one MFD (except BLANK)."
+    },
+    {
+      "path": "MFD.Configurations[].LeftMFD.FCRMode",
+      "label": "Left MFD FCR mode",
+      "kind": "enum",
+      "nullable": true,
+      "options": [
+        {
+          "value": null,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "RWS"
+        },
+        {
+          "value": 2,
+          "label": "VSR"
+        },
+        {
+          "value": 3,
+          "label": "TWS"
+        },
+        {
+          "value": 4,
+          "label": "GM"
+        },
+        {
+          "value": 5,
+          "label": "GMT"
+        },
+        {
+          "value": 6,
+          "label": "SEA"
+        }
+      ],
+      "help": "Only used when one of the pages is FCR. AA/NAV/MSL/DGFT: RWS/VSR/TWS; AG/NAV/DGFT: GM/GMT/SEA. On load an FCR page with nulls gets RWS/6/4/40 (NAV/AA/MSL) or GM/40/6 (AG)."
+    },
+    {
+      "path": "MFD.Configurations[].LeftMFD.FCRAzimuth",
+      "label": "Left MFD FCR azimuth",
+      "kind": "enum",
+      "nullable": true,
+      "options": [
+        {
+          "value": null,
+          "label": "(none)"
+        },
+        {
+          "value": 6,
+          "label": "A6 (±60°)"
+        },
+        {
+          "value": 3,
+          "label": "A3 (±30°)"
+        },
+        {
+          "value": 1,
+          "label": "A1 (±10°)"
+        }
+      ],
+      "help": "FCR azimuth scan."
+    },
+    {
+      "path": "MFD.Configurations[].LeftMFD.FCRBars",
+      "label": "Left MFD FCR bars",
+      "kind": "enum",
+      "nullable": true,
+      "options": [
+        {
+          "value": null,
+          "label": "(none)"
+        },
+        {
+          "value": 4,
+          "label": "4 bar"
+        },
+        {
+          "value": 2,
+          "label": "2 bar"
+        },
+        {
+          "value": 1,
+          "label": "1 bar"
+        }
+      ],
+      "help": "Air-to-air modes only (UI shows az/bars as \"6/4\" etc.)."
+    },
+    {
+      "path": "MFD.Configurations[].LeftMFD.FCRRange",
+      "label": "Left MFD FCR range",
+      "kind": "enum",
+      "nullable": true,
+      "unit": "NM",
+      "options": [
+        {
+          "value": null,
+          "label": "(none)"
+        },
+        {
+          "value": -1,
+          "label": "AUTO (GM/GMT/SEA)"
+        },
+        {
+          "value": 5,
+          "label": "5"
+        },
+        {
+          "value": 10,
+          "label": "10"
+        },
+        {
+          "value": 20,
+          "label": "20"
+        },
+        {
+          "value": 40,
+          "label": "40"
+        },
+        {
+          "value": 80,
+          "label": "80"
+        },
+        {
+          "value": 160,
+          "label": "160 (A-A only)"
+        }
+      ],
+      "help": "A-A: 5/10/20/40/80/160. A-G: AUTO(-1)/10/20/40/80."
+    },
+    {
+      "path": "MFD.Configurations[].RightMFD",
+      "label": "Right MFD",
+      "kind": "object",
+      "help": "MFDConfiguration (constructor-bound; keep all members)."
+    },
+    {
+      "path": "MFD.Configurations[].RightMFD.SelectedPage",
+      "label": "Right MFD selected page",
+      "kind": "int",
+      "min": 1,
+      "max": 3,
+      "help": "Which of Page1-3 is shown; must point at a non-BLANK page."
+    },
+    {
+      "path": "MFD.Configurations[].RightMFD.Page1",
+      "label": "Right MFD page 1",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "BLANK"
+        },
+        {
+          "value": 2,
+          "label": "FCR"
+        },
+        {
+          "value": 3,
+          "label": "HSD"
+        },
+        {
+          "value": 4,
+          "label": "SMS"
+        },
+        {
+          "value": 5,
+          "label": "TGP"
+        },
+        {
+          "value": 6,
+          "label": "WPN"
+        },
+        {
+          "value": 7,
+          "label": "HAD"
+        },
+        {
+          "value": 8,
+          "label": "FLCS"
+        },
+        {
+          "value": 9,
+          "label": "DTE"
+        },
+        {
+          "value": 10,
+          "label": "TEST"
+        },
+        {
+          "value": 11,
+          "label": "FLIR"
+        },
+        {
+          "value": 12,
+          "label": "TFR"
+        },
+        {
+          "value": 13,
+          "label": "RCCE"
+        }
+      ],
+      "help": "MFD format on OSB 12/13/14. A page may not repeat on one MFD (except BLANK)."
+    },
+    {
+      "path": "MFD.Configurations[].RightMFD.Page2",
+      "label": "Right MFD page 2",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "BLANK"
+        },
+        {
+          "value": 2,
+          "label": "FCR"
+        },
+        {
+          "value": 3,
+          "label": "HSD"
+        },
+        {
+          "value": 4,
+          "label": "SMS"
+        },
+        {
+          "value": 5,
+          "label": "TGP"
+        },
+        {
+          "value": 6,
+          "label": "WPN"
+        },
+        {
+          "value": 7,
+          "label": "HAD"
+        },
+        {
+          "value": 8,
+          "label": "FLCS"
+        },
+        {
+          "value": 9,
+          "label": "DTE"
+        },
+        {
+          "value": 10,
+          "label": "TEST"
+        },
+        {
+          "value": 11,
+          "label": "FLIR"
+        },
+        {
+          "value": 12,
+          "label": "TFR"
+        },
+        {
+          "value": 13,
+          "label": "RCCE"
+        }
+      ],
+      "help": "MFD format on OSB 12/13/14. A page may not repeat on one MFD (except BLANK)."
+    },
+    {
+      "path": "MFD.Configurations[].RightMFD.Page3",
+      "label": "Right MFD page 3",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "BLANK"
+        },
+        {
+          "value": 2,
+          "label": "FCR"
+        },
+        {
+          "value": 3,
+          "label": "HSD"
+        },
+        {
+          "value": 4,
+          "label": "SMS"
+        },
+        {
+          "value": 5,
+          "label": "TGP"
+        },
+        {
+          "value": 6,
+          "label": "WPN"
+        },
+        {
+          "value": 7,
+          "label": "HAD"
+        },
+        {
+          "value": 8,
+          "label": "FLCS"
+        },
+        {
+          "value": 9,
+          "label": "DTE"
+        },
+        {
+          "value": 10,
+          "label": "TEST"
+        },
+        {
+          "value": 11,
+          "label": "FLIR"
+        },
+        {
+          "value": 12,
+          "label": "TFR"
+        },
+        {
+          "value": 13,
+          "label": "RCCE"
+        }
+      ],
+      "help": "MFD format on OSB 12/13/14. A page may not repeat on one MFD (except BLANK)."
+    },
+    {
+      "path": "MFD.Configurations[].RightMFD.FCRMode",
+      "label": "Right MFD FCR mode",
+      "kind": "enum",
+      "nullable": true,
+      "options": [
+        {
+          "value": null,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "RWS"
+        },
+        {
+          "value": 2,
+          "label": "VSR"
+        },
+        {
+          "value": 3,
+          "label": "TWS"
+        },
+        {
+          "value": 4,
+          "label": "GM"
+        },
+        {
+          "value": 5,
+          "label": "GMT"
+        },
+        {
+          "value": 6,
+          "label": "SEA"
+        }
+      ],
+      "help": "Only used when one of the pages is FCR. AA/NAV/MSL/DGFT: RWS/VSR/TWS; AG/NAV/DGFT: GM/GMT/SEA. On load an FCR page with nulls gets RWS/6/4/40 (NAV/AA/MSL) or GM/40/6 (AG)."
+    },
+    {
+      "path": "MFD.Configurations[].RightMFD.FCRAzimuth",
+      "label": "Right MFD FCR azimuth",
+      "kind": "enum",
+      "nullable": true,
+      "options": [
+        {
+          "value": null,
+          "label": "(none)"
+        },
+        {
+          "value": 6,
+          "label": "A6 (±60°)"
+        },
+        {
+          "value": 3,
+          "label": "A3 (±30°)"
+        },
+        {
+          "value": 1,
+          "label": "A1 (±10°)"
+        }
+      ],
+      "help": "FCR azimuth scan."
+    },
+    {
+      "path": "MFD.Configurations[].RightMFD.FCRBars",
+      "label": "Right MFD FCR bars",
+      "kind": "enum",
+      "nullable": true,
+      "options": [
+        {
+          "value": null,
+          "label": "(none)"
+        },
+        {
+          "value": 4,
+          "label": "4 bar"
+        },
+        {
+          "value": 2,
+          "label": "2 bar"
+        },
+        {
+          "value": 1,
+          "label": "1 bar"
+        }
+      ],
+      "help": "Air-to-air modes only (UI shows az/bars as \"6/4\" etc.)."
+    },
+    {
+      "path": "MFD.Configurations[].RightMFD.FCRRange",
+      "label": "Right MFD FCR range",
+      "kind": "enum",
+      "nullable": true,
+      "unit": "NM",
+      "options": [
+        {
+          "value": null,
+          "label": "(none)"
+        },
+        {
+          "value": -1,
+          "label": "AUTO (GM/GMT/SEA)"
+        },
+        {
+          "value": 5,
+          "label": "5"
+        },
+        {
+          "value": 10,
+          "label": "10"
+        },
+        {
+          "value": 20,
+          "label": "20"
+        },
+        {
+          "value": 40,
+          "label": "40"
+        },
+        {
+          "value": 80,
+          "label": "80"
+        },
+        {
+          "value": 160,
+          "label": "160 (A-A only)"
+        }
+      ],
+      "help": "A-A: 5/10/20/40/80/160. A-G: AUTO(-1)/10/20/40/80."
+    },
+    {
+      "path": "HARM.Tables",
+      "label": "HARM ALIC tables",
+      "kind": "list",
+      "fixedLength": 3,
+      "nullCrashesEditor": true,
+      "help": "Exactly 3 tables."
+    },
+    {
+      "path": "HARM.Tables[].TableNumber",
+      "label": "Table",
+      "kind": "int",
+      "min": 1,
+      "max": 3,
+      "readonly": true,
+      "help": "Table number 1-3 (public field)."
+    },
+    {
+      "path": "HARM.Tables[].ToBeUpdated",
+      "label": "Upload this table",
+      "kind": "bool",
+      "help": "Only tables with true are uploaded (with Upload.HARMHTS)."
+    },
+    {
+      "path": "HARM.Tables[].Emitters",
+      "label": "Emitters",
+      "kind": "list",
+      "fixedLength": 5,
+      "help": "5 emitter slots."
+    },
+    {
+      "path": "HARM.Tables[].Emitters[]",
+      "label": "Emitter HARM code",
+      "kind": "int",
+      "min": 0,
+      "max": 999,
+      "help": "HARMCode from dtc-emitters.json; 0 = empty slot."
+    },
+    {
+      "path": "HTS.ManualEmitters",
+      "label": "HTS manual table",
+      "kind": "list",
+      "maxItems": 8,
+      "nullCrashesEditor": true,
+      "item": 0,
+      "help": "Up to 8 HARM codes for the HAD MAN table (default []). Must not be null."
+    },
+    {
+      "path": "HTS.ManualEmitters[]",
+      "label": "Emitter HARM code",
+      "kind": "int",
+      "min": 0,
+      "max": 999,
+      "help": "HARMCode from dtc-emitters.json; 0 = empty."
+    },
+    {
+      "path": "HTS.ManualEmittersToBeUpdated",
+      "label": "Manual table to be updated",
+      "kind": "bool",
+      "help": "Stored only: the uploader ignores it and always writes the manual table when Upload.HARMHTS."
+    },
+    {
+      "path": "HTS.EnabledClasses",
+      "label": "HTS threat classes",
+      "kind": "list",
+      "fixedLength": 11,
+      "nullCrashesEditor": true,
+      "help": "Classes 1-11 (index 0 = class 1), default all true."
+    },
+    {
+      "path": "HTS.EnabledClasses[]",
+      "label": "Class enabled",
+      "kind": "bool",
+      "help": "HAD threat class N enabled (UI label \"Class N\")."
+    },
+    {
+      "path": "HTS.ManualTableEnabledToBeUpdated",
+      "label": "Manual table enable to be updated",
+      "kind": "bool",
+      "help": "Stored only: ignored by the uploader."
+    },
+    {
+      "path": "HTS.ManualTableEnabled",
+      "label": "Manual table (MAN) enabled",
+      "kind": "bool",
+      "help": "Select MAN on the HAD threat class page (public field)."
+    },
+    {
+      "path": "Datalink.EnableOwnCallsign",
+      "label": "Set own callsign",
+      "kind": "bool",
+      "nullable": true,
+      "help": "bool? checkbox; null = never touched (shown unchecked)."
+    },
+    {
+      "path": "Datalink.OwnCallsign",
+      "label": "Own callsign",
+      "kind": "string",
+      "nullable": true,
+      "pattern": "^[A-Z]{2}[0-9]{2}$",
+      "help": "Exactly 4 chars: two letters + two digits, e.g. \"VP11\"."
+    },
+    {
+      "path": "Datalink.FlightLead",
+      "label": "Flight lead",
+      "kind": "bool",
+      "nullable": true,
+      "help": "bool? checkbox; null = never touched (shown unchecked)."
+    },
+    {
+      "path": "Datalink.EnableMembers",
+      "label": "Set team members",
+      "kind": "bool",
+      "nullable": true,
+      "help": "bool? checkbox (null = never touched); enables uploading Members/OwnshipIndex/TDOA."
+    },
+    {
+      "path": "Datalink.OwnshipIndex",
+      "label": "Ownship index",
+      "kind": "int",
+      "nullable": true,
+      "min": 1,
+      "max": 8,
+      "help": "Own position 1-8 in the team list (radio buttons); null = not set."
+    },
+    {
+      "path": "Datalink.Members",
+      "label": "Team member STNs",
+      "kind": "list",
+      "nullable": true,
+      "fixedLength": 8,
+      "item": null,
+      "help": "null, or exactly 8 entries (the uploader indexes 0-7). The app creates new string[8] on first edit."
+    },
+    {
+      "path": "Datalink.Members[]",
+      "label": "Member STN",
+      "kind": "string",
+      "nullable": true,
+      "pattern": "^([0-7]{5}|-1)$",
+      "help": "5-digit STN as text, e.g. \"00201\"; \"-1\", \"\" or null = empty slot."
+    },
+    {
+      "path": "Datalink.TDOAMembers",
+      "label": "TDOA members",
+      "kind": "list",
+      "nullable": true,
+      "fixedLength": 8,
+      "item": false,
+      "help": "null, or exactly 8 booleans."
+    },
+    {
+      "path": "Datalink.TDOAMembers[]",
+      "label": "TDOA",
+      "kind": "bool",
+      "help": "Member N is a TDOA member."
+    },
+    {
+      "path": "Datalink.DatalinkMode",
+      "label": "XMIT mode",
+      "kind": "enum",
+      "nullable": true,
+      "options": [
+        {
+          "value": null,
+          "label": "(leave unchanged)"
+        },
+        {
+          "value": 0,
+          "label": "OFF"
+        },
+        {
+          "value": 1,
+          "label": "TNDL"
+        },
+        {
+          "value": 2,
+          "label": "SMDL"
+        }
+      ],
+      "help": "DatalinkMode? enum."
+    },
+    {
+      "path": "Misc.Bingo",
+      "label": "Bingo fuel",
+      "kind": "int",
+      "min": 0,
+      "max": 99999,
+      "unit": "lbs"
+    },
+    {
+      "path": "Misc.BingoToBeUpdated",
+      "label": "Upload bingo",
+      "kind": "bool",
+      "help": "Upload the matching value(s) when Upload.Misc is true."
+    },
+    {
+      "path": "Misc.BullseyeToBeUpdated",
+      "label": "Upload bullseye",
+      "kind": "bool",
+      "help": "Upload the matching value(s) when Upload.Misc is true."
+    },
+    {
+      "path": "Misc.BullseyeWP",
+      "label": "Bullseye steerpoint",
+      "kind": "int",
+      "min": 1,
+      "max": 99,
+      "help": "Steerpoint number used as bullseye (default 25). The F-16 has no bullseye coordinate field in DTC; to set a position, put it in this steerpoint."
+    },
+    {
+      "path": "Misc.CARAALOW",
+      "label": "CARA ALOW",
+      "kind": "int",
+      "min": 0,
+      "max": 50000,
+      "step": 10,
+      "unit": "ft",
+      "help": "UI rounds to the nearest 10 ft."
+    },
+    {
+      "path": "Misc.CARAALOWToBeUpdated",
+      "label": "Upload CARA ALOW",
+      "kind": "bool",
+      "help": "Upload the matching value(s) when Upload.Misc is true."
+    },
+    {
+      "path": "Misc.MSLFloor",
+      "label": "MSL floor",
+      "kind": "int",
+      "min": 0,
+      "max": 80000,
+      "unit": "ft"
+    },
+    {
+      "path": "Misc.MSLFloorToBeUpdated",
+      "label": "Upload MSL floor",
+      "kind": "bool",
+      "help": "Upload the matching value(s) when Upload.Misc is true."
+    },
+    {
+      "path": "Misc.LaserSettingsToBeUpdated",
+      "label": "Upload laser settings",
+      "kind": "bool",
+      "help": "Upload the matching value(s) when Upload.Misc is true."
+    },
+    {
+      "path": "Misc.TGPCode",
+      "label": "TGP laser code",
+      "kind": "int",
+      "min": 1111,
+      "max": 2888,
+      "pattern": "^[12][1-8]{3}$",
+      "help": "4 digits: first 1-2, others 1-8."
+    },
+    {
+      "path": "Misc.LSTCode",
+      "label": "LST code",
+      "kind": "int",
+      "min": 1111,
+      "max": 2888,
+      "pattern": "^[12][1-8]{3}$",
+      "help": "4 digits: first 1-2, others 1-8."
+    },
+    {
+      "path": "Misc.LaserStartTime",
+      "label": "Laser start time",
+      "kind": "int",
+      "min": 0,
+      "max": 176,
+      "unit": "s",
+      "help": "Seconds before impact."
+    },
+    {
+      "path": "Misc.TACANChannel",
+      "label": "TACAN channel",
+      "kind": "int",
+      "min": 1,
+      "max": 126
+    },
+    {
+      "path": "Misc.TACANBand",
+      "label": "TACAN band",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "X"
+        },
+        {
+          "value": 1,
+          "label": "Y"
+        }
+      ]
+    },
+    {
+      "path": "Misc.TACANToBeUpdated",
+      "label": "Upload TACAN",
+      "kind": "bool",
+      "help": "Upload the matching value(s) when Upload.Misc is true."
+    },
+    {
+      "path": "Misc.ILSFrequency",
+      "label": "ILS frequency",
+      "kind": "number",
+      "min": 108.1,
+      "max": 111.95,
+      "step": 0.05,
+      "unit": "MHz",
+      "pattern": "^1[0-1][8|9|0|1]\\.[1|3|5|7|9]?[0|5]?$",
+      "help": "Decimal, ILS channels 108.10-111.95 (odd tenths)."
+    },
+    {
+      "path": "Misc.ILSCourse",
+      "label": "ILS course",
+      "kind": "int",
+      "min": 0,
+      "max": 359,
+      "unit": "deg"
+    },
+    {
+      "path": "Misc.ILSToBeUpdated",
+      "label": "Upload ILS",
+      "kind": "bool",
+      "help": "Upload the matching value(s) when Upload.Misc is true."
+    }
+  ]
+}

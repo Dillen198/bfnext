@@ -1,0 +1,22 @@
+{
+  "short_name": "Southern Flank",
+  "name": "Southern Flank 1985 · Situation Room",
+  "icons": [
+    {
+      "src": "redstorm/emblem.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any"
+    },
+    {
+      "src": "redstorm/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0d1013",
+  "theme_color": "#0d1013",
+  "display": "standalone",
+  "orientation": "any"
+}

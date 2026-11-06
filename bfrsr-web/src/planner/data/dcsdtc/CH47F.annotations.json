@@ -1,0 +1,594 @@
+{
+  "code": "CH47F",
+  "label": "CH-47F Chinook",
+  "sections": [
+    {
+      "path": "Upload",
+      "label": "Upload Settings",
+      "help": "Which systems DCS-DTC types into the cockpit when uploading. Order: waypoints or route (pilot CDU), then radios. Upload.Route takes precedence over Upload.Waypoints. The page re-creates a null system."
+    },
+    {
+      "path": "Waypoints",
+      "label": "Waypoints",
+      "managed": "route",
+      "help": "CDU ACP waypoint database, sequence 1..200. Filled from the dashboard route. The page re-creates a null system, but a null Waypoints.Waypoints list crashes it."
+    },
+    {
+      "path": "Route",
+      "label": "Route",
+      "managed": "route",
+      "help": "Which waypoints go into the CDU flight plan (FPLN) when Upload.Route is set. Only positions are entered. The page re-creates a null system; Route.Route must not be null."
+    },
+    {
+      "path": "Radios",
+      "label": "Radios",
+      "help": "Radio1 = UHF-1 (225.000-399.975), Radio2 = VHF-1 / ARC-186 (108.000-173.975 in the UI, the knob logic only reaches 30-159 MHz). 20 presets each, no guard. The page re-creates a null system; Radio1/Radio2 must not be null."
+    },
+    {
+      "path": "WaypointsCapture",
+      "label": "Capture Settings",
+      "help": "Where points captured on the DCS F10 map (Ctrl+Shift+D dialog) are inserted into the waypoint list. App-side only, never uploaded. The page re-creates a null system."
+    }
+  ],
+  "fields": [
+    {
+      "path": "Aircraft",
+      "label": "Aircraft code",
+      "kind": "string",
+      "readonly": true,
+      "help": "Always \"CH47F\". The loader picks the C# configuration type from this value; it must match the preset folder / Load page."
+    },
+    {
+      "path": "Version",
+      "label": "Format version",
+      "kind": "int",
+      "readonly": true,
+      "help": "Always 2. A missing Version (or 1) together with a missing Upload sends the file to the V1 converter, which throws for this aircraft."
+    },
+    {
+      "path": "KneeboardNotes",
+      "label": "Kneeboard notes",
+      "kind": "string",
+      "nullable": true,
+      "multiline": true,
+      "help": "Free text shown (and editable) in the in-game DCS-DTC kneeboard dialog (Ctrl+Shift+K). Not a system: Load/Save never copies it, only a whole preset file carries it."
+    },
+    {
+      "path": "Upload.Waypoints",
+      "label": "Waypoints",
+      "kind": "bool",
+      "help": "Write all waypoints into the CDU waypoint database (number, position, elevation, name). Ignored when Upload.Route is true."
+    },
+    {
+      "path": "Upload.Route",
+      "label": "Route",
+      "kind": "bool",
+      "help": "Build the FPLN from the route selection (positions only). When true, Upload.Waypoints is ignored."
+    },
+    {
+      "path": "Upload.Radios",
+      "label": "Radios",
+      "kind": "bool",
+      "help": "Program presets and manual frequency / preset selection for both radios."
+    },
+    {
+      "path": "Waypoints.Waypoints",
+      "label": "Waypoints",
+      "kind": "list",
+      "managed": "route",
+      "maxItems": 200,
+      "nullCrashesEditor": true,
+      "item": {
+        "Sequence": 1,
+        "Name": "STPT 1",
+        "Latitude": null,
+        "Longitude": null,
+        "Elevation": 0,
+        "TimeOverSteerpoint": null,
+        "Target": false
+      },
+      "help": "Filled from the planned route: route point i -> Sequence i (1..N, unique, sorted), list order = fly order (the FPLN path uses list order for Use all). Max 200."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Sequence",
+      "label": "Sequence",
+      "kind": "int",
+      "min": 1,
+      "max": 200,
+      "managed": "route",
+      "help": "ACP waypoint number 1..200, unique; typed into the CDU."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Name",
+      "label": "Name",
+      "kind": "string",
+      "managed": "route",
+      "pattern": "^[A-Za-z0-9 .]*$",
+      "help": "Required, never null (the uploader throws on null). Typed in full (not truncated) after a slash; only A-Z, 0-9 and \".\" are typed, spaces and other characters are dropped. Use short upper-case route point names."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Latitude",
+      "label": "Latitude",
+      "kind": "coord-lat",
+      "pattern": "^[NS] \\d{2}°\\d{2}\\.\\d{3}’$",
+      "managed": "route",
+      "help": "DDM thousandths, e.g. \"N 42°10.583’\" (2-digit zero-padded degrees, U+00B0 degree sign, U+2019 minute mark). The CH-47F uploader slices the string by position (N4136.575E04136.014), so the exact padded format is mandatory."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Longitude",
+      "label": "Longitude",
+      "kind": "coord-lon",
+      "pattern": "^[EW] \\d{3}°\\d{2}\\.\\d{3}’$",
+      "managed": "route",
+      "help": "DDM thousandths, e.g. \"E 042°28.950’\" (3-digit zero-padded degrees). The CH-47F uploader slices the string by position (N4136.575E04136.014), so the exact padded format is mandatory."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Elevation",
+      "label": "Elevation",
+      "kind": "int",
+      "min": 0,
+      "max": 30000,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Ground elevation of the point, integer feet MSL (editor range 0..30000). A minus sign is dropped when typed."
+    },
+    {
+      "path": "Waypoints.Waypoints[].TimeOverSteerpoint",
+      "label": "Time over steerpoint",
+      "kind": "time",
+      "nullable": true,
+      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d$",
+      "managed": "route",
+      "help": "HH:MM:SS or null; route TOT/ETA if the dashboard has one. Shown in the app and kneeboard only, never uploaded on this aircraft."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Target",
+      "label": "Target",
+      "kind": "bool",
+      "managed": "route",
+      "help": "True for route target points (shows \"TGT\" in the list and kneeboard). Not uploaded on this aircraft."
+    },
+    {
+      "path": "Route.Route",
+      "label": "Route",
+      "kind": "object",
+      "nullCrashesEditor": true,
+      "managed": "route",
+      "help": "RoutePage dereferences Route.Route, so it must not be null."
+    },
+    {
+      "path": "Route.Route.Mode",
+      "label": "Route selection",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(unset = all)"
+        },
+        {
+          "value": 1,
+          "label": "Use all waypoints"
+        },
+        {
+          "value": 2,
+          "label": "Use range"
+        },
+        {
+          "value": 3,
+          "label": "Use specific"
+        }
+      ],
+      "managed": "route",
+      "help": "RouteMode. 1 = every waypoint in list order; 2 = Route.Waypoints is [from, to] (inclusive sequences, swapped if reversed); 3 = Route.Waypoints is an ordered list of sequences (unknown ones skipped). 0 behaves like 1; the UI coerces it to 1 when opened. From the dashboard: 1 when the waypoint list IS the route; 2/3 when extra non-route points (alternates, FARPs) are also in the list."
+    },
+    {
+      "path": "Route.Route.Waypoints",
+      "label": "Route waypoints",
+      "kind": "list",
+      "nullable": true,
+      "maxItems": 200,
+      "item": 1,
+      "managed": "route",
+      "help": "null for Use all. Use range: exactly [from, to] (1..200). Use specific: waypoint sequences in fly order, unique, 1..200 (UI: comma separated list)."
+    },
+    {
+      "path": "Route.Route.Waypoints[]",
+      "label": "Waypoint sequence",
+      "kind": "int",
+      "min": 1,
+      "max": 200,
+      "managed": "route",
+      "help": "A waypoint Sequence present in Waypoints.Waypoints. For a dashboard route, list its sequences in fly order (Mode 3) or give [first, last] (Mode 2)."
+    },
+    {
+      "path": "Radios.Radio1",
+      "label": "UHF-1",
+      "kind": "object",
+      "nullCrashesEditor": true,
+      "help": "UHF radio programmed through the CDU."
+    },
+    {
+      "path": "Radios.Radio1.Presets",
+      "label": "UHF-1 presets",
+      "kind": "list",
+      "nullable": true,
+      "maxItems": 20,
+      "item": {
+        "Number": 1,
+        "Name": null,
+        "Frequency": ""
+      },
+      "help": "Preset channels, Number 1..20, one entry per used channel (null or [] when none). Ordered by Number when uploaded."
+    },
+    {
+      "path": "Radios.Radio1.Presets[].Number",
+      "label": "Channel",
+      "kind": "int",
+      "min": 1,
+      "max": 20,
+      "help": "Preset channel number, unique within the radio. Required: RadioPreset has only a Number constructor."
+    },
+    {
+      "path": "Radios.Radio1.Presets[].Name",
+      "label": "Name",
+      "kind": "string",
+      "nullable": true,
+      "help": "Preset label; the uploader types the first 8 characters. Null when empty."
+    },
+    {
+      "path": "Radios.Radio1.Presets[].Frequency",
+      "label": "Frequency",
+      "kind": "freq",
+      "pattern": "^\\d{1,3}\\.\\d{3}$",
+      "unit": "MHz",
+      "help": "UHF 225.000-399.975 MHz, 25 kHz steps. Invariant decimal with exactly 3 decimals, no leading zeros (e.g. \"251.000\")."
+    },
+    {
+      "path": "Radios.Radio1.SelectedFrequency",
+      "label": "Manual frequency",
+      "kind": "freq",
+      "nullable": true,
+      "pattern": "^\\d{1,3}\\.\\d{3}$",
+      "unit": "MHz",
+      "help": "Frequency tuned when Mode = Frequency. UHF 225.000-399.975 MHz, 25 kHz steps."
+    },
+    {
+      "path": "Radios.Radio1.SelectedPreset",
+      "label": "Selected preset",
+      "kind": "enum",
+      "nullable": true,
+      "options": [
+        {
+          "value": "1",
+          "label": "1"
+        },
+        {
+          "value": "2",
+          "label": "2"
+        },
+        {
+          "value": "3",
+          "label": "3"
+        },
+        {
+          "value": "4",
+          "label": "4"
+        },
+        {
+          "value": "5",
+          "label": "5"
+        },
+        {
+          "value": "6",
+          "label": "6"
+        },
+        {
+          "value": "7",
+          "label": "7"
+        },
+        {
+          "value": "8",
+          "label": "8"
+        },
+        {
+          "value": "9",
+          "label": "9"
+        },
+        {
+          "value": "10",
+          "label": "10"
+        },
+        {
+          "value": "11",
+          "label": "11"
+        },
+        {
+          "value": "12",
+          "label": "12"
+        },
+        {
+          "value": "13",
+          "label": "13"
+        },
+        {
+          "value": "14",
+          "label": "14"
+        },
+        {
+          "value": "15",
+          "label": "15"
+        },
+        {
+          "value": "16",
+          "label": "16"
+        },
+        {
+          "value": "17",
+          "label": "17"
+        },
+        {
+          "value": "18",
+          "label": "18"
+        },
+        {
+          "value": "19",
+          "label": "19"
+        },
+        {
+          "value": "20",
+          "label": "20"
+        }
+      ],
+      "help": "Preset channel selected when Mode = Preset. Stored as a STRING (\"1\"..\"20\") or null."
+    },
+    {
+      "path": "Radios.Radio1.EnableGuard",
+      "label": "Guard",
+      "kind": "bool",
+      "help": "Guard receiver. Not offered by the UI for this aircraft and not uploaded; leave false."
+    },
+    {
+      "path": "Radios.Radio1.Mode",
+      "label": "Mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(unset)"
+        },
+        {
+          "value": 1,
+          "label": "Frequency"
+        },
+        {
+          "value": 2,
+          "label": "Preset"
+        }
+      ],
+      "help": "RadioMode: 1 = tune SelectedFrequency, 2 = select SelectedPreset. A new preset has 0 (no combo selection); the uploader then neither tunes nor selects. Set 1 or 2 explicitly."
+    },
+    {
+      "path": "Radios.Radio2",
+      "label": "VHF-1 (ARC-186)",
+      "kind": "object",
+      "nullCrashesEditor": true,
+      "help": "ARC-186; Mode 1 turns the mode knob to manual and dials the frequency with the knobs, Mode 2 to preset."
+    },
+    {
+      "path": "Radios.Radio2.Presets",
+      "label": "VHF-1 (ARC-186) presets",
+      "kind": "list",
+      "nullable": true,
+      "maxItems": 20,
+      "item": {
+        "Number": 1,
+        "Name": null,
+        "Frequency": ""
+      },
+      "help": "Preset channels, Number 1..20, one entry per used channel (null or [] when none). Ordered by Number when uploaded."
+    },
+    {
+      "path": "Radios.Radio2.Presets[].Number",
+      "label": "Channel",
+      "kind": "int",
+      "min": 1,
+      "max": 20,
+      "help": "Preset channel number, unique within the radio. Required: RadioPreset has only a Number constructor."
+    },
+    {
+      "path": "Radios.Radio2.Presets[].Name",
+      "label": "Name",
+      "kind": "string",
+      "nullable": true,
+      "help": "Preset label; the uploader types the first 8 characters. Null when empty."
+    },
+    {
+      "path": "Radios.Radio2.Presets[].Frequency",
+      "label": "Frequency",
+      "kind": "freq",
+      "pattern": "^\\d{1,3}\\.\\d{3}$",
+      "unit": "MHz",
+      "help": "VHF 108.000-173.975 MHz in the UI, 25 kHz steps (last two decimals 00/25/50/75). The knob logic only reaches 30-159 MHz. Invariant decimal with exactly 3 decimals, no leading zeros (e.g. \"251.000\")."
+    },
+    {
+      "path": "Radios.Radio2.SelectedFrequency",
+      "label": "Manual frequency",
+      "kind": "freq",
+      "nullable": true,
+      "pattern": "^\\d{1,3}\\.\\d{3}$",
+      "unit": "MHz",
+      "help": "Frequency tuned when Mode = Frequency. VHF 108.000-173.975 MHz in the UI, 25 kHz steps (last two decimals 00/25/50/75). The knob logic only reaches 30-159 MHz."
+    },
+    {
+      "path": "Radios.Radio2.SelectedPreset",
+      "label": "Selected preset",
+      "kind": "enum",
+      "nullable": true,
+      "options": [
+        {
+          "value": "1",
+          "label": "1"
+        },
+        {
+          "value": "2",
+          "label": "2"
+        },
+        {
+          "value": "3",
+          "label": "3"
+        },
+        {
+          "value": "4",
+          "label": "4"
+        },
+        {
+          "value": "5",
+          "label": "5"
+        },
+        {
+          "value": "6",
+          "label": "6"
+        },
+        {
+          "value": "7",
+          "label": "7"
+        },
+        {
+          "value": "8",
+          "label": "8"
+        },
+        {
+          "value": "9",
+          "label": "9"
+        },
+        {
+          "value": "10",
+          "label": "10"
+        },
+        {
+          "value": "11",
+          "label": "11"
+        },
+        {
+          "value": "12",
+          "label": "12"
+        },
+        {
+          "value": "13",
+          "label": "13"
+        },
+        {
+          "value": "14",
+          "label": "14"
+        },
+        {
+          "value": "15",
+          "label": "15"
+        },
+        {
+          "value": "16",
+          "label": "16"
+        },
+        {
+          "value": "17",
+          "label": "17"
+        },
+        {
+          "value": "18",
+          "label": "18"
+        },
+        {
+          "value": "19",
+          "label": "19"
+        },
+        {
+          "value": "20",
+          "label": "20"
+        }
+      ],
+      "help": "Preset channel selected when Mode = Preset. Stored as a STRING (\"1\"..\"20\") or null."
+    },
+    {
+      "path": "Radios.Radio2.EnableGuard",
+      "label": "Guard",
+      "kind": "bool",
+      "help": "Guard receiver. Not offered by the UI for this aircraft and not uploaded; leave false."
+    },
+    {
+      "path": "Radios.Radio2.Mode",
+      "label": "Mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(unset)"
+        },
+        {
+          "value": 1,
+          "label": "Frequency"
+        },
+        {
+          "value": 2,
+          "label": "Preset"
+        }
+      ],
+      "help": "RadioMode: 1 = tune SelectedFrequency, 2 = select SelectedPreset. A new preset has 0 (no combo selection); the uploader then neither tunes nor selects. Set 1 or 2 explicitly."
+    },
+    {
+      "path": "WaypointsCapture.NavPointsMode",
+      "label": "Navigation points",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Add to end of the list"
+        },
+        {
+          "value": 1,
+          "label": "Add to end of the first gap"
+        },
+        {
+          "value": 2,
+          "label": "Add to specific range"
+        }
+      ],
+      "managed": "route",
+      "help": "SteerpointCaptureMode for captured non-target points. When the waypoint list comes from the dashboard route, leave 0 (append after the route) so captures in the cockpit do not overwrite route points."
+    },
+    {
+      "path": "WaypointsCapture.TgtPointsMode",
+      "label": "Target points",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Add to the end of the list"
+        },
+        {
+          "value": 2,
+          "label": "Add to specific range"
+        }
+      ],
+      "managed": "route",
+      "help": "SteerpointCaptureMode for captured target points. The UI offers only end-of-list (0) and range (2); 1 is accepted on load but has no radio button. This aircraft has no \"Add TGT\" capture button, so this rarely matters."
+    },
+    {
+      "path": "WaypointsCapture.NavPointsRangeFrom",
+      "label": "Navigation range start",
+      "kind": "int",
+      "min": 1,
+      "max": 99,
+      "managed": "route",
+      "help": "First sequence used when Navigation points = Add to specific range. A dashboard can set it to (last route sequence + 1) to keep captures clear of the route."
+    },
+    {
+      "path": "WaypointsCapture.TgtPointsRangeFrom",
+      "label": "Target range start",
+      "kind": "int",
+      "min": 1,
+      "max": 99,
+      "managed": "route",
+      "help": "First sequence used when Target points = Add to specific range."
+    }
+  ]
+}

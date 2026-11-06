@@ -11,12 +11,12 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
-use super::{as_tbl, cvt_err, LuaVec3};
+use super::{as_tbl, LuaVec3};
 use crate::{record_perf, simple_enum, wrapped_table, LuaEnv, LuaVec2, MizLua, Sequence};
 use anyhow::Result;
 use mlua::{prelude::*, Value};
 use na::Vector2;
-use serde_derive::{Deserialize, Serialize};
+use serde_derive::Serialize;
 use std::ops::Deref;
 
 simple_enum!(SurfaceType, u8, [
@@ -35,8 +35,8 @@ pub enum RoadType {
 
 wrapped_table!(Land, None);
 
-impl<'lua> Land<'lua> {
-    pub fn singleton(lua: MizLua<'lua>) -> Result<Self> {
+impl Land {
+    pub fn singleton(lua: MizLua) -> Result<Self> {
         Ok(lua.inner().globals().raw_get("land")?)
     }
 
@@ -53,27 +53,51 @@ impl<'lua> Land<'lua> {
     }
 
     pub fn is_visible(&self, origin: LuaVec3, destination: LuaVec3) -> Result<bool> {
-        Ok(record_perf!(land_is_visible, self.t.call_function("isVisible", (origin, destination))?))
+        Ok(record_perf!(
+            land_is_visible,
+            self.t.call_function("isVisible", (origin, destination))?
+        ))
     }
 
-    pub fn get_ip(&self, origin: LuaVec3, direction: LuaVec3, distance: f64) -> Result<LuaVec3> {
-        Ok(self
-            .t
-            .call_function("getIP", (origin, direction, distance))?)
+    pub fn get_ip(
+        &self,
+        origin: LuaVec3,
+        direction: LuaVec3,
+        distance: f64,
+    ) -> Result<LuaVec3> {
+        Ok(self.t.call_function("getIP", (origin, direction, distance))?)
     }
 
-    pub fn get_profile(&self, origin: LuaVec3, destination: LuaVec3) -> Result<Sequence<'lua, LuaVec3>> {
+    /// `land.getIP`, but `None` when the ray does not reach the ground within
+    /// `distance` (DCS returns nil, which `get_ip` reports as an error).
+    pub fn get_ip_opt(
+        &self,
+        origin: LuaVec3,
+        direction: LuaVec3,
+        distance: f64,
+    ) -> Result<Option<LuaVec3>> {
+        Ok(self.t.call_function("getIP", (origin, direction, distance))?)
+    }
+
+    pub fn get_profile(
+        &self,
+        origin: LuaVec3,
+        destination: LuaVec3,
+    ) -> Result<Sequence<LuaVec3>> {
         Ok(self.t.call_function("profile", (origin, destination))?)
     }
 
-    pub fn get_closest_point_on_roads(&self, typ: RoadType, from: LuaVec2) -> Result<LuaVec2> {
+    pub fn get_closest_point_on_roads(
+        &self,
+        typ: RoadType,
+        from: LuaVec2,
+    ) -> Result<LuaVec2> {
         let typ = match typ {
             RoadType::Road => "roads",
             RoadType::Rail => "railroads",
         };
-        let (x, y) = self
-            .t
-            .call_function("getClosestPointOnRoads", (typ, from.x, from.y))?;
+        let (x, y) =
+            self.t.call_function("getClosestPointOnRoads", (typ, from.x, from.y))?;
         Ok(LuaVec2(Vector2::new(x, y)))
     }
 
@@ -82,7 +106,7 @@ impl<'lua> Land<'lua> {
         typ: RoadType,
         origin: LuaVec2,
         destination: LuaVec2,
-    ) -> Result<Sequence<'lua, LuaVec2>> {
+    ) -> Result<Sequence<LuaVec2>> {
         let typ = match typ {
             RoadType::Road => "roads",
             RoadType::Rail => "rails",

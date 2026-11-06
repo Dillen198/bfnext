@@ -1,0 +1,79 @@
+/* Server tiles (the site's and the wiki's): each one a small piece of its
+   server's page, in that page's colours and type whatever the app's theme. */
+
+.tiles { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) { .tiles { grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr)); } }
+
+.tile {
+  position: relative; display: flex; flex-direction: column; min-width: 0;
+  text-decoration: none; color: var(--t-ink); background: var(--t-bg);
+  border: 1px solid var(--t-line); overflow: hidden;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.tile:hover { transform: translateY(-3px); border-color: var(--t-accent); box-shadow: 0 14px 34px -18px var(--t-accent); }
+.tile:focus-visible { outline: 2px solid var(--t-accent); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { .tile, .tile:hover { transition: none; transform: none; } }
+
+.tile-art { display: block; width: 100%; height: 132px; flex-shrink: 0; position: relative; }
+.tile-body { display: flex; flex-direction: column; gap: 6px; padding: 16px 18px 18px; flex: 1; }
+.tile-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tile-label { font-family: var(--t-mono); font-size: 0.66rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--t-muted); }
+.tile-title { margin: 6px 0 0; font-family: var(--t-display); font-size: 2rem; line-height: 0.95; color: var(--t-ink); text-wrap: balance; }
+.tile-era { font-family: var(--t-mono); font-size: 0.7rem; letter-spacing: 0.06em; color: var(--t-accent); }
+.tile-summary { margin: 6px 0 0; font-family: var(--t-body); font-size: 0.9rem; line-height: 1.55; color: var(--t-muted); flex: 1; }
+.tile-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--t-line); }
+.tile-meta { font-family: var(--t-mono); font-size: 0.68rem; letter-spacing: 0.06em; color: var(--t-muted); min-width: 0; }
+.tile-cta { display: inline-flex; align-items: center; gap: 6px; font-family: var(--t-display); font-size: 1rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--t-accent); white-space: nowrap; }
+.tile .status { --accent: var(--t-accent); --accent-border: color-mix(in srgb, var(--t-accent) 40%, transparent); --accent-glow: color-mix(in srgb, var(--t-accent) 12%, transparent); --text-dim: var(--t-muted); --border-light: var(--t-line); }
+
+/* ── desert: the modern war's battlefield ── */
+.tile-desert {
+  --t-bg: #17130d; --t-ink: #e3d2ad; --t-muted: #b09d7b; --t-line: #3a2f22; --t-accent: #e07a3f;
+  --t-display: 'Oswald', 'Bebas Neue', sans-serif; --t-body: 'Barlow', system-ui, sans-serif; --t-mono: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+  --red: #d9493b; --yellow: #e0b04a;
+}
+.tile-desert .tile-title { font-weight: 700; text-transform: uppercase; letter-spacing: 0.01em; font-size: 2.2rem; }
+.tile-desert .tile-label, .tile-desert .tile-era, .tile-desert .tile-meta { font-weight: 600; letter-spacing: 0.12em; }
+.tile-desert .tile-art {
+  background:
+    linear-gradient(180deg, transparent 40%, #17130d 100%),
+    radial-gradient(ellipse at 75% 30%, rgba(224,122,63,0.35), transparent 60%),
+    url(/media/hero.jpg) center 40% / cover no-repeat;
+}
+.ta-tape {
+  position: absolute; left: 16px; bottom: 14px; padding: 2px 10px; transform: rotate(-2deg);
+  font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase;
+  color: #1a0d05; background: #c8642f; clip-path: polygon(2% 0, 98% 4%, 100% 50%, 97% 100%, 1% 96%, 0 52%);
+}
+
+/* ── staff: 1985 staff paper ── */
+.tile-staff {
+  --t-bg: #ece2c6; --t-ink: #2a251c; --t-muted: #625844; --t-line: #cbb98e; --t-accent: #a3271f;
+  --t-display: 'Stardos Stencil', 'Bebas Neue', sans-serif; --t-body: 'Courier Prime', 'Courier New', monospace; --t-mono: 'Courier Prime', 'Courier New', monospace;
+  --red: #a3271f; --yellow: #8a6a10;
+  background-image: radial-gradient(rgba(90,70,30,0.10) 1px, transparent 1px); background-size: 5px 5px;
+}
+.tile-staff .tile-title { font-weight: 700; text-transform: uppercase; }
+.tile-staff .tile-art {
+  background: linear-gradient(180deg, #d9c99c, #e3d5ad); border-bottom: 1px dashed #b9a573;
+  display: flex; align-items: center; justify-content: center;
+}
+.tile-staff .tile-art::before { content: ''; position: absolute; left: 18px; top: 0; width: 84px; height: 14px; background: #d2bf8c; border: 1px solid #b9a573; border-top: none; }
+.ta-stamp {
+  font-family: 'Stardos Stencil', sans-serif; font-weight: 700; font-size: 2.1rem; letter-spacing: 0.18em; text-transform: uppercase;
+  color: #a3271f; border: 3px solid #a3271f; padding: 2px 14px; transform: rotate(-7deg); opacity: 0.82; mix-blend-mode: multiply;
+}
+.ta-file { position: absolute; right: 14px; bottom: 10px; font-family: 'Courier Prime', monospace; font-size: 0.68rem; color: #625844; letter-spacing: 0.08em; text-transform: uppercase; }
+
+/* ── chart: the range's aeronautical chart ── */
+.tile-chart {
+  --t-bg: #f4f2ea; --t-ink: #13212c; --t-muted: #566673; --t-line: #cfd6d8; --t-accent: #0f6f91;
+  --t-display: 'Big Shoulders Stencil', 'Bebas Neue', sans-serif; --t-body: 'Archivo', system-ui, sans-serif; --t-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --red: #c8322a; --yellow: #a07400;
+}
+.tile-chart .tile-title { font-weight: 800; text-transform: uppercase; }
+.tile-chart .tile-art { background: #cfe3ea; border-bottom: 1px solid #9fc0cc; }
+.ta-rose circle, .ta-rose line { fill: none; stroke: #a0307a; stroke-width: 0.8; }
+.ta-north { fill: #a0307a; }
+.ta-sector { fill: rgba(217,138,0,0.22); stroke: #d98a00; stroke-width: 1.2; }
+.ta-ring { fill: none; stroke: #1aa3b8; stroke-width: 1.4; stroke-dasharray: 4 3; }

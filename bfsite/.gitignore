@@ -1,0 +1,5 @@
+node_modules
+dist
+*.local
+# tsc -b build info (tsBuildInfoFile points into node_modules/.tmp; these are older strays)
+*.tsbuildinfo
