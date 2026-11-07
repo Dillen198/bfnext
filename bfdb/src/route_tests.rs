@@ -52,28 +52,38 @@ impl ScratchDir {
     }
 }
 
+impl ScratchDir {
+    fn db_closed(dir: &Path) -> bool {
+        crate::storage::ensure_not_in_use(&dir.join("db"), crate::storage::Backend::Sled)
+            .is_ok()
+    }
+}
+
 impl Drop for ScratchDir {
     fn drop(&mut self) {
-        // sled lets go of its files a moment after the last handle drops (an
-        // IO thread finishing its last write still holds them), so wait for
-        // that. If something keeps the database open for longer (a spawned
-        // task holding a `StatsDb` clone, say), leave the directory to the
-        // OS's temp cleanup rather than pull it out from under sled.
-        let db = self.0.join("db");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        loop {
-            match crate::storage::ensure_not_in_use(&db, crate::storage::Backend::Sled) {
-                Ok(()) => break,
-                Err(_) if std::time::Instant::now() < deadline => {
-                    std::thread::sleep(std::time::Duration::from_millis(20))
-                }
-                Err(e) => {
-                    eprintln!("leaving {}: {e:#}", self.0.display());
+        let dir = std::mem::take(&mut self.0);
+        if Self::db_closed(&dir) {
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        // Still open: sled lets go of its files a moment after the last handle
+        // drops (an IO thread finishing its last write), and a task the test
+        // spawned (a server holding the routes, say) keeps the database open
+        // until the test's runtime shuts down, just after this. Remove the
+        // directory once sled is done with it, without holding up the test.
+        // If that takes too long, leave it to the OS's temp cleanup.
+        std::thread::spawn(move || {
+            let deadline =
+                std::time::Instant::now() + std::time::Duration::from_secs(120);
+            while std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                if Self::db_closed(&dir) {
+                    let _ = std::fs::remove_dir_all(&dir);
                     return;
                 }
             }
-        }
-        let _ = std::fs::remove_dir_all(&self.0);
+            eprintln!("leaving {}: the database there is still open", dir.display());
+        });
     }
 }
 
@@ -1216,8 +1226,12 @@ fn scratch_dir_is_removed_only_once_its_database_is_closed() {
     let p = scratch.path().to_path_buf();
     let db = yats::Db::open_sled(p.join("db")).unwrap();
     drop(scratch);
+    std::thread::sleep(std::time::Duration::from_millis(300));
     assert!(p.join("db").exists(), "removed while sled had it open");
     drop(db);
-    drop(ScratchDir(p.clone()));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while p.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     assert!(!p.exists(), "left behind after the database closed");
 }
