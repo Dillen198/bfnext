@@ -7,7 +7,7 @@
 //! names the one it pins.
 
 use crate::*;
-use std::net::SocketAddr;
+use std::{net::SocketAddr, path::Path};
 
 /// What `warp::test` hands back.
 pub(crate) type TestResp = warp::http::Response<bytes::Bytes>;
@@ -15,12 +15,65 @@ pub(crate) type TestResp = warp::http::Response<bytes::Bytes>;
 pub(crate) struct Harness {
     pub(crate) db: StatsDb,
     pub(crate) routes: warp::filters::BoxedFilter<(Response,)>,
-    dir: PathBuf,
+    // Must stay the last field: fields drop in declaration order, so the
+    // database (held by `db` and by the route filters) is closed before the
+    // directory under it is removed. See `ScratchDir`.
+    _dir: ScratchDir,
 }
 
-impl Drop for Harness {
+/// A test's scratch directory holding a sled database at `<dir>/db`, removed
+/// on drop -- but only once that database is closed.
+///
+/// Removing it while sled still has it open is what hung the bfdb tests on
+/// Windows CI now and then. Windows lets the open files go, `blobs/`
+/// included. sled keeps any value or tree node over about 128 KiB (a seeded
+/// wiki picture, or a leaf full of seeded wiki pages) as a file under
+/// `blobs/`, and its flusher thread writes new ones when it compacts the log.
+/// With `blobs/` gone that write fails (os error 3) after sled 0.34.7 has
+/// already claimed the write's slot in its IO buffer (`Log::reserve_inner`
+/// returns early from `encapsulate`), so the buffer is never written, the
+/// flusher thread exits, and the final flush when the database is dropped
+/// waits for it forever. That needs the flusher to compact in the gap between
+/// removing the directory and closing the database, hence only some runs.
+///
+/// Any test that removes its own database directory must close the database
+/// first (`drop(db)`) for the same reason.
+pub(crate) struct ScratchDir(PathBuf);
+
+impl ScratchDir {
+    pub(crate) fn new(prefix: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("{prefix}-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        Self(dir)
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for ScratchDir {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
+        // sled lets go of its files a moment after the last handle drops (an
+        // IO thread finishing its last write still holds them), so wait for
+        // that. If something keeps the database open for longer (a spawned
+        // task holding a `StatsDb` clone, say), leave the directory to the
+        // OS's temp cleanup rather than pull it out from under sled.
+        let db = self.0.join("db");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match crate::storage::ensure_not_in_use(&db, crate::storage::Backend::Sled) {
+                Ok(()) => break,
+                Err(_) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(20))
+                }
+                Err(e) => {
+                    eprintln!("leaving {}: {e:#}", self.0.display());
+                    return;
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 
@@ -40,8 +93,8 @@ pub(crate) fn harness_with(
 ) -> Harness {
     // never ask GitHub from a test
     let _ = COCKPIT_VERSION_OVERRIDE.set("9.9.9-test".into());
-    let dir = std::env::temp_dir().join(format!("bfdb-route-test-{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let scratch = ScratchDir::new("bfdb-route-test");
+    let dir = scratch.path().to_path_buf();
     let file: instance::InstancesFile = serde_json::from_value(instances).unwrap();
     let reg = Registry::new(file).unwrap();
     let db =
@@ -100,7 +153,7 @@ pub(crate) fn harness_with(
     };
     tweak(&mut rc);
     let routes = build_routes(rc);
-    Harness { db, routes, dir }
+    Harness { db, routes, _dir: scratch }
 }
 
 impl Harness {
@@ -1153,4 +1206,18 @@ async fn api_oob_shows_losses_to_all_and_stock_to_those_who_may_see_it() {
         (v["blue"].clone(), v["red"].clone()),
         (serde_json::json!([]), serde_json::json!([]))
     );
+}
+
+/// `ScratchDir` never removes a database sled still has open (that hung the
+/// suite now and then on Windows; see its doc), and does once it is closed.
+#[test]
+fn scratch_dir_is_removed_only_once_its_database_is_closed() {
+    let scratch = ScratchDir::new("bfdb-scratch-test");
+    let p = scratch.path().to_path_buf();
+    let db = yats::Db::open_sled(p.join("db")).unwrap();
+    drop(scratch);
+    assert!(p.join("db").exists(), "removed while sled had it open");
+    drop(db);
+    drop(ScratchDir(p.clone()));
+    assert!(!p.exists(), "left behind after the database closed");
 }

@@ -7714,9 +7714,13 @@ mod storage_tests;
 #[cfg(test)]
 thread_local! {
     /// Whether a database opened on this thread gets the seed wiki pictures.
-    /// They are about 55 MB, every test opens its own database, and writing
-    /// them a few hundred times over loaded sled enough that the suite hung
-    /// on CI. Off unless a test asks with `seed_images_in_this_test`.
+    /// They are about 55 MB and every test opens its own database, so writing
+    /// them a few hundred times over is slow. Off unless a test asks with
+    /// `seed_images_in_this_test`. (The suite hanging on CI, which this was
+    /// first blamed for, was tests removing their database directory while
+    /// sled still had it open: see `route_tests::ScratchDir`. Pictures made it
+    /// more likely because sled keeps them as files under `blobs/`, which it
+    /// then fails to rewrite.)
     static SEED_IMAGES_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -8120,6 +8124,7 @@ mod round_number_tests {
         assert_eq!(n.get(&RoundId(54_000_002)), Some(&2));
         assert_eq!(n.get(&RoundId(108_000_656)), Some(&3));
         assert_eq!(db.round_number(RoundId(108_000_656)), Some(3));
+        drop(db);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
@@ -8212,6 +8217,7 @@ mod merge_rounds_tests {
         let again = db.merge_rounds("campaign").unwrap();
         assert!(again.contains("already has a single round"), "{again}");
 
+        drop(db);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -8259,6 +8265,7 @@ mod merge_rounds_tests {
         assert_eq!(left[0].1, real);
         assert!(left[0].2.end.is_none());
 
+        drop(db);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
@@ -8296,6 +8303,7 @@ mod intel_storage_tests {
         assert!(db.intel_images.get(&id).unwrap().is_none());
         assert!(!img_dir.join(id.to_string()).exists());
 
+        drop(db);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -8310,6 +8318,7 @@ mod intel_storage_tests {
         assert_eq!(row.data.as_deref(), Some(&[1, 2, 3][..]));
         let (ct, got) = db.intel_get_image(&id).unwrap().unwrap();
         assert_eq!((ct.as_str(), got), ("image/jpeg", vec![1, 2, 3]));
+        drop(db);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
@@ -8373,6 +8382,7 @@ mod off_slot_credit_tests {
             .get(&(ucid, Vehicle::from("Combined Arms"), rid))
             .unwrap()
             .is_some_and(|a| a.ground_kills == 2));
+        drop(db);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
