@@ -163,7 +163,7 @@ else.
 | Spent on | How |
 | --- | --- |
 | **Repairs** | Each automatic repair of a group costs {{cfg:repair_supply_cost|5}}% of the base's stock, or {{cfg:warehouse.materiel.repair_cost|250}} materiel where the materiel economy is on. A base that can't pay doesn't repair. |
-| **Aircraft and weapons** | Taking off with an airframe, fuel and weapons takes them out of the warehouse (and landing back at a friendly base returns what you didn't use). |
+| **Aircraft and weapons** | Taking off with an airframe, fuel and weapons takes them out of the warehouse (and landing back at a friendly base returns what you didn't use). AI flights (CAP, strikes, bombers, wingmen) take fuel too and never give it back, so on some servers they won't take off from a field below {{cfg:warehouse.ai_launch_min_fuel_pct|0}}% fuel (0 = no such check) and use the next field out. |
 | **Crates** | Each crate unpacked charges the base it was **spawned at**, not where you unpack it: {{cfg:deploy_supply_cost|3}}% of its stock per crate, or {{cfg:warehouse.materiel.deploy_cost|100}} materiel per crate with the materiel economy. Building a SAM site in the desert spends the stock of the base you picked the crates up from. |
 | **Issuing crates and troops** | With the materiel economy on, a base with less than {{cfg:warehouse.materiel.deploy_cost|100}} materiel refuses to issue any: `Ramat David is out of materiel (40 on hand, 100 needed) -- it can't issue supply until a convoy gets through`. |
 
@@ -293,21 +293,39 @@ up its repair. See [Carrier Operations](./carrier-ops.md).
 
 ## Supply transfer crates
 
-**Fuel Transfer** and **Weapons Transfer** crates (the names vary by server)
-move stock from the base you load them at to another friendly base:
-{{cfg:warehouse.supply_transfer_size|25}}% of the source's stock, never
-airframes. This is the manual way to push stock into a base the automatic
-distribution can't reach: a cut-off objective, or one you have just taken.
-Unpacked from the F10 menu at a base that is still consolidating after a capture, it also speeds the consolidation up.
+Supply crates move stock from the base you load them at to another friendly
+base, never airframes. This is the manual way to push stock into a base the
+automatic distribution can't reach: a cut-off objective, or one you have just
+taken. Unpacked from the F10 menu at a base that is still consolidating after
+a capture, a crate also speeds the consolidation up.
 
-| Delivered by | Where it goes | What moves |
-| --- | --- | --- |
-| Classic F10 menu | Unpack it inside the zone of a friendly base other than its origin | Either crate moves weapons, equipment and fuel together |
-| Dynamic or C-130 cargo | The nearest friendly objective when it lands, which must not be its origin | The fuel crate moves only fuel, the weapons crate only weapons and equipment |
+Each crate carries one kind of stock and moves only that:
 
-A transfer delivered from the F10 menu pays
+| Crate | What it moves |
+| --- | --- |
+| **Fuel Transfer** | Fuel only |
+| **Weapons Transfer** | Weapons and equipment, never fuel |
+| **Supply crates by kind**, on servers that split supply | Only the kind named: fuel, air-to-air missiles, air-to-ground munitions (missiles, bombs and rockets), gun ammunition and pods, or ground equipment. Missiles are sorted by what DCS says they are, so an AIM-120 is air-to-air and a Maverick air-to-ground |
+
+Names vary by server; the crates are under **F10 → Cargo → Crates → Base
+Supply**. A crate moves up to {{cfg:warehouse.supply_transfer_size|25}}% of
+each item it carries, and never more than the source holds or the
+destination has room for. The same rules apply whichever way it travels:
+
+| Delivered by | Where it goes |
+| --- | --- |
+| Classic F10 menu | Unpack it inside the zone of a friendly base other than its origin |
+| Dynamic or C-130 cargo | The nearest friendly objective when it lands, which must not be its origin |
+
+A crate that would move nothing (the source had none of that kind to spare,
+or the destination is already full of it) is refused by **Unpack Nearby
+Crate(s)** and stays on the ground; one that unloads itself on landing (C-130,
+or dynamic cargo that auto-unpacks) is used up and pays nothing. So fly the
+kind of stock the base is short of.
+
+A transfer that moved something pays
 **{{cfg:points.logistics_transfer|15}} points**, scaled the same way as a
-repair kit.
+repair kit, whether you unpack it or it unloads itself on landing.
 
 If you would rather pay points than fly, the **Logistics Repair** and
 **Logistics Transfer** actions send an AI cargo flight to do the same jobs; see

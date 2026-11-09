@@ -278,6 +278,14 @@ many times your side may use it before the server restarts. At the limit:
 could not start Fat Cow, blue is out of Fat Cow actions
 ```
 
+**Cooldown.** Some actions make your side wait after each use, whoever called
+it: a player, a commander or the AI HQ. The wait counts from the last call
+that started, and a server restart clears it:
+
+```dcsmessage
+could not start F-16 CAS, F-16 CAS is on cooldown for blue: available again in 12 min
+```
+
 **Geo limit.** Some actions can only be aimed within a set distance of a
 friendly objective:
 
@@ -321,7 +329,7 @@ Point-to-point actions report back when they arrive:
 
 | Action | On arrival | If it fails there |
 | --- | --- | --- |
-| Bomber (within 10 km of the target) | strikes up to its target count among your side's JTAC contacts within 15 km, then flies home | — |
+| Bomber (within 10 km of the target) | strikes up to its target count among your side's JTAC contacts near the target (each contact once; on some servers only those within a set radius of it), then flies home | — |
 | Logistics Repair | repairs one step of the objective's logistics | `repair mission failed ...` to your side |
 | Logistics Transfer | moves supply between the two objectives | `transfer mission failed ...` to your side |
 | Paratrooper | drops the squad, which is yours | `paratroop mission failed ...` to you |

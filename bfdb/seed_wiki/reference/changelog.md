@@ -8,6 +8,9 @@ a linked page says otherwise, the later one is right.
 
 ## v3.2 — November 9, 2026
 
+The engine for **Levant Ablaze**. Everything here is off unless a server's
+campaign turns it on; the linked pages say what this server does.
+
 **Put troops out of an IFV, APC or truck**
 - Driving one (Combined Arms) or one you deployed, you can dismount its squad
   while it is stopped: F10 → Troops in the vehicle, or `-dismount` /
@@ -15,7 +18,69 @@ a linked page says otherwise, the later one is right.
   vehicle was destroyed.
 - One squad per vehicle: embark it again to redeploy it. If it is killed the
   vehicle has no more troops. A destroyed vehicle only lets out a squad that
-  is actually aboard. See [Troops](../f10-menu/troops.md#troops-in-ifvs-apcs-and-trucks).
+  is actually aboard, and an armoured formation's assault uses up the squad
+  of the vehicle that sends it. See
+  [Troops](../f10-menu/troops.md#troops-in-ifvs-apcs-and-trucks).
+
+**Supply crates by kind**
+- Base Supply can offer one crate per kind of stock: fuel, air-to-air
+  missiles, air-to-ground munitions, guns, tanks and pods, ground equipment.
+  Each moves only its own kind, so a base short of AMRAAMs needs a load of
+  missiles flown in, not a slice of everything.
+- The fuel crate now moves only fuel and the weapons crate everything else,
+  whichever way it is delivered (the helicopter route used to move both).
+- A crate with nothing to move is refused (it stays on the ground), and a
+  C-130 supply run pays like any other transfer, but only when it moved
+  something. See [Logistics & Supply](../gameplay/logistics.md#supply-transfer-crates).
+
+**Wingmen by type**
+- F10 → Wingman → Request lists the kinds you can call, each priced: fighter
+  escort, CAS, strike, SEAD, an attack helicopter for helicopter pilots, and
+  on some servers a copy of your own aircraft with its slot's loadout.
+- **Orders**: cover me, engage air threats, attack near me or at your map
+  mark, hold, weapons free / return fire / hold, close or spread formation.
+  See [Wingmen](../advanced/air-life.md).
+
+**Naval convoys and patrols**
+- Cargo ships with an escort sail fixed sea lanes from a naval base to
+  coastal bases, as well as to carrier groups. The lane is drawn on the F10
+  map while a convoy is on it; sink the cargo ships and the load is lost.
+- Warship patrols sail a loop off each naval base for whoever holds it, and
+  are replaced {{cfg:naval_patrols.respawn_minutes|60}} minutes after they
+  are sunk. See
+  [Logistics & Supply](../gameplay/logistics.md#three-carriers).
+
+**Ground war**
+- Commanders can form a formation from their own deployed vehicles near them
+  (F10 → Ground Forces), and disband any formation: one formed this way
+  becomes their deployed units again where it stands, one raised from a
+  garrison goes straight back to its posts. See
+  [Ground War](../advanced/ground-war.md#a-formation-from-your-own-deployed-units).
+
+**Actions**
+- Actions can have a **cooldown** for the whole side after each use, whoever
+  called it. See [Actions Menu](../f10-menu/actions.md#costs-limits-and-refunds).
+- A bomber run counts each JTAC contact once, and a server can limit it to
+  contacts within a set radius of the aim point (before, one run could clear
+  several bases ~30 km apart).
+- At most one convoy ambush per side at a time, unless the server allows more.
+
+**Menus and the cockpit panel**
+- Every list the engine builds in F10 pages with `More >>`, including the
+  formation menus and Base Supply.
+- Cockpit panel 3.6: those pages read as one scrolling list, openers such as
+  `Actions>>` step straight into the menu they build, and supply crates say
+  what they carry.
+
+**Fixes**
+- The **Fuel** hex shows the kind of fuel a base is shortest of. An airfield
+  out of jet fuel used to read green because its other fuels were full, so
+  nothing ever relieved it.
+- On some servers AI flights (CAP, strikes, bombers, wingmen) won't take off
+  from a field low on fuel, because they burn its fuel and never give it back;
+  they use the next field out.
+- A naval convoy no longer tries to start on dry land at a naval base that
+  sits inland of the shore: it puts to sea in open water first.
 
 ## v3.1 — October 22, 2026
 

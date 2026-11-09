@@ -100,7 +100,9 @@ spawns (the treasury is not refunded).
 There is no message, but an F10 circle about 1.5 km across, labelled
 `AMBUSH [Red]`, marks the ambush point **for both sides**. Once the force is in
 place it waits {{cfg:campaign_events.ambush_duration_secs|600}} seconds for the
-convoy, then goes.
+convoy, then goes. A side has at most
+{{cfg:campaign_events.ambush_max_per_side|1}} ambush out at once, however it
+was called, each after a different convoy.
 
 **What you can do:** if it is your convoy heading into the circle, escort it
 or clear the ambush from the air first; the force is a normal ground group.

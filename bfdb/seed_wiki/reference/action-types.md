@@ -109,8 +109,11 @@ aircraft"*.
 into a list of your coalition's live JTACs, then `Yes, do it!`. The bomber
 flies to what that JTAC is tracking (or the JTAC's position if it has no
 target). Within 10 km of it, the strike lands on up to the action's target
-count of your JTACs' contacts within 15 km, each hit placed at random inside
-the action's accuracy radius. Then it flies home.
+count of the contacts held by your JTACs within 15 km of the target, each hit
+placed at random inside the action's accuracy radius. A contact two JTACs
+both see counts once. A server can also set a strike radius, so that only
+contacts that close to the aim point are hit; without one, a run can reach
+anything those JTACs can see, up to about 30 km out. Then it flies home.
 
 ```dcsmessage
 BOMBER MISSION STARTED
@@ -361,6 +364,7 @@ an objective; `RemoveTask` takes one back off. Usually free. See
 | **Penalty** | Charged to the responsible party when an action group is destroyed. For Move, charged to the mover only when they moved someone else's unit and it dies. |
 | **Limit** | For actions that put a group on the map: how many your side may have up at once. For the rest (waypoints, RTB, Move, nuke, carrier orders, fires, tasks): how many uses per server session. |
 | **Geo limit** | Some actions can only be aimed within a distance of a friendly objective. |
+| **Cooldown** | Some actions make the side wait a set time after each use, whoever called it (players, commanders, the AI HQ): `F-16 CAS is on cooldown for blue: available again in 12 min`. A restart clears it. |
 | **Duration** | Loitering flights can have a lifetime in hours, after which they are removed. |
 
 Every refusal answers with a panel message rather than silently failing:
