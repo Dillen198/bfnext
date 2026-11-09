@@ -291,6 +291,10 @@ fn asset_of(
         });
     }
     let lead = units.first()?.clone();
+    let (dest, task) = match ctx.db.current_waypoint(&gid) {
+        Some((p, why)) => (Some(to_ll(coord, p, 0.)), Some(why.to_string())),
+        None => (None, None),
+    };
     Some(Asset {
         id: gid.inner(),
         name: asset_label(ctx, &g.origin, &lead.typ),
@@ -304,8 +308,8 @@ fn asset_of(
         alive: units.len() as u32,
         total,
         live,
-        task: None,
-        dest: None,
+        task,
+        dest,
         base: None,
         range_m: None,
         orders,
@@ -429,8 +433,10 @@ pub(crate) fn picture(
                 continue;
             }
             let Some(groups) = o.groups().get(&side) else { continue };
-            if let bfprotocols::db::objective::ObjectiveKind::CarrierGroup { .. } =
-                o.kind()
+            if let bfprotocols::db::objective::ObjectiveKind::CarrierGroup {
+                waypoint,
+                ..
+            } = o.kind()
             {
                 if let Some(gid) = groups.into_iter().next()
                     && let Some(mut a) = asset_of(
@@ -446,6 +452,16 @@ pub(crate) fn picture(
                 {
                     a.name = o.name.to_string();
                     a.base = Some(o.name.to_string());
+                    // The last Sail order, until the group gets there.
+                    if let Some(wp) = waypoint
+                        && ctx
+                            .db
+                            .group_center(gid)
+                            .is_ok_and(|c| (c - *wp).magnitude() > 1_000.)
+                    {
+                        a.dest = Some(to_ll(coord, *wp, 0.));
+                        a.task = Some("Sailing to waypoint".into());
+                    }
                     assets.push(a);
                 }
                 continue;

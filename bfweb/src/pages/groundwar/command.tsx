@@ -154,6 +154,15 @@ export function AssetLines({ assets, sel, side }: { assets: Asset[]; sel: Asset 
       geometry: { type: 'LineString', coordinates: [[a.pos[1], a.pos[0]], [a.dest![1], a.dest![0]]] },
     })),
   }), [assets, sel])
+  // The waypoint itself, at the end of each route.
+  const ends: FeatureCollection = useMemo(() => ({
+    type: 'FeatureCollection',
+    features: assets.filter((a) => a.dest).map((a): Feature => ({
+      type: 'Feature',
+      properties: { sel: sel?.id === a.id ? 1 : 0 },
+      geometry: { type: 'Point', coordinates: [a.dest![1], a.dest![0]] },
+    })),
+  }), [assets, sel])
   const reach: FeatureCollection = useMemo(() => ({
     type: 'FeatureCollection',
     features: sel?.range_m ? [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: ring(sel.pos, sel.range_m) } }] : [],
@@ -166,6 +175,15 @@ export function AssetLines({ assets, sel, side }: { assets: Asset[]; sel: Asset 
           'line-width': ['match', ['get', 'sel'], 1, 2, 1.2],
           'line-opacity': 0.75,
           'line-dasharray': [2, 2],
+        }} />
+      </Source>
+      <Source id="cm-route-ends" type="geojson" data={ends}>
+        <Layer id="cm-route-ends" type="circle" paint={{
+          'circle-radius': ['match', ['get', 'sel'], 1, 5, 3.5],
+          'circle-color': 'rgba(0,0,0,0)',
+          'circle-stroke-color': ['match', ['get', 'sel'], 1, PENCIL, SIDE_BRIGHT[side]],
+          'circle-stroke-width': ['match', ['get', 'sel'], 1, 2, 1.4],
+          'circle-stroke-opacity': 0.85,
         }} />
       </Source>
       <Source id="cm-reach" type="geojson" data={reach}>
