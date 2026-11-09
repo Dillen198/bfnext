@@ -57,6 +57,15 @@ export function LayerToggles({ layers, set, note }: { layers: Layers; set: (l: L
   )
 }
 
+/** A marker's tooltip. The engine names an AI asset by its type ("E-3A")
+ *  and a player's "Player - Type" ("Viper - E-3A"): AI gets its role after
+ *  the type, a player's shows as named, anything else gets its type added. */
+function assetTitle(a: Asset): string {
+  if (a.typ && a.name === a.typ) return `${a.name} · ${a.role}`
+  if (a.typ && a.name.endsWith(` - ${a.typ}`)) return a.name
+  return `${a.name} · ${a.role}${a.typ ? ` (${a.typ})` : ''}`
+}
+
 const fl = (m: number) => `FL${String(Math.round((m * 3.281) / 100)).padStart(3, '0')}`
 
 interface AProps {
@@ -86,7 +95,7 @@ function AssetMarkerImpl({ a, side, selected, near, onPick }: AProps): ReactElem
         <div
           className={`gw-mk cm-asset cm-${a.kind}${selected ? ' sel' : ''}${a.live ? '' : ' sim'}`}
           {...pressable((e) => onPick(e, a.id))}
-          title={`${a.name} · ${a.role}${a.typ ? ` (${a.typ})` : ''}`}
+          title={assetTitle(a)}
         >
           {/* Raw SVG markup: safe because assetSvg builds it only from this
               file's constants -- server fields pick a branch, never land in it

@@ -215,6 +215,23 @@ fn station_args(
     })
 }
 
+/// An asset's name on the command map: the lead unit's DCS type ("E-3A",
+/// not the .miz template "BAWACS" the group is named after), and for a
+/// group a player bought or deployed, "Player - Type".
+fn asset_label(ctx: &Context, origin: &DeployKind, typ: &str) -> String {
+    let owner = match origin {
+        DeployKind::Action { player, .. } => player.as_ref(),
+        DeployKind::Deployed { player, .. } | DeployKind::Troop { player, .. } => {
+            Some(player)
+        }
+        _ => None,
+    };
+    match owner.and_then(|u| ctx.db.player(u)) {
+        Some(p) => format!("{} - {typ}", p.name),
+        None => typ.to_string(),
+    }
+}
+
 /// One group as an asset: its units where DCS has them (live) or where the
 /// engine last placed them. `read_live` false skips asking DCS, for groups
 /// that never move (a base's battery): the query runs inside the DCS frame.
@@ -276,7 +293,7 @@ fn asset_of(
     let lead = units.first()?.clone();
     Some(Asset {
         id: gid.inner(),
-        name: g.name.to_string(),
+        name: asset_label(ctx, &g.origin, &lead.typ),
         kind,
         role: role.to_string(),
         typ: lead.typ.clone(),
