@@ -1850,6 +1850,78 @@ fn snap_to_water(
         .collect()
 }
 
+/// Eight points `reach` metres out around a formation's centre: whichever
+/// way the formation is turned, its ships stay inside them.
+fn formation_room(reach: f64) -> SmallVec<[Vector2; 8]> {
+    if reach <= 0. {
+        return smallvec![];
+    }
+    (0..8)
+        .map(|i| {
+            let a = i as f64 * std::f64::consts::TAU / 8.;
+            Vector2::new(a.cos(), a.sin()) * reach
+        })
+        .collect()
+}
+
+/// `p` if open water there has room for a formation (`room`, see
+/// `formation_room`), else the nearest spot that does (see `sea_spot`).
+fn put_to_sea(
+    p: Vector2,
+    room: &[Vector2],
+    water: impl Fn(Vector2) -> bool,
+) -> Option<Vector2> {
+    if water(p) && room.iter().all(|o| water(p + o * 1.2)) {
+        return Some(p);
+    }
+    super::objective::sea_spot(p, room, water)
+}
+
+/// Where ship group `template` puts to sea near `p` (see `put_to_sea`). A
+/// naval base's own position is usually ashore, and a convoy started there
+/// failed with "you can't spawn this unit on land".
+fn ship_start(
+    lua: MizLua,
+    spctx: &crate::spawnctx::SpawnCtx,
+    idx: &dcso3::env::miz::MizIndex,
+    side: Side,
+    template: &str,
+    p: Vector2,
+    what: &str,
+) -> Vector2 {
+    let Ok(land) = Land::singleton(lua) else {
+        return p;
+    };
+    let water = |q: Vector2| {
+        matches!(land.get_surface_type(LuaVec2(q)), Ok(dcso3::land::SurfaceType::Water))
+    };
+    // how far the template's ships sit from its centre, where AtPos puts it
+    let reach = spctx
+        .get_template_ref(idx, dcso3::env::miz::GroupKind::Any, side, template)
+        .and_then(|t| {
+            let ps: SmallVec<[Vector2; 8]> = t
+                .group
+                .units()?
+                .into_iter()
+                .filter_map(|u| u.ok().and_then(|u| u.pos().ok()))
+                .collect();
+            let c = dcso3::centroid2d(ps.iter().copied());
+            Ok(ps.iter().map(|q| (q - c).norm()).fold(0., f64::max))
+        })
+        .unwrap_or(0.);
+    match put_to_sea(p, &formation_room(reach), water) {
+        Some(q) => q,
+        None => {
+            warn!(
+                "[SEA_LANE] {what}: no open water with room for {template} within 30 km of \
+                 ({:.0}, {:.0})",
+                p.x, p.y
+            );
+            p
+        }
+    }
+}
+
 /// Shortest distance from `p` to the segment `a`-`b`. Used to decide whether
 /// an enemy-held objective sits on the ground route between two friendly
 /// ones, without having to sample the line.
@@ -6738,19 +6810,6 @@ impl Db {
         );
         self.ephemeral.sea_route_counter += 1;
 
-        // A lane is sailed point by point, every point in open water; a run
-        // to a carrier goes straight from the naval base.
-        let path: Vec<Vector2> = match lane {
-            Some(lane) => water_path(lua, lane, &format!("{origin_name} -> {dest_name}")),
-            None => vec![],
-        };
-        let (start, first_leg) = match path.as_slice() {
-            [a, b, ..] => (*a, *b - *a),
-            _ => (origin_pos, dest_pos - origin_pos),
-        };
-        let heading = first_leg.y.atan2(first_leg.x);
-        let speed_mps = speed_kph / 3.6;
-
         use crate::db::group::DeployKind;
         use crate::spawnctx::{SpawnCtx, SpawnLoc};
         use dcso3::LuaVec2;
@@ -6763,6 +6822,27 @@ impl Db {
         let spawn_ctx = SpawnCtx::new(lua)?;
         let miz = Miz::singleton(lua)?;
         let idx = miz.index()?;
+
+        // A lane is sailed point by point, every point in open water; a run
+        // to a carrier goes straight from the naval base. Either way the
+        // ships put to sea where there is water for all of them: the naval
+        // base itself is usually ashore.
+        let what = format!("{origin_name} -> {dest_name}");
+        let mut path: Vec<Vector2> = match lane {
+            Some(lane) => water_path(lua, lane, &what),
+            None => vec![],
+        };
+        let first = path.first().copied().unwrap_or(origin_pos);
+        let start = ship_start(lua, &spawn_ctx, &idx, side, &ship_template, first, &what);
+        if let Some(p) = path.first_mut() {
+            *p = start;
+        }
+        let first_leg = match path.as_slice() {
+            [_, b, ..] => *b - start,
+            _ => dest_pos - start,
+        };
+        let heading = first_leg.y.atan2(first_leg.x);
+        let speed_mps = speed_kph / 3.6;
 
         let group_id = self.add_group(
             &spawn_ctx,
@@ -6796,22 +6876,31 @@ impl Db {
             task: Box::new(Task::ComboTask(vec![])),
         };
         let route_points: Vec<MissionPoint> = if path.is_empty() {
-            vec![point(origin_pos, true), point(dest_pos, false)]
+            vec![point(start, true), point(dest_pos, false)]
         } else {
             path.iter().enumerate().map(|(i, p)| point(*p, i == 0)).collect()
         };
 
-        {
+        let spawned = {
             let mut perf = Perf::get_mut();
             let perf = Arc::make_mut(&mut perf.inner);
-            self.ephemeral.spawn_group(
-                perf,
-                &self.persisted,
-                &idx,
-                &spawn_ctx,
-                group!(self, group_id)?,
-                route_points,
-            )?;
+            group!(self, group_id).and_then(|group| {
+                self.ephemeral.spawn_group(
+                    perf,
+                    &self.persisted,
+                    &idx,
+                    &spawn_ctx,
+                    group,
+                    route_points,
+                )
+            })
+        };
+        if let Err(e) = spawned {
+            // don't leave a ship group in the db that DCS never got
+            if let Err(de) = self.delete_group(&group_id) {
+                error!("{what}: could not remove an unspawned ship group: {de:?}");
+            }
+            return Err(e);
         }
 
         let route = SeaLogisticsRoute {
@@ -6861,12 +6950,14 @@ impl Db {
         use crate::db::group::DeployKind;
         use crate::spawnctx::{SpawnCtx, SpawnLoc};
         use bfprotocols::cfg::UnitTag;
-        let path = water_path(lua, path, what);
-        let (start, leg) = match path.as_slice() {
-            [a, b, ..] => (*a, *b - *a),
-            _ => bail!("{what}: a ship route needs two points"),
-        };
+        let mut path = water_path(lua, path, what);
+        if path.len() < 2 {
+            bail!("{what}: a ship route needs two points")
+        }
         let spctx = SpawnCtx::new(lua)?;
+        let start = ship_start(lua, &spctx, idx, side, template, path[0], what);
+        path[0] = start;
+        let leg = path[1] - start;
         let gid = self.add_group(
             &spctx,
             idx,
@@ -8854,6 +8945,26 @@ mod tests {
         assert_eq!(path[0], lane[0], "a point at sea stays put");
         assert!(path[1].x > 0., "the one on land is moved offshore: {:?}", path[1]);
         assert!((path[1] - lane[1]).norm() <= 6_000., "and not far: {:?}", path[1]);
+    }
+
+    #[test]
+    fn a_convoy_puts_to_sea_with_room_for_every_ship() {
+        // Coast along x = 0: land for x < 0, sea beyond. The naval base is
+        // ashore, as Mersin's is; the convoy's ships sit up to 800 m out.
+        let water = |p: Vector2| p.x > 0.;
+        let room = formation_room(800.);
+        let base = Vector2::new(-1_000., 0.);
+        let start = put_to_sea(base, &room, water).expect("open sea nearby");
+        assert!(room.iter().all(|o| water(start + o)), "a ship ashore at {start:?}");
+        // At sea already, with room: stays put.
+        let off = Vector2::new(5_000., 0.);
+        assert_eq!(put_to_sea(off, &room, water), Some(off));
+        // In water but too close in for the escorts: moved out.
+        let shore = Vector2::new(300., 0.);
+        let p = put_to_sea(shore, &room, water).expect("open sea nearby");
+        assert!(p.x > 800., "escorts would be on the beach at {p:?}");
+        // A single ship needs only its own spot.
+        assert!(formation_room(0.).is_empty());
     }
 
     #[test]
