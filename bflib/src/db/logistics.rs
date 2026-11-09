@@ -2568,6 +2568,25 @@ impl Db {
                             }
                         }
                         hit.map(|(oid, _)| *oid)
+                    })
+                    .or_else(|| {
+                        // An airfield whose reference point is outside its own
+                        // objective's zone (a zone drawn round the runways of a
+                        // field whose ATC point is out by the apron; H3, found
+                        // by the load test on 9 November 2026) still belongs to
+                        // the airbase objective of the same name, as long as no
+                        // other airbase has taken it.
+                        self.persisted
+                            .objectives_by_name
+                            .get(&name)
+                            .copied()
+                            .filter(|oid| {
+                                self.persisted
+                                    .objectives
+                                    .get(oid)
+                                    .is_some_and(|o| matches!(o.kind, ObjectiveKind::Airbase))
+                                    && !self.ephemeral.airbase_by_oid.contains_key(oid)
+                            })
                     });
                     let w = airbase
                         .get_warehouse()

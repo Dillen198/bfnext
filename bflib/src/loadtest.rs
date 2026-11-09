@@ -86,6 +86,14 @@ pub(crate) struct LoadTest {
     /// (real time, game time) at the last report.
     last_report: Option<(DateTime<Utc>, f64)>,
     counts: FxHashMap<&'static str, u32>,
+    /// Next slot type to fly, per side: every type is flown in turn.
+    next_type: FxHashMap<Side, usize>,
+    /// Per (side, aircraft type): (launched, refused, last refusal).
+    by_type: FxHashMap<(Side, String), (u32, u32, std::string::String)>,
+    last_type_report: Option<DateTime<Utc>>,
+    /// The simulated players have joined (once a mission, even when there
+    /// are none, as in a baseline run).
+    joined: bool,
 }
 
 impl LoadTest {
@@ -113,7 +121,8 @@ pub(crate) fn tick(
         return;
     }
     ctx.loadtest.last_tick = Some(now);
-    if ctx.loadtest.sims.is_empty() {
+    if !ctx.loadtest.joined {
+        ctx.loadtest.joined = true;
         join(ctx, &cfg, now);
     }
     fly(lua, ctx, perf, &cfg, now);
@@ -193,44 +202,67 @@ fn fly(
             .collect();
         for &i in idle.iter().take(want.saturating_sub(up).min(LAUNCH_PER_TICK)) {
             match launch(lua, ctx, perf, side, &front) {
-                Ok(gid) => {
+                Ok((gid, typ)) => {
+                    ctx.loadtest.by_type.entry((side, typ)).or_default().0 += 1;
                     let mins =
                         cfg.sortie_minutes as f64 * thread_rng().gen_range(0.8..1.2);
                     ctx.loadtest.sims[i].flight =
                         Some((gid, now + Duration::seconds((mins * 60.) as i64)));
                     ctx.loadtest.count("aircraft launched");
                 }
-                Err(e) => {
+                Err((typ, e)) => {
                     ctx.loadtest.count("launch refused");
-                    log::debug!("[LOAD_TEST] {side:?} launch refused: {e:?}");
+                    let t = ctx.loadtest.by_type.entry((side, typ.clone())).or_default();
+                    t.1 += 1;
+                    t.2 = format!("{e:#}").chars().take(160).collect();
+                    log::debug!("[LOAD_TEST] {side:?} {typ} launch refused: {e:?}");
                 }
             }
         }
     }
 }
 
-/// One AI copy of a player aircraft of `side`, from the friendly field
-/// nearest a random point of the front, to orbit and fight over it.
+/// One AI copy of a player aircraft of `side` -- the next slot type in turn,
+/// so a run flies every aircraft the mission offers -- from the friendly
+/// field nearest a random point of the front, to orbit and fight over it.
+/// Returns the group and the type, or the type and why it couldn't launch.
 fn launch(
     lua: MizLua,
     ctx: &mut Context,
     perf: &mut PerfInner,
     side: Side,
     front: &[Vector2],
-) -> anyhow::Result<GroupId> {
-    let mut rng = thread_rng();
-    let slots: Vec<(String, String)> = ctx
+) -> Result<(GroupId, String), (String, anyhow::Error)> {
+    let mut slots: Vec<(String, String)> = ctx
         .db
         .ephemeral
         .clone_templates
         .iter()
-        .filter(|((s, typ), _)| *s == side && !Db::needs_big_spot(typ.as_str()))
+        .filter(|((s, _), _)| *s == side)
         .map(|((_, typ), t)| (typ.clone(), t.clone()))
         .collect();
-    let (typ, template) = slots
-        .choose(&mut rng)
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("no slot templates"))?;
+    if slots.is_empty() {
+        return Err((String::from("none"), anyhow::anyhow!("no slot templates")));
+    }
+    slots.sort();
+    let n = ctx.loadtest.next_type.entry(side).or_default();
+    let (typ, template) = slots[*n % slots.len()].clone();
+    *n += 1;
+    launch_type(lua, ctx, perf, side, front, &typ, &template)
+        .map(|gid| (gid, typ.clone()))
+        .map_err(|e| (typ, e))
+}
+
+fn launch_type(
+    lua: MizLua,
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    side: Side,
+    front: &[Vector2],
+    typ: &String,
+    template: &String,
+) -> anyhow::Result<GroupId> {
+    let mut rng = thread_rng();
     let rotary = ctx
         .db
         .ephemeral
@@ -241,7 +273,14 @@ fn launch(
     let target = *front.choose(&mut rng).expect("not empty");
     let field = ctx
         .db
-        .pick_launch_field(lua, side, target, rotary, false, 0.)
+        .pick_launch_field(
+            lua,
+            side,
+            target,
+            rotary,
+            Db::needs_big_spot(typ.as_str()),
+            0.,
+        )
         .ok_or_else(|| anyhow::anyhow!("no field for a {typ}"))?;
     let ground = Land::singleton(lua)?;
     let elev = ground.get_height(LuaVec2(field.pos)).unwrap_or(0.);
@@ -561,6 +600,20 @@ fn report(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
     let mut counts: Vec<_> =
         ctx.loadtest.counts.iter().map(|(k, v)| format!("{k} {v}")).collect();
     counts.sort();
+    // every ten minutes: how each aircraft type is doing
+    if ctx.loadtest.last_type_report.is_none_or(|t| (now - t).num_seconds() >= 600) {
+        ctx.loadtest.last_type_report = Some(now);
+        let mut types: Vec<_> = ctx.loadtest.by_type.iter().collect();
+        types.sort_by(|a, b| (a.0.0 as u8, &a.0.1).cmp(&(b.0.0 as u8, &b.0.1)));
+        for ((side, typ), (ok, bad, why)) in types {
+            let why = if *bad > 0 {
+                format!(" (last: {why})")
+            } else {
+                std::string::String::new()
+            };
+            info!("[LOAD_TEST_TYPE] {side:?} {typ}: launched {ok}, refused {bad}{why}");
+        }
+    }
     info!(
         "[LOAD_TEST] {} players, {airborne} airborne; game {:.2}x real time; {} groups in the db; {}",
         ctx.loadtest.sims.len(),
