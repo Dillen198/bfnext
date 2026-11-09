@@ -59,6 +59,13 @@ The map is your coalition's picture, not the truth: enemy positions appear
 only once your side has found them. How to read all of it is on
 [Reading the F10 Map](../gameplay/reading-the-map.md).
 
+**Fog of war.** Some servers (Levant Ablaze among them) also run DCS's own
+fog of war on the F10 map: besides your side's units, it shows the enemy
+units your side's sensors detect right now, as ordinary DCS unit icons, and
+they disappear when the contact is lost. The engine's intel pins are what
+stays once nobody is looking. Spectators and observers see the map only,
+with no units at all.
+
 ### Your map marks
 
 The marks **you** place on the map are how you give the engine a position:

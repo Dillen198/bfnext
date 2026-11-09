@@ -276,6 +276,10 @@ the contact is somewhere in there. Fly against the ring, not the shape.
 
 Class, count, source, confidence and age are all still there — click the pin.
 
+On a server that runs DCS's fog of war, enemy units your side detects right
+now also show as plain DCS unit icons. Those are live and vanish the moment
+the contact is lost; the intel pin is what remembers it afterwards.
+
 ---
 
 ## Quick answers
