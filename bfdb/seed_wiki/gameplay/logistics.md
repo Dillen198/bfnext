@@ -80,7 +80,7 @@ reserve is still available for hub-to-hub balancing and for supply transfers.
 | --- | --- | --- | --- |
 | Ground convoys | {{cfg:warehouse.convoy.enabled|yes}} | {{cfg:warehouse.convoy.speed_kph|60}} km/h | {{cfg:warehouse.convoy.trucks_per_convoy|5}} trucks each, up to {{cfg:warehouse.convoy.max_concurrent_convoys|10}} at once. Follows roads, blocked by the front line, killable. |
 | Air logistics | {{cfg:warehouse.air_logistics.enabled|yes}} | {{cfg:warehouse.air_logistics.speed_kph|780}} km/h | Crosses the front line. Up to {{cfg:warehouse.air_logistics.max_concurrent_routes|6}} routes, sent when a base drops below {{cfg:warehouse.air_logistics.supply_threshold|50}}% supply. Killable, and a fat target at {{cfg:warehouse.air_logistics.altitude_m|2500}} m. |
-| Sea logistics | {{cfg:warehouse.sea_logistics.enabled|no}} | {{cfg:warehouse.sea_logistics.speed_kph|30}} km/h | Naval resupply, where the map and the server enable it. |
+| Sea logistics | {{cfg:warehouse.sea_logistics.enabled|no}} | {{cfg:warehouse.sea_logistics.speed_kph|30}} km/h | Naval convoys from a naval base: to carrier groups, and on servers with sea lanes, along fixed lanes to coastal bases. Sent when the destination drops below {{cfg:warehouse.sea_logistics.supply_threshold|50}}% supply or fuel. |
 
 Each base gets **one** convoy or airlift at a time, carrying weapons and fuel
 together.
@@ -89,6 +89,21 @@ together.
 convoy truck earns points *and* removes supply that was about to arrive
 somewhere. `F10 → Info → Supply Convoys` shows what is in transit on your side;
 the enemy has the same page for theirs.
+
+**Naval convoys** sail fixed sea lanes from a naval base: cargo ships with an
+escort warship, unloading at an anchorage off the base they supply. The lane
+is drawn on the F10 map while a convoy is on it. Sink the cargo ships and the
+load is lost; a convoy that can't arrive within
+{{cfg:warehouse.sea_logistics.max_transit_minutes|180}} minutes is called back
+and its load returns to the naval base. Lanes run along the coast, so expect
+air defences ashore and the escort's own guns.
+
+**Naval patrols** guard the waters off the naval bases: warship groups sailing
+a fixed loop for whichever side holds the base, and taken over by the other
+side's ships if the base is captured. They defend themselves and the sky
+around them, so treat them as moving SAM sites. A sunk patrol is replaced
+after {{cfg:naval_patrols.respawn_minutes|60}} minutes, so sinking one opens
+the sea lanes it covers for a while.
 
 Ground convoys despawn on arrival, so a convoy still on the map is still
 carrying something. They keep driving under fire: they don't scatter off the
@@ -148,7 +163,7 @@ else.
 | Spent on | How |
 | --- | --- |
 | **Repairs** | Each automatic repair of a group costs {{cfg:repair_supply_cost|5}}% of the base's stock, or {{cfg:warehouse.materiel.repair_cost|250}} materiel where the materiel economy is on. A base that can't pay doesn't repair. |
-| **Aircraft and weapons** | Taking off with an airframe, fuel and weapons takes them out of the warehouse (and landing back at a friendly base returns what you didn't use). |
+| **Aircraft and weapons** | Taking off with an airframe, fuel and weapons takes them out of the warehouse (and landing back at a friendly base returns what you didn't use). AI flights (CAP, strikes, bombers, wingmen) take fuel too and never give it back, so on some servers they won't take off from a field below {{cfg:warehouse.ai_launch_min_fuel_pct|0}}% fuel (0 = no such check) and use the next field out. |
 | **Crates** | Each crate unpacked charges the base it was **spawned at**, not where you unpack it: {{cfg:deploy_supply_cost|3}}% of its stock per crate, or {{cfg:warehouse.materiel.deploy_cost|100}} materiel per crate with the materiel economy. Building a SAM site in the desert spends the stock of the base you picked the crates up from. |
 | **Issuing crates and troops** | With the materiel economy on, a base with less than {{cfg:warehouse.materiel.deploy_cost|100}} materiel refuses to issue any: `Ramat David is out of materiel (40 on hand, 100 needed) -- it can't issue supply until a convoy gets through`. |
 
@@ -278,21 +293,39 @@ up its repair. See [Carrier Operations](./carrier-ops.md).
 
 ## Supply transfer crates
 
-**Fuel Transfer** and **Weapons Transfer** crates (the names vary by server)
-move stock from the base you load them at to another friendly base:
-{{cfg:warehouse.supply_transfer_size|25}}% of the source's stock, never
-airframes. This is the manual way to push stock into a base the automatic
-distribution can't reach: a cut-off objective, or one you have just taken.
-Unpacked from the F10 menu at a base that is still consolidating after a capture, it also speeds the consolidation up.
+Supply crates move stock from the base you load them at to another friendly
+base, never airframes. This is the manual way to push stock into a base the
+automatic distribution can't reach: a cut-off objective, or one you have just
+taken. Unpacked from the F10 menu at a base that is still consolidating after
+a capture, a crate also speeds the consolidation up.
 
-| Delivered by | Where it goes | What moves |
-| --- | --- | --- |
-| Classic F10 menu | Unpack it inside the zone of a friendly base other than its origin | Either crate moves weapons, equipment and fuel together |
-| Dynamic or C-130 cargo | The nearest friendly objective when it lands, which must not be its origin | The fuel crate moves only fuel, the weapons crate only weapons and equipment |
+Each crate carries one kind of stock and moves only that:
 
-A transfer delivered from the F10 menu pays
+| Crate | What it moves |
+| --- | --- |
+| **Fuel Transfer** | Fuel only |
+| **Weapons Transfer** | Weapons and equipment, never fuel |
+| **Supply crates by kind**, on servers that split supply | Only the kind named: fuel, air-to-air missiles, air-to-ground munitions (missiles, bombs and rockets), gun ammunition and pods, or ground equipment. Missiles are sorted by what DCS says they are, so an AIM-120 is air-to-air and a Maverick air-to-ground |
+
+Names vary by server; the crates are under **F10 → Cargo → Crates → Base
+Supply**. A crate moves up to {{cfg:warehouse.supply_transfer_size|25}}% of
+each item it carries, and never more than the source holds or the
+destination has room for. The same rules apply whichever way it travels:
+
+| Delivered by | Where it goes |
+| --- | --- |
+| Classic F10 menu | Unpack it inside the zone of a friendly base other than its origin |
+| Dynamic or C-130 cargo | The nearest friendly objective when it lands, which must not be its origin |
+
+A crate that would move nothing (the source had none of that kind to spare,
+or the destination is already full of it) is refused by **Unpack Nearby
+Crate(s)** and stays on the ground; one that unloads itself on landing (C-130,
+or dynamic cargo that auto-unpacks) is used up and pays nothing. So fly the
+kind of stock the base is short of.
+
+A transfer that moved something pays
 **{{cfg:points.logistics_transfer|15}} points**, scaled the same way as a
-repair kit.
+repair kit, whether you unpack it or it unloads itself on landing.
 
 If you would rather pay points than fly, the **Logistics Repair** and
 **Logistics Transfer** actions send an AI cargo flight to do the same jobs; see

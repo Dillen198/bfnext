@@ -552,6 +552,132 @@ pub struct WingmanCfg {
     /// units. Default 8 km.
     #[serde(default = "default_wingman_rotary_engage_m")]
     pub rotary_engage_dist_m: f64,
+    /// The kinds of wingman a player can ask for, each with its own aircraft
+    /// and price: F10 > Wingman > Request lists them. Jet pilots see the jet
+    /// roles, helicopter pilots `AttackHelo`. Empty (the default): a single
+    /// "Request Wingman" from `templates_*` at `cost`, as before.
+    #[serde(default)]
+    pub types: Vec<WingmanType>,
+    /// "A copy of my aircraft": the player's own type, with the loadout and
+    /// paint of its slot in the .miz. Absent: not offered.
+    #[serde(default)]
+    pub clone: Option<WingmanCloneCfg>,
+}
+
+/// TESTING ONLY: simulated players for a load test (`Cfg::load_test`). They
+/// register on both sides, fly AI copies of player aircraft from friendly
+/// fields, and on a timer deploy units and troops, buy actions, move
+/// supplies and form formations -- what a full server's players put the
+/// engine and DCS through. Never put this in a live campaign's config.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LoadTestCfg {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Simulated players per side. Default 30.
+    #[serde(default = "default_lt_players")]
+    pub players_per_side: u32,
+    /// Share of them flying at any time, as AI copies of player aircraft.
+    /// Default 0.5.
+    #[serde(default = "default_lt_airborne")]
+    pub airborne_share: f64,
+    /// Seconds between one simulated player's ground, logistics and action
+    /// moves (jittered). Default 120.
+    #[serde(default = "default_lt_act")]
+    pub act_every_secs: u32,
+    /// Minutes an AI copy flies before landing and another launches.
+    /// Default 30.
+    #[serde(default = "default_lt_sortie")]
+    pub sortie_minutes: u32,
+    /// Deployed groups each simulated player keeps; the oldest goes when it
+    /// deploys another. Default 3.
+    #[serde(default = "default_lt_deployed")]
+    pub deployed_per_player: u32,
+}
+
+pub(super) fn default_lt_players() -> u32 {
+    30
+}
+pub(super) fn default_lt_airborne() -> f64 {
+    0.5
+}
+pub(super) fn default_lt_act() -> u32 {
+    120
+}
+pub(super) fn default_lt_sortie() -> u32 {
+    30
+}
+pub(super) fn default_lt_deployed() -> u32 {
+    3
+}
+
+/// What a wingman is for. Decides what it engages while covering the
+/// player, and what "attack" means when it is ordered to.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub enum WingmanRole {
+    /// Air-to-air: covers against fighters and helicopters.
+    Fighter,
+    /// Bombs and missiles on ground targets; covers against air threats.
+    Strike,
+    /// Hunts air defences.
+    Sead,
+    /// Close air support against armour and troops.
+    Cas,
+    /// A helicopter for a helicopter pilot: ground units and helicopters.
+    AttackHelo,
+    /// Both air and ground: what a copy of the player's aircraft is.
+    Multirole,
+}
+
+impl WingmanRole {
+    pub fn rotary(self) -> bool {
+        self == WingmanRole::AttackHelo
+    }
+}
+
+/// One entry in F10 > Wingman > Request. See `WingmanCfg::types`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct WingmanType {
+    /// Menu label, e.g. "Fighter escort".
+    pub name: String,
+    pub role: WingmanRole,
+    /// Groups in the .miz (plane section, or helicopter for `AttackHelo`)
+    /// to draw it from; one is picked at random.
+    #[serde(default)]
+    pub templates_blue: Vec<String>,
+    #[serde(default)]
+    pub templates_red: Vec<String>,
+    /// Points charged when it is called. Default 0.
+    #[serde(default)]
+    pub cost: i32,
+}
+
+/// See `WingmanCfg::clone`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct WingmanCloneCfg {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Points charged for a copy. Default 0.
+    #[serde(default)]
+    pub cost: i32,
+    /// A price for particular types in place of `cost`, by DCS type name,
+    /// e.g. {"F-14B": 600}.
+    #[serde(default)]
+    pub cost_by_type: FxHashMap<String, i32>,
+    /// Types that can't be copied (transports, tankers ...).
+    #[serde(default)]
+    pub exclude: Vec<String>,
+}
+
+impl WingmanCloneCfg {
+    /// What a copy of `typ` costs, or None if it can't be copied.
+    pub fn price(&self, typ: &str) -> Option<i32> {
+        if !self.enabled || self.exclude.iter().any(|t| t.as_str() == typ) {
+            return None;
+        }
+        Some(self.cost_by_type.get(typ).copied().unwrap_or(self.cost))
+    }
 }
 
 pub(super) fn default_wingman_max_side_pilots() -> u32 {

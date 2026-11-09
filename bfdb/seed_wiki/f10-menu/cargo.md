@@ -84,7 +84,7 @@ server's deployables, so the categories and units below are examples.
   {"label":"Base Supply","items":[
    {"label":"Logistics Repair","says":"2 of 4 crates spawned, 4471 will be deleted if the limit is exceeded","note":"The base repair kit. Every crate entry answers the same way; 4471 is your oldest crate's id."},
    {"label":"Emergency Repair","says":"3 of 4 crates spawned, 4471 will be deleted if the limit is exceeded","note":"Only where the server enables emergency repairs."},
-   {"label":"Fuel Transfer","says":"1 of 4 crates spawned, 4471 will be deleted if the limit is exceeded"},
+   {"label":"Fuel Transfer","says":"1 of 4 crates spawned, 4471 will be deleted if the limit is exceeded","note":"On servers that split supply by kind these two are replaced (or joined) by one crate per kind, e.g. Fuel Resupply, A/A Missile Resupply, A/G Munition Resupply, Gun, Tank & Pod Resupply, Ground Equipment Resupply."},
    {"label":"Weapons Transfer","says":"1 of 4 crates spawned, 4471 will be deleted if the limit is exceeded"}]},
   {"label":"Radar SAMs","items":[
    {"label":"Roland ADS(35 pts)","items":[{"label":"Roland(4)","says":"1 of 4 crates spawned, 4471 will be deleted if the limit is exceeded","note":"(4) means the unit needs four of this crate."}]},
@@ -219,7 +219,8 @@ their own when they land (see the C-130 page).
 | --- | --- | --- |
 | **{{cfg:repair_crate.Blue.name|Logistics Repair}}** | Inside the zone of a friendly base **other than the one you loaded it at**. Raises that base's logistics one step. | `KillerDog repaired logistics at Ramat David to %80` |
 | **{{cfg:emergency_repair.crate.name|Emergency Repair}}** | Inside the zone of a damaged, quiet friendly base. Rebuilds one destroyed group. | `KillerDog delivered an emergency repair crate. Emergency repair at Ramat David: AAA group rebuilt (health 70% -> 80%)` |
-| **Fuel / Weapons Transfer** | Inside the zone of a friendly base other than its origin. Moves {{cfg:warehouse.supply_transfer_size|25}}% of the origin's stock across. | `KillerDog transfered supplies from Ramat David to Megiddo` |
+| **Fuel / Weapons Transfer** | Inside the zone of a friendly base other than its origin. The fuel crate moves fuel only, the weapons crate weapons and equipment (never airframes): {{cfg:warehouse.supply_transfer_size|25}}% of each item, taken from the origin's stock. | `KillerDog transfered supplies from Ramat David to Megiddo` |
+| **Supply crates by kind** (some servers) | The same, but each carries one kind of stock: fuel, air-to-air missiles, air-to-ground munitions (missiles, bombs and rockets), guns, tanks and pods, or ground equipment. Moves only items of that kind. | the same; a crate that would move nothing is refused (see below) |
 | **Carrier Repair** | Dynamic and C-130 menus only. Delivered to the nearest friendly carrier group. | `Carrier repair crate delivered to CVN-71 (2 crate(s)) - ~5m remaining` |
 
 A repair kit at a base whose logistics are already full is refused
@@ -230,6 +231,16 @@ up instead:
 ```dcsmessage
 KillerDog delivered a logistics repair kit to Megiddo, speeding up its consolidation
 ```
+
+A supply crate that has nothing to move stays where it is, so you can take it
+somewhere that needs it, and pays nothing:
+
+```dcsmessage
+Ramat David had no air-to-air missiles to spare, or Megiddo is already full of them
+```
+
+So check what the base is short of before you fly: its stock is on the
+dashboard's base panel, and **F10 → Objectives** reads out its supply.
 
 A repair kit pays {{cfg:points.logistics_repair|25}} points and a supply
 transfer {{cfg:points.logistics_transfer|15}} points, more for a long haul or
@@ -293,6 +304,8 @@ it has one. See [Cockpit overlay](../getting-started/cockpit-overlay.md).
   {{cfg:crate_spread|250}} m of each other.
 - **Supply crates go to a different base.** A repair kit or transfer crate
   unpacked at the base it came from does nothing.
+- **Bring the kind the base is short of.** Where supply is split by kind, a
+  load of missiles does nothing for a base that is out of fuel.
 
 ## See Also
 

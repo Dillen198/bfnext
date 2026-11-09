@@ -214,6 +214,9 @@ base is broken (the same point at which troops could capture it, see
 [Capturing Objectives](../gameplay/capturing-objectives.md)), the formation
 **sends infantry in** as a capture squad: its infantry group if it has one,
 or a squad that dismounts from one of its IFVs or APCs (the vehicle stays).
+Each vehicle carries one squad: once it has sent its squad in, it has none
+left for the next assault (see
+[Troops in IFVs, APCs and trucks](../f10-menu/troops.md#troops-in-ifvs-apcs-and-trucks)).
 From there the normal capture timer and consolidation hold apply: kill the
 squad and the capture fails. After an assault goes in, the next one at the
 same base waits ten minutes.
@@ -365,6 +368,29 @@ so you can see it on the ground and fly over it.
 Raising a formation costs {{cfg:ground_war.raise_cost|0}} of your points
 (free unless the server sets a price). Orders are free.
 
+### A formation from your own deployed units
+
+On servers that allow it, a commander can turn the vehicles they deployed
+into a formation: **F10 → Ground Forces → Form a formation from my deployed
+units**. It takes up to {{cfg:ground_war.form_max_groups|6}} of your deployed
+ground groups within {{cfg:ground_war.form_radius_m|3000}} m of you, the
+nearest first, that can drive and still have a vehicle alive (static units
+such as SAM sites stay out). They stay where they are and wait for orders,
+and from then on it is a formation like any other: Attack, Defend, Hold,
+Withdraw, the front line and the rules above all apply. It counts toward your
+side's formation limit.
+
+```dcsmessage
+6th Mech Coy (Masyaf) formed and awaiting your orders
+```
+
+**Disband into deployed units here** gives them back: the surviving vehicles
+become your deployed units again, where they stand. A formation raised from a
+garrison has **Disband (back to the garrison)** instead, which puts it straight
+back at its posts at home (or your nearest base) instead of driving there.
+Your side is told either way. A formation carrying out another commander's
+order can't be disbanded until that order runs out.
+
 ### F10 → Ground Forces
 
 The entry reads **Ground Forces>>** until you open it: opening it builds the
@@ -393,7 +419,8 @@ spare. Carrier groups never appear: nothing drives to sea.
    ]},
    {"label":"Hold position","says":"3rd Mech Coy (Senaki): holding position. Yours for 60 min, then the AI takes it back."},
    {"label":"Withdraw to Senaki and refit","says":"3rd Mech Coy (Senaki): withdrawing to Senaki, 11 km by road. Yours for 60 min, then the AI takes it back.","note":"Its home base while that is still yours, else your base nearest it. On arrival it rejoins that garrison."},
-   {"label":"Hand back to AI command","says":"3rd Mech Coy (Senaki) is back under AI command."}
+   {"label":"Hand back to AI command","says":"3rd Mech Coy (Senaki) is back under AI command."},
+   {"label":"Disband (back to the garrison)","says":"3rd Mech Coy (Senaki) disbanded, back in the garrison at Senaki","note":"A formation formed from deployed units reads Disband into deployed units here: 'its vehicles are deployed units again where they stand'."}
   ]},
   {"label":"4th Armd Coy (Kutaisi) (holding, 100%)","items":[
    {"label":"Attack","items":[
@@ -404,8 +431,10 @@ spare. Carrier groups never appear: nothing drives to sea.
    ]},
    {"label":"Hold position","says":"4th Armd Coy (Kutaisi): holding position. Yours for 60 min, then the AI takes it back."},
    {"label":"Withdraw to Kutaisi and refit","says":"4th Armd Coy (Kutaisi): withdrawing to Kutaisi, 1 km by road. Yours for 60 min, then the AI takes it back."},
-   {"label":"Hand back to AI command","says":"4th Armd Coy (Kutaisi) is back under AI command."}
+   {"label":"Hand back to AI command","says":"4th Armd Coy (Kutaisi) is back under AI command."},
+   {"label":"Disband (back to the garrison)","says":"4th Armd Coy (Kutaisi) disbanded, back in the garrison at Kutaisi"}
   ]},
+  {"label":"Form a formation from my deployed units (within 3 km)","says":"6th Mech Coy (Kutaisi) formed and awaiting your orders","note":"Only on servers that allow it, and only with deployed vehicles near you."},
   {"label":"Raise a formation","note":"Only when a base near you has groups to spare.","items":[
    {"label":"From Kutaisi (2 groups, 4 km)","says":"5th Mech Coy (Kutaisi) raised and awaiting orders.","note":"Your side hears 'Viper has raised 5th Mech Coy (Kutaisi). It awaits orders.' The new formation holds at its base until someone orders it."},
    {"label":"From Zestaponi (1 groups, 31 km)","says":"can't raise a formation: Zestaponi is under threat and can't spare its garrison."}
@@ -435,6 +464,9 @@ carried out, the reply says why. The ones you will meet most:
 | can't raise a formation: Kutaisi is still consolidating. | Just captured |
 | can't raise a formation: Kutaisi has no armour or infantry it can spare. | Everything left must stay home |
 | raising a formation costs {{cfg:ground_war.raise_cost|0}} points. | The server charges for raising, and you can't pay |
+| can't form a formation: you have no deployed vehicles that can drive within 3.0 km of you | None of your deployed ground units are near enough, or none can drive |
+| get into a slot near your deployed units first | Forming needs to know where you are |
+| can't disband: 3rd Mech Coy (Senaki) is carrying out Viper's order | Another commander's order still stands |
 
 Formations under orders also report their progress to your side:
 

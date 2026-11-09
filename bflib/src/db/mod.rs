@@ -47,6 +47,7 @@ pub mod balance;
 pub mod battle;
 pub mod capture_report;
 pub mod cargo;
+pub mod carrier;
 pub mod combat;
 pub mod economy;
 pub mod emergency_repair;

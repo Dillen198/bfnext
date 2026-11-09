@@ -121,7 +121,9 @@ This server's Blue squads, straight from its config:
 {{list:troops.Blue|_Squad list unavailable for this server: check F10 → Troops → Squads in game._}}
 
 Dismounted infantry from a killed APC can capture too, where the server sets
-that vehicle's dismounts as capture-capable.
+that vehicle's dismounts as capture-capable. A squad you put out of an IFV,
+APC or truck yourself is an ordinary troop squad of yours, and captures if
+its kind of squad can (see [Troops](../f10-menu/troops.md#troops-in-ifvs-apcs-and-trucks)).
 
 **Load from a different base.** `F10 → Troops → Squads → Load Standard squad`
 works only inside a friendly base that still has logistics and is not itself

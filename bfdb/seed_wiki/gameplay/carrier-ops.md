@@ -137,6 +137,14 @@ This is the main mechanism, and it is a reason to care about naval bases you
 otherwise never visit: **lose the base, or let its materiel run down, and the
 carrier stops healing.**
 
+The carrier's stores come from the same naval base. On servers with sea
+logistics, a **naval convoy** of cargo ships and escorts sails out from it
+when the carrier group runs below
+{{cfg:warehouse.sea_logistics.supply_threshold|50}}% supply or fuel. Sink the
+enemy's on the way and their carrier's jets go without; guard your own. See
+[Logistics & Supply](./logistics.md#three-carriers) for convoys and the
+warship patrols off the naval bases.
+
 ### Carrier repair crates
 
 Fly or air-drop your side's **Carrier Repair** crate to the ship. A delivered

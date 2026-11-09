@@ -34,11 +34,13 @@ mod hq;
 mod intel_marks;
 mod jtac;
 mod landcache;
+mod loadtest;
 mod mapcolor;
 mod menu;
 mod modern_war;
 mod msgq;
 mod navaids;
+mod naval;
 mod rules;
 mod shots;
 mod situation;
@@ -373,6 +375,9 @@ struct Context {
     /// `-brief` requests, answered from the mission Lua state for the same
     /// reason as `weather_requests`.
     brief_requests: Vec<PlayerId>,
+    /// `-dismount` / `-embark` / `-carriers`, run from the mission Lua state
+    /// for the same reason as `weather_requests` (they spawn and despawn).
+    carrier_requests: Vec<(PlayerId, chatcmd::CarrierCmd, Option<GroupId>)>,
     jtac_commands: Vec<(PlayerId, JtId, String)>,
     to_background: Option<UnboundedSender<bg::Task>>,
     recently_landed: FxHashMap<DcsOid<ClassUnit>, DateTime<Utc>>,
@@ -446,6 +451,10 @@ struct Context {
     /// On-call wingmen, autonomous AI packages and civil traffic
     /// (`Cfg::air_life`). Session state only.
     airlife: airlife::AirLife,
+    /// Warship patrols at sea (`Cfg::naval_patrols`). Session state only.
+    naval: naval::NavalPatrols,
+    /// TESTING ONLY: simulated players (`Cfg::load_test`). Session state.
+    loadtest: loadtest::LoadTest,
     /// Electronic warfare, SAM magazines, strike raids, sea drones and
     /// campaign tempo (`Cfg::modern_war`). Session state only.
     modern_war: modern_war::ModernWar,
@@ -994,6 +1003,11 @@ struct DismountInfo {
     pos: dcso3::Vector2,
     heading: f64,
     from_group: GroupId,
+    uid: bfprotocols::db::group::UnitId,
+    /// What it had aboard if not the squad it started with (`db::carrier`).
+    /// Read before the death is handled: that can delete the group, and
+    /// the record with it.
+    carried: Option<db::carrier::Carried>,
 }
 
 fn try_capture_dismount_info(ctx: &Context, unit: &Unit) -> Option<DismountInfo> {
@@ -1024,11 +1038,38 @@ fn dismount_info_for(
         pos,
         heading: su.heading,
         from_group: su.group,
+        uid: *uid,
+        carried: ctx.db.persisted.carriers.get(uid).cloned(),
     })
 }
 
 fn spawn_dismount(lua: MizLua, ctx: &mut Context, info: Option<DismountInfo>) {
     let Some(info) = info else { return };
+    ctx.db.take_carried(&info.uid);
+    match info.carried {
+        // its squad is out or lost: nobody gets out, nothing is duplicated
+        Some(db::carrier::Carried::Out(_) | db::carrier::Carried::Lost) => return,
+        // a squad that embarked gets out as it was
+        Some(db::carrier::Carried::Squad(it)) => {
+            let name = it.troop.name.clone();
+            match ctx.db.spawn_embarked_squad(
+                lua,
+                &ctx.idx,
+                info.side,
+                it,
+                info.pos,
+                info.heading,
+            ) {
+                Ok(gid) => info!(
+                    "[DISMOUNT] {} {} destroyed; its embarked {name} squad gets out as {gid}",
+                    info.vehicle_typ, info.uid
+                ),
+                Err(e) => error!("failed to let an embarked squad out: {e:?}"),
+            }
+            return;
+        }
+        None => (),
+    }
     if let Err(e) = ctx.db.spawn_dismount_group(
         lua,
         &ctx.idx,
@@ -1753,7 +1794,25 @@ fn handle_event(
                             }
                         }
                     });
+                let ucid = driver.map(|(u, _)| u);
                 ctx.db.player_entered_unit(&id, driver);
+                // Driving an IFV/APC/truck that carries a squad: a Troops
+                // menu on it to put the squad down or take one aboard.
+                if let Some(ucid) = ucid
+                    && let Some(uid) = ctx.db.driven_unit(&ucid)
+                    && ctx.db.persisted.units.get(&uid).is_some_and(|u| {
+                        !u.dead && ctx.db.carrier_troop(&u.typ, u.side).is_some()
+                    })
+                {
+                    let built = dcso3::mission_commands::MissionCommands::singleton(lua)
+                        .and_then(|mc| {
+                            let gid = unit.get_group()?.id()?;
+                            menu::add_carrier_menu_for_group(&mc, gid, unit.get_name()?)
+                        });
+                    if let Err(e) = built {
+                        warn!("could not build the carrier menu for {ucid}: {e:?}");
+                    }
+                }
             }
         }
         Event::PlayerLeaveUnit(e) => {
@@ -3323,14 +3382,15 @@ fn find_ground_template(
     // A special SAM site's group is built from inline units under an
     // "@synthetic:<gid>" name, with no .miz template behind it, so it can't
     // be copied into an ambush force ("no such template @synthetic:8").
+    // Armour only, and only a group with something left alive: SAM batteries
+    // (Mr/Sr/Lr) used to qualify, so an "ambush force" could be a fresh copy
+    // of a destroyed SAM battery driving out of its base, wave after wave.
     let is_ground = |g: &db::group::SpawnedGroup| {
-        matches!(
-            g.class,
-            ObjGroupClass::Armor
-                | ObjGroupClass::Mr
-                | ObjGroupClass::Sr
-                | ObjGroupClass::Lr
-        ) && !g.template_name.starts_with("@synthetic:")
+        g.class == ObjGroupClass::Armor
+            && !g.template_name.starts_with("@synthetic:")
+            && g.units
+                .into_iter()
+                .any(|uid| db.persisted.units.get(uid).is_some_and(|u| !u.dead))
     };
 
     // First try the requested objective's own groups
@@ -6131,6 +6191,10 @@ fn slow_phase_4(
 ) -> Result<AdminResult> {
     // Wingmen, autonomous AI packages and civil traffic (`Cfg::air_life`).
     step(lua, ctx, "air life", |ctx| airlife::tick(lua, ctx, perf, start_ts));
+    // Warship patrols for whoever holds their naval base (`Cfg::naval_patrols`).
+    step(lua, ctx, "naval patrols", |ctx| naval::tick(lua, ctx, start_ts));
+    // TESTING ONLY: simulated players, when a test config asks for them.
+    step(lua, ctx, "load test", |ctx| loadtest::tick(lua, ctx, perf, start_ts));
     // EW, SAM magazines, strike raids, sea drones, tempo (`Cfg::modern_war`).
     step(lua, ctx, "modern war", |ctx| modern_war::tick(lua, ctx, perf, start_ts));
     step(lua, ctx, "hunters", |ctx| command::tick_hunters(lua, ctx, start_ts));
@@ -6353,6 +6417,7 @@ fn run_timed_events(ctx: &mut Context, lua: MizLua, path: &Path) -> Result<Admin
         }
     });
     step(lua, ctx, "brief requests", |ctx| chatcmd::run_brief_requests(ctx, lua));
+    step(lua, ctx, "carrier requests", |ctx| chatcmd::run_carrier_requests(ctx, lua));
     ctx.load_state.step();
     record_perf(&mut perf.timed_events, perf_ts);
     ctx.log_perf(now);

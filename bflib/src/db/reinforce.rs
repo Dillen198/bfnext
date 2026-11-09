@@ -210,6 +210,8 @@ impl Db {
                 **id != args.oid
                     && o.owner == side
                     && !o.threatened
+                    && o.health() > 0
+                    && !o.kind.is_special_sam_site()
                     && !matches!(o.kind, ObjectiveKind::CarrierGroup { .. })
                     && (materiel == 0 || stock(o) >= materiel)
             })

@@ -113,7 +113,9 @@ it again for fresh lists.
 
 **DCS silently drops anything past the tenth entry in a menu.** No error, no
 warning. Fowl Engine spends the last slot of a full page on **`More >>`**,
-which opens the next page of the same list.
+which opens the next page of the same list. Every list the engine builds
+pages this way: actions, Base Supply crates, Ground Forces, wingmen and the
+rest.
 
 So if something you expect is not in a list, **look for `More >>` at the
 bottom before assuming it isn't there.** Long base lists split into numbered

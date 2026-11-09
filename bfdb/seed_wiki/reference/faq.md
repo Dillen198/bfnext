@@ -100,6 +100,25 @@ Heavy aircraft need a large open stand, so a field with only fighter spots is
 passed over. You were not charged; try again when a field is free, or capture
 one closer to the front. See [Actions Menu](../f10-menu/actions.md).
 
+Some actions also have a **cooldown** for your whole side after each use:
+`F-16 CAS is on cooldown for blue: available again in 12 min`. Someone on your
+side (or the AI HQ) called it recently. See
+[Costs, limits and refunds](../f10-menu/actions.md#costs-limits-and-refunds).
+
+### Q: How do I get the troops out of a BTR, BMP, Bradley or truck?
+**A**: Drive it yourself (Combined Arms) or deploy it, stop, then **F10 →
+Troops → Dismount squad** in the vehicle, or `-dismount` in chat. Each vehicle
+has one squad: embark it again (**Embark nearby squad**, or `-embark`) before
+it can be put down somewhere else. If the squad is killed, that vehicle has no
+more troops. See [Troops](../f10-menu/troops.md#troops-in-ifvs-apcs-and-trucks).
+
+### Q: Can I get an AI wingman?
+**A**: Where the server has wingmen on, **F10 → Wingman → Request** once you
+are airborne. It lists the kinds you can call (fighter escort, CAS, SEAD ...)
+with their prices, and on some servers a copy of your own aircraft. **Orders**
+then tells it to cover you, engage, attack near you or at your map mark, or
+hold. See [Wingmen, AI Packages & Civil Traffic](../advanced/air-life.md).
+
 ### Q: Why does my ground formation keep falling back?
 **A**: Either its morale broke (heavy losses, or cut off from supply), or it ran
 low on fuel and ammunition and pulled back to resupply. Keep the road to a
@@ -163,13 +182,17 @@ See [JTAC System](../f10-menu/jtac.md).
 - its convoys are being shot up,
 - it is spending supply on repairs and on the aircraft, weapons and fuel pilots take from it.
 
+To feed it yourself, fly in a supply crate of the kind it is short of (fuel,
+missiles, munitions ...): a crate only moves its own kind of stock. See
+[Supply transfer crates](../gameplay/logistics.md#supply-transfer-crates).
+
 See [Logistics & Supply](../gameplay/logistics.md).
 
 ### Q: How often does supply update?
 **A**: Every **{{cfg:warehouse.tick|10}} minutes**, with a fresh outside delivery every {{cfg:warehouse.ticks_per_delivery|12}} ticks. Admins can force one with `-admin tick`.
 
 ### Q: Why is a base of mine getting nothing at all?
-**A**: Its road is probably cut. Supply routing follows the front line: a road that runs through an enemy base is cut. A cut-off base can only be reached by air, by player crates, or by an AI helo run. See [Materiel & the War Economy](../gameplay/war-economy.md).
+**A**: Its road is probably cut. Supply routing follows the front line: a road that runs through an enemy base is cut. A cut-off base can only be reached by air, by sea where it has a naval convoy lane, by player crates, or by an AI helo run. See [Materiel & the War Economy](../gameplay/war-economy.md).
 
 ## Technical Issues
 

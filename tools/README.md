@@ -5,6 +5,7 @@ browser, no build and no server.
 
 | File | What |
 |------|------|
+| `cfg-viewer.html` | Reads a whole engine config (`<sortie>_CFG`) and lays it out by topic: an overview of what is switched on, tables for actions, deployables and their crates, troops, supply crates, points and lives, wingmen, sea lanes and naval patrols, SAM sites and garrisons, and a searchable tree for the rest. **Compare with…** lists every value that differs between two configs. Read-only; the file never leaves the browser |
 | `action-cfg-editor.html` | Edits the engine config's `actions` (what each F10 action costs and spawns) |
 | `deployable-cfg-editor.html` | Edits the engine config's `deployables` |
 

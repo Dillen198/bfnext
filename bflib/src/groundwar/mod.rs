@@ -46,7 +46,9 @@ use bfprotocols::{
 };
 use chrono::{Duration, prelude::*};
 use compact_str::{CompactString, format_compact};
-use dcso3::{MizLua, coalition::Side, env::miz::GroupId as MizGroupId, net::Ucid};
+use dcso3::{
+    MizLua, Vector2, coalition::Side, env::miz::GroupId as MizGroupId, net::Ucid,
+};
 use fxhash::FxHashMap;
 use log::info;
 use std::mem;
@@ -57,6 +59,10 @@ pub(crate) enum CmdKind {
     Raise(ObjectiveId),
     Order(FormationId, Order),
     Release(FormationId),
+    /// Form a formation from the player's own deployed units near them.
+    FormDeployed,
+    /// Take a formation out of the field now (`Db::disband_formation`).
+    Disband(FormationId),
 }
 
 /// A player's ground-war command, from the F10 menu.
@@ -197,6 +203,48 @@ pub(crate) fn apply(
             ctx.db.release_formation(id).map_err(|e| format_compact!("{e}"))?;
             let name = ctx.db.formation(id).map(|f| f.name.clone()).unwrap_or_default();
             Ok((format_compact!("{name} is back under AI command"), Some(id)))
+        }
+        CmdKind::FormDeployed => {
+            if cooling {
+                return Err("wait a moment before your next ground order".into());
+            }
+            let Some(at) = ctx
+                .db
+                .instanced_players()
+                .find(|(u, _, _)| **u == ucid)
+                .map(|(_, _, i)| Vector2::new(i.position.p.x, i.position.p.z))
+            else {
+                return Err("get into a slot near your deployed units first".into());
+            };
+            let id = ctx
+                .db
+                .form_from_deployed(&mut ctx.groundwar.rt, lua, side, ucid, at, now)
+                .map_err(|e| format_compact!("can't form a formation: {e}"))?;
+            ctx.groundwar.last_order.insert(ucid, now);
+            let name = ctx.db.formation(id).map(|f| f.name.clone()).unwrap_or_default();
+            ctx.db.ephemeral.msgs().panel_to_side(
+                15,
+                false,
+                side,
+                format_compact!("{pname}{via} has formed {name}. It awaits orders."),
+            );
+            Ok((format_compact!("{name} formed and awaiting your orders"), Some(id)))
+        }
+        CmdKind::Disband(id) => {
+            if !mine(ctx, id) {
+                return Err("that formation is not ours".into());
+            }
+            let what = ctx
+                .db
+                .disband_formation(&mut ctx.groundwar.rt, side, id, Some(ucid), now)
+                .map_err(|e| format_compact!("can't disband: {e}"))?;
+            ctx.db.ephemeral.msgs().panel_to_side(
+                10,
+                false,
+                side,
+                format_compact!("{pname}{via}: {what}"),
+            );
+            Ok((what, None))
         }
     }
 }

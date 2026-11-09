@@ -20,7 +20,7 @@ use crate::{
     db::cargo::{Cargo, Oldest, SlotStats},
 };
 use anyhow::{Context as ErrContext, Result, anyhow};
-use bfprotocols::cfg::{Cfg, DeployableKind, LimitEnforceTyp};
+use bfprotocols::cfg::{Cfg, Crate, DeployableKind, LimitEnforceTyp};
 use chrono;
 use compact_str::{CompactString, ToCompactString, format_compact};
 use dcso3::{
@@ -371,8 +371,15 @@ pub(crate) fn spawn_crates_for_ucid(
     let cfg = &ctx.db.ephemeral.cfg;
     let whcfg = cfg.warehouse.as_ref();
     let crate_def = whcfg
-        .and_then(|w| w.supply_transfer_fuel_crate.get(&side))
-        .filter(|cr| cr.name.as_str() == crate_name)
+        .and_then(|w| w.supply_crates.get(&side))
+        .and_then(|l| {
+            l.iter().map(|s| &s.crate_def).find(|cr| cr.name.as_str() == crate_name)
+        })
+        .or_else(|| {
+            whcfg
+                .and_then(|w| w.supply_transfer_fuel_crate.get(&side))
+                .filter(|cr| cr.name.as_str() == crate_name)
+        })
         .or_else(|| {
             whcfg
                 .and_then(|w| w.supply_transfer_weapons_crate.get(&side))
@@ -786,42 +793,31 @@ pub(super) fn add_cargo_menu_for_group(
     // with the same name+parent collide in DCS, breaking both menus.
     let logi =
         mc.add_submenu_for_group(group, "Base Supply".into(), Some(root.clone()))?;
-    mc.add_command_for_group(
-        group,
-        rep.name.clone(),
-        Some(logi.clone()),
-        spawn_crate,
-        ArgTuple { fst: group, snd: rep.name.clone() },
-    )?;
-    if let Some(er) = emergency_crate(cfg) {
-        mc.add_command_for_group(
-            group,
-            er.name.clone(),
-            Some(logi.clone()),
+    // Paged: with split supply crates (fuel, A/A, A/G, guns, ground) this
+    // list passes the ten F10 shows.
+    let mut supply = Pager::new(group, logi);
+    let mut add = |cr: &Crate| -> Result<()> {
+        supply.command(
+            mc,
+            cr.name.clone(),
             spawn_crate,
-            ArgTuple { fst: group, snd: er.name.clone() },
+            ArgTuple { fst: group, snd: cr.name.clone() },
         )?;
+        Ok(())
+    };
+    add(rep)?;
+    if let Some(er) = emergency_crate(cfg) {
+        add(er)?;
     }
     if let Some(whcfg) = &cfg.warehouse {
-        // Add fuel transfer crate menu item
         if let Some(fuel_cr) = whcfg.supply_transfer_fuel_crate.get(side) {
-            mc.add_command_for_group(
-                group,
-                fuel_cr.name.clone(),
-                Some(logi.clone()),
-                spawn_crate,
-                ArgTuple { fst: group, snd: fuel_cr.name.clone() },
-            )?;
+            add(fuel_cr)?;
         }
-        // Add weapons transfer crate menu item
         if let Some(weapons_cr) = whcfg.supply_transfer_weapons_crate.get(side) {
-            mc.add_command_for_group(
-                group,
-                weapons_cr.name.clone(),
-                Some(logi.clone()),
-                spawn_crate,
-                ArgTuple { fst: group, snd: weapons_cr.name.clone() },
-            )?;
+            add(weapons_cr)?;
+        }
+        for sc in whcfg.supply_crates.get(side).into_iter().flatten() {
+            add(&sc.crate_def)?;
         }
     }
     // "Base Supply" already occupies one slot directly under "Crates".
@@ -969,6 +965,9 @@ pub(super) fn add_c130_cargo_menu_for_group(
             }
             if let Some(weapons_cr) = whcfg.supply_transfer_weapons_crate.get(side) {
                 add_supply(weapons_cr.name.as_str())?;
+            }
+            for sc in whcfg.supply_crates.get(side).into_iter().flatten() {
+                add_supply(sc.crate_def.name.as_str())?;
             }
             if !whcfg.carrier_repair_crate.is_empty() {
                 add_supply(whcfg.carrier_repair_crate[side].name.as_str())?;
@@ -1243,6 +1242,9 @@ pub(super) fn add_helo_cargo_menu_for_group(
             }
             if let Some(weapons_cr) = whcfg.supply_transfer_weapons_crate.get(side) {
                 add_supply(weapons_cr.name.as_str())?;
+            }
+            for sc in whcfg.supply_crates.get(side).into_iter().flatten() {
+                add_supply(sc.crate_def.name.as_str())?;
             }
             if !whcfg.carrier_repair_crate.is_empty() {
                 add_supply(whcfg.carrier_repair_crate[side].name.as_str())?;

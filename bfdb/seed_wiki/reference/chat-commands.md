@@ -25,6 +25,8 @@ you typed it into, like any message.
 -brief: auto-generated situational briefing (full report: F10 > Info > Situation)
 -transfer <amount> [<player> | objective:<objective>]: transfer points to another player or objective
 -delete <groupid>: delete a group you deployed for a partial refund
+-dismount [groupid]: put the squad out of the IFV/APC/truck you drive or deployed
+-embark [groupid]: take a nearby squad aboard it, -carriers: list yours
 -action <name> <args>: perform an action, -action help for a list of actions
 -bind <uuid>: link your account to the web dashboard (uuid from its login page)
 -jtac list | -jtac <id> <cmd>: work a JTAC from chat, -jtac help for the commands

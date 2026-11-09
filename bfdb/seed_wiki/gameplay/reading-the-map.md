@@ -108,7 +108,8 @@ supply on your own base is the usual reason "my jet won't take that bomb".
 {"health":82,"logi":58,"supply":14,"fuel":95,"focus":["fuel"]}
 ```
 
-Exactly what it says.
+The kind of fuel the base is shortest of, not an average: an airfield out of
+jet fuel shows red here even with its petrol and diesel full.
 
 **Unlimited supply** is shown on the **supply** hex: a **gold outline**. Such a
 base never runs out of weapons, vehicles or fuel, so both its supply and fuel

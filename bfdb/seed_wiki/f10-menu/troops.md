@@ -111,6 +111,39 @@ If you leave your slot or the server while parked at a working friendly base,
 the squads aboard are returned and refunded for you. Squads lost with an
 aircraft that crashes or is shot down are gone.
 
+## Troops in IFVs, APCs and trucks
+
+Every BTR, BMP, Bradley, Stryker and troop truck the server lists as carrying
+infantry has **one squad aboard**, for as long as the vehicle lives. You can
+put it down:
+
+- **Driving it yourself** (Combined Arms): the vehicle gets an **F10 → Troops**
+  menu with **Dismount squad**, **Embark nearby squad** and **What is aboard**.
+  The same works from chat: `-dismount`, `-embark`.
+- **One you deployed** (AI driven): `-dismount <groupid>` and
+  `-embark <groupid>` in chat. `-carriers` lists your vehicles that carry a
+  squad and what each has aboard.
+
+The vehicle has to be **stopped**. The squad gets out behind it and is yours:
+it counts against the squad limits and captures if its type can.
+
+One squad per vehicle, never more:
+
+- To put it down again, **embark it first**: drive within 60 m of it, stop,
+  and use Embark. It comes back aboard at the strength it has left.
+- If the squad is **killed**, deleted or lifted out by a helicopter, the
+  vehicle has **nobody left** and can't deploy troops again.
+- A vehicle that is **destroyed** lets out whoever is aboard, and nobody if
+  its squad is already out or lost.
+- An AI formation that sends a vehicle's squad into a base uses it up the
+  same way.
+
+```dcsmessage
+a Standard squad is out of the BTR-82A as group 4120 -- inside an enemy base's ring they capture it
+the BTR-82A's squad is already out as group 4120 -- embark it before it can deploy again
+the BTR-82A's squad was lost -- it has no troops to deploy
+```
+
 ## Capturing with troops
 
 The squad has to be **inside the ring** of an objective that is

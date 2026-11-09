@@ -127,11 +127,22 @@ These do not need a set. Each one acts alone when it lands:
 
 | Crate | Goes to | Message |
 | --- | --- | --- |
-| **Fuel Transfer** | The **nearest friendly objective**, which must not be the base it was loaded at. Moves up to {{cfg:warehouse.supply_transfer_size|25}}% of fuel, taken from the base it was loaded at. | `Fuel transfer crate delivered to Megiddo` |
-| **Weapons Transfer** | Same, for weapons and equipment (never airframes). | `Weapons transfer crate delivered to Megiddo` |
+| **Fuel Transfer** | The **nearest friendly objective**, which must not be the base it was loaded at. Tops up each kind of fuel by up to {{cfg:warehouse.supply_transfer_size|25}}% of the base's capacity for it, taken from the base it was loaded at. | `Fuel transfer crate delivered to Megiddo: 3 kinds of fuel topped up` |
+| **Weapons Transfer** | Same, for weapons and equipment (never airframes, never fuel). | `Weapons transfer crate delivered to Megiddo: 41 kinds of weapons and equipment topped up` |
+| **Supply crates by kind** (some servers: Fuel Resupply, A/A Missile Resupply, A/G Munition Resupply, ...) | Same, for only the kind of stock named on the crate. | `A/A Missile Resupply delivered to Megiddo: 6 kinds of air-to-air missiles topped up` |
 | **{{cfg:repair_crate.Blue.name|Logistics Repair}}** | The nearest friendly objective (the base it was loaded at is allowed). Logistics up one step. | `Logistics repair crate delivered to Megiddo (logi 60 -> 80%)` |
 | **Carrier Repair** | The nearest friendly carrier group. Starts its repair, or speeds one up: the repair time is divided by the number of crates delivered. | `Carrier repair crate delivered to CVN-71 (2 crate(s)) - ~5m remaining` |
 | **{{cfg:emergency_repair.crate.name|Emergency Repair}}** | Must come to rest **inside the zone** of a damaged, quiet friendly base. Rebuilds one destroyed group. | `Emergency repair at Megiddo: AAA group rebuilt (health 70% -> 80%)` |
+
+A supply run pays like a helicopter or truck transfer
+({{cfg:points.logistics_transfer|15}} points, more for a long haul or a
+front-line base), but only when it moved something. A crate dropped on a base
+already full of that kind, or loaded at a base that had none to spare, is used
+up and pays nothing:
+
+```dcsmessage
+A/A Missile Resupply delivered to Megiddo, but nothing was unloaded: it is full of air-to-air missiles, or its source had none to spare
+```
 
 "Nearest" means nearest anywhere on the map, so drop supply crates on or right
 next to the base you mean. Refusals leave the crate on the ground, with the

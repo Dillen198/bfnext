@@ -618,6 +618,47 @@ BFCOCKPIT_TEST.panel.wiki_api.open("nope/missing")
 settle()
 check(all_text():find('There is no page "nope/missing"', 1, true), "missing page")
 
+-- ── the MENU tab: F10's "More >>" pages read as one list ──
+
+do
+    -- what bflib's Pager makes of a long Actions menu: nine entries, then a
+    -- "More >>" page with the rest, one of them a submenu
+    local items = { { name = "Actions", path = { "Actions" } } }
+    for i = 1, 9 do
+        items[#items + 1] = { name = "A" .. i, path = { "Actions", "A" .. i }, command = true }
+    end
+    items[#items + 1] = { name = "More >>", path = { "Actions", "More >>" } }
+    for i = 10, 12 do
+        items[#items + 1] = { name = "A" .. i, path = { "Actions", "More >>", "A" .. i }, command = true }
+    end
+    items[#items + 1] = { name = "Sub", path = { "Actions", "More >>", "Sub" } }
+    items[#items + 1] = { name = "X", path = { "Actions", "More >>", "Sub", "X" }, command = true }
+
+    local lvl = P.menu_level(items, { "Actions" })
+    eq(#lvl, 13, "a paged level reads as one list")
+    eq(lvl[10] and lvl[10].name, "A10", "page two follows page one")
+    eq(lvl[13] and lvl[13].name, "Sub", "submenus on a page are kept")
+    eq(lvl[10] and table.concat(lvl[10].path, "/"), "Actions/More >>/A10", "paths keep the page for the server")
+    eq(table.concat(P.crumb_of({ "Actions", "More >>", "Sub" }), "/"), "Actions/Sub", "crumb skips pages")
+    eq(P.opened_by({ "Actions>>" }, "Actions>>"), "Actions", "Actions>> opens Actions")
+    eq(P.opened_by({ "Ground Forces>>" }, "Ground Forces>>"), "Ground Forces", "Ground Forces>> opens Ground Forces")
+    eq(P.opened_by({ "Actions", "Bomber>>" }, "Bomber>>"), nil, "only root entries are openers")
+    eq(P.opened_by({ "Status" }, "Status"), nil, "a plain command opens nothing")
+
+    P.select_tab("menu")
+    P.state.menu = items
+    P.state.here = { "Actions" }
+    P.render()
+    local txt = all_text()
+    check(txt:find("A12", 1, true), "page-two entry in the panel")
+    check(not txt:find("More >>", 1, true), "no More >> row in the panel")
+    P.state.here = { "Actions", "More >>", "Sub" }
+    P.render()
+    eq(wid.crumb.text, "F10 > Actions > Sub", "crumb inside a paged submenu")
+    wid.back:click()
+    eq(table.concat(P.state.here, "/"), "Actions", "Back skips the page")
+end
+
 -- LUATEST_PAGE=<slug> prints that page as the panel lays it out: x offset,
 -- kind, text.
 local show_page = os.getenv("LUATEST_PAGE")
