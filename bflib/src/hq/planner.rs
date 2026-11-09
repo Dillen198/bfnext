@@ -252,6 +252,7 @@ pub(crate) fn available(
                         cost: 0,
                         penalty: None,
                         limit: None,
+                        cooldown_secs: None,
                         geo_limit: Default::default(),
                     },
                     weight: t.weight,
@@ -360,9 +361,13 @@ pub(crate) fn available(
     if cfgs.artillery.is_some() {
         put(OpKind::Artillery, c.artillery, None);
     }
-    if cfgs.campaign_events.as_ref().is_some_and(|e| e.enabled) {
+    if let Some(e) = cfgs.campaign_events.as_ref().filter(|e| e.enabled) {
         put(OpKind::MissileStrike, c.missile_strike, None);
-        put(OpKind::Ambush, c.ambush, None);
+        // `ambush_enabled: false` turns the HQ's ambushes off too, not only
+        // the rules mode's (it used to be ignored here)
+        if e.ambush_enabled {
+            put(OpKind::Ambush, c.ambush, None);
+        }
     }
     if cfgs.warehouse.as_ref().and_then(|w| w.convoy.as_ref()).is_some_and(|c| c.enabled)
     {
@@ -1471,6 +1476,7 @@ mod tests {
                 cost: 0,
                 penalty: None,
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: Default::default(),
             },
             weight: 1.,
@@ -1566,6 +1572,7 @@ mod tests {
                     cost: 0,
                     penalty: None,
                     limit: None,
+                    cooldown_secs: None,
                     geo_limit,
                 },
             )),

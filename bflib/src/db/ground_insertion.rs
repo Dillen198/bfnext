@@ -380,7 +380,13 @@ impl Db {
                 .objectives
                 .into_iter()
                 .filter(|(oid, o)| {
-                    o.owner == side && **oid != f.destination && can_send_vehicle(&o.kind)
+                    // a wiped-out base or a special SAM site (never
+                    // neutralised, even at health 0) sends nothing
+                    o.owner == side
+                        && **oid != f.destination
+                        && can_send_vehicle(&o.kind)
+                        && o.health() > 0
+                        && !o.kind.is_special_sam_site()
                 })
                 .map(|(oid, o)| (*oid, o.pos())),
             dest_pos,

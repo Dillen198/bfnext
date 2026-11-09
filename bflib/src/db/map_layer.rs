@@ -1450,16 +1450,22 @@ impl MapLayer {
             if self.sea_route_marks.contains_key(id) {
                 continue;
             }
-            let origin_pos = persisted
-                .objectives
-                .get(&route.origin)
-                .map(|o| o.zone.pos())
-                .unwrap_or_default();
-            let dst_pos = persisted
-                .objectives
-                .get(&route.destination)
-                .map(|o| o.zone.pos())
-                .unwrap_or_default();
+            let origin_pos = route.path.first().copied().unwrap_or_else(|| {
+                persisted
+                    .objectives
+                    .get(&route.origin)
+                    .map(|o| o.zone.pos())
+                    .unwrap_or_default()
+            });
+            // a convoy on a sea lane is drawn to its anchorage, not across
+            // the land to the airbase it supplies
+            let dst_pos = route.path.last().copied().unwrap_or_else(|| {
+                persisted
+                    .objectives
+                    .get(&route.destination)
+                    .map(|o| o.zone.pos())
+                    .unwrap_or_default()
+            });
             let side = persisted
                 .groups
                 .get(&route.group_id)

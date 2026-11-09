@@ -34,11 +34,13 @@ mod hq;
 mod intel_marks;
 mod jtac;
 mod landcache;
+mod loadtest;
 mod mapcolor;
 mod menu;
 mod modern_war;
 mod msgq;
 mod navaids;
+mod naval;
 mod rules;
 mod shots;
 mod situation;
@@ -446,6 +448,10 @@ struct Context {
     /// On-call wingmen, autonomous AI packages and civil traffic
     /// (`Cfg::air_life`). Session state only.
     airlife: airlife::AirLife,
+    /// Warship patrols at sea (`Cfg::naval_patrols`). Session state only.
+    naval: naval::NavalPatrols,
+    /// TESTING ONLY: simulated players (`Cfg::load_test`). Session state.
+    loadtest: loadtest::LoadTest,
     /// Electronic warfare, SAM magazines, strike raids, sea drones and
     /// campaign tempo (`Cfg::modern_war`). Session state only.
     modern_war: modern_war::ModernWar,
@@ -3306,14 +3312,15 @@ fn find_ground_template(
     // A special SAM site's group is built from inline units under an
     // "@synthetic:<gid>" name, with no .miz template behind it, so it can't
     // be copied into an ambush force ("no such template @synthetic:8").
+    // Armour only, and only a group with something left alive: SAM batteries
+    // (Mr/Sr/Lr) used to qualify, so an "ambush force" could be a fresh copy
+    // of a destroyed SAM battery driving out of its base, wave after wave.
     let is_ground = |g: &db::group::SpawnedGroup| {
-        matches!(
-            g.class,
-            ObjGroupClass::Armor
-                | ObjGroupClass::Mr
-                | ObjGroupClass::Sr
-                | ObjGroupClass::Lr
-        ) && !g.template_name.starts_with("@synthetic:")
+        g.class == ObjGroupClass::Armor
+            && !g.template_name.starts_with("@synthetic:")
+            && g.units
+                .into_iter()
+                .any(|uid| db.persisted.units.get(uid).is_some_and(|u| !u.dead))
     };
 
     // First try the requested objective's own groups
@@ -6114,6 +6121,10 @@ fn slow_phase_4(
 ) -> Result<AdminResult> {
     // Wingmen, autonomous AI packages and civil traffic (`Cfg::air_life`).
     step(lua, ctx, "air life", |ctx| airlife::tick(lua, ctx, perf, start_ts));
+    // Warship patrols for whoever holds their naval base (`Cfg::naval_patrols`).
+    step(lua, ctx, "naval patrols", |ctx| naval::tick(lua, ctx, start_ts));
+    // TESTING ONLY: simulated players, when a test config asks for them.
+    step(lua, ctx, "load test", |ctx| loadtest::tick(lua, ctx, perf, start_ts));
     // EW, SAM magazines, strike raids, sea drones, tempo (`Cfg::modern_war`).
     step(lua, ctx, "modern war", |ctx| modern_war::tick(lua, ctx, perf, start_ts));
     step(lua, ctx, "hunters", |ctx| command::tick_hunters(lua, ctx, start_ts));

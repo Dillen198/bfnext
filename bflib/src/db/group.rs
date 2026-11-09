@@ -1637,6 +1637,11 @@ impl Db {
         // past this many the next field out is too far to matter anyway.
         const MAX_FIELDS_TRIED: usize = 8;
         let extra = &self.ephemeral.cfg.extra_fixed_wing_objectives;
+        let min_fuel = if rotary {
+            0
+        } else {
+            self.ephemeral.cfg.warehouse.as_ref().map_or(0, |w| w.ai_launch_min_fuel_pct)
+        };
         let ranked = rank_launch_fields(
             self.persisted
                 .objectives
@@ -1645,6 +1650,7 @@ impl Db {
                     o.owner == side
                         && !o.captureable()
                         && is_launch_kind(&o.kind, rotary, extra.contains(&o.name))
+                        && (o.fuel() >= min_fuel || o.warehouse.liquids.len() == 0)
                         && ok(id)
                 })
                 .map(|(id, o)| (*id, o.zone.pos())),

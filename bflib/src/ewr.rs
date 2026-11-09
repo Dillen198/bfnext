@@ -25,6 +25,7 @@ The default mode is EwrMode::Original to maintain backward compatibility.
 use crate::{
     db::{
         Db,
+        objective::ObjGroupClass,
         player::{InstancedPlayer, Player},
     },
     landcache::LandCache,
@@ -748,6 +749,19 @@ struct SamEmconState {
 
 /// Shared filter for the GCI event vecs: entries whose side matches `want`,
 /// within `radius_m` of `pos`, no older than `max_secs`.
+/// A special SAM site's point defence group (`red_defence`/`blue_defence`,
+/// class Sr). The IADN's emission control leaves it alone: it stays on DCS's
+/// own Auto so it covers the site while the main group is dark.
+fn is_sam_site_defence(db: &Db, gid: &GroupId) -> bool {
+    db.persisted.groups.get(gid).is_some_and(|g| g.class == ObjGroupClass::Sr)
+        && db
+            .persisted
+            .objectives_by_group
+            .get(gid)
+            .and_then(|oid| db.persisted.objectives.get(oid))
+            .is_some_and(|o| o.kind().is_special_sam_site())
+}
+
 fn near(
     events: &[(Vector2, Side, DateTime<Utc>)],
     pos: Vector2,
@@ -1090,7 +1104,7 @@ impl Ewr {
                 // Ephemeral::spawn_group) and left under player control,
                 // otherwise this loop drives them to Auto every tick and
                 // they never light up.
-                if db.persisted.deployed.contains(&gid) {
+                if db.persisted.deployed.contains(&gid) || is_sam_site_defence(db, &gid) {
                     continue;
                 }
                 let sam_pos = Vector2::new(donor.pos.p.x, donor.pos.p.z);
@@ -1245,7 +1259,10 @@ impl Ewr {
             };
             let sam_pos = sam.pos();
             for gid in gids {
-                if handled.contains(gid) || db.persisted.deployed.contains(gid) {
+                if handled.contains(gid)
+                    || db.persisted.deployed.contains(gid)
+                    || is_sam_site_defence(db, gid)
+                {
                     continue;
                 }
                 let Some(group) = db.persisted.groups.get(gid) else {

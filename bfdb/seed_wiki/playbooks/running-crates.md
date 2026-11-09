@@ -14,7 +14,7 @@ ways for a new player to earn points and matter. Reference pages:
 |---|---|
 | **Build a deployable** | Fly every crate a unit needs to a spot between or ahead of your bases, then unpack them into the unit. |
 | **Fix a base** | Fly a logistics repair kit (logistics up one step) or an emergency repair crate (one destroyed group rebuilt) to a damaged base. |
-| **Feed a base** | Fly a fuel or weapons transfer crate from a well-stocked base to a hungry one: a cut-off base, or one you have just captured. |
+| **Feed a base** | Fly a supply crate from a well-stocked base to a hungry one: a cut-off base, or one you have just captured. Each crate carries one kind of stock: a fuel crate carries fuel, a weapons crate carries weapons and equipment, and some servers split it further (air-to-air missiles, air-to-ground munitions, guns and pods, ground equipment). Bring what the base is short of. A crate the base has no room for, or that its source base has none of, will not unpack. |
 
 ## What can carry crates
 

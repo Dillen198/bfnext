@@ -1369,6 +1369,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 100,
                 penalty: Some(100),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Awacs(AwacsCfg {
                     ewr: DeployableEwr { range: 400000 },
@@ -1395,6 +1396,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 10,
                 penalty: None,
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::AwacsWaypoint,
             },
@@ -1405,6 +1407,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 50,
                 penalty: Some(50),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Tanker(AiPlaneCfg {
                     kind: AiPlaneKind::FixedWing,
@@ -1428,6 +1431,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 10,
                 penalty: None,
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::TankerWaypoint,
             },
@@ -1438,6 +1442,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 25,
                 penalty: Some(25),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Drone(DroneCfg {
                     plane: AiPlaneCfg {
@@ -1469,6 +1474,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 5,
                 penalty: None,
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::DroneWaypoint,
             },
@@ -1479,11 +1485,13 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 100,
                 penalty: Some(100),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Bomber(BomberCfg {
                     targets: 15,
                     power: 1000,
                     accuracy: 15,
+                    strike_radius_m: None,
                     plane: AiPlaneCfg {
                         kind: AiPlaneKind::FixedWing,
                         template: "RBOMBER".into(),
@@ -1507,6 +1515,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 100,
                 penalty: Some(100),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Fighters(AiPlaneCfg {
                     kind: AiPlaneKind::FixedWing,
@@ -1530,6 +1539,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 5,
                 penalty: None,
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::FighersWaypoint,
             },
@@ -1540,6 +1550,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 100,
                 penalty: Some(100),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Attackers(AiPlaneCfg {
                     kind: AiPlaneKind::Helicopter,
@@ -1563,6 +1574,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 5,
                 penalty: None,
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::AttackersWaypoint,
             },
@@ -1573,6 +1585,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 50,
                 penalty: Some(100),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Paratrooper(DeployableCfg {
                     name: "Standard".into(),
@@ -1599,6 +1612,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 50,
                 penalty: None,
                 limit: Some(1),
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::FatCow(FatCowActionCfg {
                     deployable: "Fat Cow".into(),
@@ -1613,6 +1627,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 50,
                 penalty: Some(100),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Deployable(DeployableCfg {
                     name: "1L13".into(),
@@ -1639,6 +1654,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 100,
                 penalty: Some(100),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::LogisticsRepair(AiPlaneCfg {
                     kind: AiPlaneKind::Helicopter,
@@ -1662,6 +1678,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 100,
                 penalty: Some(100),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::LogisticsTransfer(AiPlaneCfg {
                     kind: AiPlaneKind::Helicopter,
@@ -1685,6 +1702,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 5000,
                 penalty: None,
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Nuke(NukeCfg {
                     cost_scale: 5,
@@ -1698,6 +1716,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 0,
                 penalty: None,
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::AddTask(TaskCfg {
                     max_per_side: 12,
@@ -1776,6 +1795,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 0,
                 penalty: None,
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::RemoveTask(RemoveTaskCfg { owner_only: false }),
             },
@@ -1786,6 +1806,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 10,
                 penalty: Some(25),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Move(MoveCfg {
                     troop: 1000,
@@ -1804,6 +1825,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 100,
                 penalty: Some(100),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Awacs(AwacsCfg {
                     plane: AiPlaneCfg {
@@ -1830,6 +1852,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 10,
                 penalty: None,
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::AwacsWaypoint,
             },
@@ -1840,6 +1863,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 50,
                 penalty: Some(50),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Tanker(AiPlaneCfg {
                     kind: AiPlaneKind::FixedWing,
@@ -1863,6 +1887,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 50,
                 penalty: Some(50),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Tanker(AiPlaneCfg {
                     kind: AiPlaneKind::FixedWing,
@@ -1886,6 +1911,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 10,
                 penalty: None,
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::TankerWaypoint,
             },
@@ -1896,6 +1922,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 25,
                 penalty: Some(25),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Drone(DroneCfg {
                     plane: AiPlaneCfg {
@@ -1927,6 +1954,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 5,
                 penalty: None,
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::DroneWaypoint,
             },
@@ -1937,11 +1965,13 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 100,
                 penalty: Some(100),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Bomber(BomberCfg {
                     targets: 15,
                     power: 1000,
                     accuracy: 15,
+                    strike_radius_m: None,
                     plane: AiPlaneCfg {
                         kind: AiPlaneKind::FixedWing,
                         template: "BBOMBER".into(),
@@ -1965,6 +1995,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 100,
                 penalty: Some(100),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Fighters(AiPlaneCfg {
                     kind: AiPlaneKind::FixedWing,
@@ -1988,6 +2019,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 5,
                 penalty: None,
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::FighersWaypoint,
             },
@@ -1998,6 +2030,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 100,
                 penalty: Some(100),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Attackers(AiPlaneCfg {
                     kind: AiPlaneKind::Helicopter,
@@ -2021,6 +2054,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 5,
                 penalty: None,
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::AttackersWaypoint,
             },
@@ -2031,6 +2065,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 50,
                 penalty: Some(100),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Paratrooper(DeployableCfg {
                     name: "Standard".into(),
@@ -2057,6 +2092,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 50,
                 penalty: None,
                 limit: Some(1),
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::FatCow(FatCowActionCfg {
                     deployable: "Fat Cow".into(),
@@ -2071,6 +2107,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 50,
                 penalty: Some(100),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Deployable(DeployableCfg {
                     name: "AN/FPS-117".into(),
@@ -2097,6 +2134,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 100,
                 penalty: Some(100),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::LogisticsRepair(AiPlaneCfg {
                     kind: AiPlaneKind::Helicopter,
@@ -2120,6 +2158,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 100,
                 penalty: Some(100),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::LogisticsTransfer(AiPlaneCfg {
                     kind: AiPlaneKind::Helicopter,
@@ -2143,6 +2182,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 5000,
                 penalty: None,
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Nuke(NukeCfg {
                     cost_scale: 5,
@@ -2156,6 +2196,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 0,
                 penalty: None,
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::AddTask(TaskCfg {
                     max_per_side: 12,
@@ -2234,6 +2275,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 0,
                 penalty: None,
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::RemoveTask(RemoveTaskCfg { owner_only: false }),
             },
@@ -2244,6 +2286,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                 cost: 10,
                 penalty: Some(25),
                 limit: None,
+                cooldown_secs: None,
                 geo_limit: ActionGeoLimit::Unlimited,
                 kind: ActionKind::Move(MoveCfg {
                     troop: 1000,
@@ -2311,6 +2354,8 @@ impl Default for Cfg {
                 supply_transfer_fuel_crate: FxHashMap::default(),
                 supply_transfer_weapons_crate: FxHashMap::default(),
                 supply_transfer_size: 25,
+                supply_crates: FxHashMap::default(),
+                ai_launch_min_fuel_pct: 0,
                 carrier_repair_crate: default_carrier_repair_crate(),
                 supply_source: FxHashMap::from_iter([
                     (Side::Blue, "BINVENTORY".into()),
@@ -2460,6 +2505,7 @@ impl Default for Cfg {
             }),
             special_sam_sites: vec![],
             garrison_layouts: None,
+            ground_liveries: FxHashMap::default(),
             special_sam_capture_radius_m: 609.6, // 2000 ft
             special_sam_wake_distance: FxHashMap::default(),
             weather_effects: None,
@@ -2488,6 +2534,8 @@ impl Default for Cfg {
             logi_from_scenery: None,
             helo_insertion: None,
             air_life: None,
+            naval_patrols: None,
+            load_test: None,
             modern_war: None,
             ground_war: None,
             emergency_repair: None,

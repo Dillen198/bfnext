@@ -565,6 +565,7 @@ fn run_action(
             cost: 0,
             penalty: None,
             limit: None,
+            cooldown_secs: None,
             geo_limit: Default::default(),
         },
         args,

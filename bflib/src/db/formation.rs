@@ -279,6 +279,11 @@ pub struct Formation {
     /// down, never into a garrison (`Db::release_purchased_group`).
     #[serde(default)]
     pub purchased: bool,
+    /// Formed by a player from their own deployed units (it is `purchased`
+    /// too): disbanding it gives them back as deployed units where they
+    /// stand, where a bought one is removed (`Db::form_from_deployed`).
+    #[serde(default)]
+    pub formed: bool,
 }
 
 fn full() -> f64 {
@@ -1237,6 +1242,11 @@ impl Db {
         if matches!(obj.kind, ObjectiveKind::CarrierGroup { .. }) {
             bail!("a carrier group has no ground forces to send")
         }
+        // a destroyed base, or a special SAM site (those stay owned at health
+        // 0), has nothing left to raise a formation from
+        if obj.health() == 0 || obj.kind.is_special_sam_site() {
+            bail!("{oname} has no garrison left to raise a formation from")
+        }
         if obj.threatened {
             bail!("{oname} is under threat and can't spare its garrison")
         }
@@ -1324,6 +1334,7 @@ impl Db {
             roe: None,
             pace: Pace::Normal,
             purchased: false,
+            formed: false,
         };
         self.persisted.formations.insert_cow(id, f);
         if let Err(e) = self.update_objective_status(&oid, now) {
@@ -1492,6 +1503,7 @@ impl Db {
             roe: None,
             pace: Pace::Normal,
             purchased: true,
+            formed: false,
         };
         self.persisted.formations.insert_cow(id, f);
         let what = match self.move_formation_to(rt, lua, id, to, via, by, now) {
@@ -1522,6 +1534,162 @@ impl Db {
             now,
         );
         Ok((id, what))
+    }
+
+    /// A formation `by` forms from their own deployed vehicles within
+    /// `form_radius_m` of `at` (where they are): up to `form_max_groups` of
+    /// their deployed ground groups that can drive and still have a vehicle
+    /// alive, the nearest first. The groups leave the deployed list for the
+    /// formation and stay where they are (those in DCS stay in DCS). It is
+    /// `purchased` (never part of a garrison) and `formed`: disbanding it
+    /// gives the groups back as `by`'s deployed units where they stand.
+    pub fn form_from_deployed(
+        &mut self,
+        rt: &mut FormationRt,
+        lua: MizLua,
+        side: Side,
+        by: Ucid,
+        at: Vector2,
+        now: DateTime<Utc>,
+    ) -> Result<FormationId> {
+        let cfg = self.ground_war_cfg()?;
+        if !cfg.form_from_deployed {
+            bail!("forming formations from deployed units is off on this server")
+        }
+        let in_field = self.formations().filter(|f| f.side == side).count();
+        if in_field >= cfg.max_formations_per_side as usize {
+            bail!(
+                "{side:?} already has {in_field} formations in the field, the most it can have"
+            )
+        }
+        let total = self.formations().count();
+        if cfg.live_only && total >= cfg.max_live_formations as usize {
+            bail!("the server can run no more than {total} formations in DCS at once")
+        }
+        let reach = cfg.form_radius_m;
+        let mut cands: Vec<(f64, GroupId)> = vec![];
+        for gid in &self.persisted.deployed {
+            let Some(g) = self.persisted.groups.get(gid) else { continue };
+            if g.side != side || g.kind != Some(GroupCategory::Ground) {
+                continue;
+            }
+            let DeployKind::Deployed { player, .. } = &g.origin else { continue };
+            if *player != by || !self.group_can_drive(gid) {
+                continue;
+            }
+            let alive: SmallVec<[Vector2; 16]> = g
+                .units
+                .into_iter()
+                .filter_map(|u| self.persisted.units.get(u))
+                .filter(|u| !u.dead)
+                .map(|u| u.pos)
+                .collect();
+            if alive.is_empty() {
+                continue;
+            }
+            let d = dist(centroid2d(alive.iter().copied()), at);
+            if d <= reach {
+                cands.push((d, *gid));
+            }
+        }
+        if cands.is_empty() {
+            bail!(
+                "you have no deployed vehicles that can drive within {:.1} km of you",
+                reach / 1000.
+            )
+        }
+        cands.sort_by(|a, b| a.0.total_cmp(&b.0));
+        cands.truncate(cfg.form_max_groups.max(1) as usize);
+        let gids: Vec<GroupId> = cands.into_iter().map(|(_, g)| g).collect();
+        let home = self
+            .objectives()
+            .filter(|(_, o)| o.owner() == side && !crate::groundwar::at_sea(o.kind()))
+            .min_by(|(_, a), (_, b)| dist(a.pos(), at).total_cmp(&dist(b.pos(), at)))
+            .map(|(oid, o)| (*oid, o.supply()))
+            .ok_or_else(|| anyhow!("{side:?} holds no base to form up from"))?;
+        let mut strength0 = 0;
+        let mut pts = vec![];
+        let (mut armor, mut inf) = (false, false);
+        for gid in &gids {
+            // The formation spawns and despawns it now, not the deployed list,
+            // and its pin stands for it on the F10 map.
+            self.persisted.deployed.remove_cow(gid);
+            if let Some((mark, _)) = self.ephemeral.group_marks.remove(gid) {
+                self.ephemeral.msgs().delete_mark(mark);
+            }
+            let g = group!(self, gid)?;
+            if Group::get_by_name(lua, &g.name).is_ok() {
+                rt.live.insert(*gid);
+            }
+            for uid in &g.units {
+                if let Some(u) = self.persisted.units.get(uid)
+                    && !u.dead
+                {
+                    strength0 += 1;
+                    pts.push(u.pos);
+                    armor |= u.tags.contains(UnitTag::Armor);
+                    inf |= u.tags.contains(UnitTag::Infantry)
+                        || u.tags.contains(UnitTag::APC);
+                }
+            }
+        }
+        let pname =
+            self.persisted.players.get(&by).map(|p| p.name.clone()).unwrap_or_default();
+        let id = self.formations().map(|f| f.id).max().unwrap_or(0) + 1;
+        let kind = match (armor, inf) {
+            (true, true) => "Mech Battlegroup",
+            (true, false) => "Armd Battlegroup",
+            _ => "Battlegroup",
+        };
+        let name = String::from(format_compact!("{} {kind} ({pname})", ordinal(id)));
+        let pos = centroid2d(pts);
+        let f = Formation {
+            id,
+            name: name.clone(),
+            side,
+            home: home.0,
+            groups: gids.clone(),
+            strength0,
+            order: Order::Hold,
+            posture: Posture::Holding,
+            pos,
+            heading: 0.,
+            path: vec![],
+            trail: vec![],
+            off_road: false,
+            commander: Some(by),
+            locked_until: None,
+            order_ts: now,
+            created: now,
+            supply: (home.1 as f64 / 100.).clamp(0.3, 1.),
+            morale: 1.,
+            deployment: Deployment::Deployed,
+            deployment_ts: Some(now),
+            broken: false,
+            losses: 0,
+            kills: 0,
+            damage: 0.,
+            roe: None,
+            pace: Pace::Normal,
+            purchased: true,
+            formed: true,
+        };
+        self.persisted.formations.insert_cow(id, f);
+        self.ephemeral.dirty();
+        info!(
+            "ground war: {side:?} {pname} formed {name} ({id}) from {} deployed groups, \
+             {strength0} vehicles",
+            gids.len()
+        );
+        rt.event(
+            side,
+            "raised",
+            format_compact!("{name} formed from deployed units, {strength0} vehicles"),
+            Some(pos),
+            Some(id),
+            now,
+        );
+        Ok(id)
     }
 
     /// The road from `from` to `to` as map points, or a straight line
@@ -2850,6 +3018,19 @@ impl Db {
                 .formations
                 .remove_cow(&id)
                 .ok_or_else(|| anyhow!("no such formation {id}"))?;
+            if f.formed {
+                // formed from a player's deployed units: they get them back,
+                // where they stand, as deployed units again
+                for gid in &f.groups {
+                    self.release_purchased_group(rt, *gid, now)?;
+                }
+                self.forget_formation(rt, id);
+                self.ephemeral.dirty();
+                info!("ground war: {side:?} {name} disbanded into deployed units");
+                return Ok(format_compact!(
+                    "{name} disbanded: its vehicles are deployed units again where they stand"
+                ));
+            }
             for gid in &f.groups {
                 rt.spawnq.retain(|(_, g)| g != gid);
                 rt.live.remove(gid);

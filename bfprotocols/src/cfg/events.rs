@@ -158,6 +158,11 @@ pub struct CampaignEventsCfg {
     /// Duration in seconds before an ambush expires without contact
     #[serde(default = "default_ambush_duration")]
     pub ambush_duration_secs: u32,
+    /// Ambush forces a side may have out at once, however they were called
+    /// (the rules, the AI HQ, a commander). Each goes after a different
+    /// convoy. Default 1.
+    #[serde(default = "default_ambush_max_per_side")]
+    pub ambush_max_per_side: u32,
     /// Enable automatic enemy CAP intercept spawns when players are deep in enemy territory
     #[serde(default)]
     pub enemy_cap_enabled: bool,
@@ -510,6 +515,10 @@ pub(super) fn default_barrage_duration() -> u32 {
 pub(super) fn default_ambush_duration() -> u32 {
     600
 }
+
+fn default_ambush_max_per_side() -> u32 {
+    1
+}
 pub(super) fn default_cap_altitude_m() -> f64 {
     8000.0
 }
@@ -581,6 +590,7 @@ impl Default for CampaignEventsCfg {
             barrage_duration_secs: default_barrage_duration(),
             ambush_enabled: true,
             ambush_duration_secs: default_ambush_duration(),
+            ambush_max_per_side: default_ambush_max_per_side(),
             enemy_cap_enabled: false,
             cap_templates_red: Vec::new(),
             cap_templates_blue: Vec::new(),

@@ -65,6 +65,23 @@ pub struct WarehouseConfig {
     pub supply_transfer_weapons_crate: FxHashMap<Side, Crate>,
     /// The percentage of supply that is transfered by a transfer crate
     pub supply_transfer_size: u8,
+    /// Crates that each carry one kind of stock -- fuel, air-to-air missiles,
+    /// air-to-ground munitions, gun ammunition, ground equipment -- instead
+    /// of the all-purpose fuel and weapons crates. A base short of AMRAAMs
+    /// needs a load of missiles flown in, not a slice of everything. Listed
+    /// in the Base Supply menus beside (or, if those are left out, instead
+    /// of) `supply_transfer_fuel_crate` / `supply_transfer_weapons_crate`.
+    /// Empty (the default) changes nothing.
+    #[serde(default)]
+    pub supply_crates: FxHashMap<Side, Vec<SupplyCrate>>,
+    /// An AI fixed-wing flight (CAP, strike, bomber, wingman) does not take
+    /// off from a field whose fuel is below this percent: it uses the next
+    /// field out. AI flights take their fuel from the field's warehouse and
+    /// never give it back, so without it they drained every front-line base
+    /// dry. 0 (the default) = no check. Fields with no fuel stock at all are
+    /// not held back.
+    #[serde(default)]
+    pub ai_launch_min_fuel_pct: u8,
     /// The carrier repair crate
     #[serde(default)]
     pub carrier_repair_crate: FxHashMap<Side, Crate>,
@@ -231,6 +248,264 @@ pub const MATERIEL_ITEM: &str = "campaign.materiel";
 /// True for synthetic campaign-model items that have no DCS counterpart.
 pub fn is_model_only_item(name: &str) -> bool {
     name.starts_with("campaign.")
+}
+
+/// What a supply crate is loaded with. A crate carries one or more of these,
+/// and moves only the warehouse items that fall in them -- a load of
+/// air-to-air missiles, not a percentage of everything the base owns.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub enum SupplyClass {
+    /// Every liquid: jet fuel, petrol, diesel, methanol.
+    Fuel,
+    /// Air-to-air missiles.
+    AirToAir,
+    /// Everything an aircraft drops or fires at the ground: air-to-surface
+    /// missiles, bombs and rockets (`AgMissiles` + `Bombs` + `Rockets`).
+    AirToGround,
+    /// Air-to-surface missiles only (Mavericks, Hellfires, Kh-25s ...).
+    AgMissiles,
+    /// Bombs, guided or not.
+    Bombs,
+    /// Unguided rockets and rocket pods.
+    Rockets,
+    /// Gun ammunition and gun pods.
+    Guns,
+    /// Drop tanks, targeting/ECM pods, adapters, and any weapon that fits
+    /// nowhere else (torpedoes, surface-to-air missiles).
+    Stores,
+    /// Vehicles, fortifications and the materiel commodity.
+    Ground,
+    /// Every item except airframes and liquids -- the old weapons crate.
+    Equipment,
+    /// Everything except airframes, fuel included.
+    Everything,
+}
+
+/// The kind of one warehouse item, for matching against `SupplyClass`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ItemKind {
+    Fuel,
+    AaMissile,
+    AgMissile,
+    Bomb,
+    Rocket,
+    Gun,
+    Store,
+    Ground,
+    /// Never carried in a supply crate.
+    Airframe,
+}
+
+impl SupplyClass {
+    pub fn carries(self, kind: ItemKind) -> bool {
+        use ItemKind as K;
+        match self {
+            SupplyClass::Fuel => kind == K::Fuel,
+            SupplyClass::AirToAir => kind == K::AaMissile,
+            SupplyClass::AirToGround => {
+                matches!(kind, K::AgMissile | K::Bomb | K::Rocket)
+            }
+            SupplyClass::AgMissiles => kind == K::AgMissile,
+            SupplyClass::Bombs => kind == K::Bomb,
+            SupplyClass::Rockets => kind == K::Rocket,
+            SupplyClass::Guns => kind == K::Gun,
+            SupplyClass::Stores => kind == K::Store,
+            SupplyClass::Ground => kind == K::Ground,
+            SupplyClass::Equipment => !matches!(kind, K::Fuel | K::Airframe),
+            SupplyClass::Everything => kind != K::Airframe,
+        }
+    }
+
+    /// How the class reads in a message to a player.
+    pub fn label(self) -> &'static str {
+        match self {
+            SupplyClass::Fuel => "fuel",
+            SupplyClass::AirToAir => "air-to-air missiles",
+            SupplyClass::AirToGround => "air-to-ground munitions",
+            SupplyClass::AgMissiles => "air-to-ground missiles",
+            SupplyClass::Bombs => "bombs",
+            SupplyClass::Rockets => "rockets",
+            SupplyClass::Guns => "gun ammunition",
+            SupplyClass::Stores => "tanks and pods",
+            SupplyClass::Ground => "ground equipment",
+            SupplyClass::Equipment => "weapons and equipment",
+            SupplyClass::Everything => "supplies",
+        }
+    }
+}
+
+/// DCS `wsType` level 3 codes for missiles (Scripts/Database/wsTypes.lua).
+pub const WS_AA_MISSILE: i64 = 7;
+pub const WS_AS_MISSILE: i64 = 8;
+pub const WS_SS_MISSILE: i64 = 11;
+pub const WS_SA_MISSILE: i64 = 34;
+pub const WS_AA_TRAIN_MISSILE: i64 = 100;
+pub const WS_AS_TRAIN_MISSILE: i64 = 101;
+
+/// Name fragments of air-to-air missiles, for a missile the resource map did
+/// not give a type for. Only a fallback: the wsType decides when it is known.
+const AA_NAME_HINTS: &[&str] = &[
+    "AIM_",
+    "AIM-",
+    "AIM9",
+    "AIM7",
+    "R_3",
+    "R_2",
+    "R_4",
+    "R_5",
+    "R_6",
+    "R_7",
+    "R-",
+    "P_2",
+    "P_3",
+    "P_4",
+    "P_6",
+    "P_7",
+    "MICA",
+    "Super_530",
+    "R_550",
+    "PL_",
+    "PL-",
+    "SD_10",
+    "SD-10",
+    "Python",
+    "Derby",
+    "IRIS",
+    "Meteor",
+    "ASRAAM",
+    "Sidewinder",
+    "Sparrow",
+    "Phoenix",
+    "AMRAAM",
+];
+
+/// Sort a warehouse item into an `ItemKind`. `liquid` is true for the
+/// warehouse's liquids; `missile_ws3` is the item's wsType level 3 from the
+/// resource map when it is known (only missiles need it).
+pub fn classify_item(name: &str, liquid: bool, missile_ws3: Option<i64>) -> ItemKind {
+    if liquid {
+        return ItemKind::Fuel;
+    }
+    if is_model_only_item(name)
+        || name.starts_with("vehicles.")
+        || name.starts_with("Fortifications.")
+    {
+        return ItemKind::Ground;
+    }
+    let Some(rest) = name.strip_prefix("weapons.") else {
+        return ItemKind::Airframe;
+    };
+    let (group, item) = rest.split_once('.').unwrap_or((rest, ""));
+    match group {
+        "missiles" => match missile_ws3 {
+            Some(WS_AA_MISSILE | WS_AA_TRAIN_MISSILE) => ItemKind::AaMissile,
+            Some(WS_AS_MISSILE | WS_AS_TRAIN_MISSILE | WS_SS_MISSILE) => {
+                ItemKind::AgMissile
+            }
+            Some(WS_SA_MISSILE) => ItemKind::Store,
+            Some(_) => ItemKind::Store,
+            None if AA_NAME_HINTS.iter().any(|h| item.starts_with(h)) => {
+                ItemKind::AaMissile
+            }
+            None => ItemKind::AgMissile,
+        },
+        "bombs" => ItemKind::Bomb,
+        "nurs" => ItemKind::Rocket,
+        "shells" | "gunmounts" => ItemKind::Gun,
+        _ => ItemKind::Store,
+    }
+}
+
+/// A base-supply crate that carries only some classes of stock. See
+/// `WarehouseConfig::supply_crates`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SupplyCrate {
+    /// The crate itself: name (unique among every crate a side can spawn),
+    /// weight, drop limits, model.
+    #[serde(rename = "crate")]
+    pub crate_def: Crate,
+    /// What it is loaded with. At least one.
+    pub carries: Vec<SupplyClass>,
+    /// Percent of each item it moves, in place of `supply_transfer_size`.
+    #[serde(default)]
+    pub transfer_size: Option<u8>,
+}
+
+impl SupplyCrate {
+    pub fn carries(&self, kind: ItemKind) -> bool {
+        self.carries.iter().any(|c| c.carries(kind))
+    }
+
+    /// "air-to-air missiles", "fuel and gun ammunition", ...
+    pub fn describe(&self) -> std::string::String {
+        let v: Vec<&str> = self.carries.iter().map(|c| c.label()).collect();
+        match v.as_slice() {
+            [] => "nothing".into(),
+            [one] => (*one).into(),
+            [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        }
+    }
+}
+
+#[cfg(test)]
+mod supply_class_tests {
+    use super::*;
+
+    #[test]
+    fn items_sort_into_kinds() {
+        let k = |n: &str, ws: Option<i64>| classify_item(n, false, ws);
+        assert_eq!(classify_item("jet_fuel", true, None), ItemKind::Fuel);
+        assert_eq!(k("weapons.missiles.AIM_120C", Some(7)), ItemKind::AaMissile);
+        assert_eq!(k("weapons.missiles.AGM_65D", Some(8)), ItemKind::AgMissile);
+        // the resource map wins over the name
+        assert_eq!(k("weapons.missiles.AIM_54A", Some(8)), ItemKind::AgMissile);
+        assert_eq!(k("weapons.missiles.P_77", None), ItemKind::AaMissile);
+        assert_eq!(k("weapons.missiles.Kh25ML", None), ItemKind::AgMissile);
+        assert_eq!(k("weapons.missiles.9M311", Some(34)), ItemKind::Store);
+        assert_eq!(k("weapons.bombs.Mk_82", None), ItemKind::Bomb);
+        assert_eq!(k("weapons.nurs.HYDRA_70_M151", None), ItemKind::Rocket);
+        assert_eq!(k("weapons.shells.M61_20_HE", None), ItemKind::Gun);
+        assert_eq!(k("weapons.gunmounts.GUV_YakB_GSHP", None), ItemKind::Gun);
+        assert_eq!(k("weapons.droptanks.FuelTank_2000L", None), ItemKind::Store);
+        assert_eq!(k("weapons.containers.ALQ-131", None), ItemKind::Store);
+        assert_eq!(k("vehicles.armor.M-1 Abrams", None), ItemKind::Ground);
+        assert_eq!(k("campaign.materiel", None), ItemKind::Ground);
+        assert_eq!(k("F-16C_50", None), ItemKind::Airframe);
+    }
+
+    #[test]
+    fn classes_carry_what_they_say() {
+        use ItemKind as K;
+        assert!(SupplyClass::AirToGround.carries(K::Bomb));
+        assert!(SupplyClass::AirToGround.carries(K::Rocket));
+        assert!(!SupplyClass::AirToGround.carries(K::AaMissile));
+        assert!(!SupplyClass::AirToAir.carries(K::AgMissile));
+        assert!(SupplyClass::Equipment.carries(K::Gun));
+        assert!(!SupplyClass::Equipment.carries(K::Fuel));
+        assert!(SupplyClass::Everything.carries(K::Fuel));
+        for c in [SupplyClass::Everything, SupplyClass::Equipment, SupplyClass::Stores] {
+            assert!(!c.carries(K::Airframe), "{c:?} must never move airframes");
+        }
+    }
+
+    #[test]
+    fn a_supply_crate_reads_back() {
+        let sc: SupplyCrate = serde_json::from_str(
+            r#"{"crate": {"name": "A/A missiles", "weight": 900, "required": 1,
+                 "pos_unit": null, "max_drop_height_agl": 10, "max_drop_speed": 13},
+               "carries": ["AirToAir"]}"#,
+        )
+        .unwrap();
+        assert_eq!(sc.crate_def.name.as_str(), "A/A missiles");
+        assert!(sc.carries(ItemKind::AaMissile));
+        assert!(!sc.carries(ItemKind::Bomb));
+        assert_eq!(sc.transfer_size, None);
+        let two =
+            SupplyCrate { carries: vec![SupplyClass::Guns, SupplyClass::Stores], ..sc };
+        assert_eq!(two.describe(), "gun ammunition and tanks and pods");
+    }
 }
 
 /// The generic materiel commodity. See `WarehouseConfig::materiel`.
@@ -603,6 +878,70 @@ pub struct SeaLogisticsConfig {
     /// its load returned to the naval base.
     #[serde(default = "default_sea_max_transit")]
     pub max_transit_minutes: u32,
+    /// Sea lanes: naval convoys from a naval base to a coastal objective,
+    /// besides the runs to carrier groups. A convoy is `ship_template`
+    /// (cargo ships and their escorts in one group); it sails `path` and
+    /// unloads at its last point, under the same threshold, interval and
+    /// route cap as the carrier runs. Empty (the default): carriers only.
+    #[serde(default)]
+    pub lanes: Vec<SeaLane>,
+}
+
+/// See `Cfg::naval_patrols`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct NavalPatrolCfg {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Minutes before a sunk patrol is replaced. Default 60.
+    #[serde(default = "default_patrol_respawn")]
+    pub respawn_minutes: u32,
+    pub patrols: Vec<NavalPatrol>,
+}
+
+pub(super) fn default_patrol_respawn() -> u32 {
+    60
+}
+
+pub(super) fn default_patrol_speed() -> f64 {
+    25.
+}
+
+/// One warship patrol. It sails `route` round and round for the side that
+/// holds `base`, using that side's template; when the base changes hands,
+/// the new owner's ships take over the patrol.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct NavalPatrol {
+    /// Shown to players, e.g. "Latakia coast".
+    pub name: String,
+    /// The naval base (objective name) whose owner runs the patrol.
+    pub base: String,
+    /// The ship group each side patrols with (a Ship group in the .miz). A
+    /// side without one doesn't patrol here.
+    pub templates: FxHashMap<Side, String>,
+    /// The loop, in open water, as DCS (x north, y east) metres; it sails
+    /// back to the first point after the last and starts again. Straight
+    /// legs, so keep them clear of capes. A point on land is moved to the
+    /// nearest open water, with a warning in the log.
+    pub route: Vec<(f64, f64)>,
+    /// Default 25 km/h.
+    #[serde(default = "default_patrol_speed")]
+    pub speed_kph: f64,
+}
+
+/// One naval convoy route. See `SeaLogisticsConfig::lanes`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SeaLane {
+    /// The naval base it loads at (objective name).
+    pub from: String,
+    /// The objective it supplies (objective name), normally a coastal
+    /// airbase or port.
+    pub to: String,
+    /// The way there in open water, as DCS (x north, y east) metres: the
+    /// departure off `from` first, the anchorage off `to` last. Straight
+    /// legs between the points, so keep them clear of headlands. A point
+    /// that turns out to be on land is moved to the nearest open water when
+    /// a convoy sails, with a warning in the log.
+    pub path: Vec<(f64, f64)>,
 }
 
 pub(super) fn default_sea_max_transit() -> u32 {
@@ -633,6 +972,7 @@ impl Default for SeaLogisticsConfig {
             check_interval_secs: default_sea_check_interval(),
             supply_threshold: default_sea_supply_threshold(),
             max_transit_minutes: default_sea_max_transit(),
+            lanes: vec![],
         }
     }
 }

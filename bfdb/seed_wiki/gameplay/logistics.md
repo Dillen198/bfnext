@@ -80,7 +80,7 @@ reserve is still available for hub-to-hub balancing and for supply transfers.
 | --- | --- | --- | --- |
 | Ground convoys | {{cfg:warehouse.convoy.enabled|yes}} | {{cfg:warehouse.convoy.speed_kph|60}} km/h | {{cfg:warehouse.convoy.trucks_per_convoy|5}} trucks each, up to {{cfg:warehouse.convoy.max_concurrent_convoys|10}} at once. Follows roads, blocked by the front line, killable. |
 | Air logistics | {{cfg:warehouse.air_logistics.enabled|yes}} | {{cfg:warehouse.air_logistics.speed_kph|780}} km/h | Crosses the front line. Up to {{cfg:warehouse.air_logistics.max_concurrent_routes|6}} routes, sent when a base drops below {{cfg:warehouse.air_logistics.supply_threshold|50}}% supply. Killable, and a fat target at {{cfg:warehouse.air_logistics.altitude_m|2500}} m. |
-| Sea logistics | {{cfg:warehouse.sea_logistics.enabled|no}} | {{cfg:warehouse.sea_logistics.speed_kph|30}} km/h | Naval resupply, where the map and the server enable it. |
+| Sea logistics | {{cfg:warehouse.sea_logistics.enabled|no}} | {{cfg:warehouse.sea_logistics.speed_kph|30}} km/h | Naval convoys from a naval base: to carrier groups, and on servers with sea lanes, along fixed lanes to coastal bases. Sent when the destination drops below {{cfg:warehouse.sea_logistics.supply_threshold|50}}% supply or fuel. |
 
 Each base gets **one** convoy or airlift at a time, carrying weapons and fuel
 together.
@@ -89,6 +89,21 @@ together.
 convoy truck earns points *and* removes supply that was about to arrive
 somewhere. `F10 → Info → Supply Convoys` shows what is in transit on your side;
 the enemy has the same page for theirs.
+
+**Naval convoys** sail fixed sea lanes from a naval base: cargo ships with an
+escort warship, unloading at an anchorage off the base they supply. The lane
+is drawn on the F10 map while a convoy is on it. Sink the cargo ships and the
+load is lost; a convoy that can't arrive within
+{{cfg:warehouse.sea_logistics.max_transit_minutes|180}} minutes is called back
+and its load returns to the naval base. Lanes run along the coast, so expect
+air defences ashore and the escort's own guns.
+
+**Naval patrols** guard the waters off the naval bases: warship groups sailing
+a fixed loop for whichever side holds the base, and taken over by the other
+side's ships if the base is captured. They defend themselves and the sky
+around them, so treat them as moving SAM sites. A sunk patrol is replaced
+after {{cfg:naval_patrols.respawn_minutes|60}} minutes, so sinking one opens
+the sea lanes it covers for a while.
 
 Ground convoys despawn on arrival, so a convoy still on the map is still
 carrying something. They keep driving under fire: they don't scatter off the

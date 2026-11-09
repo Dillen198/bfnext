@@ -539,6 +539,12 @@ pub struct Cfg {
     /// heading) instead of from G trigger zones. Absent = G zones only.
     #[serde(default)]
     pub garrison_layouts: Option<GarrisonLayoutsCfg>,
+    /// Paint for the groups the engine builds from inline units (garrison
+    /// layouts and special SAM sites): DCS unit type -> livery id, the
+    /// livery's folder name (e.g. "desert", or "Desert" for a Currenthill
+    /// unit). A type not listed keeps its default paint.
+    #[serde(default)]
+    pub ground_liveries: FxHashMap<String, String>,
     /// Capture zone radius in metres, shared by every special SAM site (they have
     /// no mission-editor trigger zone of their own to derive one from)
     #[serde(default = "default_sam_capture_radius")]
@@ -673,6 +679,14 @@ pub struct Cfg {
     /// neutral civilian airliners. Absent = all three off.
     #[serde(default)]
     pub air_life: Option<AirLifeCfg>,
+    /// Warship groups that patrol fixed loops at sea for whoever holds their
+    /// naval base, and are replaced a while after they are sunk. Absent: none.
+    #[serde(default)]
+    pub naval_patrols: Option<NavalPatrolCfg>,
+    /// TESTING ONLY: simulated players for a load test. Absent from every
+    /// live config.
+    #[serde(default)]
+    pub load_test: Option<LoadTestCfg>,
     /// Modern-war systems modelled on Russia-Ukraine and the 2025 Iran war:
     /// electronic warfare, finite SAM interceptors, drone and missile raids
     /// on infrastructure, sea-drone raids and campaign tempo. Absent = off.
@@ -843,6 +857,28 @@ mod load_tests {
     }
 
     #[test]
+    fn wingman_types_and_clone_read_back() {
+        let w: WingmanCfg = serde_json::from_value(serde_json::json!({
+            "types": [
+                {"name": "Fighter escort", "role": "Fighter", "templates_blue": ["BF"], "cost": 300},
+                {"name": "Attack helicopter", "role": "AttackHelo", "templates_red": ["RH"]}
+            ],
+            "clone": {"cost": 400, "cost_by_type": {"F-14B": 700}, "exclude": ["C-130J-30"]}
+        }))
+        .unwrap();
+        assert_eq!(w.types.len(), 2);
+        assert_eq!(w.types[0].cost, 300);
+        assert!(!w.types[0].role.rotary() && w.types[1].role.rotary());
+        assert_eq!(w.types[1].cost, 0);
+        let c = w.clone.as_ref().unwrap();
+        assert_eq!(c.price("F-16C_50"), Some(400));
+        assert_eq!(c.price("F-14B"), Some(700));
+        assert_eq!(c.price("C-130J-30"), None);
+        let off = WingmanCloneCfg { enabled: false, ..c.clone() };
+        assert_eq!(off.price("F-16C_50"), None);
+    }
+
+    #[test]
     fn air_life_empty_blocks_take_defaults() {
         let al: AirLifeCfg = serde_json::from_value(serde_json::json!({
             "wingman": {}, "packages": {}, "civil_traffic": {}
@@ -852,6 +888,7 @@ mod load_tests {
         assert!(w.enabled);
         assert_eq!(w.max_side_pilots, 4);
         assert_eq!(w.lifetime_secs, 3600);
+        assert!(w.types.is_empty() && w.clone.is_none(), "old configs keep one wingman");
         let p = al.packages.as_ref().unwrap();
         assert!(p.enabled && !p.run_when_empty);
         assert_eq!(p.max_side_pilots, 3);
@@ -1248,6 +1285,7 @@ impl Cfg {
                         .values()
                         .chain(w.supply_transfer_weapons_crate.values())
                         .chain(w.carrier_repair_crate.values())
+                        .chain(w.supply_crates.values().flatten().map(|s| &s.crate_def))
                         .any(|c| &c.name == name)
                 })
                 || cfg.deployables.values().flatten().any(|d| {
@@ -1255,6 +1293,83 @@ impl Cfg {
                 });
             if clash {
                 bail!("emergency_repair.crate.name '{name}' is already used by another crate")
+            }
+        }
+        if let Some(lt) = cfg.load_test.as_ref().filter(|l| l.enabled) {
+            warn!(
+                "load_test is ON: {} simulated players a side will join this server.                  This is for a test server only; take it out of a live config.",
+                lt.players_per_side
+            )
+        }
+        if let Some(np) = cfg.naval_patrols.as_ref().filter(|n| n.enabled) {
+            for (i, p) in np.patrols.iter().enumerate() {
+                if np.patrols[..i].iter().any(|o| o.name == p.name) {
+                    bail!("naval_patrols: '{}' is listed twice", p.name)
+                }
+                if p.route.len() < 2 {
+                    bail!("naval_patrols: '{}' needs at least two route points", p.name)
+                }
+                if p.templates.is_empty() {
+                    bail!(
+                        "naval_patrols: '{}' has no ship template for either side",
+                        p.name
+                    )
+                }
+            }
+        }
+        // A lane needs somewhere to start and somewhere to end.
+        for lane in cfg
+            .warehouse
+            .as_ref()
+            .and_then(|w| w.sea_logistics.as_ref())
+            .map(|s| s.lanes.as_slice())
+            .unwrap_or_default()
+        {
+            if lane.path.len() < 2 {
+                bail!(
+                    "warehouse.sea_logistics.lanes: {} -> {} needs at least two path points",
+                    lane.from,
+                    lane.to
+                )
+            }
+            if lane.from == lane.to {
+                bail!("warehouse.sea_logistics.lanes: {} -> itself", lane.from)
+            }
+        }
+        // Supply crates are matched by name like every other crate, so each
+        // must be unique on its side, and one that carries nothing would be
+        // a crate that moves nothing.
+        if let Some(w) = cfg.warehouse.as_ref() {
+            for (side, list) in &w.supply_crates {
+                for sc in list {
+                    let name = &sc.crate_def.name;
+                    if sc.carries.is_empty() {
+                        bail!(
+                            "warehouse.supply_crates: '{name}' ({side}) carries nothing"
+                        )
+                    }
+                    if sc.transfer_size.is_some_and(|p| p == 0 || p > 100) {
+                        bail!("warehouse.supply_crates: '{name}' transfer_size must be 1-100")
+                    }
+                    let same = list.iter().filter(|o| &o.crate_def.name == name).count();
+                    let other = w
+                        .supply_transfer_fuel_crate
+                        .get(side)
+                        .into_iter()
+                        .chain(w.supply_transfer_weapons_crate.get(side))
+                        .chain(w.carrier_repair_crate.get(side))
+                        .chain(cfg.repair_crate.get(side))
+                        .any(|c| &c.name == name)
+                        || cfg.deployables.get(side).into_iter().flatten().any(|d| {
+                            d.crates
+                                .iter()
+                                .chain(d.repair_crate.iter())
+                                .any(|c| &c.name == name)
+                        });
+                    if same > 1 || other {
+                        bail!("warehouse.supply_crates: '{name}' ({side}) is already used by another crate")
+                    }
+                }
             }
         }
         if let Some(sc) = &cfg.smart_commander {
@@ -1303,6 +1418,32 @@ impl Cfg {
         }
         if let Some(al) = &cfg.air_life {
             if let Some(w) = al.wingman.as_ref().filter(|w| w.enabled) {
+                // Each type is a menu entry matched by name, so names must
+                // be unique; a type with no aircraft for a side is never
+                // offered to that side.
+                for (i, t) in w.types.iter().enumerate() {
+                    if w.types[..i].iter().any(|o| o.name == t.name) {
+                        bail!("air_life.wingman.types: '{}' is listed twice", t.name)
+                    }
+                    if t.cost < 0 {
+                        bail!("air_life.wingman.types: '{}' has a negative cost", t.name)
+                    }
+                    for (side, list) in
+                        [("blue", &t.templates_blue), ("red", &t.templates_red)]
+                    {
+                        if list.is_empty() {
+                            warn!(
+                                "air_life.wingman.types: '{}' has no templates_{side}, so {side}                                  is never offered it",
+                                t.name
+                            )
+                        }
+                    }
+                }
+                if w.clone.as_ref().is_some_and(|c| {
+                    c.cost < 0 || c.cost_by_type.values().any(|v| *v < 0)
+                }) {
+                    bail!("air_life.wingman.clone: costs must not be negative")
+                }
                 let cap = cfg.campaign_events.as_deref();
                 for (side, own, fallback) in [
                     ("red", &w.templates_red, cap.map(|c| c.cap_templates_red.len())),
@@ -1469,6 +1610,54 @@ mod unused_settings_tests {
             cfg.unused_settings(),
             vec!["weapon_spawn_radius", "weather_effects.no_helo_in_thunderstorm"]
         );
+    }
+}
+
+#[cfg(test)]
+mod ground_liveries_tests {
+    use super::*;
+
+    #[test]
+    fn absent_means_default_paint_and_a_table_reads_back() {
+        let mut v = serde_json::to_value(Cfg::default()).unwrap();
+        v.as_object_mut().unwrap().remove("ground_liveries");
+        let cfg: Cfg = serde_json::from_value(v.clone()).unwrap();
+        assert!(cfg.ground_liveries.is_empty());
+        v["ground_liveries"] =
+            serde_json::json!({"Vulcan": "desert", "CHAP_T90M": "Desert"});
+        let cfg: Cfg = serde_json::from_value(v).unwrap();
+        assert_eq!(cfg.ground_liveries.get("Vulcan").map(|s| s.as_str()), Some("desert"));
+        assert_eq!(
+            cfg.ground_liveries.get("CHAP_T90M").map(|s| s.as_str()),
+            Some("Desert")
+        );
+    }
+
+    /// The settings added for Levant (9 November 2026) change nothing in a
+    /// config that does not set them: no action cooldown, bombers still
+    /// reach every JTAC contact, no AI fuel floor, one ambush a side.
+    #[test]
+    fn new_limits_default_to_the_old_behaviour() {
+        let a: Action = serde_json::from_value(serde_json::json!({
+            "kind": {"Bomber": {"targets": 15, "power": 1000, "accuracy": 15, "plane": {
+                "kind": "FixedWing", "template": "BBOMBER", "altitude": 12000,
+                "altitude_typ": "BARO", "speed": 300, "duration": null}}},
+            "cost": 100, "penalty": 100, "limit": null
+        }))
+        .unwrap();
+        assert_eq!(a.cooldown_secs, None);
+        match &a.kind {
+            ActionKind::Bomber(b) => assert_eq!(b.strike_radius_m, None),
+            _ => panic!("not a bomber"),
+        }
+        let mut v = serde_json::to_value(Cfg::default()).unwrap();
+        v["warehouse"].as_object_mut().unwrap().remove("ai_launch_min_fuel_pct");
+        let cfg: Cfg = serde_json::from_value(v).unwrap();
+        assert_eq!(cfg.warehouse.unwrap().ai_launch_min_fuel_pct, 0);
+        let mut e = serde_json::to_value(CampaignEventsCfg::default()).unwrap();
+        e.as_object_mut().unwrap().remove("ambush_max_per_side");
+        let e: CampaignEventsCfg = serde_json::from_value(e).unwrap();
+        assert_eq!(e.ambush_max_per_side, 1);
     }
 }
 

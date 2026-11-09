@@ -1191,10 +1191,9 @@ impl Db {
                     (Side::Red, &cfg_site.red_units, cfg_site.red_country),
                     (Side::Blue, &cfg_site.blue_units, cfg_site.blue_country),
                 ];
-                for (side, inline_units, country) in &sides_info {
-                    if inline_units.is_empty() {
-                        continue;
-                    }
+                // Every synthetic group on the side: the main group and, when
+                // there is one, the defence group (both built from inline units).
+                for (side, _, country) in &sides_info {
                     if let Some(oid) =
                         self.persisted.objectives_by_name.get(&cfg_site.name)
                         && let Some(obj) = self.persisted.objectives.get(oid)
@@ -1321,13 +1320,33 @@ impl Db {
                         side
                     )
                 };
-                let o = objective_mut!(self, id)?;
-                o.groups.get_or_default_cow(side).insert_cow(gid);
-                self.persisted.objectives_by_group.insert_cow(gid, id);
-                // Mark non-owner side's units dead (same as init_objective_group)
-                if side != cfg_site.coalition {
-                    for uid in group!(self, gid)?.units.clone().into_iter() {
-                        unit_mut!(self, uid)?.dead = true;
+                // The point defence is a group of its own (class Sr): the
+                // IADN's emission control only drives the main Lr group, so
+                // the defence stays hot while the SAM is dark.
+                let defence = match side {
+                    Side::Blue => &cfg_site.blue_defence,
+                    _ => &cfg_site.red_defence,
+                };
+                let mut gids = vec![gid];
+                if !defence.is_empty() {
+                    gids.push(self.add_group_from_units(
+                        spctx,
+                        side,
+                        country,
+                        defence,
+                        DeployKind::Objective { origin: id },
+                        ObjGroupClass::Sr,
+                    )?);
+                }
+                for gid in gids {
+                    let o = objective_mut!(self, id)?;
+                    o.groups.get_or_default_cow(side).insert_cow(gid);
+                    self.persisted.objectives_by_group.insert_cow(gid, id);
+                    // Mark non-owner side's units dead (same as init_objective_group)
+                    if side != cfg_site.coalition {
+                        for uid in group!(self, gid)?.units.clone().into_iter() {
+                            unit_mut!(self, uid)?.dead = true;
+                        }
                     }
                 }
             }
@@ -1792,6 +1811,19 @@ impl Db {
     }
 
     pub fn init_objective_slots(&mut self, side: Side, slot: Group) -> Result<()> {
+        // Every player slot -- dynamic-spawn templates included -- is a
+        // template a "copy of my aircraft" wingman can be built from.
+        if let Some(unit) = slot.units()?.into_iter().next() {
+            let unit = unit?;
+            if unit.skill()? == Skill::Client
+                || slot.raw_get::<bool>("dynSpawnTemplate").unwrap_or(false)
+            {
+                self.ephemeral
+                    .clone_templates
+                    .entry((side, unit.typ()?))
+                    .or_insert(slot.name()?);
+            }
+        }
         if slot.raw_get::<bool>("dynSpawnTemplate").unwrap_or(false) {
             return Ok(());
         }

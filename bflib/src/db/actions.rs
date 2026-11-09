@@ -26,7 +26,7 @@ use bfprotocols::{
         objective::{ObjectiveId, ObjectiveKind},
     },
     perf::PerfInner,
-    stats::Stat,
+    stats::{EnId, Stat},
 };
 use chrono::{Duration, prelude::*};
 use compact_str::format_compact;
@@ -56,6 +56,10 @@ use log::{debug, error, info, warn};
 use rand::{Rng, thread_rng};
 use smallvec::{SmallVec, smallvec};
 use std::{cmp::max, vec};
+
+/// A bomber flight launches at least this far from its target when any field
+/// that far has room (else from 10 km, like every other flight).
+const BOMBER_REAR_LAUNCH_M: f64 = 100_000.;
 
 /// Build the task that activates a TACAN beacon for an AI aircraft, if the
 /// action's config asked for one. Falls back to the first 3 alphanumeric
@@ -877,6 +881,19 @@ impl Db {
                 bail!("{side} is out of {} actions", cmd.name)
             }
         }
+        if let Some(wait) = cmd.action.cooldown_secs
+            && let Some(last) =
+                self.ephemeral.actions_last_used.get(&side).and_then(|m| m.get(&cmd.name))
+        {
+            let left = wait as i64 - (self.ephemeral.now() - *last).num_seconds();
+            if left > 0 {
+                bail!(
+                    "{} is on cooldown for {side}: available again in {} min",
+                    cmd.name,
+                    (left + 59) / 60
+                )
+            }
+        }
         match cmd.action.geo_limit {
             ActionGeoLimit::Unlimited => (),
             ActionGeoLimit::NearFriendlyObjective { max } => {
@@ -1081,6 +1098,12 @@ impl Db {
             .or_default()
             .entry(cmd.name.clone())
             .or_default() += 1;
+        let now = self.ephemeral.now();
+        self.ephemeral
+            .actions_last_used
+            .entry(side)
+            .or_default()
+            .insert(cmd.name.clone(), now);
         Ok(())
     }
 
@@ -3553,17 +3576,29 @@ impl Db {
                 })?;
                 LaunchField { oid, name, pos }
             }
-            None => self
-                .pick_launch_field_where(
-                    spctx.lua(),
-                    side,
-                    args.pos,
-                    rotary,
-                    heavy,
-                    10_000.,
-                    |oid| need.as_ref().is_none_or(|n| self.air_stock_field_ok(oid, n)),
-                )
-                .ok_or_else(|| match need.as_ref() {
+            None => {
+                let pick = |min_dist_m: f64| {
+                    self.pick_launch_field_where(
+                        spctx.lua(),
+                        side,
+                        args.pos,
+                        rotary,
+                        heavy,
+                        min_dist_m,
+                        |oid| need.as_ref().is_none_or(|n| self.air_stock_field_ok(oid, n)),
+                    )
+                };
+                // A heavy bomber (the B-1B air-starts: no stand fits it) came
+                // out of the nearest field to its target, so it appeared at
+                // altitude right over the front and struck before anyone could
+                // get airborne. It comes from the rear when it can.
+                if matches!(action.kind, ActionKind::Bomber(_)) {
+                    pick(BOMBER_REAR_LAUNCH_M).or_else(|| pick(10_000.))
+                } else {
+                    pick(10_000.)
+                }
+            }
+            .ok_or_else(|| match need.as_ref() {
                     None => anyhow!(
                         "no friendly {} more than 10 km from the target has room to launch \
                          this flight",
@@ -4204,16 +4239,28 @@ impl Db {
         let mut rng = thread_rng();
         let land = Land::singleton(lua)?;
         let act = Trigger::singleton(lua)?.action()?;
-        for (i, (_, ct)) in jtacs.contacts_near_point(side, target, 15_000.).enumerate() {
-            if i < cfg.targets as usize {
-                let dir = Vector2::new(rng.gen_range(0. ..1.), rng.gen_range(0. ..1.))
-                    .normalize();
-                let mag = rng.gen_range(0. ..cfg.accuracy as f64);
-                let pos = Vector2::new(ct.pos.x, ct.pos.z) + dir * mag;
-                let alt = land.get_height(LuaVec2(pos))?;
-                let pos = Vector3::new(pos.x, alt, pos.y);
-                act.explosion(LuaVec3(pos), cfg.power as f32)?
+        // Every friendly JTAC within 15 km lends its contacts, but a contact
+        // only counts once (two JTACs seeing one tank used to spend two of the
+        // run's targets on it), and with `strike_radius_m` only those within
+        // that much of the aim point: without it a run reached each JTAC's
+        // whole spotting range, ~30 km, and cleared several bases at once.
+        let radius = cfg.strike_radius_m.map(|r| r as f64);
+        let mut hit: FxHashSet<EnId> = FxHashSet::default();
+        for (id, ct) in jtacs.contacts_near_point(side, target, 15_000.) {
+            if hit.len() >= cfg.targets as usize {
+                break;
             }
+            let at = Vector2::new(ct.pos.x, ct.pos.z);
+            if radius.is_some_and(|r| (at - target).magnitude() > r) || !hit.insert(*id) {
+                continue;
+            }
+            // a miss in any direction (the old offset only ever fell north-east)
+            let a = rng.gen_range(0. ..std::f64::consts::TAU);
+            let mag = rng.gen_range(0. ..cfg.accuracy.max(1) as f64);
+            let pos = at + Vector2::new(a.cos(), a.sin()) * mag;
+            let alt = land.get_height(LuaVec2(pos))?;
+            let pos = Vector3::new(pos.x, alt, pos.y);
+            act.explosion(LuaVec3(pos), cfg.power as f32)?
         }
         Ok(())
     }
@@ -4269,7 +4316,8 @@ impl Db {
         if let Some(ucid) = ucid {
             self.ephemeral.stat(Stat::SupplyTransfer { from: src, to: tgt, by: ucid });
         }
-        self.transfer_supplies(lua, src, tgt)
+        let all = super::logistics::Carries::everything();
+        self.transfer_supplies(lua, src, tgt, &all).map(|_| ())
     }
 
     fn deployable_to_point(

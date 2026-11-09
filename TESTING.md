@@ -715,6 +715,7 @@ Client side, on a player PC, flying on a campaign server. `bfcockpit/README.md` 
 | 27B.2 | Key handshake | Open the panel for the first time on a server, with a second player watching chat | The `-cockpitkey` line is not seen by anyone and not in `dcs.log`; the panel starts answering | |
 | 27B.3 | Reconnect | Disconnect, reconnect, open the panel | Works again with a new key | |
 | 27B.4 | MENU tab | Go into a submenu, run a command, `< Back` | Same items as the F10 menu; the reply shows in the box at the top; the list scrolls instead of `More >>` | |
+| 27B.4a | MENU tab, long lists | Click `Actions>>`; open an action with more than nine entries (Blue has 25); then `Ground Forces>>` | The panel steps into Actions by itself; every entry is in one list, no `More >>` row, the crumb never shows `More >>`, `< Back` goes straight up a level; in F10 the same list is pages of nine with `More >>` | |
 | 27B.5 | CARGO tab | At a logistics base: SPAWN 1, Load, Unload, Unpack | Same results and same refusals as the F10 commands; weight and room shown | |
 | 27B.6 | STATUS tab | Open STATUS | Side, points, lives, crates; aircraft, position, altitude, heading, speed; nearest objective with range and bearing | |
 | 27B.7 | EWR tab | Toggle EWR calls and imperial/metric | Picture shown; toggles take effect | |
@@ -828,6 +829,33 @@ On the server box. `deploy/auto-update.md` is the reference; `DCSServerBot/plugi
 | 28C.8 | Check a backup | **Check a backup** on a copy of the zip | Same report | |
 | 28C.9 | Restore | Restore onto a spare box | Missing prerequisites listed; existing folders renamed `*.before-restore-<time>`; service installed and started; automatic sign-in and the GitHub token have to be entered again | |
 
+## 29. Wingmen
+
+With `air_life.wingman.types` and `clone` set (Levant has both).
+
+| # | Item | Steps | Expected | Pass |
+|---|------|-------|----------|------|
+| 29.1 | Menu | Jet slot, then a helicopter slot: F10 > Wingman > Request | Jets list the jet types and "Copy of my <type>", helicopters the attack helicopter and their own copy; every entry shows its price; a C-130 has no copy | |
+| 29.2 | Pay on launch | Airborne, request a type you can afford; then one you can't | Points go down by the price once it starts up; the second is refused with the price and your points, nothing charged | |
+| 29.3 | Copy | Request "Copy of my aircraft" | Same type, the slot's loadout and livery, AI (not a client slot), takes off and joins | |
+| 29.4 | Orders | Once it has joined: Engage air, Attack near me, drop a map mark and Attack my mark, Hold, then Cover me | Each reply in the message box; it flies to and attacks around the mark; Cover me brings it back to the wing | |
+| 29.5 | ROE and formation | Weapons hold near an enemy, then Weapons free; Formation spread, close | Holds fire, then engages; station visibly wider, then back | |
+| 29.6 | Status and release | Status, then Release (RTB) | Status names the type, role, task, ROE and formation; released flight lands and is removed | |
+
+## 30. Naval Convoys and Patrols
+
+With `warehouse.sea_logistics.lanes` and `naval_patrols` set (Levant).
+
+| # | Item | Steps | Expected | Pass |
+|---|------|-------|----------|------|
+| 30.1 | Lanes at load | Start the mission, read `dcs.log` for `[SEA_LANE]` | "5 sea lanes configured"; any point on land named | |
+| 30.2 | A convoy sails | Admin-drain a lane's destination below 80% supply, wait for the next logistics tick | Escort and cargo ships put to sea off the naval base, in open water; the lane is drawn on the F10 map | |
+| 30.3 | Delivery | Watch a short lane (Latakia to Bassel Al Assad) | Ships reach the anchorage and despawn; the destination's supply goes up | |
+| 30.4 | Interdiction | Sink a convoy's cargo ships | Route ends as destroyed, the load is lost, the lane drawing goes | |
+| 30.5 | Patrols at sea | Start the mission, wait a minute | Four patrols sail their loops in open water (`[NAVAL_PATROL] ... at sea` in `dcs.log`) | |
+| 30.6 | Patrol lost and replaced | Sink a patrol | Its side is told; a new one sails `respawn_minutes` later | |
+| 30.7 | Base captured | Capture Latakia (admin) | Its two patrols are withdrawn and sail again as NATO ships | |
+
 ---
 
 ## Sign-off Table
@@ -876,3 +904,5 @@ On the server box. `deploy/auto-update.md` is the reference; `DCSServerBot/plugi
 | 28A. Releases, Staging & Rollback | | | | |
 | 28B. OPS Page & /feops | | | | |
 | 28C. Fowl Engine Manager | | | | |
+| 29. Wingmen | | | | |
+| 30. Naval Convoys and Patrols | | | | |

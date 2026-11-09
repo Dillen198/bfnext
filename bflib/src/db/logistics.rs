@@ -24,8 +24,8 @@ use crate::{Task, admin::WarehouseKind, group, maybe, objective, objective_mut};
 use anyhow::{Context, Result, anyhow, bail};
 use bfprotocols::{
     cfg::{
-        MATERIEL_ITEM, ProductionScalingConfig, UNLIMITED_CAPACITY, Vehicle,
-        is_model_only_item,
+        ItemKind, MATERIEL_ITEM, ProductionScalingConfig, SupplyClass,
+        UNLIMITED_CAPACITY, Vehicle, classify_item, is_model_only_item,
     },
     db::group::GroupId,
     db::objective::{ObjectiveId, ObjectiveKind},
@@ -35,9 +35,10 @@ use bfprotocols::{
 use chrono::{Duration, prelude::*};
 use compact_str::{CompactString, format_compact};
 use dcso3::{
-    MizLua, String, Vector2,
+    LuaVec2, MizLua, String, Vector2,
     airbase::Airbase,
     coalition::Side,
+    land::Land,
     object::DcsObject,
     perf::record_perf,
     warehouse::{self, LiquidType},
@@ -875,6 +876,11 @@ pub struct SeaLogisticsRoute {
     pub side: Side,
     pub last_pos: Vector2,
     pub last_check: DateTime<Utc>,
+    /// The sea lane it sails, in open water, ending at the anchorage it
+    /// unloads at. Empty for a run to a carrier, which unloads at the
+    /// carrier.
+    #[serde(default)]
+    pub path: Vec<Vector2>,
 }
 
 impl SeaLogisticsRoute {
@@ -1669,13 +1675,85 @@ fn reconcile_warehouse(
     Ok(())
 }
 
+/// What one supply-crate delivery moves: the classes the crate carries and
+/// how much of each item. Built by `Db::supply_crate_load` from the crate's
+/// name; `everything` is the admin/action transfer, which moves it all.
+#[derive(Debug, Clone)]
+pub(crate) struct Carries {
+    classes: SmallVec<[SupplyClass; 4]>,
+    /// Percent of each item, in place of `supply_transfer_size`.
+    pub(crate) size: Option<u8>,
+    /// "air-to-air missiles", for messages.
+    pub(crate) label: std::string::String,
+}
+
+impl Carries {
+    pub(crate) fn everything() -> Self {
+        Self::of(&[SupplyClass::Everything], None)
+    }
+
+    pub(crate) fn of(classes: &[SupplyClass], size: Option<u8>) -> Self {
+        let v: Vec<&str> = classes.iter().map(|c| c.label()).collect();
+        let label = match v.as_slice() {
+            [] => "nothing".into(),
+            [one] => (*one).into(),
+            [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        };
+        Carries { classes: classes.iter().copied().collect(), size, label }
+    }
+
+    /// Does it carry any liquid?
+    pub(crate) fn fuel(&self) -> bool {
+        self.classes.iter().any(|c| c.carries(ItemKind::Fuel))
+    }
+
+    /// Does it carry this equipment item? `ws3` is `Ephemeral::missile_ws3`.
+    pub(crate) fn item(&self, ws3: &FxHashMap<String, i64>, name: &str) -> bool {
+        let kind = classify_item(name, false, ws3.get(name).copied());
+        self.classes.iter().any(|c| c.carries(kind))
+    }
+}
+
+impl Db {
+    /// The load a base-supply crate named `name` carries for `side`, or None
+    /// if it isn't one. The old fuel crate carries fuel and the old weapons
+    /// crate everything but fuel -- what their names always said, and what
+    /// the C-130 already did with them.
+    pub(crate) fn supply_crate_load(&self, side: Side, name: &str) -> Option<Carries> {
+        let w = self.ephemeral.cfg.warehouse.as_ref()?;
+        if let Some(sc) = w
+            .supply_crates
+            .get(&side)
+            .and_then(|l| l.iter().find(|s| s.crate_def.name.as_str() == name))
+        {
+            return Some(Carries::of(&sc.carries, sc.transfer_size));
+        }
+        if w.supply_transfer_fuel_crate
+            .get(&side)
+            .is_some_and(|c| c.name.as_str() == name)
+        {
+            return Some(Carries::of(&[SupplyClass::Fuel], None));
+        }
+        if w.supply_transfer_weapons_crate
+            .get(&side)
+            .is_some_and(|c| c.name.as_str() == name)
+        {
+            return Some(Carries::of(&[SupplyClass::Equipment], None));
+        }
+        None
+    }
+}
+
 /// Write every weapon in the DCS warehouse resource map to the log, once per
 /// mission load, with its wsType. Warehouse items (Fat Cow stock, supply
 /// sources) are named by these strings, and there is no other way to look
 /// them up -- gun ammunition (`weapons.shells.*`) and door guns / gun pods
 /// (`weapons.gunmounts.*`) are not declared anywhere readable in the DCS
 /// install. Aircraft and vehicles are left out; they are listed elsewhere.
-fn log_resource_map(lua: MizLua) -> Result<()> {
+///
+/// Returns wsType level 3 of every missile (`weapons.missiles.*`), which the
+/// split supply crates use to tell air-to-air from air-to-ground.
+fn log_resource_map(lua: MizLua) -> Result<FxHashMap<String, i64>> {
     let map =
         warehouse::Warehouse::get_resource_map(lua).context("getting resource map")?;
     let mut weapons: Vec<(String, [i64; 4])> = vec![];
@@ -1687,10 +1765,14 @@ fn log_resource_map(lua: MizLua) -> Result<()> {
     })?;
     weapons.sort();
     info!("[RESOURCE_MAP] {} weapon items in the warehouse resource map", weapons.len());
+    let mut missiles = FxHashMap::default();
     for (name, [a, b, c, d]) in &weapons {
         info!("[RESOURCE_MAP] {name} wsType={{{a},{b},{c},{d}}}");
+        if name.starts_with("weapons.missiles.") {
+            missiles.insert(name.clone(), *c);
+        }
     }
-    Ok(())
+    Ok(missiles)
 }
 
 fn get_supplier(lua: MizLua, template: String) -> Result<warehouse::Warehouse> {
@@ -1698,6 +1780,74 @@ fn get_supplier(lua: MizLua, template: String) -> Result<warehouse::Warehouse> {
         .with_context(|| format_compact!("getting airbase {}", template))?
         .get_warehouse()
         .context("getting warehouse")
+}
+
+/// The route of a ship group sailing `path` at `speed_kph`: the first point
+/// is where it is (or starts), the rest are sailed in order.
+pub(crate) fn ship_route(
+    path: &[Vector2],
+    speed_kph: f64,
+) -> Vec<dcso3::controller::MissionPoint> {
+    use dcso3::controller::{
+        ActionTyp, AltType, MissionPoint, PointType, Task, VehicleFormation,
+    };
+    let speed = speed_kph / 3.6;
+    path.iter()
+        .enumerate()
+        .map(|(i, p)| MissionPoint {
+            action: Some(ActionTyp::Ground(VehicleFormation::Vee)),
+            airdrome_id: None,
+            helipad: None,
+            typ: PointType::TurningPoint,
+            link_unit: None,
+            pos: LuaVec2(*p),
+            alt: 0.,
+            alt_typ: Some(AltType::BARO),
+            time_re_fu_ar: None,
+            eta: (i == 0).then_some(dcso3::Time(0.)),
+            eta_locked: (i == 0).then_some(true),
+            speed,
+            speed_locked: (i == 0).then_some(true),
+            name: None,
+            task: Box::new(Task::ComboTask(vec![])),
+        })
+        .collect()
+}
+
+/// `lane` with every point in open water: one on land is moved to the
+/// nearest water (see `sea_spot`), with a warning naming `what`.
+fn water_path(lua: MizLua, lane: &[Vector2], what: &str) -> Vec<Vector2> {
+    let Ok(land) = Land::singleton(lua) else {
+        return lane.to_vec();
+    };
+    let water = |p: Vector2| {
+        matches!(land.get_surface_type(LuaVec2(p)), Ok(dcso3::land::SurfaceType::Water))
+    };
+    snap_to_water(lane, water, what)
+}
+
+fn snap_to_water(
+    lane: &[Vector2],
+    water: impl Fn(Vector2) -> bool,
+    what: &str,
+) -> Vec<Vector2> {
+    lane.iter()
+        .map(|p| {
+            if water(*p) {
+                return *p;
+            }
+            match super::objective::sea_spot(*p, &[], &water) {
+                Some(q) => {
+                    warn!(
+                        "[SEA_LANE] {what}: ({:.0}, {:.0}) is on land, sailing via ({:.0}, {:.0})",
+                        p.x, p.y, q.x, q.y
+                    );
+                    q
+                }
+                None => *p,
+            }
+        })
+        .collect()
 }
 
 /// Shortest distance from `p` to the segment `a`-`b`. Used to decide whether
@@ -2144,10 +2294,12 @@ impl Db {
     }
 
     pub(super) fn init_warehouses(&mut self, lua: MizLua) -> Result<()> {
-        if let Err(e) = log_resource_map(lua) {
-            warn!("[RESOURCE_MAP] could not list the resource map: {e:?}");
+        match log_resource_map(lua) {
+            Ok(missiles) => self.ephemeral.missile_ws3 = missiles,
+            Err(e) => warn!("[RESOURCE_MAP] could not list the resource map: {e:?}"),
         }
         self.init_resource_map(lua).context("initializing resource map")?;
+        self.check_sea_lanes(lua);
         let cfg = &self.ephemeral.cfg;
         info!(
             "[WAREHOUSE] Checking warehouse config: exists = {}",
@@ -2336,6 +2488,7 @@ impl Db {
 
     pub(super) fn setup_warehouses_after_load(&mut self, lua: MizLua) -> Result<()> {
         self.init_resource_map(lua).context("initializing resource map")?;
+        self.check_sea_lanes(lua);
         let whcfg = match self.ephemeral.cfg.warehouse.as_ref() {
             Some(cfg) => cfg,
             None => return Ok(()),
@@ -4457,7 +4610,8 @@ impl Db {
                                 continue;
                             }
                         };
-                        if route.check_delivery(dest_pos, delivery_distance) {
+                        let unload_at = route.path.last().copied().unwrap_or(dest_pos);
+                        if route.check_delivery(unload_at, delivery_distance) {
                             let dest_name = self
                                 .persisted
                                 .objectives
@@ -6525,6 +6679,7 @@ impl Db {
         destination: ObjectiveId,
         cargo_type: ConvoyCargoType,
         transfers: Vec<Transfer>,
+        lane: Option<&[Vector2]>,
         now: DateTime<Utc>,
     ) -> Result<Option<CompactString>> {
         let cfg = match &self.ephemeral.cfg.warehouse {
@@ -6564,8 +6719,17 @@ impl Db {
         );
         self.ephemeral.sea_route_counter += 1;
 
-        let delta = dest_pos - origin_pos;
-        let heading = delta.y.atan2(delta.x);
+        // A lane is sailed point by point, every point in open water; a run
+        // to a carrier goes straight from the naval base.
+        let path: Vec<Vector2> = match lane {
+            Some(lane) => water_path(lua, lane, &format!("{origin_name} -> {dest_name}")),
+            None => vec![],
+        };
+        let (start, first_leg) = match path.as_slice() {
+            [a, b, ..] => (*a, *b - *a),
+            _ => (origin_pos, dest_pos - origin_pos),
+        };
+        let heading = first_leg.y.atan2(first_leg.x);
         let speed_mps = speed_kph / 3.6;
 
         use crate::db::group::DeployKind;
@@ -6586,7 +6750,7 @@ impl Db {
             &idx,
             side,
             SpawnLoc::AtPos {
-                pos: origin_pos,
+                pos: start,
                 offset_direction: Vector2::new(0., 0.),
                 group_heading: heading,
             },
@@ -6595,42 +6759,28 @@ impl Db {
             BitFlags::empty(),
         )?;
 
-        let route_points = vec![
-            MissionPoint {
-                action: Some(ActionTyp::Ground(VehicleFormation::Vee)),
-                airdrome_id: None,
-                helipad: None,
-                typ: PointType::TurningPoint,
-                link_unit: None,
-                pos: LuaVec2(origin_pos),
-                alt: 0.,
-                alt_typ: Some(AltType::BARO),
-                time_re_fu_ar: None,
-                eta: Some(dcso3::Time(0.)),
-                eta_locked: Some(true),
-                speed: speed_mps,
-                speed_locked: Some(true),
-                name: None,
-                task: Box::new(Task::ComboTask(vec![])),
-            },
-            MissionPoint {
-                action: Some(ActionTyp::Ground(VehicleFormation::Vee)),
-                airdrome_id: None,
-                helipad: None,
-                typ: PointType::TurningPoint,
-                link_unit: None,
-                pos: LuaVec2(dest_pos),
-                alt: 0.,
-                alt_typ: Some(AltType::BARO),
-                time_re_fu_ar: None,
-                eta: None,
-                eta_locked: None,
-                speed: speed_mps,
-                speed_locked: None,
-                name: None,
-                task: Box::new(Task::ComboTask(vec![])),
-            },
-        ];
+        let point = |pos: Vector2, first: bool| MissionPoint {
+            action: Some(ActionTyp::Ground(VehicleFormation::Vee)),
+            airdrome_id: None,
+            helipad: None,
+            typ: PointType::TurningPoint,
+            link_unit: None,
+            pos: LuaVec2(pos),
+            alt: 0.,
+            alt_typ: Some(AltType::BARO),
+            time_re_fu_ar: None,
+            eta: first.then_some(dcso3::Time(0.)),
+            eta_locked: first.then_some(true),
+            speed: speed_mps,
+            speed_locked: first.then_some(true),
+            name: None,
+            task: Box::new(Task::ComboTask(vec![])),
+        };
+        let route_points: Vec<MissionPoint> = if path.is_empty() {
+            vec![point(origin_pos, true), point(dest_pos, false)]
+        } else {
+            path.iter().enumerate().map(|(i, p)| point(*p, i == 0)).collect()
+        };
 
         {
             let mut perf = Perf::get_mut();
@@ -6655,8 +6805,9 @@ impl Db {
             spawn_time: now,
             state: LogiRouteState::InTransit,
             side,
-            last_pos: origin_pos,
+            last_pos: start,
             last_check: now,
+            path,
         };
 
         self.ephemeral.active_sea_routes.insert(route_id.clone(), route);
@@ -6671,6 +6822,161 @@ impl Db {
         );
 
         Ok(Some(route_id))
+    }
+
+    /// Put ship group `template` to sea for `side` at the start of `path`
+    /// (every point moved to open water first), sailing the path at
+    /// `speed_kph`. Session scoped (`EventSpawn`): a restart drops it. Returns
+    /// the group and the path it was given.
+    pub(crate) fn spawn_ships_on_path(
+        &mut self,
+        lua: MizLua,
+        idx: &dcso3::env::miz::MizIndex,
+        side: Side,
+        template: &str,
+        origin: ObjectiveId,
+        path: &[Vector2],
+        speed_kph: f64,
+        what: &str,
+    ) -> Result<(GroupId, Vec<Vector2>)> {
+        use crate::db::group::DeployKind;
+        use crate::spawnctx::{SpawnCtx, SpawnLoc};
+        use bfprotocols::cfg::UnitTag;
+        let path = water_path(lua, path, what);
+        let (start, leg) = match path.as_slice() {
+            [a, b, ..] => (*a, *b - *a),
+            _ => bail!("{what}: a ship route needs two points"),
+        };
+        let spctx = SpawnCtx::new(lua)?;
+        let gid = self.add_group(
+            &spctx,
+            idx,
+            side,
+            SpawnLoc::AtPos {
+                pos: start,
+                offset_direction: Vector2::new(0., 0.),
+                group_heading: leg.y.atan2(leg.x),
+            },
+            template,
+            DeployKind::Objective { origin },
+            UnitTag::EventSpawn.into(),
+        )?;
+        let spawned = {
+            let mut perf = Perf::get_mut();
+            let perf = Arc::make_mut(&mut perf.inner);
+            group!(self, gid).and_then(|group| {
+                self.ephemeral.spawn_group(
+                    perf,
+                    &self.persisted,
+                    idx,
+                    &spctx,
+                    group,
+                    ship_route(&path, speed_kph),
+                )
+            })
+        };
+        if let Err(e) = spawned {
+            if let Err(de) = self.delete_group(&gid) {
+                error!("{what}: could not remove an unspawned ship group: {de:?}");
+            }
+            return Err(e);
+        }
+        Ok((gid, path))
+    }
+
+    /// The configured sea lanes that can sail right now, by (naval base,
+    /// destination): the base is a naval base, and both ends belong to the
+    /// same side. Paths are in DCS x/y metres.
+    pub(super) fn live_sea_lanes(
+        &self,
+    ) -> FxHashMap<(ObjectiveId, ObjectiveId), Vec<Vector2>> {
+        let mut out = FxHashMap::default();
+        let Some(sea) =
+            self.ephemeral.cfg.warehouse.as_ref().and_then(|w| w.sea_logistics.as_ref())
+        else {
+            return out;
+        };
+        let by_name = |name: &str| {
+            self.persisted
+                .objectives
+                .into_iter()
+                .find(|(_, o)| o.name.as_str() == name)
+                .map(|(id, o)| (*id, o))
+        };
+        for lane in &sea.lanes {
+            let (Some((from, nb)), Some((to, dest))) =
+                (by_name(lane.from.as_str()), by_name(lane.to.as_str()))
+            else {
+                continue;
+            };
+            if nb.kind.is_naval_base()
+                && nb.owner != Side::Neutral
+                && dest.owner == nb.owner
+            {
+                out.insert(
+                    (from, to),
+                    lane.path.iter().map(|(x, y)| Vector2::new(*x, *y)).collect(),
+                );
+            }
+        }
+        out
+    }
+
+    /// Say at load what is wrong with the sea lanes, rather than leaving a
+    /// convoy that never sails to be puzzled over.
+    pub(super) fn check_sea_lanes(&self, lua: MizLua) {
+        let Some(sea) =
+            self.ephemeral.cfg.warehouse.as_ref().and_then(|w| w.sea_logistics.as_ref())
+        else {
+            return;
+        };
+        if sea.lanes.is_empty() {
+            return;
+        }
+        let land = Land::singleton(lua).ok();
+        for lane in &sea.lanes {
+            let find = |name: &str| {
+                self.persisted
+                    .objectives
+                    .into_iter()
+                    .find(|(_, o)| o.name.as_str() == name)
+            };
+            match find(lane.from.as_str()) {
+                None => warn!(
+                    "[SEA_LANE] {} -> {}: there is no objective {}",
+                    lane.from, lane.to, lane.from
+                ),
+                Some((_, o)) if !o.kind.is_naval_base() => warn!(
+                    "[SEA_LANE] {} -> {}: {} is not a naval base, so nothing sails from it",
+                    lane.from, lane.to, lane.from
+                ),
+                Some(_) => (),
+            }
+            if find(lane.to.as_str()).is_none() {
+                warn!(
+                    "[SEA_LANE] {} -> {}: there is no objective {}",
+                    lane.from, lane.to, lane.to
+                );
+            }
+            if let Some(land) = land.as_ref() {
+                for (i, (x, y)) in lane.path.iter().enumerate() {
+                    let wet = matches!(
+                        land.get_surface_type(LuaVec2(Vector2::new(*x, *y))),
+                        Ok(dcso3::land::SurfaceType::Water)
+                    );
+                    if !wet {
+                        warn!(
+                            "[SEA_LANE] {} -> {}: point {} ({x:.0}, {y:.0}) is not open water; \
+                             convoys will be moved to the nearest water there",
+                            lane.from,
+                            lane.to,
+                            i + 1
+                        );
+                    }
+                }
+            }
+        }
+        info!("[SEA_LANE] {} sea lanes configured", sea.lanes.len());
     }
 
     pub fn deliver_supplies_from_logistics_hubs(
@@ -7495,6 +7801,9 @@ impl Db {
 
             // Second pass: filter destinations to carrier groups below threshold
             let mut naval_pairs: Vec<(ObjectiveId, ObjectiveId, Side)> = Vec::new();
+            // Sea lanes (naval convoys to coastal objectives) whose ends are
+            // both still in one side's hands, by (naval base, destination).
+            let lane_paths = self.live_sea_lanes();
             for (nb_id, side, dest_ids) in &naval_hubs {
                 for dest_id in dest_ids {
                     let dest = match self.persisted.objectives.get(dest_id) {
@@ -7514,6 +7823,20 @@ impl Db {
                     }
                     naval_pairs.push((*nb_id, *dest_id, *side));
                 }
+            }
+            for (nb_id, dest_id) in lane_paths.keys() {
+                let (Some(nb), Some(dest)) = (
+                    self.persisted.objectives.get(nb_id),
+                    self.persisted.objectives.get(dest_id),
+                ) else {
+                    continue;
+                };
+                if dest.supply >= sea_supply_threshold
+                    && dest.fuel >= sea_supply_threshold
+                {
+                    continue;
+                }
+                naval_pairs.push((*nb_id, *dest_id, nb.owner));
             }
 
             let mut sea_routes_to_spawn: Vec<RouteSpawnInfo> = Vec::new();
@@ -7630,6 +7953,9 @@ impl Db {
                     route_info.destination,
                     route_info.cargo_type,
                     route_info.transfers.clone(),
+                    lane_paths
+                        .get(&(route_info.origin, route_info.destination))
+                        .map(|p| p.as_slice()),
                     now,
                 ) {
                     Ok(Some(id)) => {
@@ -7955,16 +8281,22 @@ impl Db {
                     mun_weight += weight;
                 }
             }
-            let mut liq_sum = 0.;
-            let mut liq_weight = 0.;
+            // Fuel is the scarcest liquid the side produces, not the average:
+            // only jet fuel drains (aircraft burn it), so averaged with three
+            // full liquids an airfield with none left still read ~70% -- green
+            // on the F10 map, and below no alert, airlift or HQ resupply
+            // threshold, so nothing ever relieved it.
+            let mut fuel_min: Option<u8> = None;
             for (name, inv) in &obj.warehouse.liquids {
                 let Some(pct) = inv.percent() else { continue };
                 let weight = production
                     .and_then(|p| p.liquids.get(name))
                     .map(|q| *q as f64)
                     .unwrap_or(1.);
-                liq_sum += weight * pct as f64;
-                liq_weight += weight;
+                if weight <= 0. {
+                    continue;
+                }
+                fuel_min = Some(fuel_min.map_or(pct, |m| m.min(pct)));
             }
             let mean = |sum: f64, weight: f64| -> u8 {
                 if weight <= 0. {
@@ -7974,7 +8306,7 @@ impl Db {
                 }
             };
             obj.supply = mean(mun_sum, mun_weight);
-            obj.fuel = mean(liq_sum, liq_weight);
+            obj.fuel = fuel_min.unwrap_or(0).min(100);
             // A base with no airframe entries at all (a FOB, a logistics hub)
             // isn't short of aircraft -- it just doesn't operate any.
             obj.aircraft = if air_weight <= 0. { 100 } else { mean(air_sum, air_weight) };
@@ -8076,21 +8408,25 @@ impl Db {
         Ok((obj, warehouse))
     }
 
+    /// Move `carries` from `from` to `to`. Returns how many item types moved;
+    /// 0 means the source had none of that load to spare or the destination
+    /// was already full of it.
     pub fn transfer_supplies(
         &mut self,
         lua: MizLua,
         from: ObjectiveId,
         to: ObjectiveId,
-    ) -> Result<()> {
+        carries: &Carries,
+    ) -> Result<usize> {
         if from == to {
             bail!("you can't transfer supplies to the same objective")
         }
-        let (size, transfer_size_percent) = match self.ephemeral.cfg.warehouse.as_ref() {
-            Some(whcfg) => {
-                (whcfg.supply_transfer_size as f32 / 100., whcfg.supply_transfer_size)
-            }
-            None => return Ok(()),
+        let transfer_size_percent = match self.ephemeral.cfg.warehouse.as_ref() {
+            Some(whcfg) => carries.size.unwrap_or(whcfg.supply_transfer_size),
+            None => return Ok(0),
         };
+        let size = transfer_size_percent as f32 / 100.;
+        let ws3 = self.ephemeral.missile_ws3.clone();
         let side = objective!(self, from)?.owner;
         if side != objective!(self, to)?.owner {
             bail!("can't transfer supply from an enemy objective")
@@ -8134,6 +8470,10 @@ impl Db {
                     "[SUPPLY_TRANSFER] Skipping airframe: {} (stored: {})",
                     name, inv.stored
                 );
+                continue;
+            }
+            // Not part of this crate's load.
+            if !carries.item(&ws3, name.as_str()) {
                 continue;
             }
 
@@ -8197,8 +8537,10 @@ impl Db {
             }
         }
 
-        // Transfer all liquids (fuel)
-        for (name, inv) in &from_obj.warehouse.liquids {
+        // Liquids, if the crate carries fuel
+        let liquids =
+            if carries.fuel() { Some(&from_obj.warehouse.liquids) } else { None };
+        for (name, inv) in liquids.into_iter().flatten() {
             if inv.stored > 0 {
                 let needed = match to_obj.warehouse.liquids.get(name) {
                     // If destination doesn't have this liquid type, transfer based on source inventory
@@ -8222,6 +8564,7 @@ impl Db {
         }
 
         debug!("[SUPPLY_TRANSFER] Total transfers queued: {}", transfers.len());
+        let moved = transfers.len();
         for tr in transfers {
             self.execute_transfer(&tr)?;
         }
@@ -8231,7 +8574,7 @@ impl Db {
         mark_pushed(objective_mut!(self, to)?);
         self.update_supply_status().context("updating supply status")?;
         self.ephemeral.dirty();
-        Ok(())
+        Ok(moved)
     }
 
     /// Halt a factory's production for `pause` (a strike on it). Returns
@@ -8482,6 +8825,17 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sea_lane_point_on_land_moves_to_open_water() {
+        // Coast along x = 0: land for x < 0, sea beyond.
+        let water = |p: Vector2| p.x > 0.;
+        let lane = [Vector2::new(5_000., 0.), Vector2::new(-2_000., 10_000.)];
+        let path = snap_to_water(&lane, water, "test");
+        assert_eq!(path[0], lane[0], "a point at sea stays put");
+        assert!(path[1].x > 0., "the one on land is moved offshore: {:?}", path[1]);
+        assert!((path[1] - lane[1]).norm() <= 6_000., "and not far: {:?}", path[1]);
+    }
 
     #[test]
     fn convoy_stall_needs_five_quiet_minutes() {

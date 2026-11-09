@@ -125,12 +125,18 @@ pub fn build(lua: MizLua, gid: GroupId, d: &MenuData) -> Result<()> {
         r(&s, "Reset targets", &format!("ag:reset:{id}"))?;
     }
     let gt = sub(&ag, "Ground targets 10 nm ahead")?;
+    let mut p = Pager::new(gid, gt);
     for (k, l) in &d.compositions {
-        r(&gt, l, &format!("spawn:ground_targets:composition={k}&dist_nm=10&moving=no"))?;
+        p.cmd(
+            &mc,
+            l,
+            format!("spawn:ground_targets:composition={k}&dist_nm=10&moving=no"),
+        )?;
     }
     let ms = sub(&ag, "SAM site 20 nm ahead (instructor)")?;
+    let mut p = Pager::new(gid, ms);
     for (k, l) in &d.sams {
-        r(&ms, l, &format!("spawn:sam_site:type={k}&dist_nm=20&weapons_free=no"))?;
+        p.cmd(&mc, l, format!("spawn:sam_site:type={k}&dist_nm=20&weapons_free=no"))?;
     }
     if !d.iads.is_empty() {
         let se = sub(&ag, "SEAD / IADS ranges")?;
@@ -179,12 +185,14 @@ pub fn build(lua: MizLua, gid: GroupId, d: &MenuData) -> Result<()> {
         p.cmd(&mc, l, format!("sel:adv:{k}"))?;
     }
     let wpn = sub(&sel, "Weapons")?;
+    let mut p = Pager::new(gid, wpn);
     for (k, l) in crate::catalog::WEAPONS {
-        r(&wpn, l, &format!("sel:weapons:{k}"))?;
+        p.cmd(&mc, l, format!("sel:weapons:{k}"))?;
     }
     let skill = sub(&sel, "Skill")?;
+    let mut p = Pager::new(gid, skill);
     for (k, l) in crate::catalog::SKILLS {
-        r(&skill, l, &format!("sel:skill:{k}"))?;
+        p.cmd(&mc, l, format!("sel:skill:{k}"))?;
     }
     let rng = sub(&sel, "BVR range")?;
     for n in [10, 20, 30, 40, 60] {
@@ -220,11 +228,12 @@ pub fn build(lua: MizLua, gid: GroupId, d: &MenuData) -> Result<()> {
 
     // 6. anti-ship
     let sh = sub(&root, "Anti-ship")?;
+    let mut p = Pager::new(gid, sh);
     for (k, l) in &d.ships {
-        r(
-            &sh,
+        p.cmd(
+            &mc,
             &format!("{l} 30 nm ahead"),
-            &format!("spawn:ship_target:type={k}&count=1&dist_nm=30&moving=yes"),
+            format!("spawn:ship_target:type={k}&count=1&dist_nm=30&moving=yes"),
         )?;
     }
 

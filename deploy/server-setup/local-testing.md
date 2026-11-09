@@ -141,3 +141,41 @@ cargo build --release --package=bfdb
 cargo build --release --package=bflib
 # Then copy target\release\bflib.dll to your DCS mission folder
 ```
+
+---
+
+## Load test: simulated players
+
+A full server can't be staged with real clients, so bflib can stand in for
+their load. Add a `load_test` block to a **test copy** of the campaign config
+(never a live one; the engine logs a warning whenever it is on):
+
+```json
+"load_test": {
+    "enabled": true,
+    "players_per_side": 30,
+    "airborne_share": 0.5,
+    "act_every_secs": 120,
+    "sortie_minutes": 30,
+    "deployed_per_player": 3
+}
+```
+
+Each simulated player registers on its side and:
+
+- flies an AI copy of a player aircraft (a slot template, the same one a
+  wingman copy uses) from the friendly field nearest the front, orbits and
+  fights there, lands after `sortie_minutes` and launches again, keeping
+  `airborne_share` of the players in the air;
+- every `act_every_secs` (jittered) deploys a unit or troops near the front,
+  buys an action aimed at the front (the F10 menu's own code path, so limits,
+  cooldowns and costs apply), moves supplies between two friendly airbases, or
+  forms a formation from its deployed units. It keeps `deployed_per_player`
+  groups; the oldest goes when it deploys another.
+
+Every minute the engine logs a `[LOAD_TEST]` line: players, how many are
+airborne, what was done and refused, the number of groups, and **game time
+against real time** (1.00x means the server keeps up; under 1 means the
+simulation is falling behind the clock). The engine's perf tables follow every
+ten minutes. Simulated players are named `LoadTest Blue 01` ... and their ids
+start `10ad7e57`; a test save is best thrown away afterwards.
