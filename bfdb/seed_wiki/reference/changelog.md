@@ -1,10 +1,21 @@
 # Changelog
 
-What changed for players, newest first. Current version: **v3.1**. Each update
+What changed for players, newest first. Current version: **v3.2**. Each update
 gets the next number. Below v2.0 is the list of what this engine does
 differently from stock Fowl Engine. Where an entry gives a campaign number, it
 is read from the server selected at the top of the page; where a later entry or
 a linked page says otherwise, the later one is right.
+
+## v3.2 — November 9, 2026
+
+**Put troops out of an IFV, APC or truck**
+- Driving one (Combined Arms) or one you deployed, you can dismount its squad
+  while it is stopped: F10 → Troops in the vehicle, or `-dismount` /
+  `-embark` / `-carriers` in chat. Before, the squad only got out when the
+  vehicle was destroyed.
+- One squad per vehicle: embark it again to redeploy it. If it is killed the
+  vehicle has no more troops. A destroyed vehicle only lets out a squad that
+  is actually aboard. See [Troops](../f10-menu/troops.md#troops-in-ifvs-apcs-and-trucks).
 
 ## v3.1 — October 22, 2026
 
@@ -453,7 +464,7 @@ Recon-capable airframes (server-configured) get an **F10 → Recon** menu. Start
 Any target a JTAC (ground, drone, or player) has confirmed line-of-sight on now feeds the same intel picture automatically — no menu action needed. The mark stays at full confidence while the JTAC keeps watching; once it loses the target the confidence halves every {{cfg:elint.half_life_jtac_secs|3600}} seconds, so the mark stays on the map for hours instead of vanishing the moment the JTAC looks away. See [JTAC System](../f10-menu/jtac.md#f10-map-intel).
 
 **Mechanized Infantry**
-Infantry squads can board and dismount IFVs/APCs for overland transport, not just helicopters — troops embark near a friendly vehicle and can be dropped off anywhere it can drive.
+IFVs and APCs carry infantry: a squad gets out when the vehicle is destroyed, and armoured formations send it in to take a base. (Putting a squad out by hand came in v3.2.)
 
 **CSAR — Combat Search & Rescue**
 A lost aircraft's life can be won back. A downed pilot unit spawns at the crash site; a friendly helicopter can locate and extract them via the F10 → CSAR menu, giving the pilot the life back (where lives are enforced) and paying the rescuer {{cfg:csar.rescue_reward|0}} points. Come down inside a friendly objective's zone and the pilot recovers on their own — no helo needed. A downed pilot is held by an enemy-capture countdown ({{cfg:csar.capture_timer|15}} minutes here), but as long as a friendly rescue helicopter is near them the timer can't take them, so a pickup that's a few seconds late still works. See [Combat Search & Rescue](../f10-menu/csar.md).

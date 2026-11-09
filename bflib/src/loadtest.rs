@@ -354,11 +354,21 @@ fn act(
         let next = every * thread_rng().gen_range(0.5..1.5);
         ctx.loadtest.sims[i].next_act = now + Duration::seconds(next as i64);
         let roll = thread_rng().gen_range(0..100);
+        if (75..88).contains(&roll) {
+            match carrier(lua, ctx, i) {
+                Ok(done) => ctx.loadtest.count(done),
+                Err(e) => {
+                    ctx.loadtest.count("carrier refused");
+                    log::debug!("[LOAD_TEST] carrier refused: {e:?}");
+                }
+            }
+            continue;
+        }
         let (what, res) = match roll {
-            0..30 => ("deploy", deploy(lua, ctx, i, cfg, &front, false)),
-            30..45 => ("troops", deploy(lua, ctx, i, cfg, &front, true)),
-            45..70 => ("action", action(lua, ctx, perf, i, &front)),
-            70..85 => ("supply run", supply(lua, ctx, i, &front)),
+            0..25 => ("deploy", deploy(lua, ctx, i, cfg, &front, false)),
+            25..37 => ("troops", deploy(lua, ctx, i, cfg, &front, true)),
+            37..60 => ("action", action(lua, ctx, perf, i, &front)),
+            60..75 => ("supply run", supply(lua, ctx, i, &front)),
             _ => ("formation", formation(lua, ctx, i, now)),
         };
         match res {
@@ -378,6 +388,40 @@ fn act(
                     _ => "formation refused",
                 });
                 log::debug!("[LOAD_TEST] {what} refused: {e:?}");
+            }
+        }
+    }
+}
+
+/// One of the simulated player's own IFVs/APCs/trucks: its squad out if it
+/// is aboard, back in if it is out (`db::carrier`). The deployed vehicles
+/// stand still, so the squad is still beside it to embark.
+fn carrier(lua: MizLua, ctx: &mut Context, i: usize) -> anyhow::Result<&'static str> {
+    let ucid = ctx.loadtest.sims[i].ucid;
+    let uid = *ctx
+        .db
+        .carriers_of(&ucid)
+        .choose(&mut thread_rng())
+        .ok_or_else(|| anyhow::anyhow!("no troop carrier deployed"))?;
+    match ctx.db.carrier_aboard(&uid)? {
+        crate::db::carrier::Aboard::Out(_) => {
+            ctx.db.embark_squad(lua, &uid, &ucid)?;
+            Ok("carrier embarks")
+        }
+        a if a.loaded() => {
+            ctx.db.dismount_squad(lua, &ctx.idx, &uid, &ucid)?;
+            Ok("carrier dismounts")
+        }
+        _ => {
+            // its squad is lost: the second try must be refused too
+            match ctx.db.dismount_squad(lua, &ctx.idx, &uid, &ucid) {
+                Ok(_) => {
+                    log::error!(
+                        "[LOAD_TEST] a carrier whose squad was lost dismounted another"
+                    );
+                    Ok("carrier DUPLICATED a squad")
+                }
+                Err(_) => Ok("carrier empty (refused, as it should be)"),
             }
         }
     }

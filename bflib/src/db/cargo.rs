@@ -171,7 +171,7 @@ fn survival_fraction(strength: Option<(u16, u16)>) -> f32 {
 }
 
 /// `(alive, total)` for a squad group, or `None` when nobody is missing.
-fn squad_strength(units: impl Iterator<Item = bool>) -> Option<(u16, u16)> {
+pub(super) fn squad_strength(units: impl Iterator<Item = bool>) -> Option<(u16, u16)> {
     let (alive, total) = units.fold((0u16, 0u16), |(a, t), dead| {
         (a.saturating_add(!dead as u16), t.saturating_add(1))
     });
@@ -463,7 +463,7 @@ impl SlotStats {
 }
 
 impl Db {
-    fn point_near_logistics(
+    pub(super) fn point_near_logistics(
         &self,
         side: Side,
         point: Vector2,
@@ -2018,7 +2018,11 @@ impl Db {
     /// Re-apply an extracted squad's casualties to the group it was just
     /// re-spawned as: everyone past the survivors is marked dead before the
     /// spawn queue runs, so only the survivors are put back in the field.
-    fn apply_troop_strength(&mut self, gid: GroupId, strength: Option<(u16, u16)>) {
+    pub(super) fn apply_troop_strength(
+        &mut self,
+        gid: GroupId,
+        strength: Option<(u16, u16)>,
+    ) {
         let Some((alive, _)) = strength else { return };
         let units: SmallVec<[bfprotocols::db::group::UnitId; 16]> =
             match self.persisted.groups.get(&gid) {

@@ -23,6 +23,7 @@ pub mod jtac;
 pub(crate) mod objectives;
 mod recon;
 mod troop;
+pub(crate) use troop::add_carrier_menu_for_group;
 mod wingman;
 
 use crate::{Context, db::Db};

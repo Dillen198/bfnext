@@ -178,6 +178,12 @@ pub struct Persisted {
     /// check. See `Db::expire_dismounts`.
     #[serde(default)]
     pub dismount_spawned: MapS<GroupId, DateTime<Utc>>,
+    /// IFVs, APCs and trucks (`cfg.dismount` types) whose squad is not the
+    /// one they started with: put down (`Empty`) or a squad that embarked.
+    /// No entry: the vehicle still carries its own squad. See
+    /// `crate::db::carrier`.
+    #[serde(default)]
+    pub carriers: MapS<UnitId, super::carrier::Carried>,
     /// Mirror of `Ephemeral::last_stand_state`, written on snapshot and read
     /// back on load. The live value is ephemeral so readers outside the db
     /// module keep working; persisting it is what stops a scheduled restart

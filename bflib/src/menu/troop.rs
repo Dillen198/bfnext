@@ -198,6 +198,79 @@ fn return_troops(lua: MizLua, gid: GroupId) -> Result<()> {
     Ok(())
 }
 
+/// A carrier order from the F10 menu of a vehicle a Combined Arms player
+/// is driving: `arg` is (its DCS group, the unit's name).
+fn carrier_menu_order(
+    lua: MizLua,
+    arg: ArgTuple<GroupId, String>,
+    cmd: crate::chatcmd::CarrierCmd,
+) -> Result<()> {
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
+    let unit = dcso3::unit::Unit::get_by_name(lua, arg.snd.as_str())?;
+    let Some(ucid) = unit
+        .get_player_name()?
+        .and_then(|name| ctx.connected.get_by_name(&name))
+        .map(|ifo| ifo.ucid)
+    else {
+        return Ok(());
+    };
+    let Some(uid) = ctx.db.persisted.units_by_name.get(&arg.snd).copied() else {
+        return Ok(());
+    };
+    let reply = crate::chatcmd::carrier_order_unit(ctx, lua, &ucid, cmd, uid);
+    ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, reply.clone());
+    super::jtac::tell(ctx, 10, &ucid, reply);
+    Ok(())
+}
+
+fn carrier_dismount(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
+    carrier_menu_order(lua, arg, crate::chatcmd::CarrierCmd::Dismount)
+}
+
+fn carrier_embark(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
+    carrier_menu_order(lua, arg, crate::chatcmd::CarrierCmd::Embark)
+}
+
+fn carrier_status(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
+    carrier_menu_order(lua, arg, crate::chatcmd::CarrierCmd::List)
+}
+
+/// "Troops" on the F10 menu of a carrier's DCS `group` for the Combined
+/// Arms player driving `unit`: put its squad down, take one aboard, what is
+/// aboard. Rebuilt each time someone gets in.
+pub(crate) fn add_carrier_menu_for_group(
+    mc: &MissionCommands,
+    group: GroupId,
+    unit: String,
+) -> Result<()> {
+    let _ = mc.remove_submenu_for_group(group, vec!["Troops".into()].into());
+    let root = mc.add_submenu_for_group(group, "Troops".into(), None)?;
+    let arg = || ArgTuple { fst: group, snd: unit.clone() };
+    mc.add_command_for_group(
+        group,
+        "Dismount squad".into(),
+        Some(root.clone()),
+        carrier_dismount,
+        arg(),
+    )?;
+    mc.add_command_for_group(
+        group,
+        "Embark nearby squad".into(),
+        Some(root.clone()),
+        carrier_embark,
+        arg(),
+    )?;
+    mc.add_command_for_group(
+        group,
+        "What is aboard".into(),
+        Some(root),
+        carrier_status,
+        arg(),
+    )?;
+    Ok(())
+}
+
 pub(super) fn add_troops_menu_for_group(
     cfg: &Cfg,
     mc: &MissionCommands,

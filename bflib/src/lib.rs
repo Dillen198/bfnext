@@ -375,6 +375,9 @@ struct Context {
     /// `-brief` requests, answered from the mission Lua state for the same
     /// reason as `weather_requests`.
     brief_requests: Vec<PlayerId>,
+    /// `-dismount` / `-embark` / `-carriers`, run from the mission Lua state
+    /// for the same reason as `weather_requests` (they spawn and despawn).
+    carrier_requests: Vec<(PlayerId, chatcmd::CarrierCmd, Option<GroupId>)>,
     jtac_commands: Vec<(PlayerId, JtId, String)>,
     to_background: Option<UnboundedSender<bg::Task>>,
     recently_landed: FxHashMap<DcsOid<ClassUnit>, DateTime<Utc>>,
@@ -995,6 +998,11 @@ struct DismountInfo {
     pos: dcso3::Vector2,
     heading: f64,
     from_group: GroupId,
+    uid: bfprotocols::db::group::UnitId,
+    /// What it had aboard if not the squad it started with (`db::carrier`).
+    /// Read before the death is handled: that can delete the group, and
+    /// the record with it.
+    carried: Option<db::carrier::Carried>,
 }
 
 fn try_capture_dismount_info(ctx: &Context, unit: &Unit) -> Option<DismountInfo> {
@@ -1025,11 +1033,38 @@ fn dismount_info_for(
         pos,
         heading: su.heading,
         from_group: su.group,
+        uid: *uid,
+        carried: ctx.db.persisted.carriers.get(uid).cloned(),
     })
 }
 
 fn spawn_dismount(lua: MizLua, ctx: &mut Context, info: Option<DismountInfo>) {
     let Some(info) = info else { return };
+    ctx.db.take_carried(&info.uid);
+    match info.carried {
+        // its squad is out or lost: nobody gets out, nothing is duplicated
+        Some(db::carrier::Carried::Out(_) | db::carrier::Carried::Lost) => return,
+        // a squad that embarked gets out as it was
+        Some(db::carrier::Carried::Squad(it)) => {
+            let name = it.troop.name.clone();
+            match ctx.db.spawn_embarked_squad(
+                lua,
+                &ctx.idx,
+                info.side,
+                it,
+                info.pos,
+                info.heading,
+            ) {
+                Ok(gid) => info!(
+                    "[DISMOUNT] {} {} destroyed; its embarked {name} squad gets out as {gid}",
+                    info.vehicle_typ, info.uid
+                ),
+                Err(e) => error!("failed to let an embarked squad out: {e:?}"),
+            }
+            return;
+        }
+        None => (),
+    }
     if let Err(e) = ctx.db.spawn_dismount_group(
         lua,
         &ctx.idx,
@@ -1742,7 +1777,25 @@ fn handle_event(
                             }
                         }
                     });
+                let ucid = driver.map(|(u, _)| u);
                 ctx.db.player_entered_unit(&id, driver);
+                // Driving an IFV/APC/truck that carries a squad: a Troops
+                // menu on it to put the squad down or take one aboard.
+                if let Some(ucid) = ucid
+                    && let Some(uid) = ctx.db.driven_unit(&ucid)
+                    && ctx.db.persisted.units.get(&uid).is_some_and(|u| {
+                        !u.dead && ctx.db.carrier_troop(&u.typ, u.side).is_some()
+                    })
+                {
+                    let built = dcso3::mission_commands::MissionCommands::singleton(lua)
+                        .and_then(|mc| {
+                            let gid = unit.get_group()?.id()?;
+                            menu::add_carrier_menu_for_group(&mc, gid, unit.get_name()?)
+                        });
+                    if let Err(e) = built {
+                        warn!("could not build the carrier menu for {ucid}: {e:?}");
+                    }
+                }
             }
         }
         Event::PlayerLeaveUnit(e) => {
@@ -6347,6 +6400,7 @@ fn run_timed_events(ctx: &mut Context, lua: MizLua, path: &Path) -> Result<Admin
         }
     });
     step(lua, ctx, "brief requests", |ctx| chatcmd::run_brief_requests(ctx, lua));
+    step(lua, ctx, "carrier requests", |ctx| chatcmd::run_carrier_requests(ctx, lua));
     ctx.load_state.step();
     record_perf(&mut perf.timed_events, perf_ts);
     ctx.log_perf(now);

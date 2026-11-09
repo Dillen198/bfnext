@@ -710,6 +710,7 @@ impl Db {
                 self.persisted.units_by_name.remove_cow(&unit.name);
                 units.push(unit.name);
             }
+            self.persisted.carriers.remove_cow(uid);
         }
         self.ephemeral.dirty();
         match group.kind {

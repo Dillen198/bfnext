@@ -1052,12 +1052,14 @@ impl Db {
     /// `cfg.dismount` squad for `f`'s side: (its group, where it is, the
     /// squad's template). Garrisons keep their last infantry group at home,
     /// so on most maps this is how an armoured formation takes a base.
-    fn troop_carrier(&self, f: &Formation) -> Option<(GroupId, Vector2, String)> {
+    /// Only a vehicle still carrying the squad it started with: one whose
+    /// squad is out or used up has nobody to send (`db::carrier`).
+    fn troop_carrier(&self, f: &Formation) -> Option<(GroupId, UnitId, Vector2, String)> {
         for gid in &f.groups {
             let Some(g) = self.persisted.groups.get(gid) else { continue };
             for uid in &g.units {
                 let Some(u) = self.persisted.units.get(uid) else { continue };
-                if u.dead {
+                if u.dead || !self.carries_own_squad(uid) {
                     continue;
                 }
                 let squad = self
@@ -1067,7 +1069,7 @@ impl Db {
                     .get(&u.typ)
                     .and_then(|d| d.template.get(&f.side));
                 if let Some(t) = squad {
-                    return Some((*gid, u.pos, t.clone()));
+                    return Some((*gid, *uid, u.pos, t.clone()));
                 }
             }
         }
@@ -2829,13 +2831,18 @@ impl Db {
         let (side, home) = (f.side, f.home);
         // (group the squad comes from, where it gets out, template, the
         // group itself becomes the squad)
+        // the vehicle whose squad goes in, when it is not a whole group
+        let mut carrier = None;
         let (gid, from, template, whole_group) = match self.infantry_group(f) {
             Some(gid) => {
                 let g = group!(self, gid)?;
                 (gid, self.group_center(&gid)?, g.template_name.clone(), true)
             }
             None => match self.troop_carrier(f) {
-                Some((gid, pos, template)) => (gid, pos, template, false),
+                Some((gid, uid, pos, template)) => {
+                    carrier = Some(uid);
+                    (gid, pos, template, false)
+                }
                 None => return Ok(false),
             },
         };
@@ -2872,6 +2879,10 @@ impl Db {
             None,
         )
         .context("spawning the assault squad")?;
+        if let Some(uid) = carrier {
+            // its one squad is used up: it won't send or drop another
+            self.carrier_squad_used(&uid);
+        }
         if !whole_group {
             return Ok(true);
         }

@@ -858,6 +858,26 @@ With `warehouse.sea_logistics.lanes` and `naval_patrols` set (Levant).
 
 ---
 
+## 31. Troops in Vehicles
+
+A `cfg.dismount` type (BTR-82A, BMP-2, M-2 Bradley, ...). See `bflib/src/db/carrier.rs`.
+
+| # | Item | Steps | Expected | Pass |
+|---|------|-------|----------|------|
+| 31.1 | Menu when driving | Combined Arms: take control of a BTR | F10 → Troops: Dismount squad, Embark nearby squad, What is aboard | |
+| 31.2 | Must be stopped | Dismount while moving | "stop the BTR-82A first", nothing spawns | |
+| 31.3 | Dismount | Stop, Dismount squad | A squad gets out behind the vehicle, owned by you; What is aboard says it is out as group N | |
+| 31.4 | No second squad | Dismount again | "already out as group N -- embark it before it can deploy again" | |
+| 31.5 | Embark | Drive within 60 m of the squad, stop, Embark | Squad despawns, aboard again with its casualties; Dismount works again | |
+| 31.6 | Squad killed | Dismount, kill the squad, Dismount | "squad was lost -- it has no troops to deploy", for good | |
+| 31.7 | Destroyed while out | Dismount, destroy the vehicle | No second squad appears at the wreck | |
+| 31.8 | Destroyed loaded | Destroy a vehicle with its squad aboard | Its squad gets out at the wreck, as before | |
+| 31.9 | AI vehicle you deployed | Deploy a Bradley, `-carriers`, `-dismount <group>` | Listed with what is aboard; its squad gets out when it is stopped | |
+| 31.10 | Not yours | `-dismount <someone else's group>` | Refused; nothing spawns | |
+| 31.11 | Restart | Dismount, restart the mission | The squad and the vehicle's "out" state both survive | |
+
+---
+
 ## Sign-off Table
 
 | Section | Tested By | Date | Pass/Fail | Notes |
@@ -906,3 +926,4 @@ With `warehouse.sea_logistics.lanes` and `naval_patrols` set (Levant).
 | 28C. Fowl Engine Manager | | | | |
 | 29. Wingmen | | | | |
 | 30. Naval Convoys and Patrols | | | | |
+| 31. Troops in Vehicles | | | | |
