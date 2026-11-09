@@ -14,6 +14,7 @@ import { useOffline } from '@shared/web/snapshot'
 import { ErrorBoundary } from '@shared/web/ErrorBoundary'
 import NotificationBell from './NotificationBell'
 import { getDevUser } from '../lib/devAuth'
+import { OTHER_SERVERS, elsewhere, handOffUrl } from '../lib/elsewhere'
 import { Emblem } from './Emblem'
 import Flaps from './shell/Flaps'
 import { functionKeys, isActive, isTyping, moreGroups, shortcutIndex } from './shell/keys'
@@ -120,6 +121,10 @@ function CampaignSelect({
         {activeRound  && <option value={`${currentId}|`}>{roundLabel(activeRound)}</option>}
         {!activeRound && <option value={`${currentId}|`}>Latest Round</option>}
         {pastRounds.map(r => <option key={r.id} value={`${currentId}|${r.id}`}>{roundLabel(r)}</option>)}
+        {/* The other campaigns, each on its own dashboard (lib/elsewhere). */}
+        <optgroup label="Other servers">
+          {OTHER_SERVERS.map(s => <option key={s.slug} value={`${s.instanceId}|`}>{s.title} · {s.label}</option>)}
+        </optgroup>
       </>}
       {multi && groups.map(({ instance, rounds: rs }) => {
         const live = rs.find(r => r.active)
@@ -242,11 +247,17 @@ export default function Layout() {
   const selectorValue = `${selectedInstance ?? current?.id ?? ''}|${selectedRound ?? ''}`
   function onSelectCampaign(value: string) {
     const [inst, round] = value.split('|')
+    // Another campaign opens on its own dashboard, on the same page.
+    const away = elsewhere(inst)
+    if (away) {
+      window.location.assign(handOffUrl(away, location))
+      return
+    }
     if (!locked && inst && inst !== current?.id) select(inst)
     setSelectedRound(round === '' ? undefined : Number(round))
   }
   const groups = (multi ? instances : []).map(i => ({ instance: i, rounds: rounds.filter(r => instanceOf(r) === i.id) }))
-  const hasCampaignSelect = rounds.length > 0 || multi
+  const hasCampaignSelect = rounds.length > 0 || multi || OTHER_SERVERS.length > 0
   const campaignSelect = (style?: React.CSSProperties) => hasCampaignSelect && (
     <CampaignSelect
       value={selectorValue}

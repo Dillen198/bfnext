@@ -73,7 +73,7 @@ def test_loops_started_in_cog_load_exist_and_are_cancelled():
 
 EXPECTED_COMMANDS = {
     "fe_ban", "fe_briefing", "fe_card", "fe_commander", "fe_commanders", "fe_dashboard", "fe_gci",
-    "fe_objective", "fe_rotation", "fe_rotation_advance", "fe_rotation_vote", "fe_side_switch",
+    "fe_objective", "fe_repair_all", "fe_rotation", "fe_rotation_advance", "fe_rotation_vote", "fe_side_switch",
     "fe_terminal", "fe_unban",
 }
 EXPECTED_GROUPS = {

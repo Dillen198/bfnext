@@ -61,7 +61,7 @@ export const CFG_CATEGORIES: CfgCategory[] = [
   {
     key: 'performance', label: 'Culling & Performance', icon: Baro,
     fields: [
-      'unit_cull_distance', 'ground_vehicle_cull_distance', 'lr_cull_distance', 'cull_after',
+      'unit_cull_distance', 'ground_vehicle_cull_distance', 'ai_air_wake_distance', 'rear_area_distance', 'lr_cull_distance', 'cull_after',
       'slow_timed_events_freq', 'weapon_spawn_radius', 'weapon_spawn_expiry_secs',
     ],
   },

@@ -215,6 +215,23 @@ fn station_args(
     })
 }
 
+/// An asset's name on the command map: the lead unit's DCS type ("E-3A",
+/// not the .miz template "BAWACS" the group is named after), and for a
+/// group a player bought or deployed, "Player - Type".
+fn asset_label(ctx: &Context, origin: &DeployKind, typ: &str) -> String {
+    let owner = match origin {
+        DeployKind::Action { player, .. } => player.as_ref(),
+        DeployKind::Deployed { player, .. } | DeployKind::Troop { player, .. } => {
+            Some(player)
+        }
+        _ => None,
+    };
+    match owner.and_then(|u| ctx.db.player(u)) {
+        Some(p) => format!("{} - {typ}", p.name),
+        None => typ.to_string(),
+    }
+}
+
 /// One group as an asset: its units where DCS has them (live) or where the
 /// engine last placed them. `read_live` false skips asking DCS, for groups
 /// that never move (a base's battery): the query runs inside the DCS frame.
@@ -274,9 +291,13 @@ fn asset_of(
         });
     }
     let lead = units.first()?.clone();
+    let (dest, task) = match ctx.db.current_waypoint(&gid) {
+        Some((p, why)) => (Some(to_ll(coord, p, 0.)), Some(why.to_string())),
+        None => (None, None),
+    };
     Some(Asset {
         id: gid.inner(),
-        name: g.name.to_string(),
+        name: asset_label(ctx, &g.origin, &lead.typ),
         kind,
         role: role.to_string(),
         typ: lead.typ.clone(),
@@ -287,13 +308,80 @@ fn asset_of(
         alive: units.len() as u32,
         total,
         live,
-        task: None,
-        dest: None,
+        task,
+        dest,
         base: None,
         range_m: None,
         orders,
         units,
     })
+}
+
+/// `side`'s modern-war raiders, each with its target as its waypoint: the
+/// raid drones flying at an enemy base, and the sea drones running at an
+/// enemy ship (those are only in DCS, so they are read from there). The
+/// engine runs both: nothing to order.
+fn raid_assets(
+    lua: MizLua,
+    ctx: &Context,
+    side: Side,
+    coord: Option<&Coord>,
+) -> Vec<Asset> {
+    let mut out = vec![];
+    for (gid, target, name) in ctx.modern_war.raids.drones_for(side) {
+        if let Some(mut a) =
+            asset_of(ctx, lua, coord, gid, AssetKind::Air, "Raid drone", vec![], true)
+        {
+            a.dest = Some(to_ll(coord, target, 0.));
+            a.task = Some(format!("Raid on {name}"));
+            out.push(a);
+        }
+    }
+    for (group, target_unit, label) in ctx.modern_war.boats.boats_for(side) {
+        let Ok(g) = dcso3::group::Group::get_by_name(lua, group) else { continue };
+        let Ok(gunits) = g.get_units() else { continue };
+        let mut units = vec![];
+        for u in gunits.into_iter().filter_map(|u| u.ok()) {
+            let Ok(pos) = u.get_position() else { continue };
+            let v = u.get_velocity().map(|v| v.0).unwrap_or_default();
+            units.push(AssetUnit {
+                typ: u.get_type_name().map(|t| t.to_string()).unwrap_or_default(),
+                pos: to_ll(coord, Vector2::new(pos.p.x, pos.p.z), 0.),
+                heading: azumith3d(pos.x.0).to_degrees(),
+                alt_m: 0.,
+                speed_kts: v.magnitude() * MS_TO_KTS,
+            });
+        }
+        let Some(lead) = units.first().cloned() else { continue };
+        let dest = Unit::get_by_name(lua, target_unit)
+            .and_then(|u| u.get_point())
+            .ok()
+            .map(|p| to_ll(coord, Vector2::new(p.x, p.z), 0.));
+        let n = units.len() as u32;
+        out.push(Asset {
+            // Negative like the hunter groups (not campaign groups), and
+            // clear of their ids.
+            id: -(1i64 << 40) - (fxhash::hash64(group) & 0xffff_ffff) as i64,
+            name: lead.typ.clone(),
+            kind: AssetKind::Naval,
+            role: "Sea drone".into(),
+            typ: lead.typ.clone(),
+            pos: lead.pos,
+            heading: lead.heading,
+            alt_m: 0.,
+            speed_kts: lead.speed_kts,
+            alive: n,
+            total: n,
+            live: true,
+            task: Some(format!("Attacking {label}")),
+            dest,
+            base: None,
+            range_m: None,
+            orders: vec![],
+            units,
+        });
+    }
+    out
 }
 
 /// `side`'s own assets and what a commander can launch, for the command map.
@@ -412,8 +500,10 @@ pub(crate) fn picture(
                 continue;
             }
             let Some(groups) = o.groups().get(&side) else { continue };
-            if let bfprotocols::db::objective::ObjectiveKind::CarrierGroup { .. } =
-                o.kind()
+            if let bfprotocols::db::objective::ObjectiveKind::CarrierGroup {
+                waypoint,
+                ..
+            } = o.kind()
             {
                 if let Some(gid) = groups.into_iter().next()
                     && let Some(mut a) = asset_of(
@@ -429,6 +519,16 @@ pub(crate) fn picture(
                 {
                     a.name = o.name.to_string();
                     a.base = Some(o.name.to_string());
+                    // The last Sail order, until the group gets there.
+                    if let Some(wp) = waypoint
+                        && ctx
+                            .db
+                            .group_center(gid)
+                            .is_ok_and(|c| (c - *wp).magnitude() > 1_000.)
+                    {
+                        a.dest = Some(to_ll(coord, *wp, 0.));
+                        a.task = Some("Sailing to waypoint".into());
+                    }
                     assets.push(a);
                 }
                 continue;
@@ -453,6 +553,7 @@ pub(crate) fn picture(
         }
     }
     assets.extend(orders::hunter_assets(lua, ctx, side, coord));
+    assets.extend(raid_assets(lua, ctx, side, coord));
     let (supply, defences) = overlays(ctx, side, coord);
     let menu = crate::hq::launch_menu_cached(ctx, side, 24, now);
     let launch = menu

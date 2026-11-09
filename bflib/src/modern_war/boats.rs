@@ -76,6 +76,20 @@ pub(crate) struct Boats {
     seq: u32,
 }
 
+impl Boats {
+    /// `side`'s sea drones under way, each with the enemy ship unit it runs
+    /// at and what that ship is, for the command map.
+    pub(crate) fn boats_for(
+        &self,
+        side: Side,
+    ) -> impl Iterator<Item = (&str, &str, &str)> + '_ {
+        self.boats.iter().filter_map(move |b| {
+            let r = self.raids.iter().find(|r| r.id == b.raid && r.side == side)?;
+            Some((b.group.as_str(), r.target_unit.as_str(), r.target_label.as_str()))
+        })
+    }
+}
+
 fn point(p: Vector2, speed: f64) -> MissionPoint {
     MissionPoint {
         typ: PointType::TurningPoint,

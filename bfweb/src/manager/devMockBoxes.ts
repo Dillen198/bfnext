@@ -269,6 +269,62 @@ export function opsRequest(serverId: string | null, method: string, rawPath: str
     return ok({ path: 'C:\\DCSServerBot\\config\\plugins\\fowlengine.yaml', mtime: t0 / 1000, masked: 2, mask: '__SECRET__', backups: [],
                 yaml: 'DEFAULT:\n  brand_name: "Vector Strike"\n  bfdb:\n    manage: true\n    dcsserverbot_api_key: __SECRET__\n  ops_api:\n    api_key: __SECRET__\n    require_own_key: true\n' })
   }
+  if (path.startsWith('console/')) return consoleRequest(b, path.slice('console/'.length), method, doc)
   if (method === 'POST') return ok({ ok: true, message: `${b.hostname}: done (mock)` })
+  return ok({ detail: 'Not Found' }, 404)
+}
+
+// The SERVER BOT tab (console.py): a handful of the bot's actions, the fleet
+// from this box's DCS servers, and an answer for every read or write.
+const P = (name: string, required = true, type = 'str', dflt?: unknown) =>
+  ({ name, required, type, ...(dflt === undefined ? {} : { default: dflt }) })
+const MOCK_ACTIONS: [string, 'read' | 'write', 'ops' | 'moderation' | 'admin', string, ReturnType<typeof P>[]][] = [
+  ['start_server', 'write', 'ops', 'mission', [P('server_name')]],
+  ['stop_server', 'write', 'ops', 'mission', [P('server_name')]],
+  ['restart_server', 'write', 'ops', 'mission', [P('server_name')]],
+  ['startup_server', 'write', 'ops', 'mission', [P('server_name'), P('modify_mission', false, 'bool', true), P('use_orig', false, 'bool', true), P('maintenance', false, 'bool', true)]],
+  ['shutdown_server', 'write', 'ops', 'mission', [P('server_name'), P('force', false, 'bool', false), P('maintenance', false, 'bool', true)]],
+  ['pause_mission', 'write', 'ops', 'mission', [P('server_name')]],
+  ['unpause_mission', 'write', 'ops', 'mission', [P('server_name')]],
+  ['restart_mission', 'write', 'ops', 'mission', [P('server_name')]],
+  ['message_server', 'write', 'ops', 'mission', [P('server_name'), P('message'), P('mode', false, 'str', 'popup')]],
+  ['get_mission_list', 'read', 'ops', 'mission', [P('server_name')]],
+  ['load_mission', 'write', 'ops', 'mission', [P('server_name'), P('mission', true, 'str | int')]],
+  ['kick_player', 'write', 'moderation', 'mission', [P('server_name'), P('ucid'), P('reason', false, 'str', '')]],
+  ['ban_player', 'write', 'moderation', 'mission', [P('server_name'), P('ucid'), P('reason', false, 'str', ''), P('days', false, 'str | int | None', null)]],
+  ['list_bans', 'read', 'moderation', 'mission', []],
+  ['unban', 'write', 'moderation', 'mission', [P('ucid'), P('banned_at', false, 'str', '')]],
+  ['set_maintenance', 'write', 'ops', 'scheduler', [P('server_name')]],
+  ['clear_maintenance', 'write', 'ops', 'scheduler', [P('server_name')]],
+  ['restart_node', 'write', 'admin', 'admin', [P('node_name')]],
+]
+
+function consoleRequest(b: Box, path: string, method: string, doc: Record<string, unknown>): Res {
+  if (path === 'catalog') {
+    return ok({ available: true, bot_version: '3.0.5.0', roles: ['admin'], actions: MOCK_ACTIONS.map(([name, kind, role, plugin, params]) =>
+      ({ name, kind, role, plugin, available: true, allowed: true, params })) })
+  }
+  if (path === 'fleet') {
+    return ok({ generated: now(), nodes: [{ name: b.hostname, online: true, master: true, dcs_version: '2.9.22.17913', dcs_branch: 'release',
+      bot_version: '3.0.5.0', instances: b.dcs.map((d, i) => ({ name: `DCS.${d.name}`, server: d.name, dcs_port: 10308 + i * 100, webgui_port: 8088 + i })) }],
+      servers: b.dcs.map(d => ({ name: d.name, display_name: d.mission, status: d.status, node: b.hostname, instance: `DCS.${d.name}`,
+        maintenance: false, is_remote: false, managed_by: null, max_players: 64, password: false, port: 10308, restart_time: null,
+        mission: d.status === 'SHUTDOWN' ? null : { name: d.mission, map: d.map, filename: null, date: null, start_time: 0, mission_time: 3600, real_time: 3600 },
+        players: Array.from({ length: Math.min(d.players, 3) }, (_, i) => ({ name: `Pilot ${i + 1}`, ucid: `${d.name}0000000000000000000000000000${i}`.slice(-32),
+          id: i + 2, side: i % 2 ? 'RED' : 'BLUE', slot: 1, sub_slot: 0, unit_type: 'F-16C_50', unit_callsign: '', unit_name: '', group_name: '',
+          active: true, verified: true, watchlist: false, banned: false, muted: false, vip: false, discord: null })) })) })
+  }
+  if (path === 'server') return ok({ name: '', weather: null, clouds: null, visibility: null, fog: null, extensions: [], schedule: { '00-24': 'YYYYYYY' }, restart: null })
+  if (path === 'access') return ok({ editable: true, actions: MOCK_ACTIONS.map(([name, kind, role, plugin]) => ({ name, kind, plugin, default: role, role, locked: plugin === 'admin' })) })
+  if (path === 'config/files') return ok({ files: [] })
+  if (path === 'audit') return ok({ rows: [], limit: 200 })
+  const read = /^read\/(\w+)$/.exec(path)
+  if (read) {
+    if (read[1] === 'get_mission_list') return ok({ ok: true, message: '', data: { missions: [{ index: 1, name: b.dcs[0]?.mission ?? 'mission', current: true, active: true, resolved: true }] } })
+    if (read[1] === 'list_bans') return ok({ ok: true, message: '', data: { bans: [] } })
+    return ok({ ok: true, message: `${read[1]}: (mock) nothing to show`, data: {} })
+  }
+  const act = /^act\/(\w+)$/.exec(path)
+  if (act && method === 'POST') return ok({ ok: true, message: `${b.hostname}: ${act[1]} ${JSON.stringify(doc.params ?? {})} (mock)`, data: {} })
   return ok({ detail: 'Not Found' }, 404)
 }

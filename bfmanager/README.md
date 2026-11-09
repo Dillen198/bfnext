@@ -19,7 +19,9 @@ A Windows application that installs, runs and updates a Vector Strike server box
   - checks GitHub for a newer manager and installs it (within an optional time window).
     The install restarts the bot, not DCS.
 - **The app:** overview (service, bot, plugin, updates), **Server OPS** (the dashboard's
-  OPS page, unchanged), DCS control, live logs, backups, settings.
+  OPS page, unchanged), **Server Bot** (the dashboard's SERVER BOT page: DCSServerBot's own
+  controls; file uploads, downloads and screenshots stay on the web dashboard), DCS control,
+  live logs, backups, settings.
 - **Several boxes from one PC:** a server picker at the top; every server tab acts on the
   picked box -- this box's own bot, or another box reached over Tailscale through its OPS
   API (keys DPAPI-encrypted, never in the UI). A PC without a bot runs it as a controller

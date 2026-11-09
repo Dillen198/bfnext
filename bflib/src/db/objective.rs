@@ -248,6 +248,20 @@ pub(super) fn countdown_announce_due(prev: Option<i64>, remaining: i64) -> bool 
 /// nobody in the game was told who won.
 const MIN_VICTORY_NOTICE_SECS: i64 = 30;
 
+/// No objective held by another side within `reach_sq` (squared metres) of
+/// `pos`: a rear area the fighting has left behind. `held` is every
+/// objective a side holds, neutral ones left out.
+fn in_rear_area(
+    held: &[(Side, na::Point2<f64>)],
+    owner: Side,
+    pos: na::Point2<f64>,
+    reach_sq: f64,
+) -> bool {
+    !held
+        .iter()
+        .any(|(side, p)| *side != owner && na::distance_squared(p, &pos) <= reach_sq)
+}
+
 /// The line that tells the server a round is over and who won it.
 pub(crate) fn round_over_text(side: Side) -> CompactString {
     match side {
@@ -781,6 +795,36 @@ impl CaptureDiagnosis {
     }
 }
 
+/// What an admin repair put back: groups rebuilt, and logistics buildings
+/// counted as standing again.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AdminRepair {
+    pub groups: usize,
+    pub buildings: u32,
+}
+
+impl std::fmt::Display for AdminRepair {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let plural = |n: u64, one: &str, many: &str| {
+            if n == 1 { format!("1 {one}") } else { format!("{n} {many}") }
+        };
+        match (self.groups, self.buildings) {
+            (0, 0) => f.write_str("nothing to repair"),
+            (g, 0) => write!(f, "{}", plural(g as u64, "group", "groups")),
+            (0, b) => write!(
+                f,
+                "{}",
+                plural(b as u64, "logistics building", "logistics buildings")
+            ),
+            (g, b) => write!(
+                f,
+                "{}, {}",
+                plural(g as u64, "group", "groups"),
+                plural(b as u64, "logistics building", "logistics buildings")
+            ),
+        }
+    }
+}
 impl Db {
     pub fn objective(&self, id: &ObjectiveId) -> Result<&Objective> {
         objective!(self, id)
@@ -1429,7 +1473,7 @@ impl Db {
         &mut self,
         oid: ObjectiveId,
         now: DateTime<Utc>,
-    ) -> Result<usize> {
+    ) -> Result<AdminRepair> {
         let mut repaired = 0;
         // Bounded: one iteration per damaged group, and the loop only
         // continues while a group actually got fixed, but don't let a
@@ -1440,7 +1484,19 @@ impl Db {
                 break;
             }
         }
-        Ok(repaired)
+        // With logi_from_scenery the base's logistics are buildings, which
+        // the group loop above never touches: an admin repair puts them back
+        // in the count too. (6 Nov: a broken mission API counted every base's
+        // buildings as destroyed, and only a restore could undo it.) The DCS
+        // rubble stays until the next mission load rescans the base.
+        let buildings = self.persisted.scenery_destroyed.get(&oid).copied().unwrap_or(0);
+        if buildings > 0 {
+            self.ephemeral.scenery_destroyed_by_objective.remove(&oid);
+            self.persisted.scenery_destroyed.remove_cow(&oid);
+            self.ephemeral.dirty();
+            self.update_objective_status(&oid, now)?;
+        }
+        Ok(AdminRepair { groups: repaired, buildings })
     }
 
     /// `free` skips both the affordability check and the charge -- see
@@ -1736,12 +1792,26 @@ impl Db {
         let cull_distance = (cfg.unit_cull_distance as f64).powi(2);
         let ground_cull_distance = (cfg.ground_vehicle_cull_distance as f64).powi(2);
         let lr_cull_distance = (cfg.lr_cull_distance as f64).powi(2);
+        let ai_air_wake_distance = cfg.ai_air_wake_distance.map(|d| (d as f64).powi(2));
+        let rear_area = cfg.rear_area_distance.map(|d| (d as f64).powi(2));
+        // Who holds what, for the rear-area test: owner and position of every
+        // objective a side holds.
+        let held: SmallVec<[(Side, na::Point2<f64>); 128]> = match rear_area {
+            None => SmallVec::new(),
+            Some(_) => self
+                .persisted
+                .objectives
+                .into_iter()
+                .filter(|(_, o)| o.owner != Side::Neutral)
+                .map(|(_, o)| (o.owner, o.zone.pos().into()))
+                .collect(),
+        };
         let mut is_close_to_enemies: FxHashSet<UnitId> = FxHashSet::default();
         let mut check_close_units =
             |units: &Map<UnitId, SpawnedUnit>,
              close_units: &FxHashSet<UnitId>,
              obj: &Objective,
-             air_cull_dist: f64,
+             ai_air_dist: Option<f64>,
              spawn: &mut bool,
              threat: &mut bool,
              why: &mut Option<CompactString>| {
@@ -1752,8 +1822,12 @@ impl Db {
                         let air = unit.tags.0.contains(UnitTag::Aircraft)
                             || unit.tags.0.contains(UnitTag::Helicopter);
                         let unarmed = unit.tags.0.contains(UnitTag::Unarmed);
-                        let cull_dist =
-                            if air { air_cull_dist } else { ground_cull_distance };
+                        let cull_dist = match (air, ai_air_dist) {
+                            (false, _) => ground_cull_distance,
+                            (true, Some(d)) => d,
+                            // A quiet rear-area base: AI aircraft don't wake it.
+                            (true, None) => continue,
+                        };
                         let dist = na::distance_squared(
                             &obj.zone.pos().into(),
                             &unit.pos.into(),
@@ -1909,6 +1983,20 @@ impl Db {
             } else {
                 cull_distance
             };
+            // AI aircraft wake ordinary objectives from their own, usually
+            // shorter, distance, and not at all in a quiet rear area. Special
+            // SAM sites keep their full reach so they are up to engage an
+            // incoming AI strike.
+            let obj_pt: na::Point2<f64> = obj.zone.pos().into();
+            let ai_air_dist = if obj.kind.is_special_sam_site() {
+                Some(air_cull_dist)
+            } else if rear_area
+                .is_some_and(|reach| in_rear_area(&held, obj.owner, obj_pt, reach))
+            {
+                None
+            } else {
+                Some(ai_air_wake_distance.unwrap_or(air_cull_dist))
+            };
             if let Err(e) = check_close_players(
                 obj,
                 pos3,
@@ -1923,7 +2011,7 @@ impl Db {
                 &self.persisted.units,
                 &self.ephemeral.units_potentially_close_to_enemies,
                 obj,
-                air_cull_dist,
+                ai_air_dist,
                 &mut spawn,
                 &mut is_threatened,
                 &mut why,
@@ -4890,5 +4978,20 @@ mod tests {
         // favoured by being checked first).
         assert_eq!(map_owned_winner(50, 50, 100, 0.5), None);
         assert_eq!(map_owned_winner(0, 0, 0, 0.95), None);
+    }
+
+    #[test]
+    fn rear_area_is_out_of_reach_of_every_enemy_held_objective() {
+        let p = |x: f64| na::Point2::new(x, 0.);
+        let held =
+            [(Side::Blue, p(0.)), (Side::Blue, p(5_000.)), (Side::Red, p(60_000.))];
+        let reach = 40_000f64.powi(2);
+        // Blue's own bases don't count, Red's is 60 km out.
+        assert!(in_rear_area(&held, Side::Blue, p(0.), reach));
+        // 25 km from Red's base: front line.
+        assert!(!in_rear_area(&held, Side::Blue, p(35_000.), reach));
+        // Red's base sees Blue's at 55 km: rear for Red too, at this reach.
+        assert!(in_rear_area(&held, Side::Red, p(60_000.), reach));
+        assert!(!in_rear_area(&held, Side::Red, p(60_000.), 56_000f64.powi(2)));
     }
 }

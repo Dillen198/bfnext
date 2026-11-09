@@ -70,6 +70,8 @@ while bfdb restarts -- which is exactly when an admin wants to watch.
   GET  issues/report?format=md   the Markdown report (what Claude reads)
   GET  archive                   the persistent log archive: sources x days
   GET  archive/read?source=&date=&lines=&grep=&format=json|text
+  ...  console/*                 the bot console: DCSServerBot's own actions (servers, missions,
+                                 players, bans, nodes, mods, music, statistics) -- see console.py
 """
 from __future__ import annotations
 
@@ -87,6 +89,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from urllib.parse import urlparse
 
+from .console import ConsoleApi
 from .icons import icon, plain
 
 try:  # FastAPI resolves handler annotations from this module's globals
@@ -203,11 +206,13 @@ def is_protected_key(key: Any) -> bool:
     return k in _PROTECTED_EXACT or k.endswith(_PROTECTED_SUFFIXES)
 
 
-def protected_changes(new: Any, old: Any, path: str = "", under: bool = False) -> list[str]:
-    """Paths of protected keys (is_protected_key) whose value differs between
-    two documents -- added, removed or changed, at any depth. `under` = an
-    ancestor key is protected, so everything below it counts (a list like
-    cors_origins, a mapping like netidx_resolver_cmd's)."""
+def protected_changes(new: Any, old: Any, path: str = "", under: bool = False,
+                      is_protected=None) -> list[str]:
+    """Paths of protected keys (is_protected_key, or the `is_protected` given)
+    whose value differs between two documents -- added, removed or changed, at
+    any depth. `under` = an ancestor key is protected, so everything below it
+    counts (a list like cors_origins, a mapping like netidx_resolver_cmd's)."""
+    is_protected = is_protected or is_protected_key
     out: list[str] = []
     if isinstance(new, dict) or isinstance(old, dict):
         n = new if isinstance(new, dict) else {}
@@ -217,20 +222,20 @@ def protected_changes(new: Any, old: Any, path: str = "", under: bool = False) -
                 return [path or "(document)"]
         for k in list(n.keys()) + [k for k in o.keys() if k not in n]:
             here = f"{path}.{k}" if path else str(k)
-            prot = under or is_protected_key(k)
-            out += protected_changes(n.get(k), o.get(k), here, prot)
+            prot = under or is_protected(k)
+            out += protected_changes(n.get(k), o.get(k), here, prot, is_protected)
         return out
     if isinstance(new, list) and isinstance(old, list) and not under:
         for i in range(max(len(new), len(old))):
             out += protected_changes(new[i] if i < len(new) else None,
-                                     old[i] if i < len(old) else None, f"{path}[{i}]", False)
+                                     old[i] if i < len(old) else None, f"{path}[{i}]", False, is_protected)
         return out
     if under and new != old:
         return [path]
     if not under and isinstance(new, list) != isinstance(old, list):
         # a list replaced wholesale by a scalar (or back): look inside the list side
         return protected_changes(new if isinstance(new, list) else [], old if isinstance(old, list) else [],
-                                 path, False)
+                                 path, False, is_protected)
     return out
 
 
@@ -538,6 +543,8 @@ class OpsApi:
         # server name -> the last DCS action asked for over this API
         # ({action, state: running|done|failed, at, finished, error})
         self._dcs_actions: dict[str, dict] = {}
+        # the bot console's routes (console.py) ride on this router and key
+        self.console = ConsoleApi(cog, self)
 
     # ---- config ---------------------------------------------------------
 
@@ -680,6 +687,7 @@ class OpsApi:
         r.add_api_route("/issues/report", self.issues_report, methods=["GET"])
         r.add_api_route("/archive", self.archive_index, methods=["GET"])
         r.add_api_route("/archive/read", self.archive_read, methods=["GET"])
+        self.console.add_routes(r)
         self.app = app
         self.router = r
         self.app.include_router(r)

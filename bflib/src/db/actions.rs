@@ -4897,6 +4897,50 @@ impl Db {
         Ok(())
     }
 
+    /// Where `gid` is headed now, and a few words on why, for the command
+    /// map: a ground group's move order, an AI flight's orbit point (the
+    /// loiter missions keep it in `loc`, and a Station order moves it), the
+    /// station it flies to once airborne, the field it is returning to, or the
+    /// target it was sent at.
+    pub(crate) fn current_waypoint(
+        &self,
+        gid: &GroupId,
+    ) -> Option<(Vector2, &'static str)> {
+        if let Some(p) = self.ephemeral.groups_with_move_missions.get(gid) {
+            return Some((*p, "Moving to waypoint"));
+        }
+        if let Some((p, _)) = self.ephemeral.pending_air_station.get(gid) {
+            return Some((*p, "Taking off for station"));
+        }
+        let DeployKind::Action { spec, loc, destination, rtb, .. } =
+            &self.persisted.groups.get(gid)?.origin
+        else {
+            return None;
+        };
+        match &spec.kind {
+            ActionKind::Rtb => rtb.map(|p| (p, "Returning to base")),
+            ActionKind::Awacs(_)
+            | ActionKind::Tanker(_)
+            | ActionKind::Drone(_)
+            | ActionKind::Recon(_)
+            | ActionKind::CruiseMissileSpawn(_)
+            | ActionKind::Fighters(_)
+            | ActionKind::Attackers(_)
+            | ActionKind::Sead(_) => {
+                let SpawnLoc::InAir { pos, .. } = loc else { return None };
+                let near = self
+                    .group_center(gid)
+                    .is_ok_and(|c| (c - *pos).magnitude() <= 15_000.);
+                Some((*pos, if near { "On station" } else { "Flying to station" }))
+            }
+            // Delivered (`advance_actions` takes the destination): on the
+            // way home to the field it came from.
+            _ => destination
+                .map(|p| (p, "Inbound to target"))
+                .or_else(|| rtb.map(|p| (p, "Returning to base"))),
+        }
+    }
+
     /// The longest reach of `gid`'s live guns and launchers, if it has any.
     pub(crate) fn battery_range(&self, gid: &GroupId) -> Option<f64> {
         let group = self.persisted.groups.get(gid)?;

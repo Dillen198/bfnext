@@ -19,7 +19,7 @@ use crate::{
     object::{DcsObject, DcsOid},
     wrapped_prim, wrapped_table, LuaEnv, MizLua,
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use mlua::{prelude::*, Value};
 use serde_derive::Serialize;
 use std::{marker::PhantomData, ops::Deref};
@@ -102,7 +102,7 @@ impl DcsObject for StaticObject {
         t.raw_set("id_", id.id)?;
         let t = StaticObject { t, lua: lua.inner().clone() };
         if !t.is_exist()? {
-            bail!("{} is an invalid object", id.id)
+            return Err(crate::Gone(format!("{} is an invalid object", id.id)).into());
         }
         Ok(t)
     }
@@ -116,7 +116,7 @@ impl DcsObject for StaticObject {
     fn change_instance(self, id: &DcsOid<Self::Class>) -> Result<Self> {
         self.raw_set("id_", id.id)?;
         if !self.is_exist()? {
-            bail!("{} is an invalid object", id.id)
+            return Err(crate::Gone(format!("{} is an invalid object", id.id)).into());
         }
         Ok(self)
     }
@@ -125,7 +125,7 @@ impl DcsObject for StaticObject {
         id.check_implements(MizLua(&self.lua), "StaticObject")?;
         self.t.raw_set("id_", id.id)?;
         if !self.is_exist()? {
-            bail!("{} is an invalid object", id.id)
+            return Err(crate::Gone(format!("{} is an invalid object", id.id)).into());
         }
         Ok(self)
     }

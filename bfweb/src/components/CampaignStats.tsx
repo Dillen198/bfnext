@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import { campaign } from '../config/campaign'
 import { fmtHours } from '../lib/format'
+import { useDashLook } from '../lib/look'
 import QueryState from './QueryState'
 
 /**
@@ -12,15 +13,28 @@ import QueryState from './QueryState'
  * scan, no engine RPC -- so they poll slowly and follow the round selector.
  */
 
+/** A bar's fill, never quite empty so the smallest row still shows one. */
+const barPct = (frac: number) => `${Math.max(1, Math.round(frac * 100))}%`
+
 function Bar({ frac, color }: { frac: number; color: string }) {
   return (
     <div style={{ height: 5, background: 'var(--bg-elevated)', flex: 1, minWidth: 40 }}>
-      <div style={{ width: `${Math.max(1, Math.round(frac * 100))}%`, height: '100%', background: color }} />
+      <div style={{ width: barPct(frac), height: '100%', background: color }} />
     </div>
   )
 }
 
+// The desert look (Levant Ablaze) draws both as charred readouts and rows of
+// bars; its styles live in pages/levant/rankings.css with the Rankings page,
+// the only page that shows them.
+const sideTone = (s: string) => (s === 'Blue' ? 'b' : s === 'Red' ? 'r' : 'n')
+
+function DBar({ frac, tone }: { frac: number; tone?: string }) {
+  return <span className={`lb-cs-bar${tone ? ` ${tone}` : ''}`}><i style={{ width: barPct(frac) }} /></span>
+}
+
 export function AirframeUsage() {
+  const look = useDashLook()
   const q = useQuery({
     queryKey: ['aircraft-usage'],
     queryFn: api.aircraftUsage,
@@ -40,6 +54,29 @@ export function AirframeUsage() {
         error={q.error} onRetry={q.refetch} isEmpty={(q.data ?? []).length === 0}
         emptyText="No sorties flown this round"
       />
+    )
+  }
+
+  if (look.profile) {
+    return (
+      <div className="lb-cs">
+        <dl className="lb-cs-sum">
+          <div><dt>Sorties</dt><dd>{totalSorties.toLocaleString()}</dd></div>
+          <div><dt>Airborne</dt><dd>{fmtHours(totalHours)}</dd></div>
+          <div><dt>Types</dt><dd>{(q.data ?? []).length}</dd></div>
+        </dl>
+        <div className="lb-cs-head" aria-hidden="true"><span>Airframe</span><span /><span>Sorties</span><span>Hours</span></div>
+        <ol className="lb-cs-list">
+          {rows.map((r, i) => (
+            <li key={r.vehicle} className={i === 0 ? 'first' : undefined}>
+              <span className="nm" title={r.vehicle}>{r.vehicle}</span>
+              <DBar frac={r.sorties / max} />
+              <span className="v">{r.sorties.toLocaleString()}</span>
+              <span className="h">{r.hours.toFixed(1)}h</span>
+            </li>
+          ))}
+        </ol>
+      </div>
     )
   }
 
@@ -67,6 +104,7 @@ export function AirframeUsage() {
 }
 
 export function PointsEconomy() {
+  const look = useDashLook()
   const q = useQuery({
     queryKey: ['points'],
     queryFn: api.points,
@@ -94,6 +132,33 @@ export function PointsEconomy() {
 
   const total = blue + red || 1
   const maxTop = top.length ? top[0].points : 1
+
+  if (look.profile) {
+    const share = (v: number) => Math.round((v / total) * 100)
+    return (
+      <div className="lb-cs">
+        <div className="lb-pe-split">
+          <div className="b"><span className="ds-k">{campaign.blueLabel}</span><span className="v">{blue.toLocaleString()}</span><span className="pct">{share(blue)}%</span></div>
+          <div className="r"><span className="ds-k">{campaign.redLabel}</span><span className="v">{red.toLocaleString()}</span><span className="pct">{share(red)}%</span></div>
+        </div>
+        <div className="lb-pe-bar" role="img" aria-label={`${campaign.blueLabel} ${blue.toLocaleString()} points, ${campaign.redLabel} ${red.toLocaleString()} points`}>
+          <i className="b" style={{ width: `${(blue / total) * 100}%` }} />
+          <i className="r" style={{ width: `${(red / total) * 100}%` }} />
+          <span className="mid" />
+        </div>
+        <div className="lb-cs-head pts" aria-hidden="true"><span>Top balances</span><span /><span>Points</span></div>
+        <ol className="lb-cs-list pts">
+          {top.map(p => (
+            <li key={p.name} className={sideTone(p.side)}>
+              <span className="nm" title={p.name}>{p.name}</span>
+              <DBar frac={p.points / maxTop} tone={sideTone(p.side)} />
+              <span className="v">{p.points.toLocaleString()}</span>
+            </li>
+          ))}
+        </ol>
+      </div>
+    )
+  }
 
   return (
     <div style={{ padding: '12px 16px 14px' }}>

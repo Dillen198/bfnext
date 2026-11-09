@@ -15,9 +15,27 @@ import type { PilotSortie, SortieOutcome } from '../api'
 import { fmtHours } from '../lib/format'
 import { OUTCOME, outcomeOf } from '../lib/sortie'
 import { Activity } from '@icons'
+import { Card as LvCard } from '../components/Levant'
+import { useDashLook } from '../lib/look'
+import './levant/pilots.css'
 
 const AIR = '#3b82f6'
 const GROUND = '#ea580c'
+
+/** Chart marks in each look. The desert look draws from the campaign palette
+ *  (A/A in the side blue, A/G in rust, flight time in coyote); its tick
+ *  type and tooltip come from levant/pilots.css. */
+const PLAIN_C = {
+  air: AIR, ground: GROUND, bar: 'var(--accent)', grid: 'var(--border)', gridDash: undefined as string | undefined,
+  axis: 'var(--border-light)', cursorFill: 'rgba(148,163,184,0.08)', cursorLine: 'var(--text-dim)',
+  dotRing: 'var(--bg-card-solid)', endLabel: 'var(--text-muted)', barRadius: [4, 4, 0, 0] as [number, number, number, number],
+}
+const DESERT_C: typeof PLAIN_C = {
+  air: 'var(--blue)', ground: 'var(--rust-bright)', bar: 'var(--coyote)', grid: 'var(--line)', gridDash: '3 3',
+  axis: 'var(--border-light)', cursorFill: 'rgba(227,210,173,0.06)', cursorLine: 'var(--sand-dim)',
+  dotRing: 'var(--char-2)', endLabel: 'var(--sand-2)', barRadius: [0, 0, 0, 0],
+}
+const DESERT_TICK = { fill: 'var(--sand-dim)', fontSize: 11 }
 const DAY_MS = 86_400_000
 
 const RANGES = [
@@ -66,7 +84,18 @@ const sectionLabel: React.CSSProperties = {
 }
 const axisTick = { fill: 'var(--text-dim)', fontSize: 10 }
 
-function Section({ title, note, children }: { title: string; note?: React.ReactNode; children: React.ReactNode }) {
+function Section({ title, note, desert, children }: { title: string; note?: React.ReactNode; desert?: boolean; children: React.ReactNode }) {
+  if (desert) {
+    return (
+      <section className="pl-ch-sec">
+        <div className="pl-ch-sec-head">
+          <span className="ds-k">{title}</span>
+          {note && <span className="lv-sub">{note}</span>}
+        </div>
+        {children}
+      </section>
+    )
+  }
   return (
     <div>
       <div className="flex items-baseline gap-2" style={{ marginBottom: 8 }}>
@@ -85,10 +114,25 @@ interface TipProps {
   label?: string | number
   payload?: ReadonlyArray<{ dataKey?: unknown; name?: unknown; value?: unknown; color?: string }>
   unit?: (key: string, v: number) => string
+  desert?: boolean
 }
 
-function ChartTip({ active, payload, label, unit }: TipProps) {
+function ChartTip({ active, payload, label, unit, desert }: TipProps) {
   if (!active || !payload?.length) return null
+  if (desert) {
+    return (
+      <div className="pl-tip">
+        <span className="ds-k">Week of {label}</span>
+        {payload.map(p => (
+          <div key={String(p.dataKey)} className="pl-tip-row">
+            <i style={{ background: p.color }} />
+            <b>{unit ? unit(String(p.dataKey), Number(p.value)) : String(p.value)}</b>
+            <span>{String(p.name)}</span>
+          </div>
+        ))}
+      </div>
+    )
+  }
   return (
     <div style={{
       background: 'var(--bg-elevated-solid)', border: '1px solid var(--border-light)', borderRadius: 3,
@@ -110,7 +154,7 @@ function ChartTip({ active, payload, label, unit }: TipProps) {
 
 // ── Outcome mix ───────────────────────────────────────────────────────────────
 
-function OutcomeMix({ sorties }: { sorties: PilotSortie[] }) {
+function OutcomeMix({ sorties, desert }: { sorties: PilotSortie[]; desert?: boolean }) {
   const counts = useMemo(() => {
     const c: Record<SortieOutcome, number> = { landed: 0, no_landing: 0, lost: 0, killed: 0 }
     for (const s of sorties) c[outcomeOf(s)]++
@@ -118,6 +162,28 @@ function OutcomeMix({ sorties }: { sorties: PilotSortie[] }) {
   }, [sorties])
   const total = sorties.length
   const shown = OUTCOME_ORDER.filter(o => counts[o] > 0)
+  const name = (o: SortieOutcome) => OUTCOME[o].label.replace(/^\S+\s/, '')
+  const share = (o: SortieOutcome) => (total ? `${Math.round((counts[o] / total) * 100)}%` : '')
+
+  if (desert) {
+    return (
+      <Section desert title="How sorties ended" note={`${total} sorties`}>
+        <div className="pl-mix" role="img" aria-label={shown.map(o => `${name(o)} ${counts[o]}`).join(', ')}>
+          {shown.map(o => (
+            <i key={o} className={`pl-o-${o}`} style={{ flex: counts[o] }} title={`${name(o)}: ${counts[o]} (${share(o)})`} />
+          ))}
+        </div>
+        <dl className="pl-mix-key">
+          {OUTCOME_ORDER.map(o => (
+            <div key={o} className={`pl-o-${o}`}>
+              <dt>{name(o)}</dt>
+              <dd><b>{counts[o]}</b><span>{share(o)}</span></dd>
+            </div>
+          ))}
+        </dl>
+      </Section>
+    )
+  }
 
   return (
     <Section title="How sorties ended" note={`${total} sorties`}>
@@ -158,7 +224,11 @@ const HEAT_MAX_CELL = 16
 const HEAT_GAP = 2
 const HEAT_LABEL_W = 26
 
-function Heatmap({ sorties, from, to }: { sorties: PilotSortie[]; from: number; to: number }) {
+// The desert look's shades: rust at rising strength on the charred cell.
+const HEAT_DESERT = ['var(--char-3)', 'rgba(200,100,47,0.3)', 'rgba(200,100,47,0.52)', 'rgba(200,100,47,0.76)', 'var(--rust-bright)']
+
+function Heatmap({ sorties, from, to, desert }: { sorties: PilotSortie[]; from: number; to: number; desert?: boolean }) {
+  const heat = desert ? HEAT_DESERT : HEAT
   const [hover, setHover] = useState<number | null>(null)
   const [width, setWidth] = useState(0)
   const observer = useRef<ResizeObserver | null>(null)
@@ -199,9 +269,9 @@ function Heatmap({ sorties, from, to }: { sorties: PilotSortie[]; from: number; 
   const small: React.CSSProperties = { fontSize: '0.52rem', color: 'var(--text-dim)', lineHeight: 1, whiteSpace: 'nowrap' }
 
   return (
-    <Section title="Activity"
+    <Section title="Activity" desert={desert}
       note={`${activeDays} day${activeDays === 1 ? '' : 's'} flown${clipped ? ` · last ${weeks.length} weeks` : ''}`}>
-      <div ref={measure}>
+      <div ref={measure} className={desert ? 'pl-heat' : undefined}>
         {/* One grid for labels and cells, so the weekday labels sit on their rows. */}
         <div role="img" aria-label={`Sorties per day, ${activeDays} days flown`}
           onMouseLeave={() => setHover(null)}
@@ -232,14 +302,14 @@ function Heatmap({ sorties, from, to }: { sorties: PilotSortie[]; from: number; 
                 onMouseEnter={() => setHover(t)}
                 title={`${fmtDay(t)}: ${v ? `${v.sorties} sortie${v.sorties === 1 ? '' : 's'}${v.secs > 0 ? `, ${fmtHours(v.secs / 3600)}` : ''}` : 'no flying'}`}
                 style={{
-                  ...place, borderRadius: 2, background: HEAT[level(v?.sorties ?? 0)],
-                  outline: hover === t ? '1px solid var(--text-muted)' : undefined,
+                  ...place, borderRadius: desert ? 0 : 2, background: heat[level(v?.sorties ?? 0)],
+                  outline: hover === t ? `1px solid ${desert ? 'var(--sand)' : 'var(--text-muted)'}` : undefined,
                 }} />
             )
           }))}
         </div>
       </div>
-      <div className="flex flex-wrap items-center gap-2" style={{ marginTop: 6, fontSize: '0.6rem', color: 'var(--text-dim)', minHeight: 14 }}>
+      <div className={`flex flex-wrap items-center gap-2${desert ? ' pl-heat-foot' : ''}`} style={{ marginTop: 6, fontSize: '0.6rem', color: 'var(--text-dim)', minHeight: 14 }}>
         <span style={{ color: 'var(--text-muted)' }}>
           {hovered
             ? `${fmtDay(hovered.t)} — ${hovered.sorties ? `${hovered.sorties} sortie${hovered.sorties === 1 ? '' : 's'}${hovered.secs > 0 ? `, ${fmtHours(hovered.secs / 3600)}` : ''}` : 'no flying'}`
@@ -247,7 +317,7 @@ function Heatmap({ sorties, from, to }: { sorties: PilotSortie[]; from: number; 
         </span>
         <span className="ml-auto flex items-center gap-1">
           Less
-          {HEAT.map((c, i) => <span key={i} style={{ width: 9, height: 9, borderRadius: 2, background: c, display: 'inline-block' }} />)}
+          {heat.map((c, i) => <span key={i} style={{ width: 9, height: 9, borderRadius: desert ? 0 : 2, background: c, display: 'inline-block' }} />)}
           More
         </span>
       </div>
@@ -257,24 +327,28 @@ function Heatmap({ sorties, from, to }: { sorties: PilotSortie[]; from: number; 
 
 // ── Weekly charts ─────────────────────────────────────────────────────────────
 
-function HoursPerWeek({ weeks }: { weeks: Week[] }) {
+function HoursPerWeek({ weeks, desert }: { weeks: Week[]; desert?: boolean }) {
+  const C = desert ? DESERT_C : PLAIN_C
+  const tick = desert ? DESERT_TICK : axisTick
   return (
-    <Section title="Hours per week" note="known flight time only">
+    <Section title="Hours per week" note="known flight time only" desert={desert}>
       <ResponsiveContainer width="100%" height={150}>
         <BarChart data={weeks} margin={{ left: -18, right: 4, top: 6, bottom: 0 }} barCategoryGap={2}>
-          <CartesianGrid vertical={false} stroke="var(--border)" />
-          <XAxis dataKey="label" tick={axisTick} axisLine={{ stroke: 'var(--border-light)' }} tickLine={false} minTickGap={16} />
-          <YAxis tick={axisTick} axisLine={false} tickLine={false} allowDecimals={false} width={40} />
-          <Tooltip cursor={{ fill: 'rgba(148,163,184,0.08)' }}
-            content={<ChartTip unit={(k, v) => k === 'hours' ? fmtHours(v) : String(v)} />} />
-          <Bar dataKey="hours" name="flown" fill="var(--accent)" maxBarSize={24} radius={[4, 4, 0, 0]} />
+          <CartesianGrid vertical={false} stroke={C.grid} strokeDasharray={C.gridDash} />
+          <XAxis dataKey="label" tick={tick} axisLine={{ stroke: C.axis }} tickLine={false} minTickGap={16} />
+          <YAxis tick={tick} axisLine={false} tickLine={false} allowDecimals={false} width={40} />
+          <Tooltip cursor={{ fill: C.cursorFill }}
+            content={<ChartTip desert={desert} unit={(k, v) => k === 'hours' ? fmtHours(v) : String(v)} />} />
+          <Bar dataKey="hours" name="flown" fill={C.bar} maxBarSize={24} radius={C.barRadius} />
         </BarChart>
       </ResponsiveContainer>
     </Section>
   )
 }
 
-function KillsOverTime({ weeks }: { weeks: Week[] }) {
+function KillsOverTime({ weeks, desert }: { weeks: Week[]; desert?: boolean }) {
+  const C = desert ? DESERT_C : PLAIN_C
+  const tick = desert ? DESERT_TICK : axisTick
   const last = weeks.length - 1
   const end = weeks[last]
   // A direct label at each line's end, unless the two would sit on top of each other.
@@ -282,35 +356,64 @@ function KillsOverTime({ weeks }: { weeks: Week[] }) {
   const endLabel = (key: 'airCum' | 'groundCum') =>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (p: any) => (apart && p.index === last
-      ? <text x={p.x + 6} y={p.y} dy={3} fontSize={10} fill="var(--text-muted)">{weeks[last][key]}</text>
+      ? <text x={p.x + 6} y={p.y} dy={3} fontSize={10} fill={C.endLabel} className={desert ? 'pl-ch-end' : undefined}>{weeks[last][key]}</text>
       : <g />)
 
   return (
-    <Section title="Kills over time" note={end ? `${end.airCum} A/A · ${end.groundCum} A/G` : undefined}>
+    <Section title="Kills over time" note={end ? `${end.airCum} A/A · ${end.groundCum} A/G` : undefined} desert={desert}>
       <ResponsiveContainer width="100%" height={150}>
         <LineChart data={weeks} margin={{ left: -18, right: 24, top: 6, bottom: 0 }}>
-          <CartesianGrid vertical={false} stroke="var(--border)" />
-          <XAxis dataKey="label" tick={axisTick} axisLine={{ stroke: 'var(--border-light)' }} tickLine={false} minTickGap={16} />
-          <YAxis tick={axisTick} axisLine={false} tickLine={false} allowDecimals={false} width={40} />
-          <Tooltip cursor={{ stroke: 'var(--text-dim)', strokeWidth: 1 }} content={<ChartTip />} />
-          <Line type="stepAfter" dataKey="airCum" name="air-to-air to date" stroke={AIR} strokeWidth={2} dot={false}
-            activeDot={{ r: 4, stroke: 'var(--bg-card-solid)', strokeWidth: 2 }} label={endLabel('airCum')} isAnimationActive={false} />
-          <Line type="stepAfter" dataKey="groundCum" name="air-to-ground to date" stroke={GROUND} strokeWidth={2} dot={false}
-            activeDot={{ r: 4, stroke: 'var(--bg-card-solid)', strokeWidth: 2 }} label={endLabel('groundCum')} isAnimationActive={false} />
+          <CartesianGrid vertical={false} stroke={C.grid} strokeDasharray={C.gridDash} />
+          <XAxis dataKey="label" tick={tick} axisLine={{ stroke: C.axis }} tickLine={false} minTickGap={16} />
+          <YAxis tick={tick} axisLine={false} tickLine={false} allowDecimals={false} width={40} />
+          <Tooltip cursor={{ stroke: C.cursorLine, strokeWidth: 1 }} content={<ChartTip desert={desert} />} />
+          <Line type="stepAfter" dataKey="airCum" name="air-to-air to date" stroke={C.air} strokeWidth={2} dot={false}
+            activeDot={{ r: 4, stroke: C.dotRing, strokeWidth: 2 }} label={endLabel('airCum')} isAnimationActive={false} />
+          <Line type="stepAfter" dataKey="groundCum" name="air-to-ground to date" stroke={C.ground} strokeWidth={2} dot={false}
+            activeDot={{ r: 4, stroke: C.dotRing, strokeWidth: 2 }} label={endLabel('groundCum')} isAnimationActive={false} />
         </LineChart>
       </ResponsiveContainer>
-      <div className="flex gap-4" style={{ marginTop: 4, fontSize: '0.62rem', color: 'var(--text-muted)' }}>
-        <span className="flex items-center gap-1.5"><span style={{ width: 12, height: 2, background: AIR, display: 'inline-block' }} />Air-to-air</span>
-        <span className="flex items-center gap-1.5"><span style={{ width: 12, height: 2, background: GROUND, display: 'inline-block' }} />Air-to-ground</span>
-      </div>
+      {desert ? (
+        <div className="pl-ch-key">
+          <span><i style={{ background: C.air }} />Air-to-air</span>
+          <span><i style={{ background: C.ground }} />Air-to-ground</span>
+        </div>
+      ) : (
+        <div className="flex gap-4" style={{ marginTop: 4, fontSize: '0.62rem', color: 'var(--text-muted)' }}>
+          <span className="flex items-center gap-1.5"><span style={{ width: 12, height: 2, background: AIR, display: 'inline-block' }} />Air-to-air</span>
+          <span className="flex items-center gap-1.5"><span style={{ width: 12, height: 2, background: GROUND, display: 'inline-block' }} />Air-to-ground</span>
+        </div>
+      )}
     </Section>
   )
 }
 
-function WeekTable({ weeks }: { weeks: Week[] }) {
+function WeekTable({ weeks, desert }: { weeks: Week[]; desert?: boolean }) {
   const th: React.CSSProperties = { ...sectionLabel, padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontWeight: 600 }
   const td: React.CSSProperties = { padding: '3px 8px', fontSize: '0.66rem', color: 'var(--text-muted)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', borderBottom: '1px solid var(--border)' }
   const rows = [...weeks].reverse()
+  if (desert) {
+    return (
+      <div className="pl-wtab">
+        <table>
+          <thead><tr>
+            <th scope="col" className="l">Week of</th><th scope="col">Sorties</th><th scope="col">Hours</th><th scope="col">A/A</th><th scope="col">A/G</th>
+          </tr></thead>
+          <tbody>
+            {rows.map(w => (
+              <tr key={w.t} className={w.sorties ? undefined : 'idle'}>
+                <td className="l">{w.label}</td>
+                <td>{w.sorties}</td>
+                <td>{w.hours > 0 ? fmtHours(w.hours) : '—'}</td>
+                <td className={w.air ? 'a' : undefined}>{w.air}</td>
+                <td className={w.ground ? 'g' : undefined}>{w.ground}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
   return (
     <div style={{ maxHeight: 260, overflowY: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -337,7 +440,7 @@ function WeekTable({ weeks }: { weeks: Week[] }) {
 
 const AIRFRAME_ROWS = 8
 
-function Airframes({ sorties }: { sorties: PilotSortie[] }) {
+function Airframes({ sorties, desert }: { sorties: PilotSortie[]; desert?: boolean }) {
   const rows = useMemo(() => {
     const m = new Map<string, { sorties: number; secs: number; kills: number; survived: number }>()
     for (const s of sorties) {
@@ -365,6 +468,37 @@ function Airframes({ sorties }: { sorties: PilotSortie[] }) {
   const hasOutcome = sorties.some(s => s.outcome !== undefined)
   const th: React.CSSProperties = { ...sectionLabel, padding: '4px 6px', textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }
   const td: React.CSSProperties = { padding: '4px 6px', fontSize: '0.66rem', color: 'var(--text-muted)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }
+
+  if (desert) {
+    return (
+      <Section desert title="Airframes" note="by sorties flown">
+        <div className="pl-wtab pl-af">
+          <table>
+            <thead><tr>
+              <th scope="col" className="l">Aircraft</th>
+              <th scope="col" className="l bar">Sorties</th>
+              <th scope="col" title="Known flight time only">Hours</th>
+              {hasKills && <th scope="col">Kills</th>}
+              {hasOutcome && <th scope="col" title="Sorties not ending in a shoot-down or crash">Survived</th>}
+            </tr></thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={r.name} className={i === 0 ? 'first' : undefined}>
+                  <td className="l nm" title={r.name}>{r.name}</td>
+                  <td className="l bar">
+                    <div><span><i style={{ width: `${Math.max(1, (r.sorties / max) * 100)}%` }} /></span><b>{r.sorties}</b></div>
+                  </td>
+                  <td>{r.secs > 0 ? fmtHours(r.secs / 3600) : '—'}</td>
+                  {hasKills && <td>{r.kills}</td>}
+                  {hasOutcome && <td>{Math.round((r.survived / r.sorties) * 100)}%</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Section>
+    )
+  }
 
   return (
     <Section title="Airframes" note="by sorties flown">
@@ -404,6 +538,7 @@ function Airframes({ sorties }: { sorties: PilotSortie[] }) {
 // ── Card ──────────────────────────────────────────────────────────────────────
 
 export default function PilotCharts({ sorties }: { sorties: PilotSortie[] }) {
+  const look = useDashLook()
   const [range, setRange] = useState<RangeKey>('26w')
   const [asTable, setAsTable] = useState(false)
   // Fixed at mount: the weekly buckets hang off it, and a pilot's page is not
@@ -443,6 +578,51 @@ export default function PilotCharts({ sorties }: { sorties: PilotSortie[] }) {
     color: active ? 'var(--text)' : 'var(--text-dim)', borderRadius: 2, padding: '2px 8px', fontSize: '0.6rem',
     letterSpacing: '0.08em', cursor: 'pointer', whiteSpace: 'nowrap',
   })
+
+  if (look.profile) {
+    return (
+      <LvCard tape="Career overview">
+        {/* One filter row; it scopes every chart below. */}
+        <div className="pl-ch-filter">
+          <div className="pl-seg" role="group" aria-label="Time range">
+            {RANGES.map(x => (
+              <button key={x.key} type="button" aria-pressed={range === x.key} onClick={() => setRange(x.key)}>{x.label}</button>
+            ))}
+          </div>
+          <button type="button" className="pl-seg-one" aria-pressed={asTable} onClick={() => setAsTable(v => !v)}>
+            {asTable ? 'Charts' : 'Table'}
+          </button>
+        </div>
+        <div className="pl-ch-body">
+          {inRange.length === 0 ? (
+            <p className="lv-empty">No sorties in the last {r.label}.</p>
+          ) : (
+            <>
+              <OutcomeMix sorties={inRange} desert />
+              {asTable ? (
+                <Section desert title="By week"><WeekTable weeks={weeks} desert /></Section>
+              ) : (
+                <>
+                  <Heatmap sorties={inRange} from={from} to={now} desert />
+                  <div className="pl-ch-pair">
+                    <HoursPerWeek weeks={weeks} desert />
+                    {hasKills
+                      ? <KillsOverTime weeks={weeks} desert />
+                      : (
+                        <Section desert title="Kills over time">
+                          <p className="pl-none">Per-sortie kills need the updated stats server.</p>
+                        </Section>
+                      )}
+                  </div>
+                </>
+              )}
+              <Airframes sorties={inRange} desert />
+            </>
+          )}
+        </div>
+      </LvCard>
+    )
+  }
 
   return (
     <div className="vs-card p-0">

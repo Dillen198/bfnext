@@ -61,6 +61,122 @@ pub(crate) async fn api_admin_reset_lives_all(
     Ok(warp::reply::json(&serde_json::json!({"ok": true, "message": reply})))
 }
 
+/// POST /api/admin/repair-all  — rebuild every objective on one server
+/// (`?server=` picks the instance): its groups and its logistics buildings,
+/// as `-admin repair all` in game. Proxies bflib's repair-all RPC; needs the
+/// engine running. For undoing damage like 6 Nov's, when the engine took a
+/// broken DCS API for every unit dying, without getting into DCS.
+pub(crate) async fn api_admin_repair_all(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let who = require_role(session_id, db.clone(), admin::Role::OPS).await?;
+    if inst.cfg.is_range() {
+        return Err(Error(websec::bad_request(format!(
+            "{} is a training range: it has no objectives to repair",
+            inst.id
+        ))));
+    }
+    let reply = call_engine_rpc_str(&db, &inst, "repair-all", vec![]).await?;
+    audit(&db, &who, "repair all objectives", Some(&reply), Some(&inst.id));
+    Ok(warp::reply::json(&serde_json::json!({"ok": true, "message": reply})))
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct AdminCommandBody {
+    /// As typed after `-admin` in chat, e.g. `repair all`, `kick D4n`.
+    pub(crate) command: std::string::String,
+}
+
+/// The role an `-admin` command needs from the dashboard. Moderation for
+/// the ones aimed at a player; full admin for handing out admin; operations
+/// for the rest (logistics, repairs, spawns, marks, points, lives).
+pub(crate) fn command_role(command: &str) -> u8 {
+    let command = command.trim();
+    let command = command.strip_prefix("-admin").map(str::trim_start).unwrap_or(command);
+    let word = command.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+    match word.as_str() {
+        "add-admin" | "remove-admin" => admin::Role::ALL,
+        "switch" | "ban" | "unban" | "kick" | "deslot" | "blacklist" | "whitelist" => {
+            admin::Role::MODERATION
+        }
+        _ => admin::Role::OPS,
+    }
+}
+
+/// POST /api/admin/command  {command}  -- run an `-admin` command on one
+/// server (`?server=` picks the instance) without being in the game, and get
+/// its replies back, one per line, as chat would show them. The engine parses
+/// it exactly as chat does (bflib `admin::remote_command`) and refuses
+/// `reset`, `shutdown` and `log-desc`: the first two have their own buttons.
+pub(crate) async fn api_admin_command(
+    session_id: Option<Uuid>,
+    body: AdminCommandBody,
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let command = body.command.trim();
+    if command.is_empty() {
+        return Err(Error(websec::bad_request("no command")));
+    }
+    if command.len() > 500 {
+        return Err(Error(websec::bad_request("command too long")));
+    }
+    let who = require_role(session_id, db.clone(), command_role(command)).await?;
+    if inst.cfg.is_range() {
+        return Err(Error(websec::bad_request(format!(
+            "{} is a training range: it runs no campaign admin commands",
+            inst.id
+        ))));
+    }
+    let (lines, failed) = call_engine_rpc_lines(
+        &db,
+        &inst,
+        "admin-command",
+        vec![("command", netidx::publisher::Value::from(command.to_string()))],
+    )
+    .await?;
+    audit(
+        &db,
+        &who,
+        &format!("-admin {command}"),
+        lines.first().map(|s| s.as_str()),
+        Some(&inst.id),
+    );
+    Ok(warp::reply::json(&serde_json::json!({"ok": !failed, "lines": lines})))
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+
+    #[test]
+    fn each_command_asks_for_its_role() {
+        assert_eq!(command_role("repair all"), admin::Role::OPS);
+        assert_eq!(command_role("-admin tick"), admin::Role::OPS);
+        assert_eq!(command_role("KICK D4n"), admin::Role::MODERATION);
+        assert_eq!(command_role("ban forever D4n"), admin::Role::MODERATION);
+        assert_eq!(command_role("switch blue D4n"), admin::Role::MODERATION);
+        assert_eq!(command_role("add-admin D4n"), admin::Role::ALL);
+        assert_eq!(command_role("  remove-admin D4n"), admin::Role::ALL);
+    }
+
+    #[test]
+    fn several_replies_come_back_as_lines() {
+        use netidx::publisher::Value;
+        let v = Value::Array(
+            vec![Value::from("a\nb".to_string()), Value::Error("no".into())].into(),
+        );
+        let mut out = vec![];
+        assert!(reply_lines(&v, &mut out));
+        assert_eq!(out, ["a", "b", "no"]);
+        let mut out = vec![];
+        assert!(!reply_lines(&Value::from("done".to_string()), &mut out));
+        assert_eq!(out, ["done"]);
+    }
+}
+
 #[derive(serde::Deserialize)]
 pub(crate) struct SideSwitchBody {
     /// Name (case-insensitive, as the engine's `-admin switch` takes it),
@@ -252,7 +368,175 @@ pub(crate) async fn api_admin_bot_mission_unpause(
     api_admin_bot_action(session_id, db, bot_cfg, inst, "instance/mission/unpause").await
 }
 
-/// GET|POST /api/admin/ops/<tail>  — the dashboard OPS page (admin only).
+/// Which dashboard login an OPS-API path needs.
+///
+/// `console/*` is the bot console (console.py in the FowlEngine plugin):
+/// DCSServerBot's own actions, players and bans among them. A moderator may
+/// reach it -- the plugin then checks each action against the roles named in
+/// `X-Fowl-Roles` -- and everything else under `ops/` stays OPS-only.
+pub(crate) fn ops_path_allows(path: &str, s: &crate::db::SessionData) -> bool {
+    if path.starts_with("console/") {
+        admin::has_role(s, admin::Role::OPS)
+            || admin::has_role(s, admin::Role::MODERATION)
+    } else {
+        admin::has_role(s, admin::Role::OPS)
+    }
+}
+
+/// The bot console's two uploads (a .miz, a music track): the file is the
+/// body, and it may be far bigger than the 4 MB the rest of ops/ takes.
+pub(crate) fn is_upload_path(path: &str) -> bool {
+    matches!(path, "console/mission" | "console/music")
+}
+
+/// One server-sent event block from the bot (`event: x` / `data: y` lines,
+/// `: comment` lines), as warp's own Event.
+pub(crate) fn sse_block(block: &str) -> warp::sse::Event {
+    let mut ev = warp::sse::Event::default();
+    let mut data: Vec<&str> = Vec::new();
+    let mut comment: Option<&str> = None;
+    for line in block.lines() {
+        if let Some(v) = line.strip_prefix("event:") {
+            ev = ev.event(v.trim());
+        } else if let Some(v) = line.strip_prefix("data:") {
+            data.push(v.strip_prefix(' ').unwrap_or(v));
+        } else if let Some(v) = line.strip_prefix(':') {
+            comment = Some(v.trim());
+        }
+    }
+    if data.is_empty() {
+        return ev.comment(comment.unwrap_or("ping"));
+    }
+    ev.data(data.join("\n"))
+}
+
+/// How long the bot has to start the live feed (send its headers).
+pub(crate) const STREAM_START_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(20);
+
+/// GET /api/admin/ops/console/stream  — the bot console's live feed.
+///
+/// The plugin pushes the fleet whenever it changes (server-sent events); the
+/// ordinary proxy above reads a whole answer before replying, so this one
+/// passes the stream on as it comes, event by event, with no deadline.
+pub(crate) async fn api_admin_ops_stream(
+    query: String,
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<warp::reply::Response, Error> {
+    use warp::http::StatusCode;
+    let who = require_session(session_id, &db)?;
+    if !ops_path_allows("console/stream", &who) {
+        return Err(websec::forbidden("forbidden").into());
+    }
+    let json_err = |status: StatusCode, msg: String| {
+        warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({ "error": msg })),
+            status,
+        )
+        .into_response()
+    };
+    let Some(cfg) = bot_cfg.as_ref() else {
+        return Ok(json_err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "DCSServerBot is not configured -- the bot console needs the bot".into(),
+        ));
+    };
+    static STREAM_HTTP: std::sync::LazyLock<
+        std::result::Result<reqwest::Client, std::string::String>,
+    > = std::sync::LazyLock::new(|| {
+        reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| e.to_string())
+    });
+    let http = STREAM_HTTP.as_ref().map_err(|e| anyhow::anyhow!("http client: {e}"))?;
+    let mut url = format!("{}/fowlengine/ops/console/stream", cfg.base_url);
+    if !query.is_empty() {
+        url.push('?');
+        url.push_str(&query);
+    }
+    let mut req = http.get(&url).header("X-API-Key", &cfg.ops_key);
+    for (name, value) in fowl_headers(&who) {
+        req = req.header(name, value);
+    }
+    // The stream itself has no deadline, but its start does: a bot that
+    // accepts the connection and never answers would otherwise leave this
+    // request (and one more per browser reconnect) waiting here forever.
+    let resp = match tokio::time::timeout(STREAM_START_TIMEOUT, req.send()).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {
+            return Ok(json_err(
+                StatusCode::BAD_GATEWAY,
+                format!("the bot's WebService is not answering ({e})"),
+            ))
+        }
+        Err(_) => {
+            return Ok(json_err(
+                StatusCode::GATEWAY_TIMEOUT,
+                format!(
+                    "the bot did not start the live feed within {} s -- is DCSServerBot responding?",
+                    STREAM_START_TIMEOUT.as_secs()
+                ),
+            ))
+        }
+    };
+    if !resp.status().is_success() {
+        let status = StatusCode::from_u16(resp.status().as_u16())
+            .unwrap_or(StatusCode::BAD_GATEWAY);
+        let text = resp.text().await.unwrap_or_default();
+        let msg = serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|v| v["error"].as_str().map(str::to_string))
+            .unwrap_or(text);
+        return Ok(json_err(status, msg));
+    }
+    let events = futures::stream::unfold(
+        (resp, Vec::<u8>::new()),
+        |(mut resp, mut buf)| async move {
+            loop {
+                if let Some(i) = buf.windows(2).position(|w| w == b"\n\n") {
+                    let block: Vec<u8> = buf.drain(..i + 2).collect();
+                    let ev = sse_block(&String::from_utf8_lossy(&block));
+                    return Some((Ok::<_, std::convert::Infallible>(ev), (resp, buf)));
+                }
+                match resp.chunk().await {
+                    Ok(Some(c)) => buf.extend_from_slice(
+                        &c.iter().copied().filter(|b| *b != b'\r').collect::<Vec<u8>>(),
+                    ),
+                    _ => return None,
+                }
+            }
+        },
+    );
+    let mut out =
+        warp::sse::reply(warp::sse::keep_alive().stream(events)).into_response();
+    out.headers_mut()
+        .insert("cache-control", warp::http::HeaderValue::from_static("no-store"));
+    Ok(out)
+}
+
+/// What the bot console is told about the caller, beside the key: who it
+/// is (for the bot's own audit trail) and which dashboard roles it holds.
+/// Header values must be visible ASCII, so the name is percent-encoded.
+pub(crate) fn fowl_headers(
+    s: &crate::db::SessionData,
+) -> [(&'static str, std::string::String); 3] {
+    let roles = if s.is_admin {
+        "admin".to_string()
+    } else {
+        admin::role_names(s.roles).join(",")
+    };
+    [
+        ("X-Fowl-Roles", roles),
+        ("X-Fowl-Actor", urlencoding::encode(&s.username).into_owned()),
+        ("X-Fowl-Subject", urlencoding::encode(&s.discord_id).into_owned()),
+    ]
+}
+
+/// GET|POST /api/admin/ops/<tail>  — the dashboard OPS page and the bot
+/// console (admin only; see `ops_path_allows`).
 ///
 /// Forwarded to the FowlEngine plugin's OPS API on DCSServerBot's WebService
 /// (`{--dcsserverbot-url}/fowlengine/ops/<tail>`, see
@@ -261,18 +545,23 @@ pub(crate) async fn api_admin_bot_mission_unpause(
 /// manages -- DCS, bfdb itself, staging dirs, fowlengine.yaml -- and stays up
 /// while bfdb restarts, so it answers, not bfdb. The key never reaches the
 /// browser; the dashboard admin login gates it here.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn api_admin_ops_proxy(
     method: warp::http::Method,
-    tail: warp::path::Tail,
+    path: std::string::String,
     query: String,
     session_id: Option<Uuid>,
+    content_type: Option<std::string::String>,
     body: bytes::Bytes,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<warp::reply::Response, Error> {
     use warp::http::StatusCode;
-    let who = require_role(session_id, db.clone(), admin::Role::OPS).await?;
-    let path = tail.as_str();
+    let who = require_session(session_id, &db)?;
+    let path = path.as_str();
+    if !ops_path_allows(path, &who) {
+        return Err(websec::forbidden("forbidden").into());
+    }
     let json_err = |status: StatusCode, msg: String| {
         warp::reply::with_status(
             warp::reply::json(&serde_json::json!({ "error": msg })),
@@ -313,13 +602,25 @@ pub(crate) async fn api_admin_ops_proxy(
             .map_err(|e| e.to_string())
     });
     let http = OPS_HTTP.as_ref().map_err(|e| anyhow::anyhow!("http client: {e}"))?;
-    let req = if method == warp::http::Method::POST {
-        http.post(&url)
-            .header("content-type", "application/json")
-            .body(if body.is_empty() { bytes::Bytes::from_static(b"{}") } else { body })
+    let mut req = if method == warp::http::Method::POST {
+        // A mission or music upload is the one body that isn't JSON: the file itself.
+        let ctype = match content_type.as_deref() {
+            Some("application/octet-stream") if is_upload_path(path) => {
+                "application/octet-stream"
+            }
+            _ => "application/json",
+        };
+        http.post(&url).header("content-type", ctype).body(if body.is_empty() {
+            bytes::Bytes::from_static(b"{}")
+        } else {
+            body
+        })
     } else {
         http.get(&url)
     };
+    for (name, value) in fowl_headers(&who) {
+        req = req.header(name, value);
+    }
     let resp = match req.header("X-API-Key", &cfg.ops_key).send().await {
         Ok(r) => r,
         Err(e) => {
@@ -338,6 +639,7 @@ pub(crate) async fn api_admin_ops_proxy(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("application/json")
         .to_string();
+    let disposition = resp.headers().get("content-disposition").cloned();
     let data = resp
         .bytes()
         .await
@@ -350,7 +652,8 @@ pub(crate) async fn api_admin_ops_proxy(
                 .into(),
         ));
     }
-    if method == warp::http::Method::POST {
+    // A console read changes nothing; the bot audits its own writes too.
+    if method == warp::http::Method::POST && !path.starts_with("console/read/") {
         audit(&db, &who, "OPS", Some(&format!("{path} -> {status}")), None);
     }
     let mut out = warp::reply::Response::new(data.to_vec().into());
@@ -362,6 +665,9 @@ pub(crate) async fn api_admin_ops_proxy(
     );
     out.headers_mut()
         .insert("cache-control", warp::http::HeaderValue::from_static("no-store"));
+    if let Some(d) = disposition {
+        out.headers_mut().insert("content-disposition", d);
+    }
     Ok(out)
 }
 

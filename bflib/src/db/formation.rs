@@ -3565,6 +3565,12 @@ impl Db {
             let speed = self.route_speeds_mps(cfg, f);
             for gid in f.groups.iter().filter(|g| rt.live.contains(g)) {
                 let Some(g) = self.persisted.groups.get(gid) else { continue };
+                // Wiped out while the rest fights on: DCS has already removed
+                // it, and `getByName` would hand back nil.
+                let units = &self.persisted.units;
+                if !g.units.into_iter().any(|u| units.get(u).is_some_and(|u| !u.dead)) {
+                    continue;
+                }
                 let from = self.group_center(gid).unwrap_or(f.pos);
                 let res = Group::get_by_name(lua, &g.name).and_then(|group| {
                     set_march_ai(&group, roe)?;

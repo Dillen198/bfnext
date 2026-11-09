@@ -6,7 +6,10 @@ import React, { useMemo, useState } from 'react'
 import { Link as RouterLink } from 'react-router-dom'
 import type { Pilot, PilotKill, PilotSortie } from '../api'
 import { fmtDuration, fmtHours, kd } from '../lib/format'
-import { Award, Rankings } from '@icons'
+import { Award, Rankings, ArrowRight } from '@icons'
+import { Card as LvCard } from '../components/Levant'
+import { useDashLook } from '../lib/look'
+import './levant/pilots.css'
 
 /** bfdb's "no pilot" UCID is all zeros; it is not a rival. */
 const realUcid = (u: string | null | undefined): string | null => (u && !/^0+$/.test(u) ? u : null)
@@ -47,7 +50,27 @@ function TopList({ rows, empty, unit }: { rows: { key: string; ucid?: string | n
   )
 }
 
+/** TopList in the desert look: a rank, the name (a link when it is a
+ *  player), the count. */
+function TopListDesert({ rows, empty, unit }: { rows: { key: string; ucid?: string | null; name: string; n: number }[]; empty: string; unit: string }) {
+  if (rows.length === 0) return <p className="pl-none">{empty}</p>
+  return (
+    <ol className="pl-top">
+      {rows.map((r, i) => (
+        <li key={r.key} className={i === 0 ? 'first' : undefined}>
+          <span className="rk">{i + 1}</span>
+          {r.ucid
+            ? <RouterLink className="nm" to={`/pilots?ucid=${r.ucid}`}>{r.name}</RouterLink>
+            : <span className="nm ai">{r.name}</span>}
+          <span className="n"><b>{r.n}</b> {unit}{r.n === 1 ? '' : 's'}</span>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
 export function RivalsCard({ ucid, sorties, kills, pilots }: { ucid: string; sorties: PilotSortie[]; kills: PilotKill[]; pilots: Pilot[] }) {
+  const look = useDashLook()
   const names = useMemo(() => new Map(pilots.map(p => [p.ucid, p.name])), [pilots])
   // Sortie rows carry their killer only from the per-sortie stats server.
   const knowsKillers = sorties.some(s => s.killed_by !== undefined)
@@ -81,6 +104,45 @@ export function RivalsCard({ ucid, sorties, kills, pilots }: { ucid: string; sor
     for (const s of sorties) if (score(s) > 0 && (!top || score(s) > score(top))) top = s
     return top
   }, [sorties])
+
+  if (look.profile) {
+    const needs = 'Needs the updated stats server.'
+    return (
+      <LvCard tape="Rivals">
+        <div className="pl-rivals">
+          <div>
+            <span className="ds-k">Nemesis · shot them down</span>
+            {knowsKillers ? <TopListDesert rows={nemesis} empty="Never shot down." unit="time" /> : <p className="pl-none">{needs}</p>}
+          </div>
+          <div>
+            <span className="ds-k">Favourite targets · players</span>
+            <TopListDesert rows={targets} empty="No player kills yet." unit="kill" />
+          </div>
+          <div>
+            <span className="ds-k">Best sortie</span>
+            {best ? (
+              <div className="pl-best">
+                <strong>{best.aircraft.replace(/_/g, ' ')}</strong>
+                <dl>
+                  <div><dt>A/A</dt><dd className="a">{best.air_kills ?? 0}</dd></div>
+                  <div><dt>A/G</dt><dd className="g">{best.ground_kills ?? 0}</dd></div>
+                  <div><dt>Time</dt><dd>{fmtDuration(best.duration_secs)}</dd></div>
+                </dl>
+                <span className="lv-sub">{new Date(best.takeoff).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                {best.sortie_id !== undefined && (
+                  <RouterLink className="ds-link pl-debrief" to={`/pilots/${encodeURIComponent(ucid)}/sortie/${best.sortie_id}`}>
+                    Full debrief <ArrowRight size={11} />
+                  </RouterLink>
+                )}
+              </div>
+            ) : (
+              <p className="pl-none">{knowsKillers ? 'No kills on a sortie yet.' : needs}</p>
+            )}
+          </div>
+        </div>
+      </LvCard>
+    )
+  }
 
   return (
     <Card title="Rivals" icon={Award}>
@@ -137,19 +199,64 @@ const STATS: { name: string; v: (p: Pilot) => number; fmt: (p: Pilot) => string;
 ]
 
 export function CompareCard({ pilot, pilots }: { pilot: Pilot; pilots: Pilot[] }) {
+  const look = useDashLook()
   const others = useMemo(() => pilots.filter(p => p.ucid !== pilot.ucid).sort((a, b) => a.name.localeCompare(b.name)), [pilots, pilot.ucid])
   const [otherId, setOtherId] = useState<string>('')
   const other = others.find(p => p.ucid === otherId) ?? null
+  // Each stat, scaled to the larger of the two, and who has the better of it.
+  const rows = other ? STATS.map(st => {
+    const a = st.v(pilot), b = st.v(other)
+    const max = Math.max(a, b, 1e-9)
+    return {
+      st, a, b, max,
+      aWins: st.lowerIsBetter ? a < b : a > b,
+      bWins: st.lowerIsBetter ? b < a : b > a,
+    }
+  }) : []
+  const picker = (
+    <select value={otherId} onChange={e => setOtherId(e.target.value)} className="vs-input" aria-label="Pilot to compare with"
+      style={look.profile ? undefined : { fontSize: '0.68rem', padding: '0.2rem 0.4rem', maxWidth: 200 }}>
+      <option value="">Pick a pilot…</option>
+      {others.map(p => <option key={p.ucid} value={p.ucid}>{p.name}</option>)}
+    </select>
+  )
+
+  if (look.profile) {
+    return (
+      <LvCard tape="Compare">
+        <div className="pl-cmp">
+          <div className="pl-cmp-pick"><span className="ds-k">Against</span>{picker}</div>
+          {!other ? (
+            <p className="pl-none">Pick another pilot to see the two side by side.</p>
+          ) : (
+            <>
+              <div className="pl-cmp-names">
+                <span className="me">{pilot.name}</span>
+                <span className="ds-k">vs</span>
+                <RouterLink className="them" to={`/pilots?ucid=${other.ucid}`}>{other.name}</RouterLink>
+              </div>
+              {/* Mirrored bars: this pilot grows left, the other right. */}
+              <div className="pl-cmp-grid">
+                {rows.map(({ st, a, b, max, aWins, bWins }) => (
+                  <React.Fragment key={st.name}>
+                    <span className={`v${aWins ? ' win' : ''}`}>{st.fmt(pilot)}</span>
+                    <div className="bar me"><i style={{ width: `${(a / max) * 100}%`, minWidth: a > 0 ? 2 : 0 }} /></div>
+                    <span className="ds-k nm">{st.name}</span>
+                    <div className="bar them"><i style={{ width: `${(b / max) * 100}%`, minWidth: b > 0 ? 2 : 0 }} /></div>
+                    <span className={`v them${bWins ? ' win' : ''}`}>{st.fmt(other)}</span>
+                  </React.Fragment>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </LvCard>
+    )
+  }
 
   return (
     <Card title="Compare" icon={Rankings}
-      right={
-        <select value={otherId} onChange={e => setOtherId(e.target.value)} className="vs-input" aria-label="Pilot to compare with"
-          style={{ fontSize: '0.68rem', padding: '0.2rem 0.4rem', maxWidth: 200 }}>
-          <option value="">Pick a pilot…</option>
-          {others.map(p => <option key={p.ucid} value={p.ucid}>{p.name}</option>)}
-        </select>
-      }>
+      right={picker}>
       {!other ? (
         <div style={{ padding: 16, fontSize: '0.68rem', color: 'var(--text-dim)' }}>Pick another pilot to see the two side by side.</div>
       ) : (
@@ -166,11 +273,7 @@ export function CompareCard({ pilot, pilots }: { pilot: Pilot; pilots: Pilot[] }
           {/* Mirrored bars: this pilot grows left, the other right, each
               scaled to the larger of the two on that stat. */}
           <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr minmax(80px, auto) 1fr auto', gap: '6px 8px', alignItems: 'center' }}>
-            {STATS.map(st => {
-              const a = st.v(pilot), b = st.v(other)
-              const max = Math.max(a, b, 1e-9)
-              const aWins = st.lowerIsBetter ? a < b : a > b
-              const bWins = st.lowerIsBetter ? b < a : b > a
+            {rows.map(({ st, a, b, max, aWins, bWins }) => {
               return (
                 <React.Fragment key={st.name}>
                   <span className="font-mono" style={{ fontSize: '0.7rem', color: aWins ? 'var(--text)' : 'var(--text-muted)', fontWeight: aWins ? 700 : 400, textAlign: 'right' }}>{st.fmt(pilot)}</span>

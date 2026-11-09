@@ -294,6 +294,54 @@ class PlayerCommandsMixin:
         except Exception as ex:
             await interaction.followup.send(f"Error: {ex}")
 
+    @command(description='Rebuild every objective on one server: its groups and logistics buildings.')
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    @app_commands.describe(
+        server="Which campaign server",
+        confirm="Leave off to see what it does; True to run it")
+    async def fe_repair_all(self, interaction: discord.Interaction,
+                            server: app_commands.Transform[Server, utils.ServerTransformer(status=[Status.RUNNING, Status.PAUSED])],
+                            confirm: bool = False):
+        # `-admin repair all` from Discord, for an admin who can't get into
+        # DCS: on 6 Nov the engine took a broken DCS API for every unit dying
+        # and every base's logistics being destroyed, and saved it.
+        await interaction.response.defer(ephemeral=True)
+        if not confirm:
+            await interaction.followup.send(
+                f"{icon('warning')} This rebuilds **every** objective on {server.name} for free: every damaged group "
+                f"and every logistics building, including damage done in fair play. Run it again with "
+                f"`confirm: True` to go ahead.", allowed_mentions=NO_PINGS)
+            return
+        config = self.get_config(server) or {}
+        api_url = config.get("api_url", "http://localhost:8880")
+        username = config.get("admin_username")
+        password = config.get("admin_password")
+        if not username or not password:
+            await interaction.followup.send(
+                f"{icon('bad')} admin_username/admin_password must be set in fowlengine.yaml (must match bfdb's "
+                "--admin-username/--admin-password) to use admin actions."
+            )
+            return
+        try:
+            status, data = await bfdb_admin_post(
+                api_url, username, password,
+                srv_path("/api/admin/repair-all", server.name), {},
+            )
+            if status == 200:
+                message = (data or {}).get("message") or "done"
+                await interaction.followup.send(
+                    f"{icon('restart')} {server.name}: {message}", allowed_mentions=NO_PINGS)
+            else:
+                detail = (data or {}).get("error") or (data or {}).get("message") or ""
+                await interaction.followup.send(
+                    f"{icon('bad')} Repair all failed (HTTP {status}){': ' + str(detail) if detail else ''}"
+                    + (" -- this bfdb has no repair-all yet: install the engine release that adds it, then try again."
+                       if status == 404 else ""),
+                    allowed_mentions=NO_PINGS)
+        except Exception as ex:
+            await interaction.followup.send(f"Error: {ex}")
+
     @command(description='Unban a pilot from the campaign (by UCID).')
     @app_commands.guild_only()
     @utils.app_has_role('DCS Admin')

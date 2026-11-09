@@ -110,6 +110,20 @@ pub(crate) struct Raids {
     seq: u32,
 }
 
+impl Raids {
+    /// `side`'s raid drones in flight, each with the target it is flying at
+    /// (position, name), for the command map.
+    pub(crate) fn drones_for(
+        &self,
+        side: Side,
+    ) -> impl Iterator<Item = (GroupId, Vector2, &str)> + '_ {
+        self.drones.iter().filter_map(move |d| {
+            let r = self.raids.iter().find(|r| r.id == d.raid && r.side == side)?;
+            Some((d.gid, r.target_pos, r.target_name.as_str()))
+        })
+    }
+}
+
 fn kind_value(kind: &ObjectiveKind) -> f64 {
     match kind {
         ObjectiveKind::Factory { .. } => 3.0,

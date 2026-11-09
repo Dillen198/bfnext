@@ -111,6 +111,7 @@ live on the web dashboard now -- `/fe_dashboard` points there.
 ### Commander & Admin (`DCS Admin`)
 - `/fe_terminal` - interactive Commander Terminal: drop cargo/infantry at an airbase, and set/clear objective priority.
 - `/fe_ban <ucid> <name> [reason] [until]` / `/fe_unban <ucid>` - campaign ban management.
+- `/fe_repair_all <server> [confirm]` - rebuild every objective on that server, its groups and logistics buildings, as `-admin repair all` does in game. Says what it will do unless `confirm: True`.
 - `/fe_rotation_vote <server> [hours]` - open a Discord poll on the next theatre (default 24 h, max 168).
 - `/fe_rotation_advance <server>` - record that the server has moved on to the next theatre, once its mission and config are switched.
 - `/feops bfdb_restart` - restart bfdb (re-renders `gci.json`, picks up a staged `bfdb.exe`).
@@ -217,7 +218,46 @@ through the MRO.
 | `cog_news.py` | the war diary feed |
 | `common.py`, `views.py` | shared constants and bfdb helpers; the Discord views |
 | `procman.py`, `autoupdate.py`, `opsapi.py`, `loganalyzer.py`, `heartbeat.py`, ... | the services the cog owns (unchanged) |
+| `console.py` | the dashboard's SERVER BOT page: DCSServerBot's own actions, on the OPS router (see below) |
 
 Like every module here, a changed part takes effect when the bot restarts, not on a plugin
 reload. `tests/test_fowlengine_cog_wiring.py` checks that every part is wired in and that
 no member is defined twice.
+
+## The SERVER BOT page (`console.py`)
+
+The dashboard's `/admin/bot` page does what DCSServerBot's own web console does: servers
+(start up, stop, restart, pause, maintenance, messages), missions (load, add, remove, reorder,
+upload, download), players (kick, ban, mute, message, watch, screenshot, the directory and each
+player's record), bans, nodes (restart, bot upgrade, DCS update, add or delete a server), DCS
+settings and coalition passwords, statistics, mods, music and the bot's audit trail.
+
+It doesn't reimplement any of it. Every control calls one of the bot's `@action` functions
+(`core/actions.py`, DCSServerBot **3.0.5** or later), the same ones its Discord commands and
+console call, so the same checks apply, the bot audits each one (the actor reads
+`[web:fowlengine/<discord id>]`), and a second action on a busy server is refused. On an older
+bot the page still lists the servers, and says why the controls are missing.
+
+The routes ride on the OPS router (`<prefix>/fowlengine/ops/console/*`, same key). bfdb lets a
+dashboard login with the `ops` or `moderation` role (or a full admin) through and names the
+caller's roles; `console.ACTIONS` says which role each action needs: players and bans are
+`moderation`, whole nodes and adding or deleting servers are full-admin only, the rest `ops`.
+Power actions wait while the auto-updater is staging a release, like the OPS page's own DCS
+buttons. Nothing in `services/webservice.yaml` needs `frontend: true` for this.
+
+Beyond the actions, `console.py` and `botconfig.py` give the page:
+
+- **Settings** (full admins): the bot's own config files -- main.yaml, nodes.yaml, servers.yaml,
+  every plugin's and service's YAML (services on/off too) -- as a form or as YAML. Secrets go out
+  masked and stay as they were, each save is checked against the bot's schema, written with a
+  backup in `config/.fowlengine-backups/` and refused if the file changed since it was read. A
+  saved plugin file reloads that plugin. As for fowlengine.yaml on the OPS page, a key that names a
+  program, a path, an install or a host can't be changed from here.
+- **Presets**: presets.yaml's weather and time, field by field.
+- **Access**: which dashboard role each action needs, kept in
+  `config/fowlengine-console-access.json`. Whole-node actions, adding or deleting servers, mod
+  downloads and the bot's channels stay full-admin only.
+- A **live feed** (`console/stream`, server-sent events that bfdb passes on): the fleet is pushed
+  when it changes, and the page only polls while the feed is down.
+- Music uploads, player screenshots (read from the server's own web GUI, as the bot does), and each
+  server's weather, extensions and schedule.

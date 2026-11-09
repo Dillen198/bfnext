@@ -282,6 +282,69 @@ impl IntoLua for Color {
     }
 }
 
+/// An instance lookup found the object gone: it no longer exists in DCS, or
+/// it is dead. Distinct from the lookup itself failing. On 6 Nov the mission's
+/// DCS API broke (`getLife`, `land`, `world` all nil), and bflib took every
+/// failed lookup for a death: units were killed off and every base's
+/// logistics buildings counted as destroyed, then saved. Check with
+/// [`is_gone`] before treating an error as a death.
+#[derive(Debug)]
+pub struct Gone(pub std::string::String);
+
+impl std::fmt::Display for Gone {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Gone {}
+
+/// Whether `e` says the object is gone (see [`Gone`]), as opposed to DCS
+/// failing to answer.
+pub fn is_gone(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| c.is::<Gone>())
+}
+
+/// The parts of the mission's DCS API a campaign can't run without, as
+/// `table.function` paths (methods found through the class's metatable, as a
+/// call would find them).
+pub const ESSENTIAL_API: &[(&str, &str)] = &[
+    ("trigger", "action"),
+    ("land", "getSurfaceType"),
+    ("world", "getAirbases"),
+    ("timer", "getTime"),
+    ("Unit", "getLife"),
+    ("Unit", "getPosition"),
+    ("Unit", "isExist"),
+    ("Object", "isExist"),
+];
+
+/// `Ok` when the mission's DCS API is all there, or the first missing part.
+/// On 6 Nov it came back half empty mid-mission (`land` and `world` nil,
+/// `trigger.action.setMarkupColor` and `Unit.getLife` gone) for every script
+/// in the mission, minutes before DCS crashed. A campaign that keeps running
+/// on that reads every failed call as a fact about the war.
+pub fn api_intact(lua: MizLua) -> std::result::Result<(), std::string::String> {
+    let g = lua.inner().globals();
+    for (table, field) in ESSENTIAL_API {
+        let ok = match g.raw_get::<Value>(*table) {
+            Ok(Value::Table(t)) => match t.get::<Value>(*field) {
+                Ok(Value::Function(_)) => true,
+                // trigger.action is the one table on the list
+                Ok(Value::Table(a)) if *field == "action" => {
+                    matches!(a.get::<Value>("outText"), Ok(Value::Function(_)))
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        if !ok {
+            return Err(format!("{table}.{field}"));
+        }
+    }
+    Ok(())
+}
+
 pub fn wrap_f<'lua, L: LuaEnv<'lua>, R: Default, F: FnOnce(L) -> Result<R>>(
     name: &str,
     lua: L,

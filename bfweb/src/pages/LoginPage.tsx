@@ -6,6 +6,7 @@ import { ThemeToggle } from '@shared/web/theme'
 import { LogoMark } from '@shared/web/LogoMark'
 import Backdrop from '../components/Backdrop'
 import { useWireframe } from '../lib/wireframe'
+import { useDashLook } from '../lib/look'
 
 /**
  * Sign-in. Discord is the only way a person gets into the dashboard: a pilot's
@@ -20,26 +21,32 @@ import { useWireframe } from '../lib/wireframe'
 export default function LoginPage() {
   // A carrier behind the sign-in card, over the animated backdrop.
   const art = useWireframe('carrier-quarter', { strength: 'soft', position: 'center', size: 'auto min(78%, 620px)', fade: 'none' })
+  // In the campaign's look the battle art stands behind the card instead.
+  const look = useDashLook()
+  const [first, ...rest] = campaign.name.split(' ')
   return (
-    <div style={{
+    <div className={look.className || undefined} style={{
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       height: '100%', position: 'relative',
     }}>
       <Backdrop />
-      {/* Faded out toward the edges, so the drawing sinks into the backdrop
-          instead of sitting on it as a picture. */}
+      {look.profile ? <div className="dash-login-art" aria-hidden="true" /> : (
+      // Faded out toward the edges, so the drawing sinks into the backdrop
+      // instead of sitting on it as a picture.
       <div aria-hidden="true" style={{
         ...art, position: 'absolute', inset: 0, pointerEvents: 'none',
         WebkitMaskImage: 'radial-gradient(ellipse 60% 58% at 50% 50%, #000 35%, transparent 100%)',
         maskImage: 'radial-gradient(ellipse 60% 58% at 50% 50%, #000 35%, transparent 100%)',
       }} />
+      )}
       <ThemeToggle className="vs-touch-target" style={{ position: 'absolute', top: 16, right: 16 }} />
-      <div style={{
+      <div className="dash-login-card" style={{
         position: 'relative',
         padding: '2rem', width: '100%', maxWidth: '340px',
         border: '1px solid var(--border)', borderRadius: '4px',
         background: 'var(--bg-card)',
       }}>
+        {look.onCampaign && look.profile && <span className="ds-tape rust">{look.profile.title}</span>}
         {/* Header */}
         <div style={{ textAlign: 'center', marginBottom: '1.75rem' }}>
           {campaign.logoUrl ? (
@@ -51,11 +58,11 @@ export default function LoginPage() {
           ) : (
             <LogoMark size={110} alt={campaign.name} style={{ margin: '0 auto 0.75rem', display: 'block' }} />
           )}
-          <div style={{
+          <div className="dash-login-name" style={{
             fontFamily: 'var(--font-display)',
             fontSize: '1.8rem', letterSpacing: '0.15em', color: 'var(--text)',
           }}>
-            {campaign.name}
+            {look.profile ? <>{first} <span>{rest.join(' ')}</span></> : campaign.name}
           </div>
           <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.14em', marginTop: '0.25rem' }}>
             OPERATIONS DASHBOARD
@@ -72,7 +79,7 @@ export default function LoginPage() {
             style={{
               display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
               background: '#5865F2', color: '#fff',
-              padding: '0.65rem 1.5rem', borderRadius: '3px',
+              padding: '0.65rem 1.5rem', borderRadius: look.profile ? 0 : '3px',
               textDecoration: 'none', fontSize: '0.78rem',
               letterSpacing: '0.1em', fontFamily: 'var(--font-display)',
             }}

@@ -1400,6 +1400,12 @@ class Procman:
         tts_key = self.cfg.get("atc_tts_key")
         if tts_key:
             env["BFDB_ATC_TTS_KEY"] = str(tts_key)
+        # The read token for /api/logs/* (bfdb/src/logs.rs): what the auto-fix
+        # runner (deploy/autofix) and Claude read the issue report with.
+        # bfdb serves no log endpoint without one.
+        log_token = self.cfg.get("log_read_token")
+        if log_token:
+            env["BFDB_LOG_READ_TOKEN"] = str(log_token)
         image_key = self.cfg.get("news_image_key")
         if image_key:
             env["BFDB_NEWS_IMAGE_KEY"] = str(image_key)

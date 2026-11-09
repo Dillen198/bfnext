@@ -264,6 +264,215 @@ async fn ops_proxy_get_without_content_length_reaches_the_handler() {
     assert_eq!(r.status(), 503);
 }
 
+/// A stand-in for the bot's WebService: answers every request with what it
+/// was sent (method, path, query, the headers bfdb adds, the body's length and
+/// type), and a file download for GET .../console/mission.
+async fn echo_bot() -> String {
+    use warp::Filter;
+    let echo = warp::method()
+        .and(warp::path::full())
+        .and(warp::query::raw().or(warp::any().map(String::new)).unify())
+        .and(warp::header::headers_cloned())
+        .and(warp::body::bytes())
+        .map(
+            |m: warp::http::Method,
+             p: warp::path::FullPath,
+             q: String,
+             h: warp::http::HeaderMap,
+             b: bytes::Bytes| {
+                let hv =
+                    |n: &str| h.get(n).and_then(|v| v.to_str().ok()).map(str::to_string);
+                if m == warp::http::Method::GET && p.as_str().ends_with("/console/stream") {
+                    // two events, the second split across lines, and a ping; then it ends
+                    let body = format!(
+                        "event: fleet\ndata: {{\"roles\":\"{}\"}}\n\n: ping\n\nevent: fleet\ndata: a\ndata: b\n\n",
+                        hv("x-fowl-roles").unwrap_or_default()
+                    );
+                    return warp::http::Response::builder()
+                        .header("content-type", "text/event-stream")
+                        .body(body.into_bytes())
+                        .unwrap();
+                }
+                if m == warp::http::Method::GET
+                    && p.as_str().ends_with("/console/mission")
+                {
+                    return warp::http::Response::builder()
+                        .header("content-type", "application/octet-stream")
+                        .header("content-disposition", "attachment; filename=\"Op.miz\"")
+                        .body(b"PKmiz".to_vec())
+                        .unwrap();
+                }
+                let doc = serde_json::json!({
+                    "method": m.as_str(), "path": p.as_str(), "query": q,
+                    "key": hv("x-api-key"), "roles": hv("x-fowl-roles"),
+                    "actor": hv("x-fowl-actor"), "subject": hv("x-fowl-subject"),
+                    "ctype": hv("content-type"), "len": b.len(),
+                });
+                warp::http::Response::builder()
+                    .header("content-type", "application/json")
+                    .body(serde_json::to_vec(&doc).unwrap())
+                    .unwrap()
+            },
+        );
+    let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(warp::serve(echo).incoming(listener).run());
+    format!("http://{addr}/stats")
+}
+
+fn bot_harness(base_url: String) -> Harness {
+    harness_with(serde_json::json!({ "instances": [{ "id": "default" }] }), |rc| {
+        rc.bot_link_cfg = Arc::new(Some(BotLinkConfig {
+            base_url,
+            api_key: "rest".into(),
+            ops_key: "opskey".into(),
+        }));
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ops_proxy_names_the_caller_and_lets_moderators_into_the_console() {
+    let h = bot_harness(echo_bot().await);
+    let moderator = h.session_with(false, admin::Role::MODERATION);
+    // the OPS page itself stays OPS-only
+    let r = h.get("/api/admin/ops/status", Some(&moderator)).await;
+    assert_eq!(r.status(), 403);
+    // the bot console is open to a moderator; the plugin checks each action
+    let r = h
+        .post_json(
+            "/api/admin/ops/console/act/kick_player",
+            Some(&moderator),
+            Some(DASH),
+            r#"{"params":{"server_name":"vs1","ucid":"u"}}"#,
+        )
+        .await;
+    assert_eq!(r.status(), 200);
+    let doc = body_json(r);
+    assert_eq!(doc["path"], "/stats/fowlengine/ops/console/act/kick_player");
+    assert_eq!(doc["key"], "opskey");
+    assert_eq!(doc["roles"], "moderation");
+    assert_eq!(doc["actor"], "tester");
+    assert!(doc["subject"].as_str().unwrap().starts_with("discord-"));
+    assert_eq!(doc["ctype"], "application/json");
+    // a full admin is "admin"; a session with no admin role gets nothing
+    let admin = h.session(true);
+    let r = h.get("/api/admin/ops/console/catalog?x=1", Some(&admin)).await;
+    let doc = body_json(r);
+    assert_eq!(
+        (doc["roles"].as_str(), doc["query"].as_str()),
+        (Some("admin"), Some("x=1"))
+    );
+    let content = h.session_with(false, admin::Role::CONTENT);
+    let r = h.get("/api/admin/ops/console/catalog", Some(&content)).await;
+    assert_eq!(r.status(), 403);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ops_proxy_carries_mission_files_both_ways() {
+    let h = bot_harness(echo_bot().await);
+    let ops = h.session_with(false, admin::Role::OPS);
+    // upload: a body over the 4 MB the rest of ops/ takes, as octet-stream
+    let big = vec![7u8; 5 * 1024 * 1024];
+    let r = warp::test::request()
+        .method("POST")
+        .path("/api/admin/ops/console/mission?server=vs1&name=Op.miz")
+        .remote_addr(peer())
+        .header("cookie", &ops)
+        .header("origin", DASH)
+        .header("content-type", "application/octet-stream")
+        .body(big.clone())
+        .reply(&h.routes)
+        .await;
+    assert_eq!(r.status(), 200, "{:?}", r.body());
+    let doc = body_json(r);
+    assert_eq!(doc["len"], big.len());
+    assert_eq!(doc["ctype"], "application/octet-stream");
+    assert_eq!(doc["query"], "server=vs1&name=Op.miz");
+    // anywhere else, octet-stream is not passed on and 5 MB is too big
+    let r = warp::test::request()
+        .method("POST")
+        .path("/api/admin/ops/console/act/kick_player")
+        .remote_addr(peer())
+        .header("cookie", &ops)
+        .header("origin", DASH)
+        .header("content-type", "application/octet-stream")
+        .body(b"{}")
+        .reply(&h.routes)
+        .await;
+    assert_eq!(body_json(r)["ctype"], "application/json");
+    let r = warp::test::request()
+        .method("POST")
+        .path("/api/admin/ops/config")
+        .remote_addr(peer())
+        .header("cookie", &ops)
+        .header("origin", DASH)
+        .header("content-type", "application/json")
+        .body(big)
+        .reply(&h.routes)
+        .await;
+    assert_eq!(r.status(), 413);
+    // download: bytes and file name come through
+    let r =
+        h.get("/api/admin/ops/console/mission?server=vs1&mission=1", Some(&ops)).await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.body().as_ref(), b"PKmiz");
+    assert_eq!(
+        r.headers().get("content-disposition").unwrap(),
+        "attachment; filename=\"Op.miz\""
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ops_stream_passes_the_bots_events_on() {
+    let h = bot_harness(echo_bot().await);
+    let r = h.get("/api/admin/ops/console/stream", None).await;
+    assert_eq!(r.status(), 401);
+    let content = h.session_with(false, admin::Role::CONTENT);
+    let r = h.get("/api/admin/ops/console/stream", Some(&content)).await;
+    assert_eq!(r.status(), 403);
+    let moderator = h.session_with(false, admin::Role::MODERATION);
+    let r = h.get("/api/admin/ops/console/stream", Some(&moderator)).await;
+    assert_eq!(r.status(), 200);
+    assert!(ctype(&r).starts_with("text/event-stream"), "{}", ctype(&r));
+    let body = String::from_utf8_lossy(r.body()).to_string();
+    assert!(body.contains("event:fleet\ndata:{\"roles\":\"moderation\"}\n\n"), "{body}");
+    assert!(body.contains(":ping\n\n"), "{body}");
+    assert!(body.contains("event:fleet\ndata:a\ndata:b\n\n"), "{body}");
+}
+
+#[test]
+fn sse_blocks_become_warp_events() {
+    let ev = |s: &str| sse_block(s).to_string();
+    assert_eq!(ev("event: fleet\ndata: {}\n\n"), "event:fleet\ndata:{}\n\n");
+    assert_eq!(ev(": ping\n\n"), ":ping\n\n");
+    assert_eq!(ev("data: x\ndata: y\n"), "data:x\ndata:y\n\n");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ops_proxy_carries_music_uploads() {
+    let h = bot_harness(echo_bot().await);
+    let ops = h.session_with(false, admin::Role::OPS);
+    let song = vec![1u8; 5 * 1024 * 1024];
+    let r = warp::test::request()
+        .method("POST")
+        .path("/api/admin/ops/console/music?name=a.mp3&folder=rock")
+        .remote_addr(peer())
+        .header("cookie", &ops)
+        .header("origin", DASH)
+        .header("content-type", "application/octet-stream")
+        .body(song.clone())
+        .reply(&h.routes)
+        .await;
+    assert_eq!(r.status(), 200);
+    let doc = body_json(r);
+    assert_eq!(doc["len"], song.len());
+    assert_eq!(doc["ctype"], "application/octet-stream");
+    assert_eq!(doc["path"], "/stats/fowlengine/ops/console/music");
+    assert!(is_upload_path("console/music") && !is_upload_path("console/act/x"));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn require_admin_gates() {
     let h = harness();
@@ -644,7 +853,7 @@ async fn security_headers_on_api_and_page() {
     assert!(r.headers().contains_key("content-security-policy-report-only"));
 }
 
-// ── HTTP stack (warp 0.4 / hyper 1): CORS, WebSockets, body limits ──────
+// â”€â”€ HTTP stack (warp 0.4 / hyper 1): CORS, WebSockets, body limits â”€â”€â”€â”€â”€â”€
 
 #[tokio::test(flavor = "multi_thread")]
 async fn cors_preflight_and_simple_requests() {

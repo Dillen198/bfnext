@@ -60,7 +60,12 @@ use fxhash::{FxHashMap, FxHashSet};
 use log::{debug, error, info, warn};
 use serde_derive::{Deserialize, Serialize};
 use smallvec::{SmallVec, smallvec};
-use std::{cmp::max, fmt, sync::Arc};
+use std::{
+    cmp::max,
+    f64::consts::{FRAC_PI_2, PI},
+    fmt,
+    sync::Arc,
+};
 
 /// CSAR search parties drive out of the enemy objective nearest the downed
 /// pilot, and only when it is this close (straight line)...
@@ -5354,6 +5359,16 @@ impl Db {
                             deployable_name
                         )))
                     }
+                    Err(e) if super::group::failed_in_water(&e) => {
+                        // Landed in (or next to) the sea. No sibling crate
+                        // changes that: tell the player on the crate's marker
+                        // and back off, rather than an error every tick.
+                        Ok(self.c130_crate_blocked(
+                            crate_name,
+                            crate_data,
+                            format!("{deployable_name} can't be set up in water: move the crates onto dry land"),
+                        ))
+                    }
                     Err(e) => {
                         error!(
                             "[C130_CARGO] Failed to spawn group '{}' from crate: {:?}",
@@ -5791,6 +5806,17 @@ impl Db {
         {
             return Ok(());
         }
+        // Killed swimming, or on the water's edge: nowhere dry to get out.
+        let land = Land::singleton(lua)?;
+        if matches!(
+            land.get_surface_type(LuaVec2(pos))?,
+            SurfaceType::Water | SurfaceType::ShallowWater
+        ) {
+            info!(
+                "[DISMOUNT] {template} drowned with the {vehicle_typ}: it died in water"
+            );
+            return Ok(());
+        }
         // Logged because these squads appear with no other trace: a player
         // who sees infantry pop up next to a wreck and asks "where did that
         // come from" is answered by this line and nothing else.
@@ -5799,24 +5825,34 @@ impl Db {
              ({:.0}, {:.0}); {template} gets out ({} dismount group(s) already active)",
             pos.x, pos.y, active
         );
-        let spawnpos = SpawnLoc::AtPos {
-            pos,
-            offset_direction: Vector2::new(heading.sin(), heading.cos()),
-            group_heading: heading,
-        };
         let dk = DeployKind::Dismount { from_group, can_capture: spec.can_capture };
         let spctx = SpawnCtx::new(lua)?;
-        self.add_and_queue_group(
-            &spctx,
-            idx,
-            side,
-            spawnpos,
-            &template,
-            dk,
-            BitFlags::empty(),
-            None,
-        )?;
-        Ok(())
+        // Out ahead of the wreck, or failing that whichever side is dry.
+        let mut res = Ok(());
+        for turn in [0., PI, FRAC_PI_2, -FRAC_PI_2] {
+            let dir = heading + turn;
+            let spawnpos = SpawnLoc::AtPos {
+                pos,
+                offset_direction: Vector2::new(dir.sin(), dir.cos()),
+                group_heading: heading,
+            };
+            res = self
+                .add_and_queue_group(
+                    &spctx,
+                    idx,
+                    side,
+                    spawnpos,
+                    &template,
+                    dk.clone(),
+                    BitFlags::empty(),
+                    None,
+                )
+                .map(|_| ());
+            if res.is_ok() {
+                break;
+            }
+        }
+        res
     }
 }
 

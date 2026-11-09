@@ -170,6 +170,8 @@ They do not cover the DCS runtime (spawns, events, F10 menus, slots), real Disco
 | 7.12 | Special SAM site culling | Fly an aircraft toward a non-LR special SAM site, then away | Site spawns once inside its wake distance, culls again after `cull_after` once no threat is nearby (no longer always-spawned) | |
 | 7.13 | Special SAM site LR wake distance | Approach an SA-10/S-300 special SAM site from `lr_cull_distance`/`special_sam_wake_distance` range | Site spawns/activates at that longer distance, well before the generic `unit_cull_distance` | |
 | 7.14 | Special SAM site short-range wake distance | Approach a Roland/SA-15 special SAM site configured in `special_sam_wake_distance` | Site stays culled until well inside the shorter configured distance, not the generic default | |
+| 7.15 | AI aircraft wake distance | Set `ai_air_wake_distance` below `unit_cull_distance` (e.g. 15000), let an AI CAP orbit 20-30 km from an enemy airbase and a special SAM site | The airbase stays culled until the AI comes inside 15 km (`[WAKE]` names the AI unit); the SAM site still wakes at its usual distance; a player still wakes the airbase from `unit_cull_distance` | |
+| 7.16 | Rear-area culling | Set `rear_area_distance` (e.g. 40000), fly an AI flight over an enemy base with no base of yours within 40 km, then over one near the front | The rear base stays culled (no `[WAKE]`); the front base wakes as usual; a rear special SAM site still wakes; a player flying over the rear base still wakes it | |
 
 ---
 
@@ -416,7 +418,8 @@ Chat commands are `-admin <command>` from an admin UCID; `-admin help` lists the
 | 14.22 | whythreat | `-admin whythreat <objective>` | Why it isn't repairing: threat units, capture timer, logistics, supply, next pulse | |
 | 14.23 | ghosts | `-admin ghosts`, then `-admin purge-ghosts` | Units with no DCS object listed, then marked dead | |
 | 14.24 | supply | `-admin reduce <objective> 50`, `-admin transfer <from> <to>`, `-admin tick`, `-admin deliver` | Supplies drop by half; move between objectives; a logistics tick and a delivery run now | |
-| 14.25 | repair | `-admin repair <airbase>` | One repair step at that airbase | |
+| 14.25 | repair | `-admin repair <airbase>` | The airbase rebuilt: every damaged group, and its logistics buildings counted as standing | |
+| 14.25a | repair all | `-admin repair all` | Every objective rebuilt the same way; the reply counts objectives, groups and buildings | |
 | 14.26 | log-desc | `-admin log-desc` in a slot | getDesc of your aircraft written to the log | |
 | 14.27 | shutdown confirm | `-admin shutdown` | Asks for `confirm` within 30 s; nothing else happens (see 22.4) | |
 

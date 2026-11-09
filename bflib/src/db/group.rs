@@ -313,6 +313,15 @@ fn position_sweep_chunk(total: usize) -> usize {
     total.div_ceil(16).clamp(1, POSITION_SWEEP_MAX)
 }
 
+/// What placing a group says when one of its units would stand in water.
+pub(crate) const IN_WATER: &str = "you can't spawn this unit in water";
+
+/// Whether a spawn failed only because the spot is water: a place to say so,
+/// not an error to log (a crate dropped in the sea, a vehicle killed on a
+/// bridge or a beach).
+pub(crate) fn failed_in_water(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| c.to_string() == IN_WATER)
+}
 impl Db {
     pub fn group(&self, id: &GroupId) -> Result<&SpawnedGroup> {
         group!(self, id)
@@ -1067,7 +1076,7 @@ impl Db {
                 match land.get_surface_type(LuaVec2(pos.position))? {
                     SurfaceType::Land | SurfaceType::Road | SurfaceType::Runway => (),
                     SurfaceType::ShallowWater | SurfaceType::Water => {
-                        bail!("you can't spawn this unit in water")
+                        bail!(IN_WATER)
                     }
                 }
             }
@@ -2375,6 +2384,15 @@ impl Db {
             };
             let instance = match instance {
                 Ok(i) => i,
+                // DCS failed to answer, which says nothing about the unit.
+                // On 6 Nov the mission's API broke (`getLife` nil) and this
+                // arm killed off every unit it read. Stop the sweep instead:
+                // the units are read again on the next pass.
+                Err(e) if !dcso3::is_gone(&e) => {
+                    return Err(e.context(format_compact!(
+                        "reading unit {uid}, not treating it as dead"
+                    )));
+                }
                 Err(e) => {
                     // Gone from DCS without a dead event (DCS skips some).
                     // The caller handles it as a kill, so this is routine,
@@ -2532,5 +2550,22 @@ mod tests {
         assert!(
             plan_road_drive(Vector2::new(0., 0.), Vector2::new(1., 1.), &[]).is_none()
         );
+    }
+}
+
+#[cfg(test)]
+mod water_tests {
+    use super::*;
+    use anyhow::anyhow;
+
+    #[test]
+    fn a_spawn_in_water_is_told_apart() {
+        // the way the C-130 crate path sees it: wrapped by the placement step
+        let e = Err::<(), _>(anyhow!(IN_WATER))
+            .context("placing group DEPSA15-22698")
+            .unwrap_err();
+        assert!(failed_in_water(&e));
+        assert!(!failed_in_water(&anyhow!("no such template DEPSA15")));
+        assert!(!failed_in_water(&anyhow!("{IN_WATER} or on a roof")));
     }
 }

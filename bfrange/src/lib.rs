@@ -658,6 +658,11 @@ fn bfrange(lua: &Lua) -> LuaResult<LuaTable> {
         ctx.write_dir = PathBuf::from(wd.as_str());
         bg::init(ctx.write_dir.clone());
     }
+    // Those threads run our code until the process ends: DCS must not unload
+    // the DLL under them when the Lua state closes.
+    if let Err(e) = fowlbg::pin_module() {
+        warn!("could not pin bfrange.dll, DCS may crash unloading it: {e:?}");
+    }
     dcso3::create_root_module(lua, init_hooks, init_miz)
 }
 

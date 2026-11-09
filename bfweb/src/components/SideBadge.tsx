@@ -1,3 +1,7 @@
+import { useDashLook } from '../lib/look'
+import { campaign } from '../config/campaign'
+import '../pages/levant/killfeed.css'
+
 interface Props { side: string; size?: 'sm' | 'xs' }
 
 const cfg: Record<string, { label: string; dot: string; text: string; bg: string }> = {
@@ -7,6 +11,13 @@ const cfg: Record<string, { label: string; dot: string; text: string; bg: string
 }
 
 export default function SideBadge({ side, size = 'sm' }: Props) {
+  const look = useDashLook()
+  if (look.profile) {
+    // Levant Ablaze: the side's name on a strip of its own tape.
+    const tone = side === 'Blue' ? 'b' : side === 'Red' ? 'r' : 'n'
+    const name = side === 'Blue' ? campaign.blueLabel : side === 'Red' ? campaign.redLabel : 'Neutral'
+    return <span className={`ds-tape sm ${tone} kf-side${size === 'xs' ? ' xs' : ''}`}>{name}</span>
+  }
   const c = cfg[side] ?? cfg.Neutral
   const px = size === 'xs' ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 py-0.5 text-[10px]'
   return (

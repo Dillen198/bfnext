@@ -1146,6 +1146,21 @@ pub(crate) fn call_bomber_in(
 ) -> Result<()> {
     let mut perf_guard = Perf::get_mut();
     let perf = Arc::make_mut(&mut perf_guard.inner);
+    // The menu lists the JTACs there were when it was built. One that has
+    // since gone (a player JTAC left its slot, a drone was shot down) is
+    // the player's to hear about, not an error.
+    if ctx.jtac.get(&arg.fst).is_err() {
+        tell(
+            ctx,
+            10,
+            &arg.snd,
+            format_compact!(
+                "JTAC {} is no longer on station, pick another from the menu",
+                arg.fst
+            ),
+        );
+        return Ok(());
+    }
     let spctx = SpawnCtx::new(lua)?;
     let jtac = get_jtac(&ctx.jtac, &arg.fst)?;
     let (near, name) = change_info(jtac, &ctx.db, &arg.snd);

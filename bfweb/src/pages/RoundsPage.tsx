@@ -5,7 +5,7 @@
 // ?round=<id> selects a round, so a round report can be linked.
 
 import React, { useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine,
@@ -15,11 +15,24 @@ import { campaign } from '../config/campaign'
 import QueryState from '../components/QueryState'
 import PageHeader from '../components/PageHeader'
 import { fmtHours } from '../lib/format'
+import { useDashLook } from '../lib/look'
+import { Card as LvCard, Tape } from '../components/Levant'
 import { Award } from '@icons'
+import './levant/rounds.css'
 
 const BLUE = 'var(--blue)'
 const RED = 'var(--red)'
 const NEUTRAL = '#64748b'
+
+/** The colours and names a chart keys its sides with, in each look. */
+interface Sides { blue: string; red: string; neutral: string; blueName: string; redName: string }
+const PLAIN: Sides = { blue: BLUE, red: RED, neutral: NEUTRAL, blueName: 'Blue', redName: 'Red' }
+const DESERT: Sides = {
+  blue: campaign.blueColor, red: campaign.redColor, neutral: 'var(--sand-dim)',
+  blueName: campaign.blueLabel, redName: campaign.redLabel,
+}
+/** The neutral band's fill in the desert look: the tape's dark coyote. */
+const DESERT_NEUTRAL_FILL = '#4a3c2b'
 
 const label: React.CSSProperties = {
   fontSize: '0.58rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase',
@@ -98,27 +111,48 @@ function Legend({ items }: { items: { color: string; name: string; line?: boolea
 interface TipProps<T> { active?: boolean; payload?: ReadonlyArray<{ payload?: T }> }
 type Row = RoundReportBucket & { label: string }
 
-function TerritoryTip({ active, payload }: TipProps<Row>) {
+type DesertTip<T> = TipProps<T> & { desert?: boolean }
+
+function TerritoryTip({ active, payload, desert }: DesertTip<Row>) {
   const p = payload?.[0]?.payload
   if (!active || !p) return null
-  return <Tip title={p.label} rows={[
-    { color: BLUE, value: String(p.blue_held), name: 'Blue held' },
-    { color: RED, value: String(p.red_held), name: 'Red held' },
-    ...(p.neutral_held ? [{ color: NEUTRAL, value: String(p.neutral_held), name: 'neutral' }] : []),
-  ]} />
+  const k = desert ? DESERT : PLAIN
+  const rows = [
+    { color: k.blue, value: String(p.blue_held), name: `${k.blueName} held` },
+    { color: k.red, value: String(p.red_held), name: `${k.redName} held` },
+    ...(p.neutral_held ? [{ color: k.neutral, value: String(p.neutral_held), name: 'neutral' }] : []),
+  ]
+  return desert ? <LvTip title={p.label} rows={rows} /> : <Tip title={p.label} rows={rows} />
 }
 
-function ExchangeTip({ active, payload }: TipProps<Row>) {
+function ExchangeTip({ active, payload, desert }: DesertTip<Row>) {
   const p = payload?.[0]?.payload
   if (!active || !p) return null
-  return <Tip title={p.label} rows={[
-    { color: BLUE, value: `${p.blue_air} A/A · ${p.blue_ground} A/G`, name: 'by Blue' },
-    { color: RED, value: `${p.red_air} A/A · ${p.red_ground} A/G`, name: 'by Red' },
-  ]} />
+  const k = desert ? DESERT : PLAIN
+  const rows = [
+    { color: k.blue, value: `${p.blue_air} A/A · ${p.blue_ground} A/G`, name: `by ${k.blueName}` },
+    { color: k.red, value: `${p.red_air} A/A · ${p.red_ground} A/G`, name: `by ${k.redName}` },
+  ]
+  return desert ? <LvTip title={p.label} rows={rows} /> : <Tip title={p.label} rows={rows} />
 }
+
+/** The report's buckets, labelled for the x axis. */
+const territoryData = (rep: RoundReport): Row[] => rep.buckets.map(b => ({ ...b, label: bucketLabel(b.t, rep.bucket_secs) }))
+
+/** Blue's kills above the line, Red's below: the exchange reads as which side of zero is bigger. */
+const exchangeData = (rep: RoundReport) => rep.buckets.map(b => ({
+  ...b,
+  label: bucketLabel(b.t, rep.bucket_secs),
+  blue: b.blue_air + b.blue_ground,
+  red: -(b.red_air + b.red_ground),
+}))
+
+const exchangeTotals = (rep: RoundReport) => rep.buckets.reduce((a, b) => ({
+  blue: a.blue + b.blue_air + b.blue_ground, red: a.red + b.red_air + b.red_ground,
+}), { blue: 0, red: 0 })
 
 function Territory({ rep }: { rep: RoundReport }) {
-  const data: Row[] = rep.buckets.map(b => ({ ...b, label: bucketLabel(b.t, rep.bucket_secs) }))
+  const data: Row[] = territoryData(rep)
   const last = rep.buckets[rep.buckets.length - 1]
   return (
     <Card title="Territory over time" note={last ? `${last.blue_held} Blue · ${last.red_held} Red of ${rep.objectives}` : undefined}>
@@ -142,17 +176,8 @@ function Territory({ rep }: { rep: RoundReport }) {
 }
 
 function Exchange({ rep }: { rep: RoundReport }) {
-  // Blue's kills above the line, Red's below: the exchange reads as which
-  // side of zero is bigger.
-  const data = rep.buckets.map(b => ({
-    ...b,
-    label: bucketLabel(b.t, rep.bucket_secs),
-    blue: b.blue_air + b.blue_ground,
-    red: -(b.red_air + b.red_ground),
-  }))
-  const tot = rep.buckets.reduce((a, b) => ({
-    blue: a.blue + b.blue_air + b.blue_ground, red: a.red + b.red_air + b.red_ground,
-  }), { blue: 0, red: 0 })
+  const data = exchangeData(rep)
+  const tot = exchangeTotals(rep)
   return (
     <Card title="Kill exchange" note={`${tot.blue} by Blue · ${tot.red} by Red`}>
       <ResponsiveContainer width="100%" height={190}>
@@ -249,13 +274,9 @@ function Pilots({ s }: { s: RoundSummary }) {
 
 // ── Report ────────────────────────────────────────────────────────────────────
 
-function Report({ round }: { round: Round }) {
-  const summary = useQuery({ queryKey: ['round-summary', round.id], queryFn: () => api.roundSummary(round.id) })
-  const report = useQuery({ queryKey: ['round-report', round.id], queryFn: () => api.roundReport(round.id) })
-  const s = summary.data
-  const rep = report.data
-
-  const tiles: [string, string | number][] = s ? [
+/** The round's headline numbers. */
+function summaryTiles(s: RoundSummary | null | undefined): [string, string | number][] {
+  return s ? [
     ['Pilots', s.pilots],
     ['Flight time', fmtHours(s.hours)],
     ['Air kills', s.air_kills],
@@ -263,8 +284,11 @@ function Report({ round }: { round: Round }) {
     ['Captures', s.captures],
     ['Supply runs', s.supply_runs],
   ] : []
-  // Who led each line of work, from a bfdb new enough to say.
-  const leaders = s?.leaders
+}
+
+/** Who led each line of work, from a bfdb new enough to say. */
+function summaryLeaders(s: RoundSummary | null | undefined) {
+  return s?.leaders
     ? ([
         ['Top ace', s.leaders.air, 'air kills'],
         ['Top striker', s.leaders.ground, 'ground kills'],
@@ -272,6 +296,19 @@ function Report({ round }: { round: Round }) {
         ['Top logistician', s.leaders.logistics, 'logistics jobs'],
       ] as const).flatMap(([n, l, unit]) => (l ? [[n, l, unit] as const] : []))
     : []
+}
+
+function Report({ round }: { round: Round }) {
+  const look = useDashLook()
+  const summary = useQuery({ queryKey: ['round-summary', round.id], queryFn: () => api.roundSummary(round.id) })
+  const report = useQuery({ queryKey: ['round-report', round.id], queryFn: () => api.roundReport(round.id) })
+  const s = summary.data
+  const rep = report.data
+
+  const tiles = summaryTiles(s)
+  const leaders = summaryLeaders(s)
+
+  if (look.profile) return <LvReport round={round} s={s} report={report} tiles={tiles} leaders={leaders} />
 
   return (
     <div className="space-y-4" style={{ minWidth: 0 }}>
@@ -338,6 +375,261 @@ function Report({ round }: { round: Round }) {
   )
 }
 
+// ── Levant Ablaze ─────────────────────────────────────────────────────────────
+// The same report drawn in the campaign's desert look (levant/rounds.css):
+// charred cards with their names on tape, numbers in heavy Oswald, the
+// winner in its side's colour. The plain (olive) look above is unchanged.
+
+const tone = (w: string | null | undefined): 'b' | 'r' | 'n' => (w === 'Blue' ? 'b' : w === 'Red' ? 'r' : 'n')
+const sideName = (w: string | null | undefined) => (w === 'Blue' ? campaign.blueLabel : w === 'Red' ? campaign.redLabel : 'No winner')
+const lvTick = { fill: 'var(--sand-dim)', fontSize: 11 }
+
+function Live() {
+  return <span className="lv-live"><i />Live</span>
+}
+
+function LvTip({ title, rows }: { title: string; rows: { color: string; value: string; name: string }[] }) {
+  return (
+    <div className="rd-tip">
+      <span className="ds-k">{title}</span>
+      {rows.map(r => (
+        <div key={r.name} className="rd-tip-row">
+          <i style={{ background: r.color }} />
+          <b>{r.value}</b>
+          <span>{r.name}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function LvLegend({ items }: { items: { color: string; name: string }[] }) {
+  return (
+    <div className="rd-legend">
+      {items.map(i => <span key={i.name}><i style={{ background: i.color }} />{i.name}</span>)}
+    </div>
+  )
+}
+
+/** One side's number above a chart, in its colour. */
+function SideSum({ side, v, unit }: { side: 'b' | 'r'; v: number; unit: string }) {
+  return (
+    <span className={`rd-sum-i ${side}`}>
+      <b>{v}</b>
+      <span>{side === 'b' ? campaign.blueLabel : campaign.redLabel}{unit ? ` ${unit}` : ''}</span>
+    </span>
+  )
+}
+
+function LvRoundRow({ r, on, onPick }: { r: Round; on: boolean; onPick: () => void }) {
+  const t = tone(r.winner)
+  return (
+    <button type="button" className={`rd-row ${r.active ? 'live' : t}${on ? ' on' : ''}`} onClick={onPick} aria-pressed={on}>
+      <span className="rd-no">{roundNo(r)}</span>
+      <span className="rd-row-main">
+        <span className="rd-row-top">
+          <strong>{r.scenario || `Round ${roundNo(r)}`}</strong>
+          {r.active ? <Live /> : <Tape tone={t} className="sm">{sideName(r.winner)}</Tape>}
+        </span>
+        <span className="rd-dates">{fmtDate(r.start)} → {r.end ? fmtDate(r.end) : 'now'} · {duration(r)}</span>
+      </span>
+    </button>
+  )
+}
+
+function LvTerritory({ rep }: { rep: RoundReport }) {
+  const data = territoryData(rep)
+  const last = rep.buckets[rep.buckets.length - 1]
+  return (
+    <LvCard tape="Territory over time" bodyClass="rd-chart">
+      {last && (
+        <div className="rd-sum">
+          <SideSum side="b" v={last.blue_held} unit="" />
+          <SideSum side="r" v={last.red_held} unit="" />
+          <span className="rd-sum-of">of {rep.objectives} objectives</span>
+        </div>
+      )}
+      <ResponsiveContainer width="100%" height={200}>
+        <AreaChart data={data} margin={{ left: -14, right: 6, top: 6, bottom: 0 }}>
+          <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 4" />
+          <XAxis dataKey="label" tick={lvTick} axisLine={{ stroke: 'var(--border-light)' }} tickLine={false} minTickGap={28} />
+          <YAxis tick={lvTick} axisLine={false} tickLine={false} allowDecimals={false} width={40} domain={[0, rep.objectives || 'auto']} />
+          <Tooltip cursor={{ stroke: 'var(--sand-dim)', strokeWidth: 1, strokeDasharray: '3 3' }} content={<TerritoryTip desert />} />
+          <Area type="stepAfter" dataKey="blue_held" stackId="t" stroke={DESERT.blue} strokeWidth={2} fill={DESERT.blue} fillOpacity={0.2} isAnimationActive={false} />
+          <Area type="stepAfter" dataKey="red_held" stackId="t" stroke={DESERT.red} strokeWidth={2} fill={DESERT.red} fillOpacity={0.2} isAnimationActive={false} />
+          <Area type="stepAfter" dataKey="neutral_held" stackId="t" stroke={DESERT.neutral} strokeWidth={1} fill={DESERT_NEUTRAL_FILL} fillOpacity={0.5} isAnimationActive={false} />
+        </AreaChart>
+      </ResponsiveContainer>
+      <LvLegend items={[{ color: DESERT.blue, name: campaign.blueLabel }, { color: DESERT.red, name: campaign.redLabel }, { color: DESERT_NEUTRAL_FILL, name: 'Neutral' }]} />
+      <p className="rd-fine">Rebuilt from the capture log; before a base&apos;s first recorded capture it is counted as the losing side&apos;s.</p>
+    </LvCard>
+  )
+}
+
+function LvExchange({ rep }: { rep: RoundReport }) {
+  const data = exchangeData(rep)
+  const tot = exchangeTotals(rep)
+  return (
+    <LvCard tape="Kill exchange" bodyClass="rd-chart">
+      <div className="rd-sum">
+        <SideSum side="b" v={tot.blue} unit="kills" />
+        <SideSum side="r" v={tot.red} unit="kills" />
+      </div>
+      <ResponsiveContainer width="100%" height={200}>
+        <BarChart data={data} stackOffset="sign" margin={{ left: -14, right: 6, top: 6, bottom: 0 }} barCategoryGap={2}>
+          <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 4" />
+          <XAxis dataKey="label" tick={lvTick} axisLine={false} tickLine={false} minTickGap={28} />
+          <YAxis tick={lvTick} axisLine={false} tickLine={false} allowDecimals={false} width={40} tickFormatter={(v: number) => String(Math.abs(v))} />
+          <ReferenceLine y={0} stroke="var(--sand-dim)" />
+          <Tooltip cursor={{ fill: 'rgba(216,199,160,0.06)' }} content={<ExchangeTip desert />} />
+          <Bar dataKey="blue" stackId="k" fill={DESERT.blue} maxBarSize={24} isAnimationActive={false} />
+          <Bar dataKey="red" stackId="k" fill={DESERT.red} maxBarSize={24} isAnimationActive={false} />
+        </BarChart>
+      </ResponsiveContainer>
+      <LvLegend items={[{ color: DESERT.blue, name: `Kills by ${campaign.blueLabel} (up)` }, { color: DESERT.red, name: `Kills by ${campaign.redLabel} (down)` }]} />
+    </LvCard>
+  )
+}
+
+function LvContested({ rep }: { rep: RoundReport }) {
+  const max = Math.max(1, ...rep.contested.map(c => c.captures))
+  return (
+    <LvCard tape="Most contested" bodyClass="rd-cont-body">
+      {rep.contested.length === 0 ? (
+        <p className="lv-empty">No objective changed hands.</p>
+      ) : (
+        <>
+          <span className="ds-k rd-cont-k">Captures</span>
+          <ol className="rd-cont">
+            {rep.contested.map((c, i) => (
+              <li key={c.name} className={i === 0 ? 'first' : undefined}>
+                <span className="nm" title={c.name}>{c.name}</span>
+                <span className="bar"><i style={{ width: `${(c.captures / max) * 100}%` }} /></span>
+                <b>{c.captures}</b>
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
+    </LvCard>
+  )
+}
+
+function LvPilots({ s }: { s: RoundSummary }) {
+  const mvp = s.top[0]
+  return (
+    <LvCard tape="Who carried it" tone="rust" bodyClass="rd-pilots">
+      {mvp && (
+        <div className="rd-mvp">
+          <div className="rd-mvp-id">
+            <Tape tone="rust" className="sm">MVP</Tape>
+            <Link className="rd-mvp-name" to={`/pilots?ucid=${mvp.ucid}`}>{mvp.name || mvp.ucid}</Link>
+          </div>
+          <dl className="rd-mvp-stats">
+            {([['A/A', mvp.air_kills], ['A/G', mvp.ground_kills], ['Captures', mvp.captures], ['Logistics', mvp.logistics], ['Flight time', fmtHours(mvp.hours)]] as const).map(([n, v]) => (
+              <div key={n}><dt>{n}</dt><dd>{v}</dd></div>
+            ))}
+          </dl>
+        </div>
+      )}
+      <div className="rd-table-wrap">
+        <table className="rd-table">
+          <thead><tr>
+            <th className="l">#</th>
+            <th className="l">Pilot</th>
+            <th>A/A</th><th>A/G</th><th>Cap</th><th>Logi</th><th>Deaths</th><th>Hours</th>
+          </tr></thead>
+          <tbody>
+            {s.top.map((p, i) => (
+              <tr key={p.ucid} className={i === 0 ? 'first' : undefined}>
+                <td className="l rk">{i + 1}</td>
+                <td className="l who"><Link to={`/pilots?ucid=${p.ucid}`}>{p.name || p.ucid}</Link></td>
+                <td>{p.air_kills}</td>
+                <td>{p.ground_kills}</td>
+                <td>{p.captures}</td>
+                <td>{p.logistics}</td>
+                <td>{p.deaths}</td>
+                <td>{fmtHours(p.hours)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="rd-fine">Kills, captures and logistics all count.</p>
+    </LvCard>
+  )
+}
+
+function LvReport({ round, s, report, tiles, leaders }: {
+  round: Round
+  s?: RoundSummary | null
+  report: UseQueryResult<RoundReport | null>
+  tiles: ReturnType<typeof summaryTiles>
+  leaders: ReturnType<typeof summaryLeaders>
+}) {
+  const rep = report.data
+  const t = tone(round.winner)
+  return (
+    <div className="rd-report">
+      <LvCard
+        tape={<>Round {roundNo(round)}{round.instance ? ` · ${round.instance}` : ''}</>}
+        tone={round.active ? 'rust' : t === 'n' ? undefined : t}
+        right={round.active ? <Live /> : undefined}
+        className={`rd-hero${round.active ? ' live' : ''}`}>
+        <div className="rd-hero-top">
+          <div className="rd-hero-id">
+            <span className="ds-k">Scenario</span>
+            <h2 className="rd-hero-name">{round.scenario || `Round ${roundNo(round)}`}</h2>
+            <div className="rd-hero-dates">
+              <b>{fmtDate(round.start)}</b> → <b>{round.end ? fmtDate(round.end) : 'now'}</b>
+              <span> · {duration(round)}</span>
+            </div>
+          </div>
+          <div className={`rd-hero-result ${round.active ? 'live' : t}`}>
+            <span className="ds-k">Result</span>
+            <strong>{round.active ? 'In progress' : sideName(round.winner)}</strong>
+            {!round.active && round.winner && <span className="rd-won">won the round</span>}
+          </div>
+        </div>
+        {tiles.length > 0 && (
+          <dl className="rd-readouts">
+            {tiles.map(([n, v]) => (
+              <div key={n} className="lv-readout"><dt className="ds-k">{n}</dt><dd className="lv-v">{v}</dd></div>
+            ))}
+          </dl>
+        )}
+        {leaders.length > 0 && (
+          <dl className="rd-leaders">
+            {leaders.map(([n, l, unit]) => (
+              <div key={n}>
+                <dt className="ds-k">{n}</dt>
+                <dd><strong title={l.name}>{l.name}</strong><span className="lv-sub">{l.value} {unit}</span></dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </LvCard>
+
+      <QueryState what="round report" isLoading={report.isLoading} isError={report.isError} error={report.error} onRetry={report.refetch} />
+      {rep && (
+        <>
+          <div className="rd-grid">
+            <LvTerritory rep={rep} />
+            <LvExchange rep={rep} />
+          </div>
+          <div className="rd-grid start">
+            {s && s.top.length > 0 ? <LvPilots s={s} /> : <div />}
+            <LvContested rep={rep} />
+          </div>
+        </>
+      )}
+      {!report.isLoading && !rep && !report.isError && (
+        <p className="lv-empty">This stats server does not serve round reports yet; it needs the updated bfdb.</p>
+      )}
+    </div>
+  )
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function RoundsPage() {
@@ -347,6 +639,29 @@ export default function RoundsPage() {
   const wanted = Number(params.get('round'))
   const selected = rounds.find(r => r.id === wanted) ?? rounds.find(r => r.active) ?? rounds[0]
   const pick = (id: number) => setParams(p => { p.set('round', String(id)); return p }, { replace: true })
+  const look = useDashLook()
+
+  if (look.profile) {
+    return (
+      <div className="flex flex-col flex-1 overflow-hidden">
+        <PageHeader art="flanker" title="ROUNDS" sub={`${rounds.length} round${rounds.length === 1 ? '' : 's'} on this server`} icon={Award} />
+        <div className="flex-1 overflow-auto rd-page">
+          <QueryState isLoading={q.isLoading} isError={q.isError} error={q.error} isEmpty={rounds.length === 0} what="rounds" onRetry={q.refetch} />
+          {selected && (
+            <div className="rd-layout">
+              {/* Round list: a column beside the report on wide screens, above it on narrow ones. */}
+              <LvCard tape={<>All rounds · {rounds.length}</>} className="rd-list-card" bodyClass="rd-list">
+                {rounds.map(r => <LvRoundRow key={r.id} r={r} on={r.id === selected.id} onPick={() => pick(r.id)} />)}
+              </LvCard>
+              <div className="rd-main">
+                <Report key={selected.id} round={selected} />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">

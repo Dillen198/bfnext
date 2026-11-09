@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState } from 'react'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import { Server, Activity, Config, Terminal, Download, Shield, FolderCog, Save, Rocket, Layers, Play } from '@icons'
+import { Admin, Server, Activity, Config, Terminal, Download, Shield, FolderCog, Save, Rocket, Layers, Play } from '@icons'
 import { mgr, inTauri, type ServerView } from './tauri'
 import { Dot, Pill, Btn, Note, ServerTag } from './ui'
 import logo from './logo.png'
@@ -21,6 +21,7 @@ import { OpsTargetContext } from '../context/OpsTarget'
 
 // The dashboard's own OPS page, unchanged, over the local transport.
 const OpsPage = lazy(() => import('../pages/OpsPage'))
+const BotConsolePage = lazy(() => import('../pages/BotConsolePage'))
 
 // Its queries are keyed ['ops', ...] with no server in them: each box gets a
 // cache of its own, so switching boxes never shows the last one's data.
@@ -34,13 +35,14 @@ function opsClient(id: string): QueryClient {
   return c
 }
 
-type Tab = 'servers' | 'dcs' | 'ops' | 'logs' | 'backup' | 'botconfig' | 'overview' | 'setup' | 'newbox' | 'settings'
+type Tab = 'servers' | 'dcs' | 'ops' | 'bot' | 'logs' | 'backup' | 'botconfig' | 'overview' | 'setup' | 'newbox' | 'settings'
 
 // The first group acts on the server picked at the top; the second is this PC.
 const SERVER_TABS: { key: Tab; label: string; icon: typeof Server }[] = [
   { key: 'servers', label: 'ALL SERVERS', icon: Layers },
   { key: 'dcs', label: 'DCS CONTROL', icon: Play },
   { key: 'ops', label: 'SERVER OPS', icon: Server },
+  { key: 'bot', label: 'SERVER BOT', icon: Admin },
   { key: 'logs', label: 'LIVE LOGS', icon: Terminal },
   { key: 'backup', label: 'BACKUP', icon: Save },
   { key: 'botconfig', label: 'BOT CONFIG', icon: FolderCog },
@@ -116,6 +118,33 @@ export default function ManagerApp() {
       </button>
     )
   }
+  // SERVER OPS and SERVER BOT: dashboard pages that talk to the picked box's
+  // bot, each box with its own query cache, so switching never mixes them.
+  const remotePage = (page: React.ReactNode) => (
+            !server ? noServer : server.problem ? (
+              <div className="p-6" style={{ fontSize: '0.74rem', lineHeight: 1.6 }}>
+                <div style={{ color: AMBER, marginBottom: 8 }}>This view can't reach {server.name} yet.</div>
+                <div style={{ color: 'var(--text-muted)' }}>{server.problem}</div>
+                <div style={{ color: 'var(--text-dim)', marginTop: 8 }}>
+                  {server.local
+                    ? <>It talks to the FowlEngine plugin through DCSServerBot's WebService, with the key in fowlengine.yaml
+                        (<span style={MONO}>ops_api.api_key</span>, or <span style={MONO}>bfdb.dcsserverbot_api_key</span>).</>
+                    : <>Edit it under ALL SERVERS.</>}
+                </div>
+              </div>
+            ) : (
+              <OpsTargetContext.Provider value={(state?.servers.length ?? 0) > 1 || !server.local ? server.name : null}>
+                <QueryClientProvider client={opsClient(server.id)}>
+                  <ErrorBoundary key={server.id}>
+                    <Suspense fallback={<div className="p-6" style={DIM}>Loading…</div>}>
+                      {page}
+                    </Suspense>
+                  </ErrorBoundary>
+                </QueryClientProvider>
+              </OpsTargetContext.Provider>
+            )
+  )
+
   const noServer = (
     <div className="p-6"><Note tone="warn">No server box to act on yet. Add one under ALL SERVERS{controller ? '' : ', or finish Setup for this PC'}.</Note></div>
   )
@@ -205,30 +234,8 @@ export default function ManagerApp() {
               </Note>
             </div>
           ) : <BotConfig onDirtyChange={setCfgDirty} />)}
-          {current === 'ops' && (
-            !server ? noServer : server.problem ? (
-              <div className="p-6" style={{ fontSize: '0.74rem', lineHeight: 1.6 }}>
-                <div style={{ color: AMBER, marginBottom: 8 }}>The Server OPS view can't reach {server.name} yet.</div>
-                <div style={{ color: 'var(--text-muted)' }}>{server.problem}</div>
-                <div style={{ color: 'var(--text-dim)', marginTop: 8 }}>
-                  {server.local
-                    ? <>It talks to the FowlEngine plugin through DCSServerBot's WebService, with the key in fowlengine.yaml
-                        (<span style={MONO}>ops_api.api_key</span>, or <span style={MONO}>bfdb.dcsserverbot_api_key</span>).</>
-                    : <>Edit it under ALL SERVERS.</>}
-                </div>
-              </div>
-            ) : (
-              <OpsTargetContext.Provider value={(state?.servers.length ?? 0) > 1 || !server.local ? server.name : null}>
-                <QueryClientProvider client={opsClient(server.id)}>
-                  <ErrorBoundary key={server.id}>
-                    <Suspense fallback={<div className="p-6" style={DIM}>Loading…</div>}>
-                      <OpsPage />
-                    </Suspense>
-                  </ErrorBoundary>
-                </QueryClientProvider>
-              </OpsTargetContext.Provider>
-            )
-          )}
+          {current === 'ops' && remotePage(<OpsPage />)}
+          {current === 'bot' && remotePage(<BotConsolePage />)}
           {current === 'overview' && <Overview state={state} onSetup={() => setTab('setup')} />}
           {current === 'setup' && state && <Setup state={state} onDone={() => setTab('overview')} onRestore={() => setTab('backup')}
                                                   onNewBox={() => setTab('newbox')} onController={() => setTab('servers')} />}

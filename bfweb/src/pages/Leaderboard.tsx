@@ -1,12 +1,16 @@
+import './levant/rankings.css'
 import React from 'react'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 import QueryState from '../components/QueryState'
 import { AirframeUsage, PointsEconomy } from '../components/CampaignStats'
 import { useState, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { api, roundNo, type Pilot, type Squadron, type XpRow } from '../api'
 import { useRound } from '../context/RoundContext'
 import PageHeader from '../components/PageHeader'
+import { Card, Tape } from '../components/Levant'
+import { campaign } from '../config/campaign'
+import { useDashLook } from '../lib/look'
 import {
   Rankings,
   Award,
@@ -63,6 +67,32 @@ function fmtVal(col: SortKey, p: Pilot): string {
   const v = p[col as keyof Pilot]
   return typeof v === 'number' ? v.toLocaleString() : String(v ?? 0)
 }
+function getSortVal(p: Pilot, key: SortKey): number {
+  if (key === 'kd')         return computeKd(p)
+  if (key === 'score')      return computeScore(p)
+  if (key === 'logistics')  return computeLogistics(p)
+  const v = p[key as keyof Pilot]
+  return typeof v === 'number' ? v : 0
+}
+/** The tooltip on a pilot's rank insignia: the rank and how far to the next. */
+function rankTip(p: Pilot, title: string): string {
+  const nextAt = nextRankAt(computeScore(p))
+  return `${title}${nextAt !== null ? ` — ${nextAt - Math.round(computeScore(p))} score to next rank` : ' — top of the ladder'}`
+}
+const pilotHref = (ucid: string) => `/pilots?ucid=${encodeURIComponent(ucid)}`
+const squadronHref = (tag: string) => `/squadrons?tag=${encodeURIComponent(tag)}`
+const squadronRows = (d?: Squadron[]) => [...(d ?? [])].sort((a, b) => b.xp - a.xp)
+const xpMax = (rows: XpRow[]) => Math.max(1, ...rows.map(r => r.xp))
+
+/** The readouts on a podium card; `key` marks the one the selected tab ranks by. */
+const POD_STATS: { label: string; key: SortKey; color: string; value: (p: Pilot) => string | number }[] = [
+  { label: 'A2A',   key: 'air_kills',    color: '#60a5fa', value: p => p.air_kills },
+  { label: 'A2G',   key: 'ground_kills', color: '#fb923c', value: p => p.ground_kills },
+  { label: 'Logi',  key: 'logistics',    color: '#34d399', value: computeLogistics },
+  { label: 'K/D',   key: 'kd',           color: '#4ade80', value: fmtKd },
+  { label: 'Hours', key: 'hours',        color: '#a78bfa', value: p => `${p.hours.toFixed(1)}h` },
+  { label: 'Score', key: 'score',        color: '#22d3ee', value: p => Math.round(computeScore(p)) },
+]
 
 const MEDAL_COLOR = ['#fbbf24', '#94a3b8', '#d97706']
 
@@ -106,7 +136,7 @@ const thS: React.CSSProperties = { padding: '10px 14px', textAlign: 'left', font
 const tdS: React.CSSProperties = { padding: '9px 14px', fontSize: '0.75rem', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }
 
 function SquadronTable({ q, onOpen }: { q: UseQueryResult<Squadron[]>; onOpen: (tag: string) => void }) {
-  const rows = [...(q.data ?? [])].sort((a, b) => b.xp - a.xp)
+  const rows = squadronRows(q.data)
   return (
     <div className="vs-card overflow-hidden">
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -135,7 +165,7 @@ function SquadronTable({ q, onOpen }: { q: UseQueryResult<Squadron[]>; onOpen: (
 
 function XpTable({ q, onOpen }: { q: UseQueryResult<XpRow[]>; onOpen: (ucid: string) => void }) {
   const rows = q.data ?? []
-  const max = Math.max(1, ...rows.map(r => r.xp))
+  const max = xpMax(rows)
   return (
     <div className="vs-card overflow-hidden">
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -167,12 +197,174 @@ function XpTable({ q, onOpen }: { q: UseQueryResult<XpRow[]>; onOpen: (ucid: str
   )
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Rankings in Levant Ablaze's look: square segments for the tabs and filters,
+// the top three as charred cards with their placing in heavy numerals (the
+// leader in rust), and the tables as dense charred boards with each row's
+// side on its left edge and the column it is sorted by in rust. Styles:
+// levant/rankings.css. The plain (Red Storm) look keeps the JSX above.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const VIEW_TABS = [['squadrons', 'Squadrons', Award], ['xp', 'XP', Rankings]] as const
+
+const sideTone = (s?: string | null): 'b' | 'r' | 'n' => (s === 'Blue' ? 'b' : s === 'Red' ? 'r' : 'n')
+const sideName = (s?: string | null) => (s === 'Blue' ? campaign.blueLabel : s === 'Red' ? campaign.redLabel : 'No side')
+
+/** The score formula as its terms, for the desert strip. */
+const SCORE_TERMS: readonly (readonly [string, number])[] = [
+  ['Air', 3], ['Ground', 2], ['Cap', 5], ['FARP', 4], ['Deploy', 2],
+  ['Repair', 1], ['Supply', 1], ['Troop', 0.5], ['Action', 1], ['Death', -2],
+]
+
+function DTab({ active, onClick, icon: Icon, label, className = '' }: {
+  active: boolean; onClick: () => void; icon: IconComponent; label: string; className?: string
+}) {
+  return (
+    <button type="button" className={`vs-tab lb-tab ${className}`} aria-pressed={active} onClick={onClick}>
+      <Icon size={14} strokeWidth={1.75} />
+      <span>{label}</span>
+    </button>
+  )
+}
+
+function DSeg<T extends string>({ name, value, options, onChange }: {
+  name: string; value: T; options: readonly (readonly [T, string, ('b' | 'r')?])[]; onChange: (v: T) => void
+}) {
+  return (
+    <div className="lb-seg">
+      <span className="ds-k">{name}</span>
+      <div role="group" aria-label={name} className="lb-seg-btns">
+        {options.map(([v, label, t]) => (
+          <button key={v} type="button" aria-pressed={value === v} className={t} onClick={() => onChange(v)}>
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function Podium({ p, place, tab, onOpen }: { p: Pilot; place: number; tab: SortKey; onOpen: () => void }) {
+  const prank = rankFor(Math.round(computeScore(p)), p.side)
+  const Icon = prank.icon
+  return (
+    <div className={`lb-pod${place === 0 ? ' first' : ''}`} {...pressable(onOpen)}>
+      <Tape tone={sideTone(p.side)} className="sm">{sideName(p.side)}</Tape>
+      <div className="lb-pod-id">
+        <span className="lb-pod-n">{place + 1}</span>
+        <div className="lb-pod-who">
+          <strong>{p.name}</strong>
+          <span className="lb-pod-rank"><Icon size={15} strokeWidth={1.5} />{prank.title}</span>
+        </div>
+      </div>
+      <dl className="lb-pod-stats">
+        {POD_STATS.map(s => (
+          <div key={s.label} className={s.key === tab ? 'on' : undefined}>
+            <dt>{s.label}</dt>
+            <dd>{s.value(p)}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  )
+}
+
+function Formula() {
+  return (
+    <div className="lb-formula">
+      <span className="ds-k">Score</span>
+      {SCORE_TERMS.map(([k, m], i) => (
+        <React.Fragment key={k}>
+          {i > 0 && <span className="lb-op" aria-hidden="true">{m < 0 ? '−' : '+'}</span>}
+          <span className={`lb-term${m < 0 ? ' neg' : ''}`}>
+            {k}{Math.abs(m) !== 1 && <b>×{Math.abs(m)}</b>}
+          </span>
+        </React.Fragment>
+      ))}
+    </div>
+  )
+}
+
+/** A name in a ranking row: a real link for the keyboard, the row still takes the click. */
+function RowLink({ to, children }: { to: string; children: React.ReactNode }) {
+  return <Link className="lb-name" to={to} onClick={e => e.stopPropagation()}>{children}</Link>
+}
+
+function DSquadronTable({ q, onOpen }: { q: UseQueryResult<Squadron[]>; onOpen: (tag: string) => void }) {
+  const rows = squadronRows(q.data)
+  return (
+    <Card tape={<>Squadrons · {rows.length}</>} tone="rust" className="lb-board" right={<span className="lb-sorted">By <b>XP</b></span>}>
+      <div className="lb-scroll">
+        <table className="lb-t">
+          <thead><tr>
+            <th scope="col" className="l lb-rk-h">#</th><th scope="col" className="l lb-who-h">Squadron</th>
+            <th scope="col">Members</th><th scope="col" className="on" aria-sort="descending">XP</th><th scope="col">XP / member</th>
+          </tr></thead>
+          <tbody>
+            <QueryState colSpan={5} what="squadrons" isLoading={q.isLoading} isError={q.isError} error={q.error} onRetry={q.refetch}
+              isEmpty={!q.isLoading && rows.length === 0} emptyText="No squadrons yet" />
+            {rows.map((sq, i) => (
+              <tr key={sq.tag} className={`lb-row${i === 0 ? ' first' : i < 3 ? ' top' : ''}`} onClick={() => onOpen(sq.tag)}>
+                <td className="lb-rk">{i + 1}</td>
+                <td className="lb-who">
+                  <div className="lb-who-in">
+                    <Tape tone="n" className="sm lb-tag">{sq.tag}</Tape>
+                    <RowLink to={squadronHref(sq.tag)}>{sq.name}</RowLink>
+                  </div>
+                </td>
+                <td>{sq.member_count}</td>
+                <td className="on">{sq.xp.toLocaleString()}</td>
+                <td>{sq.member_count ? Math.round(sq.xp / sq.member_count).toLocaleString() : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  )
+}
+
+function DXpTable({ q, onOpen }: { q: UseQueryResult<XpRow[]>; onOpen: (ucid: string) => void }) {
+  const rows = q.data ?? []
+  const max = xpMax(rows)
+  return (
+    <Card tape={<>Experience · {rows.length}</>} tone="rust" className="lb-board" right={<span className="lb-sorted">By <b>XP</b></span>}>
+      <div className="lb-scroll">
+        <table className="lb-t">
+          <thead><tr>
+            <th scope="col" className="l lb-rk-h">#</th><th scope="col" className="l lb-who-h">Pilot</th>
+            <th scope="col" style={{ width: 70 }}>Level</th><th scope="col" className="l on lb-xp-h" aria-sort="descending">XP</th>
+          </tr></thead>
+          <tbody>
+            <QueryState colSpan={4} what="XP leaderboard" isLoading={q.isLoading} isError={q.isError} error={q.error} onRetry={q.refetch}
+              isEmpty={!q.isLoading && rows.length === 0} emptyText="Nobody has earned XP yet" />
+            {rows.map((r, i) => (
+              <tr key={r.ucid} className={`lb-row${i === 0 ? ' first' : i < 3 ? ' top' : ''}`} onClick={() => onOpen(r.ucid)}>
+                <td className="lb-rk">{i + 1}</td>
+                <td className="lb-who"><RowLink to={pilotHref(r.ucid)}>{r.name || r.ucid}</RowLink></td>
+                <td className="lb-lvl">{r.level}</td>
+                <td className="on lb-xp">
+                  <div className="lb-xp-in">
+                    <span className="lb-xp-bar"><i style={{ width: `${(r.xp / max) * 100}%` }} /></span>
+                    <span>{r.xp.toLocaleString()}</span>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  )
+}
+
 type Period = 'all' | 'round'
 type SideF = 'All' | 'Blue' | 'Red'
 type View = 'pilots' | 'squadrons' | 'xp'
 
 export default function Leaderboard() {
   const navigate = useNavigate()
+  const look = useDashLook()
   const { selectedRound } = useRound()
   const { data: rounds = [] } = useQuery({ queryKey: ['rounds'], queryFn: () => api.rounds() })
   // "This round" is the round picked in the header's round selector, else
@@ -203,14 +395,6 @@ export default function Leaderboard() {
   const [asc,  setAsc]  = useState(false)
   const [search, setSearch] = useState('')
 
-  function getSortVal(p: Pilot, key: SortKey): number {
-    if (key === 'kd')         return computeKd(p)
-    if (key === 'score')      return computeScore(p)
-    if (key === 'logistics')  return computeLogistics(p)
-    const v = p[key as keyof Pilot]
-    return typeof v === 'number' ? v : 0
-  }
-
   const sorted = useMemo(() => {
     const filtered = pilots.filter(p => !search || p.name.toLowerCase().includes(search.toLowerCase()))
     return [...filtered].sort((a, b) => {
@@ -236,8 +420,7 @@ export default function Leaderboard() {
     [pilots, tab]
   )
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+  const header = (
       <PageHeader art="hornet"
         icon={Rankings}
         title="RANKINGS"
@@ -248,6 +431,120 @@ export default function Leaderboard() {
             style={{ width: 180 }} />
         }
       />
+  )
+
+  if (look.profile) {
+    const sortCol = COLS.find(c => c.key === sort)
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+        {header}
+        <div className="flex-1 overflow-auto vs-page lb-page">
+
+          <div className="lb-bar">
+            <div className="lb-tabs lb-dtabs" role="group" aria-label="Rankings">
+              {TABS.map(t => (
+                <DTab key={t.key} active={view === 'pilots' && tab === t.key} onClick={() => selectTab(t.key)} icon={t.icon} label={t.label} />
+              ))}
+              {VIEW_TABS.map(([v, label, Icon], i) => (
+                <DTab key={v} active={view === v} onClick={() => setView(v)} icon={Icon} label={label} className={i === 0 ? 'lb-tab-gap' : ''} />
+              ))}
+            </div>
+            {view === 'pilots' && (
+              <div className="lb-filters">
+                <DSeg name="Period" value={period} onChange={setPeriod}
+                  options={[['all', 'All time'], ['round', roundId != null ? `Round ${roundNum}` : 'This round']] as const} />
+                <DSeg name="Side" value={sideF} onChange={setSideF}
+                  options={[['All', 'Both'], ['Blue', campaign.blueLabel, 'b'], ['Red', campaign.redLabel, 'r']] as const} />
+              </div>
+            )}
+          </div>
+
+          {view === 'squadrons' && <DSquadronTable q={squadrons} onOpen={tag => navigate(squadronHref(tag))} />}
+          {view === 'xp' && <DXpTable q={xp} onOpen={ucid => navigate(pilotHref(ucid))} />}
+          {view === 'pilots' && <>
+            {top3.length >= 3 && (
+              <div className="lb-podium">
+                {top3.map((p, i) => <Podium key={p.ucid} p={p} place={i} tab={tab} onOpen={() => navigate(pilotHref(p.ucid))} />)}
+              </div>
+            )}
+
+            <Formula />
+
+            <Card tape={<>Pilot rankings · {sorted.length}</>} tone="rust" className="lb-board"
+              right={sortCol && <span className="lb-sorted">By <b>{sortCol.title ?? sortCol.label}</b></span>}>
+              <div className="lb-scroll">
+                <table className="lb-t lb-pilots">
+                  <thead>
+                    <tr>
+                      <th scope="col" className="l lb-rk-h">#</th>
+                      <th scope="col" className="l lb-who-h">Pilot</th>
+                      {COLS.map(c => {
+                        const on = sort === c.key
+                        return (
+                          <th key={c.key} scope="col" title={c.title} style={{ width: c.width }}
+                            className={on ? 'on' : undefined} aria-sort={on ? (asc ? 'ascending' : 'descending') : undefined}>
+                            <button type="button" className="lb-sort" onClick={() => handleSort(c.key)}>
+                              {c.label}
+                              {on ? (asc ? <ChevronUp size={11} /> : <ChevronDown size={11} />) : <ChevronDown size={11} className="lb-sort-idle" />}
+                            </button>
+                          </th>
+                        )
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <QueryState
+                      colSpan={COLS.length + 2} what="pilots" isLoading={isLoading}
+                      isError={isError} error={error} onRetry={refetch}
+                    />
+                    {sorted.map((p, i) => {
+                      const rank = rankFor(computeScore(p), p.side)
+                      const RankIcon = rank.icon
+                      return (
+                        <tr key={p.ucid} className={`lb-row ${sideTone(p.side)}${i === 0 ? ' first' : i < 3 ? ' top' : ''}`}
+                          onClick={() => navigate(pilotHref(p.ucid))}>
+                          <td className="lb-rk">{i + 1}</td>
+                          <td className="lb-who">
+                            <div className="lb-who-in">
+                              <span className="lb-ins" title={rankTip(p, rank.title)}><RankIcon size={18} strokeWidth={1.5} /></span>
+                              <span className="lb-who-txt">
+                                <RowLink to={pilotHref(p.ucid)}>{p.name}</RowLink>
+                                <span className="lb-title">{rank.title}</span>
+                              </span>
+                            </div>
+                          </td>
+                          {COLS.map(c => (
+                            <td key={c.key} className={sort === c.key ? 'on' : undefined}>{fmtVal(c.key, p)}</td>
+                          ))}
+                        </tr>
+                      )
+                    })}
+                    <QueryState
+                      colSpan={COLS.length + 2} what="pilots" isLoading={false}
+                      isEmpty={!isLoading && !isError && sorted.length === 0}
+                      emptyText={search.trim()
+                        ? `No pilots match "${search.trim()}"`
+                        : 'No pilots on the leaderboard yet'}
+                    />
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          </>}
+
+          <div className="lb-stats">
+            <Card tape="Airframe usage" tone="rust"><AirframeUsage /></Card>
+            <Card tape="Points economy"><PointsEconomy /></Card>
+          </div>
+
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+      {header}
 
       <div className="flex-1 overflow-auto vs-page">
 
@@ -346,17 +643,10 @@ export default function Leaderboard() {
                     </div>
                   </div>
                   <div className="podium-stats" style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-                    {[
-                      { label: 'A2A',   value: p.air_kills,              color: '#60a5fa' },
-                      { label: 'A2G',   value: p.ground_kills,           color: '#fb923c' },
-                      { label: 'Logi',  value: computeLogistics(p),      color: '#34d399' },
-                      { label: 'K/D',   value: fmtKd(p),                 color: '#4ade80' },
-                      { label: 'Hours', value: `${p.hours.toFixed(1)}h`, color: '#a78bfa' },
-                      { label: 'Score', value: score,                    color: '#22d3ee' },
-                    ].map(s => (
+                    {POD_STATS.map(s => (
                       <div key={s.label}>
                         <div className="font-mono-vs" style={{ fontSize: '0.95rem', fontWeight: 700, color: s.color, lineHeight: 1 }}>
-                          {s.value}
+                          {s.value(p)}
                         </div>
                         <div style={{ fontSize: '0.58rem', color: 'var(--text-dim)', marginTop: 2, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
                           {s.label}
@@ -421,7 +711,6 @@ export default function Leaderboard() {
                 {sorted.map((p, i) => {
                   const rank      = rankFor(computeScore(p), p.side)
                   const RankIcon  = rank.icon
-                  const nextAt    = nextRankAt(computeScore(p))
                   const medalIdx = top3.findIndex(x => x.ucid === p.ucid)
                   const isTop3   = medalIdx >= 0
 
@@ -447,7 +736,7 @@ export default function Leaderboard() {
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
                             color: isTop3 ? MEDAL_COLOR[medalIdx] : 'var(--text-dim)',
                           }}
-                          title={`${rank.title}${nextAt !== null ? ` — ${nextAt - Math.round(computeScore(p))} score to next rank` : ' — top of the ladder'}`}>
+                          title={rankTip(p, rank.title)}>
                             <RankIcon size={18} strokeWidth={1.5} />
                           </div>
                           <div>

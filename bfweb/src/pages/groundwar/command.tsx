@@ -57,6 +57,15 @@ export function LayerToggles({ layers, set, note }: { layers: Layers; set: (l: L
   )
 }
 
+/** A marker's tooltip. The engine names an AI asset by its type ("E-3A")
+ *  and a player's "Player - Type" ("Viper - E-3A"): AI gets its role after
+ *  the type, a player's shows as named, anything else gets its type added. */
+function assetTitle(a: Asset): string {
+  if (a.typ && a.name === a.typ) return `${a.name} · ${a.role}`
+  if (a.typ && a.name.endsWith(` - ${a.typ}`)) return a.name
+  return `${a.name} · ${a.role}${a.typ ? ` (${a.typ})` : ''}`
+}
+
 const fl = (m: number) => `FL${String(Math.round((m * 3.281) / 100)).padStart(3, '0')}`
 
 interface AProps {
@@ -68,7 +77,8 @@ interface AProps {
 }
 
 function AssetMarkerImpl({ a, side, selected, near, onPick }: AProps): ReactElement {
-  const fill = a.live ? SIDE_BRIGHT[side] : SIDE_COLOR[side]
+  // Selected: the unit itself takes the selection colour, no ring around it.
+  const fill = selected ? PENCIL : a.live ? SIDE_BRIGHT[side] : SIDE_COLOR[side]
   const rotate = a.kind === 'air' || a.kind === 'naval'
   const sub = a.kind === 'air'
     ? `${fl(a.alt_m)} · ${Math.round(a.speed_kts)} KT`
@@ -86,7 +96,7 @@ function AssetMarkerImpl({ a, side, selected, near, onPick }: AProps): ReactElem
         <div
           className={`gw-mk cm-asset cm-${a.kind}${selected ? ' sel' : ''}${a.live ? '' : ' sim'}`}
           {...pressable((e) => onPick(e, a.id))}
-          title={`${a.name} · ${a.role}${a.typ ? ` (${a.typ})` : ''}`}
+          title={assetTitle(a)}
         >
           {/* Raw SVG markup: safe because assetSvg builds it only from this
               file's constants -- server fields pick a branch, never land in it
@@ -145,6 +155,15 @@ export function AssetLines({ assets, sel, side }: { assets: Asset[]; sel: Asset 
       geometry: { type: 'LineString', coordinates: [[a.pos[1], a.pos[0]], [a.dest![1], a.dest![0]]] },
     })),
   }), [assets, sel])
+  // The waypoint itself, at the end of each route.
+  const ends: FeatureCollection = useMemo(() => ({
+    type: 'FeatureCollection',
+    features: assets.filter((a) => a.dest).map((a): Feature => ({
+      type: 'Feature',
+      properties: { sel: sel?.id === a.id ? 1 : 0 },
+      geometry: { type: 'Point', coordinates: [a.dest![1], a.dest![0]] },
+    })),
+  }), [assets, sel])
   const reach: FeatureCollection = useMemo(() => ({
     type: 'FeatureCollection',
     features: sel?.range_m ? [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: ring(sel.pos, sel.range_m) } }] : [],
@@ -157,6 +176,15 @@ export function AssetLines({ assets, sel, side }: { assets: Asset[]; sel: Asset 
           'line-width': ['match', ['get', 'sel'], 1, 2, 1.2],
           'line-opacity': 0.75,
           'line-dasharray': [2, 2],
+        }} />
+      </Source>
+      <Source id="cm-route-ends" type="geojson" data={ends}>
+        <Layer id="cm-route-ends" type="circle" paint={{
+          'circle-radius': ['match', ['get', 'sel'], 1, 5, 3.5],
+          'circle-color': 'rgba(0,0,0,0)',
+          'circle-stroke-color': ['match', ['get', 'sel'], 1, PENCIL, SIDE_BRIGHT[side]],
+          'circle-stroke-width': ['match', ['get', 'sel'], 1, 2, 1.4],
+          'circle-stroke-opacity': 0.85,
         }} />
       </Source>
       <Source id="cm-reach" type="geojson" data={reach}>

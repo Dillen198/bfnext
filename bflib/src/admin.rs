@@ -14,6 +14,7 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
+use crate::db::objective::AdminRepair;
 use crate::{
     Context,
     bg::Task,
@@ -101,6 +102,7 @@ pub enum AdminCommand {
     Repair {
         airbase: String,
     },
+    RepairAll,
     Capture {
         objective: String,
         side: Side,
@@ -420,7 +422,8 @@ impl AdminCommand {
             "tick: execute a logistics tick now",
             "deliver: execute a logistics delivery now",
             "logistics: dump the whole logistics picture (hubs, materiel, cargo in flight, starving bases) to the log",
-            "repair <airbase>: repair one step at the specified airbase",
+            "repair <airbase>: rebuild the airbase outright: its groups and its logistics buildings",
+            "repair all: the same at every objective",
             "capture <objective> <blue|red|neutral>: force an objective to change hands",
             "tim <key> [size] [alt]: create explosions of [size] default 3000 at every f10 mark with text <key>",
             "spawn <key>: spawn at f10 mark. <key> <troop|deployable> <side> <heading> <name>",
@@ -485,6 +488,31 @@ fn parse_life_type(s: &str) -> Result<LifeType> {
     }
 }
 
+/// An `-admin` command typed somewhere other than the game's chat (the
+/// dashboard's command console, by way of bfdb's /api/admin/command), parsed
+/// the way chat parses it.
+///
+/// Refused here: `reset` and `shutdown`, which have their own confirmed
+/// buttons and full-admin checks on the dashboard (chat asks for a `confirm`
+/// that a one-shot call has no way to give), and `log-desc`, which reads
+/// the plane the caller is sitting in.
+pub(crate) fn remote_command(text: &str) -> Result<AdminCommand> {
+    let text = text.trim();
+    let text = text.strip_prefix("-admin").map(str::trim_start).unwrap_or(text);
+    let cmd: AdminCommand = text.parse()?;
+    match cmd {
+        AdminCommand::Reset { .. } | AdminCommand::Shutdown => {
+            bail!(
+                "reset and shutdown are not run from here: use their own buttons on the admin page"
+            )
+        }
+        AdminCommand::Logdesc => {
+            bail!("log-desc reads the plane you are in: run it in game")
+        }
+        cmd => Ok(cmd),
+    }
+}
+
 impl FromStr for AdminCommand {
     type Err = anyhow::Error;
 
@@ -523,6 +551,8 @@ impl FromStr for AdminCommand {
             Ok(Self::LogisticsTickNow)
         } else if s.strip_prefix("deliver").is_some() {
             Ok(Self::LogisticsDeliverNow)
+        } else if s.eq_ignore_ascii_case("repair all") {
+            Ok(Self::RepairAll)
         } else if let Some(s) = s.strip_prefix("repair ") {
             Ok(Self::Repair { airbase: s.into() })
         } else if let Some(s) = s.strip_prefix("capture ") {
@@ -1263,6 +1293,10 @@ pub(super) fn admin_shutdown(
         ctx.do_bg_task(Task::ResetState(ctx.miz_state_path.clone()));
         ctx.do_bg_task(Task::Stat(se));
         ctx.do_bg_task(Task::Stat(Stat::RoundEnd { winner }));
+    } else if ctx.api_broken.is_some() {
+        // the campaign stood still on a broken DCS API: the last good save stands
+        error!("shutdown with the DCS API broken: not saving, the last good save stands");
+        ctx.do_bg_task(Task::Stat(se));
     } else {
         return_lives(lua, ctx, DateTime::<Utc>::MAX_UTC);
         ctx.db.close_open_sorties();
@@ -3462,10 +3496,46 @@ fn run_admin_command(
         AdminCommand::Repair { airbase } => {
             let oid = airbase!(&airbase);
             match ctx.db.admin_repair_objective(oid, ctx.now()) {
-                Ok(0) => reply_ok!("{airbase} has no damaged groups to repair"),
-                Ok(1) => reply_ok!("repaired {airbase} (1 group)"),
-                Ok(n) => reply_ok!("repaired {airbase} ({n} groups)"),
+                Ok(r) if r == AdminRepair::default() => {
+                    reply_ok!("{airbase} has nothing to repair")
+                }
+                Ok(r) => reply_ok!("repaired {airbase} ({r})"),
                 Err(e) => reply_err!("failed to repair {airbase}: {e:?}"),
+            }
+        }
+        AdminCommand::RepairAll => {
+            let now = ctx.now();
+            let oids: Vec<ObjectiveId> = ctx.db.objectives().map(|(id, _)| *id).collect();
+            let mut total = AdminRepair::default();
+            let mut bases = 0;
+            let mut failed: Vec<std::string::String> = vec![];
+            for oid in oids {
+                match ctx.db.admin_repair_objective(oid, now) {
+                    Ok(r) => {
+                        if r != AdminRepair::default() {
+                            bases += 1;
+                        }
+                        total.groups += r.groups;
+                        total.buildings += r.buildings;
+                    }
+                    Err(e) => {
+                        let name = ctx
+                            .db
+                            .objective(&oid)
+                            .map(|o| o.name.to_string())
+                            .unwrap_or_else(|_| format!("{oid:?}"));
+                        error!("repair all: {name}: {e:?}");
+                        failed.push(name);
+                    }
+                }
+            }
+            if failed.is_empty() {
+                reply_ok!("repaired {bases} objective(s) ({total})")
+            } else {
+                reply_err!(
+                    "repaired {bases} objective(s) ({total}); failed at {}",
+                    failed.join(", ")
+                )
             }
         }
         AdminCommand::Capture { objective, side } => {
@@ -4108,6 +4178,45 @@ fn run_admin_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_commands_parse_like_chat_and_refuse_the_risky_ones() {
+        assert!(matches!(remote_command("repair all"), Ok(AdminCommand::RepairAll)));
+        // pasted from chat, prefix and all
+        assert!(matches!(
+            remote_command("-admin  Repair all "),
+            Ok(AdminCommand::RepairAll)
+        ));
+        assert!(matches!(remote_command("help"), Ok(AdminCommand::Help)));
+        assert!(remote_command("reset").is_err());
+        assert!(remote_command("reset blue").is_err());
+        assert!(remote_command("shutdown").is_err());
+        assert!(remote_command("log-desc").is_err());
+        assert!(remote_command("no-such-command").is_err());
+    }
+
+    #[test]
+    fn repair_all_is_its_own_command() {
+        assert!(matches!(
+            "repair all".parse::<AdminCommand>(),
+            Ok(AdminCommand::RepairAll)
+        ));
+        assert!(matches!(
+            "Repair ALL".parse::<AdminCommand>(),
+            Ok(AdminCommand::RepairAll)
+        ));
+        match "repair Batumi Airfield".parse::<AdminCommand>() {
+            Ok(AdminCommand::Repair { airbase }) => {
+                assert_eq!(airbase.as_str(), "Batumi Airfield")
+            }
+            r => panic!("{r:?}"),
+        }
+        let r = |groups, buildings| AdminRepair { groups, buildings }.to_string();
+        assert_eq!(r(0, 0), "nothing to repair");
+        assert_eq!(r(1, 0), "1 group");
+        assert_eq!(r(0, 6), "6 logistics buildings");
+        assert_eq!(r(3, 1), "3 groups, 1 logistics building");
+    }
 
     #[test]
     fn admin_parsing_is_case_insensitive_and_takes_neutral() {

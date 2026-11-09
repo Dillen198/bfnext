@@ -79,37 +79,78 @@ pub(crate) async fn call_engine_rpc_str(
     args: Vec<(&str, netidx::publisher::Value)>,
 ) -> std::result::Result<std::string::String, Error> {
     use netidx::publisher::Value;
-    // Bounded here, not only by callers: an RPC with no timeout of its own
-    // hangs a request forever when the engine stalls mid-call, and because the
-    // future is dropped by the timeout the instance's breaker hears about it.
-    const RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-    let reply = match tokio::time::timeout(
-        RPC_TIMEOUT,
-        db.call_engine_rpc(inst, proc_name, args),
-    )
-    .await
-    {
-        Ok(Ok(v)) => v,
-        // Transport trouble: the engine is down, restarting or not answering.
-        // The detail names our own netidx paths, which is fine to show.
-        Ok(Err(e)) => {
-            return Err(Error(websec::unavailable(format!(
-                "game server not reachable: {e}"
-            ))))
-        }
-        Err(_) => {
-            return Err(Error(websec::unavailable(format!(
-                "game server did not answer {proc_name} within {}s",
-                RPC_TIMEOUT.as_secs()
-            ))))
-        }
-    };
-    match reply {
+    match engine_rpc_value(db, inst, proc_name, args).await? {
         // The engine's own refusal ("you must be in a slot") is written for
         // the player, so it goes back as-is.
         Value::Error(e) => Err(Error(websec::engine_refused(e.to_string()))),
         Value::String(s) => Ok(s.to_string()),
         other => Err(Error(anyhow::anyhow!("unexpected RPC reply: {other:?}"))),
+    }
+}
+
+/// An engine RPC that may answer with several lines -- an `-admin` command's
+/// replies, one per line, as chat shows them: each line, and whether any of
+/// them was a refusal.
+pub(crate) async fn call_engine_rpc_lines(
+    db: &StatsDb,
+    inst: &InstanceState,
+    proc_name: &str,
+    args: Vec<(&str, netidx::publisher::Value)>,
+) -> std::result::Result<(Vec<std::string::String>, bool), Error> {
+    let v = engine_rpc_value(db, inst, proc_name, args).await?;
+    let mut lines = vec![];
+    let failed = reply_lines(&v, &mut lines);
+    Ok((lines, failed))
+}
+
+/// Flatten an engine reply into lines; true if any part was an error.
+pub(crate) fn reply_lines(
+    v: &netidx::publisher::Value,
+    out: &mut Vec<std::string::String>,
+) -> bool {
+    use netidx::publisher::Value;
+    match v {
+        Value::String(s) => {
+            out.extend(s.lines().map(str::to_owned));
+            false
+        }
+        Value::Error(e) => {
+            out.extend(e.lines().map(str::to_owned));
+            true
+        }
+        Value::Array(a) => a.iter().fold(false, |f, v| reply_lines(v, out) | f),
+        Value::Null => false,
+        other => {
+            out.push(other.to_string());
+            false
+        }
+    }
+}
+
+/// One engine RPC's raw reply, within a deadline.
+async fn engine_rpc_value(
+    db: &StatsDb,
+    inst: &InstanceState,
+    proc_name: &str,
+    args: Vec<(&str, netidx::publisher::Value)>,
+) -> std::result::Result<netidx::publisher::Value, Error> {
+    // Bounded here, not only by callers: an RPC with no timeout of its own
+    // hangs a request forever when the engine stalls mid-call, and because the
+    // future is dropped by the timeout the instance's breaker hears about it.
+    const RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+    match tokio::time::timeout(RPC_TIMEOUT, db.call_engine_rpc(inst, proc_name, args))
+        .await
+    {
+        Ok(Ok(v)) => Ok(v),
+        // Transport trouble: the engine is down, restarting or not answering.
+        // The detail names our own netidx paths, which is fine to show.
+        Ok(Err(e)) => {
+            Err(Error(websec::unavailable(format!("game server not reachable: {e}"))))
+        }
+        Err(_) => Err(Error(websec::unavailable(format!(
+            "game server did not answer {proc_name} within {}s",
+            RPC_TIMEOUT.as_secs()
+        )))),
     }
 }
 

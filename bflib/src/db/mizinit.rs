@@ -1769,6 +1769,7 @@ impl Db {
         }
 
         let mut affected: SmallVec<[ObjectiveId; 8]> = SmallVec::new();
+        let mut failed = None;
         for _ in 0..BATCH_SIZE {
             let Some(id) = self.ephemeral.scenery_check_queue.pop_front() else {
                 break;
@@ -1778,7 +1779,17 @@ impl Db {
             };
             let alive = match Object::get_instance(lua, &id) {
                 Ok(obj) => obj.is_exist().unwrap_or(true),
-                Err(_) => false,
+                Err(e) if dcso3::is_gone(&e) => false,
+                // DCS failed to answer, which says nothing about the
+                // building. On 6 Nov the mission's API broke and this counted
+                // every base's logistics buildings as destroyed, and saved
+                // it. Keep it tracked and check again later.
+                Err(e) => {
+                    self.ephemeral.scenery_check_queue.push_front(id);
+                    failed =
+                        Some(e.context("checking scenery, none counted as destroyed"));
+                    break;
+                }
             };
             if alive {
                 self.ephemeral.scenery_check_queue.push_back(id);
@@ -1807,7 +1818,10 @@ impl Db {
                 );
             }
         }
-        Ok(())
+        match failed {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     pub fn init_objective_slots(&mut self, side: Side, slot: Group) -> Result<()> {

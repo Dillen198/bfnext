@@ -46,6 +46,8 @@ pub struct Rpcs {
     _log_warehouse: Proc,
     _reset_lives: Proc,
     _reset_lives_all: Proc,
+    _repair_all: Proc,
+    _admin_command: Proc,
     _add_admin: Proc,
     _remove_admin: Proc,
     _balance: Proc,
@@ -437,6 +439,41 @@ impl Rpcs {
             },
             Some(wait.clone()),
             arg: Value = Value::Null; ""
+        )?;
+        let _q = Arc::clone(q);
+        let repair_all = define_rpc!(
+            publisher,
+            base.append("repair-all"),
+            "Rebuild every objective: its groups and its logistics buildings",
+            |c: RpcCall, _: Value| {
+                let (tx, rx) = oneshot::channel();
+                _q.push((AdminCommand::RepairAll, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            arg: Value = Value::Null; ""
+        )?;
+        let _q = Arc::clone(q);
+        let admin_command = define_rpc!(
+            publisher,
+            base.append("admin-command"),
+            "Run an -admin command as typed in chat (see crate::admin::remote_command)",
+            |c: RpcCall, command: Chars| {
+                let (tx, rx) = oneshot::channel();
+                match crate::admin::remote_command(command.as_ref()) {
+                    Ok(AdminCommand::Help) => {
+                        let _ = tx.send(Value::from(AdminCommand::help().join("
+        ")));
+                    }
+                    Ok(cmd) => _q.push((cmd, tx)),
+                    Err(e) => {
+                        let _ = tx.send(Value::Error(format!("{e:#}").into()));
+                    }
+                }
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            command: Chars = Value::Null; "The command, as after -admin in chat"
         )?;
         let _q = Arc::clone(q);
         let add_admin = define_rpc!(
@@ -1555,6 +1592,8 @@ impl Rpcs {
             _log_warehouse: log_warehouse,
             _reset_lives: reset_lives,
             _reset_lives_all: reset_lives_all,
+            _repair_all: repair_all,
+            _admin_command: admin_command,
             _add_admin: add_admin,
             _remove_admin: remove_admin,
             _balance: balance,

@@ -2208,6 +2208,22 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(with_instance(db.clone()))
         .then(api_admin_reset_lives_all);
 
+    let admin_command = warp::path!("api" / "admin" / "command")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
+        .and(warp::body::json::<AdminCommandBody>())
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_admin_command);
+
+    let admin_repair_all = warp::path!("api" / "admin" / "repair-all")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_admin_repair_all);
+
     let admin_side_switch = warp::path!("api" / "admin" / "side-switch")
         .and(warp::post())
         .and(extract_session_cookie())
@@ -2290,6 +2306,49 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
 
     // GET and POST, outside the warp::get() group below so the SPA catch-all
     // can't answer it and a POST still routes.
+    //
+    // An upload (POST ops/console/mission or /music, the file as the body)
+    // gets its own filter first: the bot console takes files up to 256 MB,
+    // everything else here stays at 4 MB.
+    let admin_ops_upload = warp::path!("api" / "admin" / "ops" / "console" / String)
+        .and(warp::post())
+        .and_then(|what: String| async move {
+            if is_upload_path(&format!("console/{what}")) {
+                Ok(what)
+            } else {
+                Err(warp::reject::not_found())
+            }
+        })
+        .and(warp::query::raw().or(warp::any().map(String::new)).unify())
+        .and(extract_session_cookie())
+        .and(warp::header::optional::<String>("content-type"))
+        .and(warp::body::content_length_limit(256 * 1024 * 1024))
+        .and(warp::body::bytes())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(|what: String, query, session, ctype, body, db, bot| async move {
+            api_admin_ops_proxy(
+                warp::http::Method::POST,
+                format!("console/{what}"),
+                query,
+                session,
+                ctype,
+                body,
+                db,
+                bot,
+            )
+            .await
+        })
+        .boxed();
+    // The live feed: streamed, not read whole like everything else under ops/.
+    let admin_ops_stream = warp::path!("api" / "admin" / "ops" / "console" / "stream")
+        .and(warp::get())
+        .and(warp::query::raw().or(warp::any().map(String::new)).unify())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_admin_ops_stream)
+        .boxed();
     let admin_ops_proxy = warp::path("api")
         .and(warp::path("admin"))
         .and(warp::path("ops"))
@@ -2297,6 +2356,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(warp::path::tail())
         .and(warp::query::raw().or(warp::any().map(String::new)).unify())
         .and(extract_session_cookie())
+        .and(warp::header::optional::<String>("content-type"))
         // A GET has no body to read. warp's content_length_limit also
         // *requires* a Content-Length header, which browsers never send on a
         // GET -- so every GET the OPS page made was rejected here and fell
@@ -2312,14 +2372,30 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and_then(
-            |method: warp::http::Method, tail, query, session, body, db, bot| async move {
+            |method: warp::http::Method,
+             tail: warp::path::Tail,
+             query,
+             session,
+             ctype,
+             body,
+             db,
+             bot| async move {
                 if method != warp::http::Method::GET && method != warp::http::Method::POST
                 {
                     return Err(warp::reject::not_found());
                 }
                 Ok::<_, warp::Rejection>(
-                    api_admin_ops_proxy(method, tail, query, session, body, db, bot)
-                        .await,
+                    api_admin_ops_proxy(
+                        method,
+                        tail.as_str().to_string(),
+                        query,
+                        session,
+                        ctype,
+                        body,
+                        db,
+                        bot,
+                    )
+                    .await,
                 )
             },
         )
@@ -3118,6 +3194,8 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         // 405 carries no CORS header, so the browser reported a CORS block).
         // Each route checks its own method.
         .or(squadron_routes)
+        .or(admin_ops_upload)
+        .or(admin_ops_stream)
         .or(admin_ops_proxy)
         .or(warp::get().and(
             api_routes
@@ -3139,6 +3217,8 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .or(admin_rebuild_stats)
         .or(admin_news_regenerate_image)
         .or(admin_reset_lives_all)
+        .or(admin_repair_all)
+        .or(admin_command)
         .or(admin_side_switch)
         .or(admin_ban_route)
         .or(admin_unban_route)

@@ -9,17 +9,15 @@ import { ThemeToggle } from '@shared/web/theme'
 import { useInstance } from '../context/InstanceContext'
 import { LogoMark } from '@shared/web/LogoMark'
 import Backdrop from './Backdrop'
-import { SERVERS, THEME_CLASS, type ServerTheme } from '@shared/servers/profiles'
-import { FONTS, useFonts } from '@shared/servers/fonts'
-import { VS_URLS } from '@shared/web/urls'
-import '@shared/servers/themes.css'
-import './dash-themes.css'
+import { useDashLook } from '../lib/look'
+import { elsewhere, handOffUrl, onAdminPage } from '../lib/elsewhere'
 import StatusBanner from './StatusBanner'
 import { useOffline } from '@shared/web/snapshot'
 import { ErrorBoundary } from '@shared/web/ErrorBoundary'
 import NotificationBell from './NotificationBell'
 import { useWireframe } from '../lib/wireframe'
 import { getDevUser } from '../lib/devAuth'
+import { canSeeBotConsole } from '../lib/botconsole'
 import {
   Sitrep,
   Tacmap,
@@ -38,6 +36,7 @@ import {
   Config,
   Shield,
   Server,
+  Terminal,
   Comms,
   Aircraft,
   PlayCircle,
@@ -50,11 +49,6 @@ import {
   ChevronsRight,
   Lock,
 } from '@icons'
-
-/** The strip under the top bar while the dashboard wears a server's look. */
-const BANNER: Partial<Record<ServerTheme, string>> = {
-  desert: 'Levant Ablaze · Operation Bronze Helm · NATO v RSII',
-}
 
 // ── Nav config ────────────────────────────────────────────────────────────────
 
@@ -117,6 +111,7 @@ const ABOUT_NAV = { to: '/about', icon: Info, label: 'ABOUT' }
 const ADMIN_NAV = { to: '/admin', icon: Admin, label: 'ADMIN' }
 const CONFIG_NAV = { to: '/admin/config', icon: Config, label: 'CONFIG' }
 const SERVER_OPS_NAV = { to: '/admin/ops', icon: Server, label: 'OPS' }
+const BOT_NAV = { to: '/admin/bot', icon: Terminal, label: 'SERVER BOT' }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -301,7 +296,9 @@ export default function Layout() {
   // what "go and look at that campaign" actually means.
   const { instances, selected: selectedInstance, current, multi, select } = useInstance()
   const { data: rounds = [] } = useQuery({
-    queryKey: ['rounds', multi],
+    // Its own key: this list spans every server and survives a switch
+    // (InstanceContext), where the pages' ['rounds'] are one server's.
+    queryKey: ['rounds-all', multi],
     queryFn: () => api.rounds(multi),
     refetchInterval: 60_000,
   })
@@ -339,6 +336,13 @@ export default function Layout() {
 
   function onSelectCampaign(value: string) {
     const [inst, round] = value.split('|')
+    // A campaign with a dashboard of its own opens there, on the same page
+    // (lib/elsewhere); the admin pages look at every server here.
+    const away = elsewhere(inst)
+    if (away && !onAdminPage(location.pathname)) {
+      window.location.assign(handOffUrl(away, location))
+      return
+    }
     if (inst && inst !== current?.id) select(inst)
     setSelectedRound(round === '' ? undefined : Number(round))
   }
@@ -381,13 +385,15 @@ export default function Layout() {
     [
       ABOUT_NAV,
       ...(user?.is_admin ? [ADMIN_NAV, CONFIG_NAV, SERVER_OPS_NAV] : []),
+      // ops and moderation roles get the bot console too: the plugin
+      // checks each action against the role it needs
+      ...(canSeeBotConsole(user) ? [BOT_NAV] : []),
     ],
   ].filter(g => g.length > 0)
 
-  // The modern campaign's look. This is its dashboard; Red Storm has its own
-  // (bfrsr-web), so only a server whose live site is this one is dressed.
-  const look = SERVERS.find(s => s.instanceId && s.instanceId === current?.id && s.site.url === VS_URLS.dashboard)
-  useFonts(look && FONTS[look.theme])
+  // The modern campaign's look: this is its dashboard (lib/look).
+  const dashLook = useDashLook()
+  const look = dashLook.profile
 
   const hasCampaignSelect = rounds.length > 0 || multi
   const campaignProps = {
@@ -402,14 +408,14 @@ export default function Layout() {
 
 
   return (
-    <div className={look ? `dash-themed ${THEME_CLASS[look.theme]}` : undefined} style={{ display: 'contents' }}>
+    <div className={dashLook.className || undefined} style={{ display: 'contents' }}>
       <Backdrop />
     <div className="vs-shell" style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
 
       {/* ══════════════════════════════════════════════════════════
           TOP BAR
           ══════════════════════════════════════════════════════════ */}
-      <header className="topbar" style={topbarArt}>
+      <header className="topbar" style={look ? undefined : topbarArt}>
 
         {/* Mobile nav toggle */}
         <button
@@ -574,13 +580,6 @@ export default function Layout() {
         )}
       </header>
 
-      {look && BANNER[look.theme] && (
-        <div className="dash-theme-banner" role="note">
-          <span className="dash-theme-banner-text">{BANNER[look.theme]}</span>
-          <a href={`${VS_URLS.wiki}/servers/${look.slug}`} className="dash-theme-banner-wiki">Field guide</a>
-          <a href={`${VS_URLS.site}/servers/${look.slug}`}>Briefing</a>
-        </div>
-      )}
 
       {/* ══════════════════════════════════════════════════════════
           BODY
@@ -684,7 +683,7 @@ export default function Layout() {
           {/* Footer */}
           <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6 }}>
             <Comms size={10} style={{ color: 'var(--accent)', opacity: 0.5 }} />
-            <span className="sidebar-footer-text" style={{ fontSize: '0.55rem', color: 'var(--text-dim)', letterSpacing: '0.08em' }}>FOWL ENGINE</span>
+            <span className="sidebar-footer-text" style={{ fontSize: '0.55rem', color: 'var(--text-dim)', letterSpacing: '0.08em' }}>POWERED BY FOWL ENGINE</span>
             <Aircraft size={9} style={{ color: 'var(--text-dim)', opacity: 0.4, marginLeft: 'auto' }} />
           </div>
 
