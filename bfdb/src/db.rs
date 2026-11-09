@@ -1150,6 +1150,10 @@ pub(crate) struct StatsDbInner {
     /// query -- kills, sorties, objectives, captures -- gets filtered per DCS
     /// server without changing any existing bincode record layout.
     round_instance: Tree<RoundId, std::string::String>,
+    /// Names admins gave rounds on the Rounds page. A round without one is
+    /// shown by its scenario. Not derived from the stats stream, but keyed by
+    /// `RoundId`, so a rebuild (which mints new ids) drops them.
+    round_names: Tree<RoundId, std::string::String>,
     /// Byte offset of the last line consumed from each instance's
     /// `stats_jsonl`, persisted so a bfdb restart resumes there instead of
     /// re-reading the whole file from the top and re-applying every stat (which
@@ -1767,6 +1771,12 @@ fn combat_log_key(round: RoundId, nanos: i64) -> std::string::String {
     format!("{:020}:{:020}", round.0, nanos.max(0))
 }
 
+/// The first and last keys one round's combat log can have (inclusive).
+/// Keys are bincode strings, length first, so a shorter prefix would not do.
+fn combat_log_bounds(round: RoundId) -> (std::string::String, std::string::String) {
+    (combat_log_key(round, 0), combat_log_key(round, i64::MAX))
+}
+
 fn stat_variant_name(s: &Stat) -> &'static str {
     match s {
         Stat::NewRound { .. } => "NewRound",
@@ -1969,6 +1979,7 @@ impl StatsDb {
             equipment: Tree::open(&db, "equipment")?,
             liquids: Tree::open(&db, "liquids")?,
             round_instance: Tree::open(&db, "round_instance")?,
+            round_names: Tree::open(&db, "round_names")?,
             jsonl_cursor: Tree::open(&db, "jsonl_cursor_v2")?,
             jsonl_file_cursor: Tree::open(&db, "jsonl_cursor_v3")?,
             legacy_jsonl_cursor: Tree::open(&db, "jsonl_cursor")?,
@@ -6942,8 +6953,14 @@ impl StatsDb {
             self.deploys.remove(&k)?;
         }
         // Before the aggregate rows go: they are what tells us how much of
-        // each pilot's lifetime total came from these rounds.
-        self.subtract_rounds_from_totals(rounds)?;
+        // each pilot's lifetime total came from these rounds. A private
+        // instance's rounds never added to the totals, so they take nothing
+        // back out.
+        let counted: HashSet<RoundId> = match self.public_rounds()? {
+            None => rounds.clone(),
+            Some(public) => rounds.intersection(&public).copied().collect(),
+        };
+        self.subtract_rounds_from_totals(&counted)?;
         let agg_keys: Vec<_> = self
             .pilots
             .aggregates
@@ -7001,8 +7018,47 @@ impl StatsDb {
         }
         for rid in rounds.iter() {
             self.round_instance.remove(rid)?;
+            self.round_names.remove(rid)?;
         }
+        self.purge_round_extras(rounds)?;
 
+        Ok(())
+    }
+
+    /// The per-round trees `purge_rounds` once left behind: the war diary and
+    /// its pictures, the combat log, war will, story and air order of battle.
+    fn purge_round_extras(&self, rounds: &HashSet<RoundId>) -> Result<()> {
+        for rid in rounds.iter() {
+            let days: Vec<_> =
+                self.news.scan_prefix(rid)?.keys_only().filter_map(|k| k.ok()).collect();
+            for k in days {
+                self.news.delete(&k)?;
+            }
+            let (lo, hi) = combat_log_bounds(*rid);
+            let lines: Vec<_> = self
+                .combat_log
+                .range(lo..=hi)?
+                .keys_only()
+                .filter_map(|k| k.ok())
+                .collect();
+            for k in lines {
+                self.combat_log.delete(&k)?;
+            }
+            self.war_will.delete(rid)?;
+            self.story.delete(rid)?;
+            self.air_oob.delete(rid)?;
+        }
+        let pics: Vec<_> = self
+            .news_image_meta
+            .iter()
+            .keys_only()
+            .filter_map(|k| k.ok())
+            .filter(|(_, rid, _)| rounds.contains(rid))
+            .collect();
+        for k in pics {
+            self.news_image_meta.delete(&k)?;
+            self.news_image_data.delete(&k)?;
+        }
         Ok(())
     }
 
@@ -7092,6 +7148,7 @@ impl StatsDb {
         // Trails & weather
         self.trail_points.clear()?;
         self.round_instance.clear()?;
+        self.round_names.clear()?;
         self.war_will.clear()?;
         self.story.clear()?;
         self.air_oob.clear()?;
@@ -7169,6 +7226,7 @@ impl StatsDb {
         self.deploy_seen.clear()?;
         self.trail_points.clear()?;
         self.round_instance.clear()?;
+        self.round_names.clear()?;
         self.war_will.clear()?;
         self.story.clear()?;
         self.air_oob.clear()?;
@@ -7655,7 +7713,203 @@ impl StatsDb {
             moved
         ))
     }
+
+    // ── One round at a time, from the Rounds page (admins) ──────────────────
+
+    /// One round's `round`-tree entry, with the scenario it is keyed under.
+    fn find_round(&self, rid: RoundId) -> Result<(Scenario, Round)> {
+        self.all_rounds()?
+            .into_iter()
+            .find(|(_, id, _)| *id == rid)
+            .map(|(s, _, r)| (s, r))
+            .ok_or_else(|| anyhow!("no round {}", rid.0))
+    }
+
+    /// Every name admins have given a round.
+    pub(crate) fn round_names(&self) -> Result<HashMap<RoundId, std::string::String>> {
+        self.round_names.iter().collect()
+    }
+
+    /// Name a round, or with `None` (or a blank name) go back to its scenario.
+    pub(crate) fn rename_round(
+        &self,
+        rid: RoundId,
+        name: Option<&str>,
+    ) -> Result<Option<std::string::String>> {
+        self.find_round(rid)?;
+        let name = name.map(|n| n.split_whitespace().collect::<Vec<_>>().join(" "));
+        match name.filter(|n| !n.is_empty()) {
+            Some(n) => {
+                if n.chars().count() > ROUND_NAME_MAX {
+                    bail!("a round name is at most {ROUND_NAME_MAX} characters");
+                }
+                self.round_names.insert(&rid, &n)?;
+                Ok(Some(n))
+            }
+            None => {
+                self.round_names.remove(&rid)?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Delete one finished round and everything recorded in it, taking its
+    /// share back out of each pilot's lifetime totals. The round being played
+    /// is refused: the engine is still writing to it.
+    pub(crate) fn delete_round(&self, rid: RoundId) -> Result<()> {
+        let (_, round) = self.find_round(rid)?;
+        if round.end.is_none() {
+            bail!(
+                "round {} is still being played; it can be deleted once it ends",
+                rid.0
+            );
+        }
+        let rounds = HashSet::from([rid]);
+        self.purge_rounds(&rounds)?;
+        self.intel_purge_all_for(&rounds)?;
+        Ok(())
+    }
+
+    /// Merge two rounds of the same server into one, as if they had been one
+    /// round all along: the same rules as `merge_rounds` (counters summed,
+    /// rows re-keyed). The survivor is `into`, unless `from` is the round
+    /// being played, which always survives so the engine keeps writing to a
+    /// round that exists. It spans both, is open if either was, and otherwise
+    /// takes the later-ending round's winner. Returns the survivor.
+    pub(crate) fn merge_round_into(
+        &self,
+        from: RoundId,
+        into: RoundId,
+    ) -> Result<RoundId> {
+        if from == into {
+            bail!("a round cannot be merged into itself");
+        }
+        let (from_scen, from_r) = self.find_round(from)?;
+        let (into_scen, into_r) = self.find_round(into)?;
+        if self.round_instance_of(from) != self.round_instance_of(into) {
+            bail!("rounds {} and {} are from different servers", from.0, into.0);
+        }
+        let ((keep, keep_scen, keep_r), (gone, gone_scen, gone_r)) =
+            if from_r.end.is_none() {
+                ((from, from_scen, from_r), (into, into_scen, into_r))
+            } else {
+                ((into, into_scen, into_r), (from, from_scen, from_r))
+            };
+        let merged = Round {
+            start: keep_r.start.min(gone_r.start),
+            end: match (keep_r.end, gone_r.end) {
+                (Some(a), Some(b)) => Some(a.max(b)),
+                _ => None,
+            },
+            winner: match (keep_r.end, gone_r.end) {
+                (Some(a), Some(b)) if b > a => gone_r.winner,
+                (Some(_), Some(_)) => keep_r.winner,
+                _ => None,
+            },
+        };
+        // The admin named the target; its name wins, else the other's carries.
+        let name = match self.round_names.get(&into)? {
+            Some(n) => Some(n),
+            None => self.round_names.get(&from)?,
+        };
+
+        self.collapse_round_data(keep, &HashSet::from([gone]))?;
+        self.merge_round_extras(keep, gone, gone_r.start > keep_r.start)?;
+
+        self.round.remove(&(gone_scen.clone(), gone))?;
+        self.seq.remove(&(gone_scen, gone))?;
+        self.round.insert(&(keep_scen.clone(), keep), &merged)?;
+        if self.seq.get(&(keep_scen.clone(), keep))?.is_none() {
+            self.seq.insert(&(keep_scen, keep), &merged.start)?;
+        }
+        self.round_instance.remove(&gone)?;
+        self.round_names.remove(&gone)?;
+        match name {
+            Some(n) => self.round_names.insert(&keep, &n)?,
+            None => self.round_names.remove(&keep)?,
+        };
+        Ok(keep)
+    }
+
+    /// `merge_round_into` for the trees `collapse_round_data` leaves alone.
+    /// `gone_is_later`: the merged-away round started after the survivor, so
+    /// its latest war will / air order of battle is the one to keep and its
+    /// story events come second.
+    fn merge_round_extras(
+        &self,
+        keep: RoundId,
+        gone: RoundId,
+        gone_is_later: bool,
+    ) -> Result<()> {
+        // War diary: one digest per day; the survivor's wins a clash.
+        let days: Vec<((RoundId, std::string::String), std::string::String)> =
+            self.news.scan_prefix(&gone)?.collect::<Result<_>>()?;
+        for ((_, day), json) in days {
+            self.news.remove(&(gone, day.clone()))?;
+            if self.news.get(&(keep, day.clone()))?.is_none() {
+                self.news.insert(&(keep, day), &json)?;
+            }
+        }
+        let pics: Vec<_> = self
+            .news_image_meta
+            .iter()
+            .keys_only()
+            .filter_map(|k| k.ok())
+            .filter(|(_, rid, _)| *rid == gone)
+            .collect();
+        for (inst, _, day) in pics {
+            let old = (inst.clone(), gone, day.clone());
+            let new = (inst, keep, day);
+            let meta = self.news_image_meta.remove(&old)?;
+            let data = self.news_image_data.remove(&old)?;
+            if self.news_image_meta.get(&new)?.is_none() {
+                if let Some(m) = meta {
+                    self.news_image_meta.insert(&new, &m)?;
+                }
+                if let Some(d) = data {
+                    self.news_image_data.insert(&new, &d)?;
+                }
+            }
+        }
+        // Combat log: same times, the survivor's round in the key.
+        let (lo, hi) = combat_log_bounds(gone);
+        let lines: Vec<(std::string::String, std::string::String)> =
+            self.combat_log.range(lo..=hi)?.collect::<Result<_>>()?;
+        let prefix = format!("{:020}:", gone.0);
+        for (k, v) in lines {
+            self.combat_log.remove(&k)?;
+            let nanos = k.strip_prefix(&prefix).unwrap_or(&k);
+            self.combat_log.insert(&format!("{:020}:{nanos}", keep.0), &v)?;
+        }
+        // Latest-value trees: the later round's value.
+        for tree in [&self.war_will, &self.air_oob] {
+            if let Some(v) = tree.remove(&gone)? {
+                if gone_is_later || tree.get(&keep)?.is_none() {
+                    tree.insert(&keep, &v)?;
+                }
+            }
+        }
+        // Story: both rounds' events, the earlier round's first.
+        if let Some(g) = self.story.remove(&gone)? {
+            let parse = |s: &str| match serde_json::from_str::<serde_json::Value>(s) {
+                Ok(serde_json::Value::Array(a)) => a,
+                _ => vec![],
+            };
+            let k = self.story.get(&keep)?.map(|s| parse(&s)).unwrap_or_default();
+            let g = parse(&g);
+            let all: Vec<serde_json::Value> = if gone_is_later {
+                k.into_iter().chain(g).collect()
+            } else {
+                g.into_iter().chain(k).collect()
+            };
+            self.story.insert(&keep, &serde_json::to_string(&all)?)?;
+        }
+        Ok(())
+    }
 }
+
+/// Longest name an admin can give a round.
+pub(crate) const ROUND_NAME_MAX: usize = 80;
 
 /// Re-key every row of a `(RoundId, Rest)`-keyed tree whose round id is in
 /// `fork_ids` onto `canonical`. Rows come out of the tree RoundId-ascending,
@@ -8259,6 +8513,160 @@ mod merge_rounds_tests {
         assert_eq!(left[0].1, real);
         assert!(left[0].2.end.is_none());
 
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod round_admin_tests {
+    use super::*;
+
+    fn ucid() -> Ucid {
+        "0123456789abcdef0123456789abcdef".parse().unwrap()
+    }
+
+    /// Two finished rounds and a live one on the default instance, each with
+    /// a pilot's air kills (in his lifetime total too) and a capture count.
+    fn setup(tag: &str) -> (std::path::PathBuf, StatsDb, [RoundId; 3], DateTime<Utc>) {
+        let tmp = std::env::temp_dir().join(format!("bfdb-{tag}-{}", Uuid::new_v4()));
+        let db = StatsDb::new_offline(tmp.join("db")).unwrap();
+        let scen = Scenario::from("campaign");
+        let inst = db.round_instance_of(RoundId(u64::MAX));
+        let t0 = Utc::now() - chrono::Duration::days(1);
+        let ids = [RoundId(10), RoundId(2_000_010), RoundId(4_000_010)];
+        let veh = Vehicle(String::from("F-16C_50"));
+        let oid = ObjectiveId::from(1i64);
+        let mut total = 0;
+        for (i, rid) in ids.iter().enumerate() {
+            let start = t0 + chrono::Duration::hours(i as i64 * 2);
+            let open = i == 2;
+            let end = (!open).then(|| start + chrono::Duration::hours(1));
+            let winner = (!open).then_some(if i == 0 { Side::Blue } else { Side::Red });
+            db.round
+                .insert(&(scen.clone(), *rid), &Round { start, end, winner })
+                .unwrap();
+            db.seq.insert(&(scen.clone(), *rid), &start).unwrap();
+            db.round_instance.insert(rid, &inst.to_string()).unwrap();
+            let kills = 1 + i as u32;
+            total += kills;
+            db.pilots
+                .aggregates
+                .insert(
+                    &(ucid(), veh.clone(), *rid),
+                    &Aggregates { air_kills: kills, ..Default::default() },
+                )
+                .unwrap();
+            db.objective_captures.insert(&(*rid, oid), &kills).unwrap();
+            db.combat_log
+                .insert(&combat_log_key(*rid, 1_000 + i as i64), &format!("line {i}"))
+                .unwrap();
+        }
+        db.pilots
+            .pilots
+            .insert(
+                &ucid(),
+                &Pilot {
+                    name: ArrayVec::new(),
+                    total: Aggregates { air_kills: total, ..Default::default() },
+                    token: ArrayVec::new(),
+                },
+            )
+            .unwrap();
+        (tmp, db, ids, t0)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rename_sets_trims_and_clears() {
+        let (tmp, db, [r1, ..], _) = setup("round-rename");
+        assert_eq!(
+            db.rename_round(r1, Some("  Operation   Kingfisher ")).unwrap().as_deref(),
+            Some("Operation Kingfisher")
+        );
+        assert_eq!(
+            db.round_names().unwrap().get(&r1).map(|s| s.as_str()),
+            Some("Operation Kingfisher")
+        );
+        assert!(db.rename_round(r1, Some(&"x".repeat(ROUND_NAME_MAX + 1))).is_err());
+        assert_eq!(db.rename_round(r1, Some("   ")).unwrap(), None);
+        assert!(db.round_names().unwrap().is_empty());
+        assert!(db.rename_round(RoundId(77), Some("nope")).is_err());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn delete_removes_a_finished_round_and_its_share() {
+        let (tmp, db, [r1, r2, r3], _) = setup("round-delete");
+        db.rename_round(r2, Some("Doomed")).unwrap();
+        // The live round is refused.
+        assert!(db.delete_round(r3).is_err());
+
+        db.delete_round(r2).unwrap();
+        let left: Vec<RoundId> =
+            db.all_rounds().unwrap().into_iter().map(|(_, r, _)| r).collect();
+        assert_eq!(left.len(), 2);
+        assert!(!left.contains(&r2));
+        let oid = ObjectiveId::from(1i64);
+        assert!(db.objective_captures.get(&(r2, oid)).unwrap().is_none());
+        assert!(db.objective_captures.get(&(r1, oid)).unwrap().is_some());
+        assert!(db.combat_log.get(&combat_log_key(r2, 1_001)).unwrap().is_none());
+        assert!(db.combat_log.get(&combat_log_key(r1, 1_000)).unwrap().is_some());
+        assert!(db.round_names().unwrap().is_empty());
+        // 1 + 2 + 3 air kills, less round 2's two.
+        assert_eq!(db.pilots.pilots.get(&ucid()).unwrap().unwrap().total.air_kills, 4);
+        // The rest are renumbered 1, 2.
+        assert_eq!(db.round_number(r1), Some(1));
+        assert_eq!(db.round_number(r3), Some(2));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn merge_two_finished_rounds_keeps_the_target() {
+        let (tmp, db, [r1, r2, _], t0) = setup("round-merge");
+        db.rename_round(r2, Some("Second")).unwrap();
+        let kept = db.merge_round_into(r2, r1).unwrap();
+        assert_eq!(kept, r1);
+        let rounds = db.all_rounds().unwrap();
+        assert_eq!(rounds.len(), 2);
+        let (_, _, merged) = rounds.iter().find(|(_, r, _)| *r == r1).unwrap();
+        assert_eq!(merged.start, t0);
+        assert_eq!(merged.end, Some(t0 + chrono::Duration::hours(3)));
+        // Round 2 ended later, so its winner stands.
+        assert_eq!(merged.winner, Some(Side::Red));
+        let veh = Vehicle(String::from("F-16C_50"));
+        assert_eq!(
+            db.pilots.aggregates.get(&(ucid(), veh, r1)).unwrap().unwrap().air_kills,
+            3
+        );
+        assert_eq!(
+            db.objective_captures.get(&(r1, ObjectiveId::from(1i64))).unwrap(),
+            Some(3)
+        );
+        assert_eq!(
+            db.combat_log.get(&combat_log_key(r1, 1_001)).unwrap().as_deref(),
+            Some("line 1")
+        );
+        assert!(db.combat_log.get(&combat_log_key(r2, 1_001)).unwrap().is_none());
+        // The target had no name, so the merged round's carries over.
+        assert_eq!(
+            db.round_names().unwrap().get(&r1).map(|s| s.as_str()),
+            Some("Second")
+        );
+        // Lifetime totals are untouched by a merge.
+        assert_eq!(db.pilots.pilots.get(&ucid()).unwrap().unwrap().total.air_kills, 6);
+        assert!(db.merge_round_into(r1, r1).is_err());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn merge_into_a_finished_round_keeps_the_live_one() {
+        let (tmp, db, [_, r2, r3], _) = setup("round-merge-live");
+        let kept = db.merge_round_into(r3, r2).unwrap();
+        assert_eq!(kept, r3, "the engine is still writing to the live round");
+        let rounds = db.all_rounds().unwrap();
+        let (_, _, merged) = rounds.iter().find(|(_, r, _)| *r == r3).unwrap();
+        assert!(merged.end.is_none());
+        assert!(merged.winner.is_none());
+        assert!(!rounds.iter().any(|(_, r, _)| *r == r2));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

@@ -119,6 +119,14 @@ pub(crate) async fn cached_rows(
         .map_err(Error)
 }
 
+/// Drop every cached public answer, so an admin's edit (a round renamed,
+/// merged or deleted) shows on the next request rather than up to a minute
+/// later.
+pub(crate) fn clear_route_caches() {
+    ROUTE_CACHE.clear_all();
+    ROWS_CACHE.clear_all();
+}
+
 /// One page of a cached list, as [`page_json`] would cut it.
 pub(crate) fn page_slice(
     rows: &[serde_json::Value],

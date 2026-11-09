@@ -2240,6 +2240,31 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(with_db(db.clone()))
         .then(api_admin_merge_rounds);
 
+    let admin_round_rename = warp::path!("api" / "admin" / "rounds" / u64 / "rename")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
+        .and(warp::body::json::<RoundRenameBody>())
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_admin_round_rename);
+
+    let admin_round_delete = warp::path!("api" / "admin" / "rounds" / u64 / "delete")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_admin_round_delete);
+
+    let admin_round_merge = warp::path!("api" / "admin" / "rounds" / u64 / "merge")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
+        .and(warp::body::json::<RoundMergeBody>())
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_admin_round_merge);
+
     let admin_rebuild_stats = warp::path!("api" / "admin" / "rebuild-stats")
         .and(warp::post())
         .and(extract_session_cookie())
@@ -3214,6 +3239,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .or(auth_logout)
         .or(admin_reset)
         .or(admin_merge_rounds)
+        .or(admin_round_rename)
+        .or(admin_round_delete)
+        .or(admin_round_merge)
         .or(admin_rebuild_stats)
         .or(admin_news_regenerate_image)
         .or(admin_reset_lives_all)

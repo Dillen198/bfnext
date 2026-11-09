@@ -5,15 +5,16 @@
 // ?round=<id> selects a round, so a round report can be linked. Export PDF
 // saves the page header and the selected round's report, as drawn, on one
 // PDF page (the round list and buttons left out); admins also
-// get the text of a Discord post to go with it (lib/roundPost.ts).
+// get the text of a Discord post to go with it (lib/roundPost.ts), and can
+// rename a round, merge it into another or delete it (Edit round).
 
 import React, { useMemo, useRef, useState } from 'react'
-import { useIsFetching, useQuery, type UseQueryResult } from '@tanstack/react-query'
+import { useIsFetching, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine,
 } from 'recharts'
-import { api, roundNo, type Round, type RoundReport, type RoundReportBucket, type RoundSummary } from '../api'
+import { api, roundNo, roundTitle, type Round, type RoundReport, type RoundReportBucket, type RoundSummary } from '../api'
 import { campaign } from '../config/campaign'
 import QueryState from '../components/QueryState'
 import PageHeader from '../components/PageHeader'
@@ -323,7 +324,7 @@ function Report({ round, ref }: { round: Round; ref?: React.Ref<HTMLDivElement> 
           <div style={{ minWidth: 0 }}>
             <div style={label}>Round {roundNo(round)}{round.instance ? ` · ${round.instance}` : ''}</div>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.6rem', letterSpacing: '0.06em', color: 'var(--text)', lineHeight: 1.1 }}>
-              {round.scenario || `Round ${roundNo(round)}`}
+              {roundTitle(round)}
             </div>
             <div className="font-mono" style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginTop: 2 }}>
               {fmtDate(round.start)} → {round.end ? fmtDate(round.end) : 'now'} · {duration(round)}
@@ -434,7 +435,7 @@ function LvRoundRow({ r, on, onPick }: { r: Round; on: boolean; onPick: () => vo
       <span className="rd-no">{roundNo(r)}</span>
       <span className="rd-row-main">
         <span className="rd-row-top">
-          <strong>{r.scenario || `Round ${roundNo(r)}`}</strong>
+          <strong>{roundTitle(r)}</strong>
           {r.active ? <Live /> : <Tape tone={t} className="sm">{sideName(r.winner)}</Tape>}
         </span>
         <span className="rd-dates">{fmtDate(r.start)} → {r.end ? fmtDate(r.end) : 'now'} · {duration(r)}</span>
@@ -586,7 +587,7 @@ function LvReport({ ref, round, s, report, tiles, leaders }: {
         <div className="rd-hero-top">
           <div className="rd-hero-id">
             <span className="ds-k">Scenario</span>
-            <h2 className="rd-hero-name">{round.scenario || `Round ${roundNo(round)}`}</h2>
+            <h2 className="rd-hero-name">{roundTitle(round)}</h2>
             <div className="rd-hero-dates">
               <b>{fmtDate(round.start)}</b> → <b>{round.end ? fmtDate(round.end) : 'now'}</b>
               <span> · {duration(round)}</span>
@@ -678,9 +679,129 @@ function DiscordPost({ round, onClose }: { round: Round; onClose: () => void }) 
   )
 }
 
+/** Admins only: rename the selected round, merge it into another of its
+ *  server's rounds, or delete it. bfdb refuses deleting the live round, and
+ *  a merge with the live round keeps the live round's id. */
+function EditRound({ round, rounds, onPick, onClose }: {
+  round: Round
+  rounds: Round[]
+  onPick: (id: number | null) => void
+  onClose: () => void
+}) {
+  const qc = useQueryClient()
+  const [name, setName] = useState(round.name ?? '')
+  const [into, setInto] = useState<number | ''>('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState<string | null>(null)
+  const others = rounds.filter(r => r.id !== round.id && (r.instance ?? '') === (round.instance ?? ''))
+  const what = `Round ${roundNo(round)}${round.name || round.scenario ? ` (${round.name || round.scenario})` : ''}`
+
+  const run = async (f: () => Promise<string>) => {
+    setBusy(true)
+    setError(null)
+    setDone(null)
+    try {
+      setDone(await f())
+      // Round numbers, names, leaderboards and pilot totals can all move.
+      await qc.invalidateQueries()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const rename = (n: string | null) => run(async () => {
+    const r = await api.admin.renameRound(round.id, n)
+    setName(r.name ?? '')
+    return r.name ? `Renamed to "${r.name}".` : 'Name cleared; the scenario shows again.'
+  })
+  const merge = () => {
+    const target = others.find(r => r.id === into)
+    if (!target) return
+    if (!window.confirm(
+      `Merge ${what} into Round ${roundNo(target)}?\n\n` +
+      'Their kills, captures, sorties and reports become one round. This cannot be undone.' +
+      (round.active ? `\n\n${what} is live, so the merged round keeps its id.` : ''),
+    )) return
+    void run(async () => {
+      const r = await api.admin.mergeRound(round.id, target.id)
+      onPick(r.id)
+      return 'Merged.'
+    })
+  }
+  const remove = () => {
+    if (!window.confirm(
+      `Delete ${what}?\n\nEvery kill, capture, sortie and report in it goes, and pilots' lifetime totals lose ` +
+      'what they earned in it. Later rounds are renumbered. This cannot be undone.',
+    )) return
+    void run(async () => {
+      await api.admin.deleteRound(round.id)
+      onPick(null)
+      return `${what} deleted.`
+    })
+  }
+
+  const small: React.CSSProperties = { fontSize: '0.66rem', padding: '4px 12px' }
+  const field: React.CSSProperties = {
+    background: 'var(--bg)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 4,
+    fontSize: '0.75rem', padding: '5px 8px', minWidth: 0,
+  }
+  const row: React.CSSProperties = {
+    display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '10px 16px', borderBottom: '1px solid var(--border)',
+  }
+  const rowLabel: React.CSSProperties = { ...label, width: 70, flexShrink: 0 }
+  return (
+    <div className="vs-card p-0" style={{ marginBottom: 16 }} {...{ [NO_PDF]: '' }}>
+      <div className="flex items-center gap-2 px-4 pt-3.5 pb-2.5" style={{ borderBottom: '1px solid var(--border)' }}>
+        <span style={{ ...label, fontSize: '0.65rem' }}>Edit round · Round {roundNo(round)}</span>
+        {busy && <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>working…</span>}
+        {error && <span role="alert" style={{ fontSize: '0.65rem', color: 'var(--red)' }}>{error}</span>}
+        {done && !error && <span style={{ fontSize: '0.65rem', color: 'var(--accent-bright)' }}>{done}</span>}
+        <span className="ml-auto">
+          <button type="button" className="vs-btn-ghost" style={{ ...small, padding: '4px 10px' }} onClick={onClose}>Close</button>
+        </span>
+      </div>
+      <form style={row} onSubmit={e => { e.preventDefault(); void rename(name) }}>
+        <span style={rowLabel}>Name</span>
+        <input value={name} onChange={e => setName(e.target.value)} maxLength={80} aria-label="Round name"
+          placeholder={round.scenario || `Round ${roundNo(round)}`} style={{ ...field, flex: '1 1 220px' }} />
+        <button type="submit" className="vs-btn" style={small} disabled={busy || name.trim() === (round.name ?? '')}>SAVE</button>
+        {round.name && (
+          <button type="button" className="vs-btn-ghost" style={small} disabled={busy} onClick={() => void rename(null)}
+            title="Show the scenario name again">CLEAR</button>
+        )}
+      </form>
+      <div style={row}>
+        <span style={rowLabel}>Merge</span>
+        <select value={into} onChange={e => setInto(e.target.value ? Number(e.target.value) : '')} aria-label="Round to merge into"
+          style={{ ...field, flex: '1 1 220px' }} disabled={others.length === 0}>
+          <option value="">{others.length ? 'Merge this round into…' : 'No other rounds on this server'}</option>
+          {others.map(r => (
+            <option key={r.id} value={r.id}>
+              Round {roundNo(r)} · {r.name || r.scenario} · {fmtDate(r.start)}{r.active ? ' · live' : ''}
+            </option>
+          ))}
+        </select>
+        <button type="button" className="vs-btn-outline" style={small} disabled={busy || into === ''} onClick={merge}>MERGE</button>
+      </div>
+      <div style={{ ...row, borderBottom: 'none' }}>
+        <span style={rowLabel}>Delete</span>
+        <span style={{ fontSize: '0.66rem', color: 'var(--text-dim)', flex: '1 1 220px' }}>
+          {round.active
+            ? 'The live round cannot be deleted; end it first, or merge an old round into it.'
+            : 'Removes this round and everything recorded in it.'}
+        </span>
+        <button type="button" className="vs-btn-outline" style={{ ...small, color: 'var(--red)', borderColor: 'var(--red)' }}
+          disabled={busy || round.active} onClick={remove}>DELETE</button>
+      </div>
+    </div>
+  )
+}
+
 /** "round-12-southern-flank.pdf" */
 function pdfName(r: Round): string {
-  const slug = (r.scenario || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  const slug = (r.name || r.scenario || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
   return `round-${roundNo(r)}${r.instance ? `-${r.instance}` : ''}${slug ? `-${slug}` : ''}.pdf`
 }
 
@@ -723,13 +844,25 @@ export default function RoundsPage() {
   const wanted = Number(params.get('round'))
   const selected = rounds.find(r => r.id === wanted) ?? rounds.find(r => r.active) ?? rounds[0]
   const pick = (id: number) => setParams(p => { p.set('round', String(id)); return p }, { replace: true })
+  // After a delete there is no round to show: fall back to the live (or latest) one.
+  const pickOrLatest = (id: number | null) => (id == null
+    ? setParams(p => { p.delete('round'); return p }, { replace: true })
+    : pick(id))
   const look = useDashLook()
   const reportRef = useRef<HTMLDivElement>(null)
   const headerRef = useRef<HTMLDivElement>(null)
   const { user } = useAuth()
   const [posting, setPosting] = useState(false)
+  const [editing, setEditing] = useState(false)
   const exportBtn = (
     <>
+      {user?.is_admin && selected && (
+        <button type="button" className="vs-btn-outline" {...{ [NO_PDF]: '' }} onClick={() => setEditing(p => !p)} aria-pressed={editing}
+          title="Rename, merge or delete this round"
+          style={{ fontSize: '0.68rem', padding: '5px 12px' }}>
+          EDIT ROUND
+        </button>
+      )}
       {user?.is_admin && selected && (
         <button type="button" className="vs-btn-outline" {...{ [NO_PDF]: '' }} onClick={() => setPosting(p => !p)} aria-pressed={posting}
           title="Text for a Discord announcement of this round"
@@ -743,6 +876,9 @@ export default function RoundsPage() {
   const post = posting && user?.is_admin && selected
     ? <DiscordPost key={selected.id} round={selected} onClose={() => setPosting(false)} />
     : null
+  const edit = editing && user?.is_admin && selected
+    ? <EditRound key={selected.id} round={selected} rounds={rounds} onPick={pickOrLatest} onClose={() => setEditing(false)} />
+    : null
 
   if (look.profile) {
     return (
@@ -750,6 +886,7 @@ export default function RoundsPage() {
         <PageHeader art="flanker" title="ROUNDS" sub={`${rounds.length} round${rounds.length === 1 ? '' : 's'} on this server`} icon={Award} right={exportBtn} ref={headerRef} />
         <div className="flex-1 overflow-auto rd-page">
           <QueryState isLoading={q.isLoading} isError={q.isError} error={q.error} isEmpty={rounds.length === 0} what="rounds" onRetry={q.refetch} />
+          {edit}
           {post}
           {selected && (
             <div className="rd-layout">
@@ -772,6 +909,7 @@ export default function RoundsPage() {
       <PageHeader art="flanker" title="ROUNDS" sub={`${rounds.length} round${rounds.length === 1 ? '' : 's'} on this server`} icon={Award} right={exportBtn} ref={headerRef} />
       <div className="flex-1 overflow-auto p-4">
         <QueryState isLoading={q.isLoading} isError={q.isError} error={q.error} isEmpty={rounds.length === 0} what="rounds" onRetry={q.refetch} />
+        {edit}
         {post}
         {selected && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start' }}>
@@ -796,7 +934,7 @@ export default function RoundsPage() {
                         </span>
                       </div>
                       <div style={{ fontSize: '0.62rem', color: 'var(--text-dim)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {r.scenario} · {fmtDate(r.start)} · {duration(r)}
+                        {r.name || r.scenario} · {fmtDate(r.start)} · {duration(r)}
                       </div>
                     </button>
                   )

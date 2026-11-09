@@ -87,6 +87,7 @@ pub(crate) async fn api_rounds(
         cached_json(format!("rounds:{}:{all}", inst.id), move || -> Result<String> {
             let rounds = db.all_rounds()?;
             let numbers = db.round_numbers()?;
+            let names = db.round_names()?;
             let entries: Vec<_> = rounds
                 .iter()
                 .filter_map(|(scenario, rid, round)| {
@@ -98,6 +99,8 @@ pub(crate) async fn api_rounds(
                         "id": rid.0,
                         // What to call it: the id is a database key.
                         "number": numbers.get(rid),
+                        // An admin's name for it; null shows the scenario.
+                        "name": names.get(rid),
                         "instance": owner.to_string(),
                         "scenario": scenario.to_string(),
                         "start": round.start.to_rfc3339(),

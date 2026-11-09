@@ -36,6 +36,12 @@ describe('roundPost', () => {
     expect(t.trim().endsWith('https://x/rounds?round=1')).toBe(true)
   })
 
+  it("uses an admin's name for the round over its scenario", () => {
+    const t = post({ round: { ...round, active: true, end: null, name: 'Operation Kingfisher' } })
+    expect(t).toMatch(/Operation Kingfisher/)
+    expect(t).not.toMatch(/Southern Flank/)
+  })
+
   it('reads like a person wrote it', () => {
     for (let id = 1; id < 200; id++) {
       const t = post({ round: { ...round, id } })

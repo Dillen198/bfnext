@@ -220,6 +220,8 @@ export interface Round {
   number?: number | null
   /** Which DCS server instance ran this round. */
   instance?: string
+  /** An admin's name for the round; null (or missing) shows `scenario`. */
+  name?: string | null
   scenario: string
   start: string
   end: string | null
@@ -2321,6 +2323,10 @@ export interface LastRound {
 /** What to call a round: its number on its server (see `numberRounds`). */
 export const roundNo = (r: { id: number; number?: number | null }) => r.number ?? r.id
 
+/** A round's title: the name an admin gave it, else its scenario, else "Round N". */
+export const roundTitle = (r: { id: number; number?: number | null; name?: string | null; scenario?: string }) =>
+  r.name || r.scenario || `Round ${roundNo(r)}`
+
 /**
  * Fill in `number` where bfdb did not send it -- a bfdb from before v2.7,
  * which a server keeps running until its auto-update applies the new one.
@@ -2648,6 +2654,15 @@ export const api = {
     cfg:         () => get<Record<string, unknown>>('/admin/cfg'),
     cfgSchema:   () => get<JsonSchema>('/admin/cfg/schema'),
     cfgSave:     (cfg: Record<string, unknown>) => post<{ ok: boolean }>('/admin/cfg', { cfg }),
+    /** Name a round (null or blank goes back to its scenario). */
+    renameRound: (id: number, name: string | null) =>
+                   post<{ ok: boolean; name: string | null }>(`/admin/rounds/${id}/rename`, { name }),
+    /** Delete a finished round and everything in it; pilots' totals lose its share. */
+    deleteRound: (id: number) => post<{ ok: boolean }>(`/admin/rounds/${id}/delete`, {}),
+    /** Merge round `id` into round `into`; answers with the surviving round's id
+     *  (`into`, unless `id` is the live round). */
+    mergeRound:  (id: number, into: number) =>
+                   post<{ ok: boolean; id: number }>(`/admin/rounds/${id}/merge`, { into }),
   },
   /** The OPS page: server box, processes, engine updates, bot config. bfdb
    *  forwards these to the DCSServerBot plugin, which owns all of it. */
