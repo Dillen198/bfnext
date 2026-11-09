@@ -2,10 +2,13 @@
 // one selected, a report of how it went -- territory over time, the kill
 // exchange, the most fought-over objectives, and who carried it.
 //
-// ?round=<id> selects a round, so a round report can be linked.
+// ?round=<id> selects a round, so a round report can be linked. Export PDF
+// saves the page header and the selected round's report, as drawn, on one
+// PDF page (the round list and buttons left out); admins also
+// get the text of a Discord post to go with it (lib/roundPost.ts).
 
-import React, { useMemo } from 'react'
-import { useQuery, type UseQueryResult } from '@tanstack/react-query'
+import React, { useMemo, useRef, useState } from 'react'
+import { useIsFetching, useQuery, type UseQueryResult } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine,
@@ -17,7 +20,10 @@ import PageHeader from '../components/PageHeader'
 import { fmtHours } from '../lib/format'
 import { useDashLook } from '../lib/look'
 import { Card as LvCard, Tape } from '../components/Levant'
-import { Award } from '@icons'
+import { Award, Download } from '@icons'
+import { NO_PDF, saveElementPdf } from '../lib/pdfSnapshot'
+import { roundPost } from '../lib/roundPost'
+import { useAuth } from '../context/AuthContext'
 import './levant/rounds.css'
 
 const BLUE = 'var(--blue)'
@@ -298,7 +304,7 @@ function summaryLeaders(s: RoundSummary | null | undefined) {
     : []
 }
 
-function Report({ round }: { round: Round }) {
+function Report({ round, ref }: { round: Round; ref?: React.Ref<HTMLDivElement> }) {
   const look = useDashLook()
   const summary = useQuery({ queryKey: ['round-summary', round.id], queryFn: () => api.roundSummary(round.id) })
   const report = useQuery({ queryKey: ['round-report', round.id], queryFn: () => api.roundReport(round.id) })
@@ -308,10 +314,10 @@ function Report({ round }: { round: Round }) {
   const tiles = summaryTiles(s)
   const leaders = summaryLeaders(s)
 
-  if (look.profile) return <LvReport round={round} s={s} report={report} tiles={tiles} leaders={leaders} />
+  if (look.profile) return <LvReport ref={ref} round={round} s={s} report={report} tiles={tiles} leaders={leaders} />
 
   return (
-    <div className="space-y-4" style={{ minWidth: 0 }}>
+    <div ref={ref} className="space-y-4" style={{ minWidth: 0 }}>
       <div className="vs-card p-0" style={{ borderLeft: `3px solid ${round.active ? 'var(--accent)' : sideColor(round.winner)}` }}>
         <div className="flex flex-wrap items-center gap-3 px-4 py-3">
           <div style={{ minWidth: 0 }}>
@@ -560,7 +566,8 @@ function LvPilots({ s }: { s: RoundSummary }) {
   )
 }
 
-function LvReport({ round, s, report, tiles, leaders }: {
+function LvReport({ ref, round, s, report, tiles, leaders }: {
+  ref?: React.Ref<HTMLDivElement>
   round: Round
   s?: RoundSummary | null
   report: UseQueryResult<RoundReport | null>
@@ -570,7 +577,7 @@ function LvReport({ round, s, report, tiles, leaders }: {
   const rep = report.data
   const t = tone(round.winner)
   return (
-    <div className="rd-report">
+    <div ref={ref} className="rd-report">
       <LvCard
         tape={<>Round {roundNo(round)}{round.instance ? ` · ${round.instance}` : ''}</>}
         tone={round.active ? 'rust' : t === 'n' ? undefined : t}
@@ -632,6 +639,83 @@ function LvReport({ round, s, report, tiles, leaders }: {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+/** Admins only: the Discord post for the selected round, editable, with Copy. */
+function DiscordPost({ round, onClose }: { round: Round; onClose: () => void }) {
+  // The report's own queries, so this shares their cache.
+  const summary = useQuery({ queryKey: ['round-summary', round.id], queryFn: () => api.roundSummary(round.id) })
+  const report = useQuery({ queryKey: ['round-report', round.id], queryFn: () => api.roundReport(round.id) })
+  const url = `${window.location.origin}/rounds?round=${round.id}${round.instance ? `&instance=${encodeURIComponent(round.instance)}` : ''}`
+  const draft = roundPost({
+    round, summary: summary.data, report: report.data, blue: campaign.blueLabel, red: campaign.redLabel, url,
+  })
+  const [edited, setEdited] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  const text = edited ?? draft
+  const copy = async () => {
+    await navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <div className="vs-card p-0" style={{ marginBottom: 16 }}>
+      <div className="flex items-center gap-2 px-4 pt-3.5 pb-2.5" style={{ borderBottom: '1px solid var(--border)' }}>
+        <span style={{ ...label, fontSize: '0.65rem' }}>Discord post · Round {roundNo(round)}</span>
+        <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>edit if you like, then paste it with the PDF</span>
+        <span className="ml-auto flex gap-2">
+          {edited !== null && <button type="button" className="vs-btn-ghost" style={{ fontSize: '0.66rem', padding: '4px 10px' }} onClick={() => setEdited(null)}>Reset</button>}
+          <button type="button" className="vs-btn" style={{ fontSize: '0.66rem', padding: '4px 12px' }} onClick={() => void copy()}>{copied ? 'COPIED' : 'COPY'}</button>
+          <button type="button" className="vs-btn-ghost" style={{ fontSize: '0.66rem', padding: '4px 10px' }} onClick={onClose}>Close</button>
+        </span>
+      </div>
+      <textarea value={text} onChange={e => setEdited(e.target.value)} spellCheck aria-label="Discord post text"
+        rows={Math.min(22, text.split('\n').length + 1)}
+        style={{
+          display: 'block', width: '100%', boxSizing: 'border-box', resize: 'vertical', padding: '12px 16px',
+          background: 'transparent', color: 'var(--text)', border: 'none', outline: 'none',
+          fontFamily: 'var(--font-mono, monospace)', fontSize: '0.75rem', lineHeight: 1.5,
+        }} />
+    </div>
+  )
+}
+
+/** "round-12-southern-flank.pdf" */
+function pdfName(r: Round): string {
+  const slug = (r.scenario || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  return `round-${roundNo(r)}${r.instance ? `-${r.instance}` : ''}${slug ? `-${slug}` : ''}.pdf`
+}
+
+/** Saves the selected round's report (not the round list) as a one-page PDF. */
+function ExportPdf({ round, target, header }: {
+  round: Round | undefined
+  target: React.RefObject<HTMLDivElement | null>
+  header: React.RefObject<HTMLDivElement | null>
+}) {
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState(false)
+  // Wait for the report to be drawn before snapshotting it.
+  const loading = useIsFetching({ queryKey: ['round-report', round?.id] }) + useIsFetching({ queryKey: ['round-summary', round?.id] }) > 0
+  const save = async () => {
+    if (!round || !target.current) return
+    setBusy(true)
+    setFailed(false)
+    try {
+      await saveElementPdf(target.current, pdfName(round), { header: header.current })
+    } catch (e) {
+      console.error('round PDF export failed', e)
+      setFailed(true)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <button type="button" className="vs-btn" {...{ [NO_PDF]: '' }} onClick={() => void save()} disabled={!round || busy || loading}
+      title={failed ? 'The export failed; see the browser console' : "This round's report on one PDF page"}
+      style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.68rem', padding: '5px 12px' }}>
+      <Download size={12} /> {busy ? 'EXPORTING…' : failed ? 'EXPORT FAILED' : 'EXPORT PDF'}
+    </button>
+  )
+}
+
 export default function RoundsPage() {
   const q = useQuery({ queryKey: ['rounds'], queryFn: () => api.rounds() })
   const [params, setParams] = useSearchParams()
@@ -640,13 +724,33 @@ export default function RoundsPage() {
   const selected = rounds.find(r => r.id === wanted) ?? rounds.find(r => r.active) ?? rounds[0]
   const pick = (id: number) => setParams(p => { p.set('round', String(id)); return p }, { replace: true })
   const look = useDashLook()
+  const reportRef = useRef<HTMLDivElement>(null)
+  const headerRef = useRef<HTMLDivElement>(null)
+  const { user } = useAuth()
+  const [posting, setPosting] = useState(false)
+  const exportBtn = (
+    <>
+      {user?.is_admin && selected && (
+        <button type="button" className="vs-btn-outline" {...{ [NO_PDF]: '' }} onClick={() => setPosting(p => !p)} aria-pressed={posting}
+          title="Text for a Discord announcement of this round"
+          style={{ fontSize: '0.68rem', padding: '5px 12px' }}>
+          DISCORD POST
+        </button>
+      )}
+      <ExportPdf round={selected} target={reportRef} header={headerRef} />
+    </>
+  )
+  const post = posting && user?.is_admin && selected
+    ? <DiscordPost key={selected.id} round={selected} onClose={() => setPosting(false)} />
+    : null
 
   if (look.profile) {
     return (
       <div className="flex flex-col flex-1 overflow-hidden">
-        <PageHeader art="flanker" title="ROUNDS" sub={`${rounds.length} round${rounds.length === 1 ? '' : 's'} on this server`} icon={Award} />
+        <PageHeader art="flanker" title="ROUNDS" sub={`${rounds.length} round${rounds.length === 1 ? '' : 's'} on this server`} icon={Award} right={exportBtn} ref={headerRef} />
         <div className="flex-1 overflow-auto rd-page">
           <QueryState isLoading={q.isLoading} isError={q.isError} error={q.error} isEmpty={rounds.length === 0} what="rounds" onRetry={q.refetch} />
+          {post}
           {selected && (
             <div className="rd-layout">
               {/* Round list: a column beside the report on wide screens, above it on narrow ones. */}
@@ -654,7 +758,7 @@ export default function RoundsPage() {
                 {rounds.map(r => <LvRoundRow key={r.id} r={r} on={r.id === selected.id} onPick={() => pick(r.id)} />)}
               </LvCard>
               <div className="rd-main">
-                <Report key={selected.id} round={selected} />
+                <Report key={selected.id} ref={reportRef} round={selected} />
               </div>
             </div>
           )}
@@ -665,9 +769,10 @@ export default function RoundsPage() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <PageHeader art="flanker" title="ROUNDS" sub={`${rounds.length} round${rounds.length === 1 ? '' : 's'} on this server`} icon={Award} />
+      <PageHeader art="flanker" title="ROUNDS" sub={`${rounds.length} round${rounds.length === 1 ? '' : 's'} on this server`} icon={Award} right={exportBtn} ref={headerRef} />
       <div className="flex-1 overflow-auto p-4">
         <QueryState isLoading={q.isLoading} isError={q.isError} error={q.error} isEmpty={rounds.length === 0} what="rounds" onRetry={q.refetch} />
+        {post}
         {selected && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start' }}>
             {/* Round list: a column beside the report on wide screens, above it on narrow ones. */}
@@ -699,7 +804,7 @@ export default function RoundsPage() {
               </div>
             </div>
             <div style={{ flex: '999 1 560px', minWidth: 0 }}>
-              <Report key={selected.id} round={selected} />
+              <Report key={selected.id} ref={reportRef} round={selected} />
             </div>
           </div>
         )}
