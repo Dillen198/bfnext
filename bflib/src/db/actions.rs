@@ -4885,7 +4885,11 @@ impl Db {
                     .is_ok_and(|c| (c - *pos).magnitude() <= 15_000.);
                 Some((*pos, if near { "On station" } else { "Flying to station" }))
             }
-            _ => destination.map(|p| (p, "Inbound to target")),
+            // Delivered (`advance_actions` takes the destination): on the
+            // way home to the field it came from.
+            _ => destination
+                .map(|p| (p, "Inbound to target"))
+                .or_else(|| rtb.map(|p| (p, "Returning to base"))),
         }
     }
 

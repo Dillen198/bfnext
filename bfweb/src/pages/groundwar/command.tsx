@@ -77,7 +77,8 @@ interface AProps {
 }
 
 function AssetMarkerImpl({ a, side, selected, near, onPick }: AProps): ReactElement {
-  const fill = a.live ? SIDE_BRIGHT[side] : SIDE_COLOR[side]
+  // Selected: the unit itself takes the selection colour, no ring around it.
+  const fill = selected ? PENCIL : a.live ? SIDE_BRIGHT[side] : SIDE_COLOR[side]
   const rotate = a.kind === 'air' || a.kind === 'naval'
   const sub = a.kind === 'air'
     ? `${fl(a.alt_m)} · ${Math.round(a.speed_kts)} KT`
