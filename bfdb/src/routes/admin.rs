@@ -944,3 +944,97 @@ pub(crate) async fn api_admin_unban(
     audit(&db, &who, "unban", Some(&body.ucid), None);
     Ok(warp::reply::json(&serde_json::json!({"ok": true, "was_banned": removed})))
 }
+
+#[derive(serde::Deserialize)]
+pub(crate) struct RoundRenameBody {
+    /// The new name; null or blank goes back to the scenario name.
+    pub(crate) name: Option<std::string::String>,
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct RoundMergeBody {
+    /// The round to merge this one into.
+    pub(crate) into: u64,
+}
+
+/// The round named in an admin round route, if it is this instance's.
+fn admin_round(
+    db: &StatsDb,
+    inst: &Inst,
+    id: u64,
+) -> std::result::Result<db::RoundId, Error> {
+    let rid = db::RoundId(id);
+    if db.round_instance_of(rid) != inst.id {
+        return Err(Error(websec::bad_request(format!(
+            "round {id} is not {}'s",
+            inst.id
+        ))));
+    }
+    Ok(rid)
+}
+
+/// A refused round edit (live round, bad name, ...) comes back as a 400 the
+/// dashboard can show, not a generic 500.
+fn round_edit_err(e: anyhow::Error) -> Error {
+    Error(websec::bad_request(format!("{e:#}")))
+}
+
+/// POST /api/admin/rounds/{id}/rename `{name}` -- give a round a name on the
+/// Rounds page (null or blank clears it).
+pub(crate) async fn api_admin_round_rename(
+    id: u64,
+    session_id: Option<Uuid>,
+    body: RoundRenameBody,
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let who = require_admin(session_id, db.clone()).await?;
+    let rid = admin_round(&db, &inst, id)?;
+    let name = task::block_in_place(|| db.rename_round(rid, body.name.as_deref()))
+        .map_err(round_edit_err)?;
+    clear_route_caches();
+    let detail =
+        format!("round {id} -> {}", name.as_deref().unwrap_or("(scenario name)"));
+    audit(&db, &who, "rename round", Some(&detail), Some(&inst.id));
+    Ok(warp::reply::json(&serde_json::json!({"ok": true, "name": name})))
+}
+
+/// POST /api/admin/rounds/{id}/delete -- delete one finished round and
+/// everything recorded in it; pilots' lifetime totals lose its share.
+pub(crate) async fn api_admin_round_delete(
+    id: u64,
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let who = require_admin(session_id, db.clone()).await?;
+    let rid = admin_round(&db, &inst, id)?;
+    let number = db.round_number(rid);
+    task::block_in_place(|| db.delete_round(rid)).map_err(round_edit_err)?;
+    clear_route_caches();
+    let detail =
+        format!("round {id} (#{})", number.map_or("?".into(), |n| n.to_string()));
+    audit(&db, &who, "delete round", Some(&detail), Some(&inst.id));
+    Ok(warp::reply::json(&serde_json::json!({"ok": true})))
+}
+
+/// POST /api/admin/rounds/{id}/merge `{into}` -- merge a round into another
+/// of the same server. Answers with the surviving round's id (`into`, unless
+/// this one is the round being played).
+pub(crate) async fn api_admin_round_merge(
+    id: u64,
+    session_id: Option<Uuid>,
+    body: RoundMergeBody,
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let who = require_admin(session_id, db.clone()).await?;
+    let from = admin_round(&db, &inst, id)?;
+    let into = admin_round(&db, &inst, body.into)?;
+    let kept = task::block_in_place(|| db.merge_round_into(from, into))
+        .map_err(round_edit_err)?;
+    clear_route_caches();
+    let detail = format!("round {id} + round {} -> round {}", body.into, kept.0);
+    audit(&db, &who, "merge rounds", Some(&detail), Some(&inst.id));
+    Ok(warp::reply::json(&serde_json::json!({"ok": true, "id": kept.0})))
+}

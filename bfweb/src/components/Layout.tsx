@@ -209,10 +209,12 @@ function DiscordIcon({ size = 11 }: { size?: number }) {
    names the server and its campaign. `named` drops it there. */
 function roundLabel(r: Round, named = true) {
   const n = roundNo(r)
-  if (r.active) return named ? `${r.scenario} · Round ${n} — Active` : `Round ${n} — Active`
+  // An admin's name for the round is always worth showing; the scenario is not.
+  const title = r.name || r.scenario
+  if (r.active) return named || r.name ? `${title} · Round ${n} — Active` : `Round ${n} — Active`
   const start = new Date(r.start).toLocaleDateString([], { month: 'short', day: 'numeric' })
   const end   = r.end ? new Date(r.end).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '?'
-  return `Round ${n} · ${r.scenario} · ${start}–${end}`
+  return `Round ${n} · ${title} · ${start}–${end}`
 }
 
 /* Campaign selector. With one DCS server this is the round picker it has

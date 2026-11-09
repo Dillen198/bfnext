@@ -7,7 +7,7 @@
 import type { Round, RoundReport, RoundSummary } from '../api'
 
 export interface RoundPostInput {
-  round: Pick<Round, 'id' | 'number' | 'scenario' | 'start' | 'end' | 'active' | 'winner'>
+  round: Pick<Round, 'id' | 'number' | 'name' | 'scenario' | 'start' | 'end' | 'active' | 'winner'>
   summary?: RoundSummary | null
   report?: RoundReport | null
   /** The campaign's names for the sides, "BLUFOR" and "REDFOR". */
@@ -39,7 +39,7 @@ function pick<T>(xs: readonly T[], seed: number, slot: number): T {
 export function roundPost({ round, summary: s, report: rep, blue, red, url, now = Date.now() }: RoundPostInput): string {
   const no = round.number ?? round.id
   const seed = round.id
-  const scen = round.scenario?.trim()
+  const scen = (round.name || round.scenario)?.trim()
   const dur = span(round.start, round.end ? new Date(round.end).getTime() : now)
   const W = round.winner === 'Blue' ? blue : round.winner === 'Red' ? red : null
   const L = round.winner === 'Blue' ? red : round.winner === 'Red' ? blue : null

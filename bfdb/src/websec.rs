@@ -1176,6 +1176,11 @@ impl<K: Hash + Eq + Clone, T: Clone> CacheMap<K, T> {
         c
     }
 
+    /// Forget every answer, after a write that changes what they say.
+    pub(crate) fn clear_all(&self) {
+        self.map.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+
     #[cfg(test)]
     fn len(&self) -> usize {
         self.map.lock().unwrap().len()
