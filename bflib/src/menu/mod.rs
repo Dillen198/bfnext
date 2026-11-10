@@ -23,6 +23,7 @@ pub mod jtac;
 pub(crate) mod objectives;
 mod recon;
 mod troop;
+pub(crate) use troop::add_carrier_menu_for_group;
 mod wingman;
 
 use crate::{Context, db::Db};
@@ -438,7 +439,14 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
                 built(
                     flight.is_none(),
                     "Wingman",
-                    wingman::add_wingman_menu_for_group(&mc, miz_gid, flight.clone()),
+                    wingman::add_wingman_menu_for_group(
+                        &mc,
+                        &cfg,
+                        si_side,
+                        si_typ.as_str(),
+                        miz_gid,
+                        flight.clone(),
+                    ),
                 );
             }
             let cap = CarryCap::from_typ(&cfg, si_typ.as_str());

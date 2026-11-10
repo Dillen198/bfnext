@@ -134,7 +134,7 @@ troop insertion on it yet.
 **DEFENDERS OFFLINE** appears when the owner has almost nobody in a slot and
 the server runs empty-server protection, for example `DEFENDERS OFFLINE: Red
 has 0 pilot(s) in a slot (under 1) -- captures take 2x longer.` See
-[Capturing Objectives](../gameplay/capturing-objectives.md#step-4-hold-the-zone-until-the-timer-runs).
+[Capturing Objectives](../gameplay/capturing-objectives.md#step-3-hold-the-zone-until-the-timer-runs).
 
 **IN PROGRESS** appears when a capture timer is running. Yours: `IN PROGRESS:
 your side is capturing -- held 45s of ~90s (more squads in the zone shorten

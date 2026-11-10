@@ -15,41 +15,36 @@ your aircraft can also fly a [Recon Pass](../f10-menu/recon.md), the two share
 one **Flight** menu instead (to save a slot on the F10 root, where DCS shows
 only ten), so the path becomes **F10 > Flight > Wingman**.
 
-The menu has three commands. Each reply appears in your message box a second
-after you click (the request is handled on the next server tick).
+Each reply appears in your message box a second after you click (the request
+is handled on the next server tick).
 
 ```f10menu
 {"root":"F10 Other","items":[
  {"label":"GCI/EWR","note":"See the GCI/EWR menu page."},
  {"label":"Wingman","items":[
-  {"label":"Request Wingman","says":"Your F-16C_50 wingman is starting up at Kutaisi (48 km from you). It takes off and joins on your wing, and stays for 60 min, or until you land or release it (F10 > Wingman > Release Wingman).","note":"The minutes are this server's wingman lifetime ({{cfg:air_life.wingman.lifetime_secs|3600}} seconds). Refused on the ground: 'Call your wingman once you are airborne -- it joins you in the air.'"},
-  {"label":"Release Wingman","says":"F-16C_50 wingman released, RTB.","note":"With no wingman up: 'You have no wingman.'"},
-  {"label":"Wingman Status","says":"F-16C_50 wingman: 2/2 aircraft, 3.4 nm from you, 52 min left.","note":"With no wingman up: 'You have no wingman. F10 > Wingman > Request Wingman calls one.'"}
+  {"label":"Request","note":"What you can call, each with its price. Only what your aircraft can fly with: jets see the jet types, helicopters the helicopter ones.","items":[
+   {"label":"Fighter escort (300 pts)","says":"Fighter escort: a F-16C bl.50 (fighter) is starting up at Ramat David (48 km from you), 300 points. It takes off and joins on your wing, and stays for 60 min, or until you land or release it. F10 > Wingman > Orders to direct it."},
+   {"label":"CAS pair (400 pts)","note":"Types and prices are the server's. A server with no types offers one 'Standard wingman'."},
+   {"label":"SEAD pair (500 pts)"},
+   {"label":"Copy of my F-16C_50 (400 pts)","note":"A copy of your own aircraft, with its slot's loadout and paint. Only on servers that offer it, and not for every type."}
+  ]},
+  {"label":"Orders","items":[
+   {"label":"Cover me / rejoin","says":"Wingman: rejoining, covering you."},
+   {"label":"Engage air threats around me","says":"Wingman: engaging air threats around you."},
+   {"label":"Attack ground targets near me","says":"Wingman: attacking targets within 10 km of you."},
+   {"label":"Attack my latest map mark","says":"Wingman: on the way to your mark, 23 km out.","note":"Drop a mark on the F10 map first; it goes for your newest one."},
+   {"label":"Hold here (orbit)","says":"Wingman: holding here."},
+   {"label":"Weapons free","says":"Wingman: weapons free, copy."},
+   {"label":"Return fire only","says":"Wingman: return fire, copy."},
+   {"label":"Weapons hold","says":"Wingman: weapons hold, copy."},
+   {"label":"Formation: close","says":"Wingman: close formation."},
+   {"label":"Formation: spread","says":"Wingman: spread formation."}
+  ]},
+  {"label":"Status","says":"Fighter escort (F-16C bl.50, fighter): 1/1 aircraft, 3.4 nm from you, covering you, weapons free, close formation, 52 min left."},
+  {"label":"Release (RTB)","says":"Fighter escort released, RTB.","note":"With no wingman up: 'You have no wingman.'"}
  ]},
  {"label":"JTAC","note":"See the JTAC page."},
  {"label":"Actions","note":"See the Actions page."},
- {"label":"Objectives","note":"See the Objectives menu page."},
- {"label":"Info","note":"See the Info menu page."}
-]}
-```
-
-On a slot that can also fly recon:
-
-```f10menu
-{"root":"F10 Other","items":[
- {"label":"GCI/EWR","note":"See the GCI/EWR menu page."},
- {"label":"Flight","items":[
-  {"label":"Recon","items":[
-   {"label":"Start Recon Pass","note":"See the Recon page."},
-   {"label":"Cancel Recon Pass","note":"See the Recon page."},
-   {"label":"Recon Status","note":"See the Recon page."}
-  ]},
-  {"label":"Wingman","items":[
-   {"label":"Request Wingman","says":"Your AH-64D_BLK_II wingman is starting up at FARP London (12 km from you). It takes off and joins on your wing, and stays for 60 min, or until you land or release it (F10 > Wingman > Release Wingman).","note":"A helicopter gets a helicopter wingman, launched from the nearest friendly airbase, FARP or FOB."},
-   {"label":"Release Wingman","says":"AH-64D_BLK_II wingman released, RTB."},
-   {"label":"Wingman Status","says":"AH-64D_BLK_II wingman: 2/2 aircraft, 0.8 nm from you, 41 min left."}
-  ]}
- ]},
  {"label":"Objectives","note":"See the Objectives menu page."},
  {"label":"Info","note":"See the Info menu page."}
 ]}
@@ -60,36 +55,74 @@ under Flight.
 
 ## Calling a wingman
 
-**Request Wingman** sends an AI flight up to join you. It starts up at the
-nearest friendly field that can launch it (a jet needs free parking at an
-airfield, a helicopter any airbase, FARP or FOB), takes off and flies out to
-where you are. You are told where it is coming from and how far away that is.
-Once it reaches you it flies DCS's Escort task on your aircraft: it holds
-station behind and off your right wing, goes after threats, and comes back to
-your wing afterwards.
+**Request** lists the wingmen you can call, each with its price. Pick one and
+an AI flight starts up at the nearest friendly field that can launch it (a
+jet needs free parking at an airfield, a helicopter any airbase, FARP or
+FOB), takes off and flies out to where you are. You are told where it is
+coming from and how far away that is. Once it reaches you it covers you: DCS's
+Escort task, holding station behind and off your right wing, going after
+threats and coming back to your wing afterwards.
 
-- **Call it once you are airborne.** On the ground the request is refused.
-  Allow for the start-up and the flight out: call it before you need it.
-- **Jets get a jet, helicopters get a helicopter.** A fixed-wing wingman
-  engages aircraft within
-  {{cfg:air_life.wingman.engage_dist_m|40000}} m of you. A helicopter
-  wingman stays closer
-  ({{cfg:air_life.wingman.rotary_engage_dist_m|8000}} m) and engages
-  helicopters **and ground units**, so it will shoot at whatever is shooting
-  at your LZ.
-- **It never runs out of fuel** and is weapons free. It defends itself when
+What it goes after depends on what you called:
+
+| Kind | Covers you against | "Attack" means |
+|---|---|---|
+| Fighter | aircraft | aircraft |
+| Strike, CAS | aircraft | ground units |
+| SEAD | air defences | air defences |
+| Attack helicopter | helicopters and ground units | ground units and helicopters |
+| Copy of your aircraft | aircraft (a helicopter: helicopters and ground units) | ground units |
+
+- **A copy of your aircraft** is your own type, with the loadout and paint
+  your slot is briefed with, not whatever you have rearmed to since.
+  Transports can't be copied, and a server can price types differently.
+- **Call it on the ground or in the air.** Called before you take off, it
+  usually starts up at your own field, circles overhead until you are
+  airborne and then joins you; the reply says `It takes off, holds over you
+  until you are airborne, then joins on your wing`. If you have not taken off
+  within 20 minutes it goes home. In the air, allow for the start-up and the
+  flight out: call it before you need it.
+- A fixed-wing wingman covers out to
+  {{cfg:air_life.wingman.engage_dist_m|40000}} m from you, a helicopter
+  {{cfg:air_life.wingman.rotary_engage_dist_m|8000}} m.
+- **It never runs out of fuel**, starts weapons free and defends itself when
   shot at.
-- **It is for quiet servers.** You can only call one while your side has
+- **Cost:** the price in the menu, taken only once it is actually on its
+  way. A wingman that can't launch costs nothing; one you release early or
+  lose is not refunded.
+- **Quiet servers:** a server can offer wingmen only while your side has
   {{cfg:air_life.wingman.max_side_pilots|4}} or fewer pilots in aircraft
-  (a server that sets this to 0 offers wingmen whatever the count).
-- **Cost:** {{cfg:air_life.wingman.cost|0}} points, taken when it launches.
+  (0 means whatever the count).
 - **One at a time.** A second request while yours is up is refused.
+
+## Giving orders
+
+**Orders** are free and take effect at once:
+
+- **Cover me / rejoin** brings it back to your wing after any other order.
+- **Engage air threats around me** has it circle where you are now and fight
+  any aircraft within its cover range.
+- **Attack ground targets near me** has it circle where you are now and
+  attack what its kind attacks (table above) within 10 km (4 km for a
+  helicopter).
+- **Attack my latest map mark**: drop a mark on the F10 map, then order it.
+  It flies there and attacks around the mark. It goes for your newest mark.
+- **Hold here** parks it in an orbit where you are now, still defending
+  itself and the area.
+- **Weapons free / Return fire only / Weapons hold** set its rules of
+  engagement. Weapons hold keeps it from starting a fight you don't want.
+- **Formation: close / spread** moves its station on your wing: spread is
+  wider and higher, for when you need room to manoeuvre.
+
+Until it is off the ground only the ROE and formation orders work; the rest
+are refused with `Your wingman is still taking off.`
 
 It goes home by itself when you:
 
-- land and stay down for a minute,
+- land and stay down for a minute (once you have taken off),
+- called it on the ground and have not taken off 20 minutes later,
 - leave the slot, change aircraft or die,
-- release it (**Release Wingman**), or
+- release it (**Release (RTB)**), or
 - reach its limit of
   {{cfg:air_life.wingman.lifetime_secs|3600}} seconds.
 
@@ -98,23 +131,28 @@ removed once it lands (or after 20 minutes, wherever it is).
 
 If it is shot down, you have to wait
 {{cfg:air_life.wingman.cooldown_secs|300}} seconds before calling another.
-**Wingman Status** tells you how many of its aircraft are left, how far away it
-is in nautical miles, and how many minutes it has left.
+**Status** tells you what you called, how many of its aircraft are left, how
+far away it is, what it is doing, its ROE and formation, and how many minutes
+it has left.
 
 ### What the wingman tells you
 
 These arrive in your message box without a click:
 
 ```dcsmessage
-Your F-16C_50 wingman is down.
+Your wingman (Fighter escort) is down.
 ```
 
 ```dcsmessage
-Your F-16C_50 wingman is RTB: you are on the ground.
+Your wingman (Fighter escort) is RTB: you are on the ground.
 ```
 
 ```dcsmessage
-Your F-16C_50 wingman is RTB: it is out of time.
+Your wingman (Fighter escort) is RTB: it is out of time.
+```
+
+```dcsmessage
+Your wingman (Fighter escort) is RTB: you did not take off.
 ```
 
 ### When a request is refused
@@ -122,14 +160,15 @@ Your F-16C_50 wingman is RTB: it is out of time.
 | Reply | Why |
 |---|---|
 | `Wingmen are not enabled on this server.` | The server has no wingman config. |
-| `You already have a F-16C_50 wingman. Release it first (F10 > Wingman > Release Wingman).` | One wingman per pilot. |
+| `You already have a wingman (Fighter escort). Release it first (F10 > Wingman > Release).` | One wingman per pilot. |
 | `Your last wingman was lost. A new one is available in 4m 12s.` | The cooldown after losing one. |
 | `Get in an aircraft first.` | You are not in a slot. |
-| `Call your wingman once you are airborne -- it joins you in the air.` | You are on the ground. |
-| `Wingmen are for quiet servers: available while your side has {{cfg:air_life.wingman.max_side_pilots|4}} or fewer pilots up (it has 6).` | Your side is busy enough. |
-| `A wingman costs {{cfg:air_life.wingman.cost|0}} points and you have 150.` | Only on a server that charges for wingmen. |
-| `No helicopter wingman is configured for your side.` | No template for your airframe class. |
+| `Wingmen are for quiet servers: available while your side has 4 or fewer pilots up (it has 6).` | Your side is busy enough. |
+| `CAS pair costs 400 points and you have 150.` | Not enough points. |
+| `A C-130J-30 can't be copied on this server.` | That type is excluded from copies. |
+| `No aircraft is configured for CAS pair on your side.` | No template for your side. |
 | `No friendly airfield near you has room to launch a wingman right now.` | No field with free parking (helicopters: `airbase, FARP or FOB`). |
+| `Drop a mark on the F10 map first: your wingman attacks around your newest one.` | Attack my latest map mark, with no mark of yours on the map. |
 
 ## AI packages
 

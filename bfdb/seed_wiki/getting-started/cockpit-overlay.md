@@ -80,7 +80,11 @@ size and opacity are remembered.
   spawned. 3 more needed…", "you must land to spawn crates"), so you don't
   have to catch it in the corner of the screen.
 - **☆ / ★** pins a command to your [wheel](#the-wheel) (★ means it's pinned).
-- No `More >>` pages: long lists just scroll.
+- No `More >>` pages: the F10 menu splits long lists into pages of nine, and
+  the panel puts the pages back together into one list that scrolls (from
+  3.6).
+- Clicking an opener such as `Actions>>` or `Ground Forces>>` takes you
+  straight into the menu it builds (from 3.6).
 
 Here is the MENU tab inside **Cargo** in a Huey (on the web you can click the
 rows; the replies are the server's real wording):
@@ -113,7 +117,9 @@ under [F10 Menu Systems](../f10-menu/overview.md).
   bearing.
 - **Quick buttons** — Unpack, Load, Unload, List Cargo, Destroy: the same F10
   commands, one click away. Only the ones your aircraft has are shown.
-- **BASE SUPPLY** — repair kits and fuel / weapons transfer crates.
+- **BASE SUPPLY** — repair kits and supply crates. Since 3.6 each supply
+  crate says what it carries (fuel, air-to-air missiles, air-to-ground
+  munitions ...), on servers that split supply by kind.
 - **BUILD SOMETHING** — every deployable, grouped by category. Pick one:
 
 ![A cargo category: each deployable with the crates it needs, weights and cost](/api/wiki/images/de33e85d-f738-4cb7-b515-9fe24e15592e)

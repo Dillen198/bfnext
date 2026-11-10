@@ -110,6 +110,20 @@ pub struct GroundWarCfg {
     /// Default 0.
     #[serde(default)]
     pub raise_cost: u32,
+    /// A player may form a formation from their own deployed vehicles near
+    /// them (F10 "Ground Forces > Form a formation from my deployed units")
+    /// and later disband it: its groups go back to being their deployed
+    /// units where they stand. Default true.
+    #[serde(default = "default_true")]
+    pub form_from_deployed: bool,
+    /// How far from the player their deployed vehicles may be to join a
+    /// formation they form. Default 3000 m.
+    #[serde(default = "default_form_radius")]
+    pub form_radius_m: f64,
+    /// Most deployed groups one formation takes (the nearest first).
+    /// Default 6.
+    #[serde(default = "default_form_max_groups")]
+    pub form_max_groups: u32,
     /// How hard formations bend the F10 front line, as a fraction of an
     /// objective's weight. 0 = the line follows objectives only. Default 0.6.
     #[serde(default = "default_frontline_weight")]
@@ -508,6 +522,12 @@ fn default_player_lock() -> u32 {
 fn default_order_cooldown() -> u32 {
     30
 }
+fn default_form_radius() -> f64 {
+    3000.
+}
+fn default_form_max_groups() -> u32 {
+    6
+}
 fn default_frontline_weight() -> f64 {
     0.6
 }
@@ -551,6 +571,9 @@ mod tests {
         assert_eq!(c.max_live_formations, 6);
         assert!(c.ai.is_none());
         assert!(matches!(c.command_rule, Rule::AlwaysAllowed));
+        assert!(c.form_from_deployed);
+        assert_eq!(c.form_radius_m, 3000.);
+        assert_eq!(c.form_max_groups, 6);
         let a: GroundAiCfg = serde_json::from_str("{}").unwrap();
         assert_eq!(a.sides, vec![Side::Blue, Side::Red]);
         assert!(a.follow_tempo);

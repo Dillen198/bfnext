@@ -487,8 +487,43 @@ impl Db {
             if let Some(Some(_landed)) = self.ephemeral.open_sorties.remove(ucid) {
                 self.ephemeral.stat(Stat::Land { id: *ucid });
             }
-            self.ephemeral.stat(Stat::Deslot { id: *ucid });
+            // Already sent, in the right order, when the pilot picked the
+            // slot they are moving to -- see `player_changing_slot`.
+            if !self.ephemeral.deslot_sent.contains(ucid) {
+                self.ephemeral.stat(Stat::Deslot { id: *ucid });
+            }
             self.ephemeral.dirty()
+        }
+    }
+
+    /// The pilot has just been allowed into a new slot, and the caller is
+    /// about to send its `Stat::Slot`. Called before that, because DCS asks
+    /// about the new slot before it takes the pilot out of the aircraft they
+    /// are in: left to `player_deslot`, the old slot session's `Stat::Land`
+    /// and `Stat::Deslot` would reach bfdb after the new `Stat::Slot`. bfdb
+    /// keeps the open sortie on the slot record, so the new slot dropped it
+    /// and the landing that followed was thrown away -- every pilot who
+    /// landed and then picked another slot or spectators got "No landing" --
+    /// and the late deslot wiped the new slot, losing the next sortie too.
+    ///
+    /// So this closes the old session here: the sortie as landed if the pilot
+    /// is on the ground (`touched_down` covers a touchdown `return_lives` has
+    /// not settled yet), then the deslot, which `player_deslot` then skips.
+    pub fn player_changing_slot(&mut self, ucid: &Ucid, touched_down: bool) {
+        let in_aircraft =
+            self.persisted.players.get(ucid).is_some_and(|p| p.current_slot.is_some());
+        if !in_aircraft {
+            self.ephemeral.deslot_sent.remove(ucid);
+            return;
+        }
+        match self.ephemeral.open_sorties.remove(ucid) {
+            Some(Some(_)) => self.ephemeral.stat(Stat::Land { id: *ucid }),
+            Some(None) if touched_down => self.ephemeral.stat(Stat::Land { id: *ucid }),
+            // Still airborne: bailing out of the slot leaves it not landed.
+            Some(None) | None => (),
+        }
+        if self.ephemeral.deslot_sent.insert(*ucid) {
+            self.ephemeral.stat(Stat::Deslot { id: *ucid });
         }
     }
 
@@ -1767,6 +1802,8 @@ impl Db {
     ) -> Result<()> {
         // In an aircraft now, so no longer driving anything.
         self.ephemeral.ca_drivers.retain(|_, (driver, _)| *driver != ucid);
+        // In the new slot: its deslot, when it comes, is a real one.
+        self.ephemeral.deslot_sent.remove(&ucid);
         if let Some(old_ucid) = self.ephemeral.players_by_slot.get(&slot) {
             let old_ucid = *old_ucid;
             if old_ucid != ucid {
@@ -2643,5 +2680,92 @@ mod tests {
         let (pts, lives) = player_tk_penalty([h(1)], now, 0, 100);
         assert_eq!(pts, 100);
         assert!((lives - 1.).abs() < 1e-6);
+    }
+
+    /// A pilot in an aircraft slot, with the stats the db sends captured.
+    fn slotted_pilot() -> (Db, Ucid, tokio::sync::mpsc::UnboundedReceiver<crate::bg::Task>)
+    {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut db = Db::default();
+        db.ephemeral.to_bg = Some(tx);
+        let ucid: Ucid = "0123456789abcdef0123456789abcdef".parse().unwrap();
+        let mut p: Player = serde_json::from_value(serde_json::json!({
+            "name": "Shade", "alts": [], "side": "Blue", "side_switches": null,
+            "lives": {}, "crates": [], "points": 50,
+        }))
+        .unwrap();
+        p.current_slot = Some((SlotId::Unit(42), None));
+        db.persisted.players.insert_cow(ucid, p);
+        (db, ucid, rx)
+    }
+
+    fn sent(
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<crate::bg::Task>,
+    ) -> Vec<&'static str> {
+        let mut out = vec![];
+        while let Ok(t) = rx.try_recv() {
+            if let crate::bg::Task::Stat(st) = t {
+                out.push(match st {
+                    Stat::Land { .. } => "Land",
+                    Stat::Deslot { .. } => "Deslot",
+                    Stat::Takeoff { .. } => "Takeoff",
+                    _ => "other",
+                })
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn landing_then_changing_slot_closes_the_sortie_before_the_new_slot() {
+        let (mut db, ucid, mut rx) = slotted_pilot();
+        db.ephemeral.open_sorties.insert(ucid, Some(Utc::now()));
+        // The slot-change hook runs before DCS pulls the pilot out.
+        db.player_changing_slot(&ucid, false);
+        assert_eq!(sent(&mut rx), ["Land", "Deslot"]);
+        // Then the old aircraft goes: nothing more for bfdb, so the new
+        // `Stat::Slot` that went out in between survives.
+        db.player_deslot(&ucid);
+        assert_eq!(sent(&mut rx), Vec::<&str>::new());
+        assert!(!db.ephemeral.open_sorties.contains_key(&ucid));
+    }
+
+    #[test]
+    fn an_unsettled_touchdown_still_counts_as_landed() {
+        let (mut db, ucid, mut rx) = slotted_pilot();
+        db.ephemeral.open_sorties.insert(ucid, None);
+        db.player_changing_slot(&ucid, true);
+        assert_eq!(sent(&mut rx), ["Land", "Deslot"]);
+    }
+
+    #[test]
+    fn leaving_the_slot_in_the_air_is_not_a_landing() {
+        let (mut db, ucid, mut rx) = slotted_pilot();
+        db.ephemeral.open_sorties.insert(ucid, None);
+        db.player_changing_slot(&ucid, false);
+        db.player_deslot(&ucid);
+        assert_eq!(sent(&mut rx), ["Deslot"]);
+    }
+
+    #[test]
+    fn deslots_are_sent_again_once_in_the_new_slot() {
+        let (mut db, ucid, mut rx) = slotted_pilot();
+        db.player_changing_slot(&ucid, false);
+        db.player_deslot(&ucid);
+        assert_eq!(sent(&mut rx), ["Deslot"]);
+        // Born into the new slot (what `player_entered_slot` does).
+        db.ephemeral.deslot_sent.remove(&ucid);
+        db.persisted.players.get_mut_cow(&ucid).unwrap().current_slot =
+            Some((SlotId::Unit(43), None));
+        db.player_deslot(&ucid);
+        assert_eq!(sent(&mut rx), ["Deslot"]);
+    }
+
+    #[test]
+    fn picking_a_slot_from_spectators_changes_nothing() {
+        let (mut db, ucid, mut rx) = slotted_pilot();
+        db.persisted.players.get_mut_cow(&ucid).unwrap().current_slot = None;
+        db.player_changing_slot(&ucid, false);
+        assert_eq!(sent(&mut rx), Vec::<&str>::new());
     }
 }

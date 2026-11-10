@@ -62,9 +62,10 @@ full as the root gets.
    {"label":"Cancel Recon Pass"},
    {"label":"Recon Status","says":"Recon on Senaki: 45% (54/120s)"}]},
   {"label":"Wingman","note":"Every aircraft slot, on servers with AI wingmen on.","items":[
-   {"label":"Request Wingman","note":"Only once you are airborne. See Wingmen, AI Packages & Civil Traffic."},
-   {"label":"Release Wingman","says":"F-16C_50 wingman released, RTB."},
-   {"label":"Wingman Status","says":"F-16C_50 wingman: 2/2 aircraft, 3.4 nm from you, 52 min left."}]}]},
+   {"label":"Request","note":"The wingmen you can call, each with its price, and on some servers a copy of your own aircraft. On the ground or in the air. See Wingmen, AI Packages & Civil Traffic."},
+   {"label":"Orders","note":"Cover me, engage air, attack near me or at your map mark, hold, ROE, formation."},
+   {"label":"Status","says":"Fighter escort (F-16C bl.50, fighter): 1/1 aircraft, 3.4 nm from you, covering you, weapons free, close formation, 52 min left."},
+   {"label":"Release (RTB)","says":"Fighter escort released, RTB."}]}]},
  {"label":"Cargo","note":"Airframes the server gives crate slots (or lists for helicopter dynamic cargo). A C-130 gets C-130 Cargo here instead. This is the classic menu.","items":[
   {"label":"Unpack Nearby Crate(s)","says":"KillerDog unpacked a Hawk System"},
   {"label":"Load Nearby Crate","says":"Hawk Launcher crate loaded\n1 of 4 Hawk System deployed, unpacking will delete oldest, 4471 when the limit is exceeded"},
@@ -73,7 +74,7 @@ full as the root gets.
   {"label":"List Cargo","note":"Troops, crates and pilots aboard, and their weight."},
   {"label":"Destroy Nearby Crate"},
   {"label":"Crates","note":"Base Supply plus the server's deployable categories. See Cargo Operations.","items":[
-   {"label":"Base Supply","note":"Repair kit, fuel and weapons transfer crates."},
+   {"label":"Base Supply","note":"Repair kit and supply crates: fuel, weapons, or one crate per kind of stock on servers that split them."},
    {"label":"Air Defence","note":"An example deployable category."}]},
   {"label":"CSAR","note":"Inside Cargo whenever the slot has a cargo menu; at the top level otherwise. Only when CSAR is on.","items":[
    {"label":"List Downed Pilots","says":"No downed pilots on your side"},

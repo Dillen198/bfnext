@@ -3475,9 +3475,10 @@ fn run_admin_command(
         AdminCommand::TransferSupply { from, to } => {
             let from = airbase!(&from);
             let to = airbase!(&to);
-            match ctx.db.transfer_supplies(lua, from, to) {
+            let all = crate::db::logistics::Carries::everything();
+            match ctx.db.transfer_supplies(lua, from, to, &all) {
                 Err(e) => reply_err!("transfer inventory failed {:?}", e),
-                Ok(()) => reply_ok!("transfer complete. disconnect"),
+                Ok(_) => reply_ok!("transfer complete. disconnect"),
             }
         }
         AdminCommand::LogLogistics => match ctx.db.admin_log_logistics() {

@@ -10,7 +10,7 @@ export const LEVANT_STORY: StoryEvent[] = [
     "side": "Red",
     "title": "The shield goes blind",
     "when": "Air Defence Academy HQ destroyed while RSII holds it",
-    "text": "{by} have knocked out the Air Defence Academy. Batteries across the south lose their cueing and start fighting on their own.",
+    "text": "{by} have knocked out the Air Defence Academy. Batteries from Homs to Aleppo, the coast and the Euphrates lose their cueing and start fighting on their own.",
     "effects": [
       "RSII will −3",
       "NATO sees the defences round Air Defence Academy HQ",

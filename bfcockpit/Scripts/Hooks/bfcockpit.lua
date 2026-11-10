@@ -1325,6 +1325,45 @@ local function label_em(s)
     return em
 end
 
+-- bflib pages every long F10 list: nine entries, then a "More >>" submenu
+-- holding the next nine, and so on down. The radio menu needs that; a panel
+-- that scrolls and a wheel with its own MORE slot don't, so both show the
+-- whole chain as one list. Paths keep their "More >>" segments -- they are
+-- what the server needs to find the item -- but the player never sees one.
+local MORE = "More >>"
+
+-- `path` as the player should read it: without the "More >>" pages.
+local function crumb_of(path)
+    local out = {}
+    for _, p in ipairs(path) do
+        if p ~= MORE then out[#out + 1] = p end
+    end
+    return out
+end
+
+local function menu_crumb()
+    local c = crumb_of(state.here)
+    return "F10 > " .. (#c > 0 and table.concat(c, " > ") or "Other")
+end
+
+-- Drop "More >>" pages from the end of state.here: the level they belong to
+-- already shows everything on them.
+local function trim_more()
+    while #state.here > 0 and state.here[#state.here] == MORE do
+        table.remove(state.here)
+    end
+end
+
+-- The root openers ("Actions>>", "Ground Forces>>", "JTAC>>") build their
+-- menu when clicked: "Actions>>" makes "Actions". The menu to step into once
+-- it shows up, or nil.
+local function opened_by(path, label)
+    if #path ~= 1 then return nil end
+    local name = tostring(label):match("^(.-)%s*>>$")
+    if name and name ~= "" then return name end
+    return nil
+end
+
 local function show_only(widgets, on)
     for _, w in pairs(widgets) do w:setVisible(on) end
 end
@@ -1373,7 +1412,7 @@ local function layout()
         w_crumb:setBounds(pad + px(72), y2, cw - pad * 2 - px(72), row)
         if state.tab == "menu" then
             w_back:setEnabled(#state.here > 0)
-            w_crumb:setText("F10 > " .. (#state.here > 0 and table.concat(state.here, " > ") or "Other"))
+            w_crumb:setText(menu_crumb())
         elseif state.tab == "wiki" then
             w_back:setEnabled(wiki_api.can_back and wiki_api.can_back() or false)
             w_crumb:setText(wiki_api.crumb and wiki_api.crumb() or "WIKI")
@@ -1563,6 +1602,28 @@ local function copy_path(p)
     return out
 end
 
+-- The items directly in `prefix`, its "More >>" pages folded in, in the
+-- order F10 shows them. The page submenus themselves are left out.
+local function menu_level(items, prefix)
+    local out = {}
+    local here = copy_path(prefix)
+    while true do
+        local more = false
+        for _, it in ipairs(items) do
+            if type(it) == 'table' and type(it.path) == 'table' and same_prefix(it.path, here) then
+                if not it.command and it.path[#it.path] == MORE then
+                    more = true
+                else
+                    out[#out + 1] = it
+                end
+            end
+        end
+        if not more then break end
+        here[#here + 1] = MORE
+    end
+    return out
+end
+
 local function message_rows(text, skin)
     local rows = {}
     for _, line in ipairs(wrap(text, content_width())) do
@@ -1600,37 +1661,50 @@ renderers.menu = function()
     while #state.here > 0 and not submenu_exists(items, state.here) do
         table.remove(state.here)
     end
-    w_crumb:setText("F10 > " .. (#state.here > 0 and table.concat(state.here, " > ") or "Other"))
+    trim_more()
+    -- A root opener was clicked: step into the menu it built once it is here.
+    -- Given a few seconds; an opener that failed must not yank the player
+    -- somewhere later on.
+    local open = state.open_after
+    if open and os.clock() > open.until_t then
+        state.open_after = nil
+    elseif open and submenu_exists(items, { open.name }) then
+        state.here = { open.name }
+        state.open_after = nil
+    end
+    w_crumb:setText(menu_crumb())
     w_back:setEnabled(#state.here > 0)
 
     local rows = {}
     if state.errors.menu then add_text(rows, state.errors.menu, skins.bad) end
     add_answer(rows)
     local any = false
-    for _, it in ipairs(items) do
-        if type(it.path) == 'table' and same_prefix(it.path, state.here) then
-            any = true
-            local path = copy_path(it.path)
-            if it.command then
-                -- The star pins this command to the wheel for this airframe.
-                local star_w = px(30)
-                local label = tostring(it.name)
-                rows[#rows + 1] = { button = true, text = "  " .. label, skin = skins.row,
-                                    w = content_width() - star_w - px(4),
-                                    action = function() invoke(path) end }
-                rows[#rows + 1] = { button = true, same_line = true, x = content_width() - star_w, w = star_w,
-                                    text = pin_index(path) and "★" or "☆", skin = skins.tool,
-                                    action = function()
-                                        toggle_pin(path, label)
-                                        render()
-                                    end }
-            else
-                rows[#rows + 1] = { button = true, text = "  " .. tostring(it.name) .. "  >", skin = skins.row_sub,
-                                    action = function()
-                                        state.here = path
-                                        render()
-                                    end }
-            end
+    for _, it in ipairs(menu_level(items, state.here)) do
+        any = true
+        local path = copy_path(it.path)
+        if it.command then
+            -- The star pins this command to the wheel for this airframe.
+            local star_w = px(30)
+            local label = tostring(it.name)
+            rows[#rows + 1] = { button = true, text = "  " .. label, skin = skins.row,
+                                w = content_width() - star_w - px(4),
+                                action = function()
+                                    local name = opened_by(path, label)
+                                    state.open_after = name and { name = name, until_t = os.clock() + 15 } or nil
+                                    invoke(path)
+                                end }
+            rows[#rows + 1] = { button = true, same_line = true, x = content_width() - star_w, w = star_w,
+                                text = pin_index(path) and "★" or "☆", skin = skins.tool,
+                                action = function()
+                                    toggle_pin(path, label)
+                                    render()
+                                end }
+        else
+            rows[#rows + 1] = { button = true, text = "  " .. tostring(it.name) .. "  >", skin = skins.row_sub,
+                                action = function()
+                                    state.here = path
+                                    render()
+                                end }
         end
     end
     if not any then
@@ -1674,6 +1748,11 @@ local function crate_rows(rows, cr, indent)
         p[#p + 1] = tostring(req)
         rows[#rows + 1] = { button = true, same_line = true, x = x + btn_w + px(4), w = all_w, skin = skins.go,
                             text = "SPAWN ALL " .. req, action = function() invoke(p) end }
+    end
+    -- A base-supply crate says what it is loaded with: a split warehouse has
+    -- one crate for fuel, one for air-to-air missiles, and so on.
+    if present(cr.carries) then
+        rows[#rows + 1] = { text = (indent or "") .. "    carries " .. tostring(cr.carries), skin = skins.label }
     end
 end
 
@@ -2067,6 +2146,7 @@ local function create()
             return wiki_api.back()
         elseif #state.here > 0 then
             table.remove(state.here)
+            trim_more()
         end
         render()
     end)
@@ -2351,10 +2431,8 @@ local function path_key(p) return table.concat(p, "\31") end
 
 local function f10_children(path)
     local out = {}
-    for _, it in ipairs(list(state.menu)) do
-        if type(it) == 'table' and type(it.path) == 'table' and same_prefix(it.path, path) then
-            out[#out + 1] = { kind = it.command and "f10" or "f10menu", label = tostring(it.name), path = copy_path(it.path) }
-        end
+    for _, it in ipairs(menu_level(list(state.menu), path)) do
+        out[#out + 1] = { kind = it.command and "f10" or "f10menu", label = tostring(it.name), path = copy_path(it.path) }
     end
     return out
 end
@@ -2459,13 +2537,13 @@ local function entry_of(item)
     if k == "f10" and type(item.path) == 'table' then
         local label = tostring(item.label or item.path[#item.path])
         return { item = item, kind = k, label = label, icon = item.icon or icon_for(label),
-                 danger = is_destructive(label), hub = table.concat(item.path, " > ") }
+                 danger = is_destructive(label), hub = table.concat(crumb_of(item.path), " > ") }
     elseif k == "f10menu" and type(item.path) == 'table' then
         if not f10_menu_exists(item.path) then return nil end
         local label = tostring(item.label or item.path[#item.path])
         local path = item.path
         return { item = item, kind = k, label = label, icon = item.icon or icon_for(label), group = true,
-                 children = function() return f10_children(path) end, hub = "F10 > " .. table.concat(path, " > ") }
+                 children = function() return f10_children(path) end, hub = "F10 > " .. table.concat(crumb_of(path), " > ") }
     elseif k == "group" then
         local label = tostring(item.label or "GROUP")
         return { item = item, kind = k, label = label, icon = item.icon or "group", group = true,
@@ -5518,6 +5596,7 @@ if rawget(_G, "BFCOCKPIT_TEST") then
         widgets = function() return { tabs = w_tabs, back = w_back, crumb = w_crumb, pane = w_pane, window = window } end,
         rows = function() return pool, pool_actions end,
         label_em = label_em, wrap = wrap, px = px,
+        menu_level = menu_level, crumb_of = crumb_of, opened_by = opened_by,
     }
 end
 

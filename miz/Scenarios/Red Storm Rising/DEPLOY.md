@@ -24,7 +24,7 @@ box.
 | | Value |
 |---|---|
 | bfdb instance id | `redstorm` (the dashboard is built with `VITE_INSTANCE=redstorm`; don't change one without the other) |
-| DCS server name | `[VS] Vector Strike | Red Storm Rising 1985` (pick yours; it must match in `serverSettings.lua`, `servers.yaml`, `fowlengine.yaml` and `bfdb.instances`) |
+| DCS server name | `[VS] Vector Strike | Cold War 1985 PvP` (renamed 10 November 2026 from `[VS] Vector Strike | RSR`; it must match in `serverSettings.lua`, `servers.yaml`, `fowlengine.yaml` and `bfdb.instances`) |
 | Mission sortie | `RSR_SF`, so bflib reads `RSR_SF_CFG` and saves state to `RSR_SF` |
 | netidx base | `/local/fowl/redstorm` |
 | Brand | `Southern Flank 1985` (placeholder; one setting) |
@@ -52,7 +52,7 @@ when they don't:
 | Tacview real-time / remote control | 42676 / 42677 | 42678 / 42679 |
 | Export port (`bf_export_port.lua`, bfdb `export_port`) | 42002 | 42003 |
 | bfdb instance id / netidx base | `vs2` / `/local/fowl/2008` | `redstorm` / `/local/fowl/redstorm` |
-| Server name | `[VS] Vector Strike \| Dynamic Campaign PVP 2008` | `[VS] Vector Strike \| RSR` |
+| Server name | `[VS] Vector Strike \| Dynamic Campaign PVP 2008` | `[VS] Vector Strike \| Cold War 1985 PvP` |
 
 The range runs on its own box, so the ports `deploy/range.md` planned for a
 range instance here (10328, 8092) are free; the live box uses them.

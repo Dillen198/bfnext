@@ -73,6 +73,11 @@ pub struct BomberCfg {
     // in meters radius around the target point
     pub accuracy: u32,
     pub plane: AiPlaneCfg,
+    /// Only JTAC contacts within this many metres of the aim point are hit.
+    /// Absent = any contact of any friendly JTAC within 15 km of it (each
+    /// JTAC's whole spotting range, so up to ~30 km out).
+    #[serde(default)]
+    pub strike_radius_m: Option<u32>,
 }
 
 /// What a `Strike` action goes after.
@@ -386,6 +391,11 @@ pub struct Action {
     /// (nuke, waypoints, carrier orders, fires, tasks): how many times a side
     /// may use it per server session.
     pub limit: Option<u32>,
+    /// Seconds a side must wait after using this action before it may use it
+    /// again, whoever calls it (players, the commander, the AI HQ). Absent =
+    /// no wait. Counted from the last successful call; a restart clears it.
+    #[serde(default)]
+    pub cooldown_secs: Option<u32>,
     /// defines where this action is allowed to run
     #[serde(default)]
     pub geo_limit: ActionGeoLimit,

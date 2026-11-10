@@ -29,7 +29,7 @@ use dcso3::{
     land::{Land, RoadType},
     trigger::MarkId,
 };
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use log::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -338,12 +338,21 @@ impl Db {
         planned: Vector2,
     ) -> Result<Option<(GroupId, Vector2)>> {
         let lua = spctx.lua();
-        let from = self
+        let obj = self
             .persisted
             .objectives
             .get(&source)
-            .map(|o| o.pos())
             .ok_or_else(|| anyhow::anyhow!("no such objective {source:?}"))?;
+        // The event was planned earlier: the base may have fallen, been wiped
+        // or gone neutral since. A force never drives out of one that has.
+        if obj.owner != side || obj.health() == 0 || obj.kind().is_special_sam_site() {
+            info!(
+                "SpawnAmbush: {side:?} source {} is no longer a live base of ours, ambush dropped",
+                obj.name
+            );
+            return Ok(None);
+        }
+        let from = obj.pos();
         let convoy = self
             .ephemeral
             .active_convoys
@@ -564,7 +573,14 @@ impl EventScheduler {
         &mut self,
         db: &Db,
     ) -> Arc<Vec<(ObjectiveId, Side, Vector2, dcso3::String, u8)>> {
-        if self.owned_cache_dirty || self.cached_owned.is_empty() {
+        // Captures mark the cache dirty, but a base also changes hands when it
+        // is wiped out and drops to Neutral, which did not: the neutral base
+        // stayed in the list as its old owner's and kept sending forces out.
+        // Rebuild whenever any listed base's owner has moved on.
+        let stale = self.cached_owned.iter().any(|(id, side, ..)| {
+            db.persisted.objectives.get(id).is_none_or(|o| o.owner() != *side)
+        });
+        if stale || self.owned_cache_dirty || self.cached_owned.is_empty() {
             self.cached_owned = Arc::new(
                 db.persisted
                     .objectives
@@ -909,9 +925,37 @@ impl EventScheduler {
         // objective of ours can get ahead of within driving range qualify;
         // the road check itself needs Lua and happens at spawn time
         // (`Db::launch_ambush`).
+        // At most `ambush_max_per_side` forces out at once, each after its own
+        // convoy: the HQ forgets an ambush the moment it fires, so with no cap
+        // here it sent a new force every think, all after the same convoy.
+        let (out, chased) = self.active_events.iter().fold(
+            (0u32, FxHashSet::default()),
+            |(n, mut chased), e| match e {
+                CampaignEvent::ConvoyAmbush {
+                    ambush_side: s, convoy_group_id, ..
+                } if *s == ambush_side => {
+                    chased.insert(*convoy_group_id);
+                    (n + 1, chased)
+                }
+                _ => (n, chased),
+            },
+        );
+        if out >= cfg.ambush_max_per_side {
+            return false;
+        }
+        // `all_owned` is a cache rebuilt on captures: check each source now.
+        // It must still be ours and alive, and not a special SAM site (those
+        // are never neutralised, so a destroyed one stayed a "friendly" base).
         let ours: SmallVec<[(ObjectiveId, Vector2); 32]> = all_owned
             .iter()
             .filter(|(_, s, ..)| *s == ambush_side)
+            .filter(|(oid, ..)| {
+                db.persisted.objectives.get(oid).is_some_and(|o| {
+                    o.owner == ambush_side
+                        && o.health() > 0
+                        && !o.kind().is_special_sam_site()
+                })
+            })
             .map(|(oid, _, pos, _, _)| (*oid, *pos))
             .collect();
         let mut options: SmallVec<[(usize, ObjectiveId, Vector2, f64); 8]> =
@@ -921,6 +965,7 @@ impl EventScheduler {
             .active_convoys
             .values()
             .filter(|c| c.side == target_side)
+            .filter(|c| !chased.contains(&c.group_id))
             .filter(|c| near.is_none_or(|p| (p - c.last_pos).norm() <= NEAR_M))
             .collect();
         for (i, convoy) in convoys.iter().enumerate() {

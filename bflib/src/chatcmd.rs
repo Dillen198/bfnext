@@ -535,6 +535,168 @@ fn transfer_command(ctx: &mut Context, id: PlayerId, s: &str) {
     }
 }
 
+/// A chat order to an infantry carrier (`db::carrier`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CarrierCmd {
+    /// put its squad down
+    Dismount,
+    /// take a nearby squad aboard
+    Embark,
+    /// list the player's carriers and what each has aboard
+    List,
+}
+
+/// `-dismount [group]`, `-embark [group]`, `-carriers`: `Some` if `msg` is
+/// one, with the group id if one was given. Errors name what was wrong.
+fn parse_carrier_command(
+    msg: &str,
+) -> Option<std::result::Result<(CarrierCmd, Option<GroupId>), &'static str>> {
+    let mut words = msg.split_whitespace();
+    let cmd = match words.next()?.to_ascii_lowercase().as_str() {
+        "-dismount" => CarrierCmd::Dismount,
+        "-embark" => CarrierCmd::Embark,
+        "-carriers" => CarrierCmd::List,
+        _ => return None,
+    };
+    let gid = match words.next() {
+        None => None,
+        Some(_) if cmd == CarrierCmd::List => {
+            return Some(Err("-carriers takes nothing"));
+        }
+        Some(w) => match w.parse::<GroupId>() {
+            Ok(g) => Some(g),
+            Err(_) => return Some(Err("expected a group id, e.g. -dismount 1234")),
+        },
+    };
+    if words.next().is_some() {
+        return Some(Err("too many words: -dismount [group id] or -embark [group id]"));
+    }
+    Some(Ok((cmd, gid)))
+}
+
+/// Answer the queued carrier orders. Must be called with the mission Lua
+/// state: they spawn and remove squads.
+pub(super) fn run_carrier_requests(ctx: &mut Context, lua: MizLua) {
+    for (id, cmd, gid) in mem::take(&mut ctx.carrier_requests) {
+        let Some(ucid) = ctx.connected.get(&id).map(|i| i.ucid) else { continue };
+        let reply = carrier_order(ctx, lua, &ucid, cmd, gid);
+        crate::menu::jtac::tell(ctx, 10, &ucid, reply);
+    }
+}
+
+/// Carry out one carrier order for `ucid`, returning what to tell them.
+pub(crate) fn carrier_order(
+    ctx: &mut Context,
+    lua: MizLua,
+    ucid: &dcso3::net::Ucid,
+    cmd: CarrierCmd,
+    gid: Option<GroupId>,
+) -> String {
+    let mine = ctx.db.carriers_of(ucid);
+    if cmd == CarrierCmd::List {
+        if mine.is_empty() {
+            return "you have no vehicles that carry troops: drive one (Combined Arms) or deploy one".into();
+        }
+        let driving = ctx.db.driven_unit(ucid);
+        let mut lines = vec![std::string::String::from("your troop carriers:")];
+        for uid in &mine {
+            let Some(u) = ctx.db.persisted.units.get(uid) else { continue };
+            let aboard =
+                ctx.db.carrier_aboard(uid).map(|a| a.describe()).unwrap_or_default();
+            let how = if driving == Some(*uid) { " (you are driving it)" } else { "" };
+            lines.push(format!(" group {} {}{how}: {aboard}", u.group, u.typ));
+        }
+        lines.push(
+            " -dismount [group] puts a squad down, -embark [group] takes one aboard"
+                .into(),
+        );
+        return lines.join("\n").into();
+    }
+    // Which carrier: the group given, else the one being driven, else the
+    // only one they have.
+    let pick = |uids: Vec<_>| -> std::result::Result<_, std::string::String> {
+        // a vehicle in the group that can do it, else the first
+        let fits = |uid: &bfprotocols::db::group::UnitId| match ctx.db.carrier_aboard(uid)
+        {
+            Ok(a) if cmd == CarrierCmd::Dismount => a.loaded(),
+            Ok(a) => matches!(a, crate::db::carrier::Aboard::Out(_)),
+            Err(_) => false,
+        };
+        let first = uids.first().copied();
+        uids.iter().copied().find(|u| fits(u)).or(first).ok_or_else(|| "none".to_string())
+    };
+    let target = match gid {
+        Some(gid) => {
+            let in_group: Vec<_> = mine
+                .iter()
+                .copied()
+                .filter(|u| ctx.db.persisted.units.get(u).is_some_and(|u| u.group == gid))
+                .collect();
+            match pick(in_group) {
+                Ok(u) => u,
+                Err(_) => {
+                    return format!(
+                        "group {gid} is not a troop carrier you drive or deployed (-carriers lists yours)"
+                    )
+                    .into();
+                }
+            }
+        }
+        None => match ctx.db.driven_unit(ucid).filter(|u| mine.contains(u)) {
+            Some(u) => u,
+            None if mine.len() == 1 => mine[0],
+            None if mine.is_empty() => {
+                return "you have no vehicles that carry troops: drive one (Combined Arms) or deploy one".into();
+            }
+            None => {
+                return "you have several troop carriers: name one, e.g. -dismount 1234 (-carriers lists them)".into();
+            }
+        },
+    };
+    carrier_order_unit(ctx, lua, ucid, cmd, target)
+}
+
+/// Carry out `cmd` on carrier unit `target` for `ucid`, returning what to
+/// tell them. Also the F10 menu a Combined Arms driver gets.
+pub(crate) fn carrier_order_unit(
+    ctx: &mut Context,
+    lua: MizLua,
+    ucid: &dcso3::net::Ucid,
+    cmd: CarrierCmd,
+    target: bfprotocols::db::group::UnitId,
+) -> String {
+    let typ =
+        ctx.db.persisted.units.get(&target).map(|u| u.typ.clone()).unwrap_or_default();
+    match cmd {
+        CarrierCmd::Dismount => match ctx.db.dismount_squad(lua, &ctx.idx, &target, ucid)
+        {
+            Ok((troop, sgid)) => {
+                let mut msg =
+                    format!("a {} squad is out of the {typ} as group {sgid}", troop.name);
+                if troop.can_capture {
+                    msg.push_str(" -- inside an enemy base's ring they capture it");
+                }
+                msg.into()
+            }
+            Err(e) => format!("{e}").into(),
+        },
+        CarrierCmd::Embark => match ctx.db.embark_squad(lua, &target, ucid) {
+            Ok((troop, Some((alive, total)))) => {
+                format!("a {} squad ({alive} of {total}) is aboard the {typ}", troop.name)
+                    .into()
+            }
+            Ok((troop, None)) => {
+                format!("a {} squad is aboard the {typ}", troop.name).into()
+            }
+            Err(e) => format!("{e}").into(),
+        },
+        CarrierCmd::List => match ctx.db.carrier_aboard(&target) {
+            Ok(a) => format!("the {typ} has {} aboard", a.describe()).into(),
+            Err(e) => format!("{e}").into(),
+        },
+    }
+}
+
 fn delete_command(ctx: &mut Context, id: PlayerId, s: &str) {
     macro_rules! reply {
         ($msg:tt) => {
@@ -1254,6 +1416,8 @@ fn help_command(ctx: &mut Context, id: PlayerId) {
         " -brief: auto-generated situational briefing (full report: F10 > Info > Situation)",
         " -transfer <amount> [<player> | objective:<objective>]: transfer points to another player or objective",
         " -delete <groupid>: delete a group you deployed for a partial refund",
+        " -dismount [groupid]: put the squad out of the IFV/APC/truck you drive or deployed",
+        " -embark [groupid]: take a nearby squad aboard it, -carriers: list yours",
         " -action <name> <args>: perform an action, -action help for a list of actions",
         " -bind <uuid>: link your account to the web dashboard (uuid from its login page)",
         " -jtac list | -jtac <id> <cmd>: work a JTAC from chat, -jtac help for the commands",
@@ -1328,6 +1492,12 @@ pub(super) fn process(
     } else if let Some(s) = msg.strip_prefix("-delete ") {
         delete_command(ctx, id, s);
         Ok("".into())
+    } else if let Some(parsed) = parse_carrier_command(&msg) {
+        match parsed {
+            Err(e) => ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), e),
+            Ok((cmd, gid)) => ctx.carrier_requests.push((id, cmd, gid)),
+        }
+        Ok("".into())
     } else if let Some(s) = msg.strip_prefix("-bind ") {
         bind_command(ctx, id, s);
         Ok("".into())
@@ -1375,6 +1545,32 @@ mod tests {
         assert!(!looks_like_command("-"));
         assert!(!looks_like_command("-10 degrees"));
         assert!(!looks_like_command("hello -x"));
+    }
+
+    #[test]
+    fn carrier_commands_parse() {
+        let g = |s: &str| s.parse::<GroupId>().unwrap();
+        assert_eq!(
+            parse_carrier_command("-dismount"),
+            Some(Ok((CarrierCmd::Dismount, None)))
+        );
+        assert_eq!(
+            parse_carrier_command("-Dismount 1234"),
+            Some(Ok((CarrierCmd::Dismount, Some(g("1234")))))
+        );
+        assert_eq!(
+            parse_carrier_command("-embark  77 "),
+            Some(Ok((CarrierCmd::Embark, Some(g("77")))))
+        );
+        assert_eq!(
+            parse_carrier_command("-carriers"),
+            Some(Ok((CarrierCmd::List, None)))
+        );
+        assert!(matches!(parse_carrier_command("-dismount btr"), Some(Err(_))));
+        assert!(matches!(parse_carrier_command("-embark 1 2"), Some(Err(_))));
+        assert!(matches!(parse_carrier_command("-carriers 5"), Some(Err(_))));
+        assert_eq!(parse_carrier_command("-dismounted"), None);
+        assert_eq!(parse_carrier_command("dismount"), None);
     }
 
     #[test]

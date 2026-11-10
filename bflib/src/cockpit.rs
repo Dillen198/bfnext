@@ -356,6 +356,10 @@ pub(crate) struct CargoCrate {
     /// F10 path of the "<crate> xN" submenu (C-130 / dynamic cargo), whose
     /// children "1".."9" spawn that many.
     pub spawn_n: Option<Vec<String>>,
+    /// For a base-supply crate: what it is loaded with ("fuel",
+    /// "air-to-air missiles"). Absent for deployable crates.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub carries: Option<std::string::String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -421,6 +425,7 @@ fn cargo_crate(menu: &[MirroredMenuItem], cr: &bfprotocols::cfg::Crate) -> Cargo
         weight_kg: cr.weight,
         spawn,
         spawn_n,
+        carries: None,
     }
 }
 
@@ -476,11 +481,16 @@ pub(crate) fn cargo(ctx: &Context, lua: MizLua, ucid: &Ucid) -> Result<CargoInfo
         for cr in [
             w.supply_transfer_fuel_crate.get(&side),
             w.supply_transfer_weapons_crate.get(&side),
-            w.carrier_repair_crate.get(&side),
         ]
         .into_iter()
         .flatten()
+        .chain(w.supply_crates.get(&side).into_iter().flatten().map(|s| &s.crate_def))
         {
+            let mut c = cargo_crate(&menu, cr);
+            c.carries = ctx.db.supply_crate_load(side, cr.name.as_str()).map(|l| l.label);
+            supply.push(c);
+        }
+        if let Some(cr) = w.carrier_repair_crate.get(&side) {
             supply.push(cargo_crate(&menu, cr));
         }
     }
