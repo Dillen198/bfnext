@@ -5856,6 +5856,14 @@ fn slow_phase_0(
             error!("could not advance actions {e:?}")
         }
     });
+    // a side's last card, when a story event has ordered it (db::nuclear)
+    step(lua, ctx, "nuclear strike", |ctx| {
+        if ctx.db.persisted.nuclear.is_some()
+            && let Err(e) = ctx.db.nuclear_tick(lua, &ctx.idx, perf, start_ts)
+        {
+            error!("nuclear strike: {e:?}")
+        }
+    });
     Ok(AdminResult::Continue)
 }
 

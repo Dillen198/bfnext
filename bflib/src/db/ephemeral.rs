@@ -374,6 +374,9 @@ pub struct Ephemeral {
     /// A player slot group in the .miz for each (side, aircraft type), for
     /// "a copy of my aircraft" wingmen: its loadout and paint come along.
     pub(crate) clone_templates: FxHashMap<(Side, String), String>,
+    /// This session launched the round's nuclear strike flight: one
+    /// from an earlier session was dropped by the restart.
+    pub(crate) nuclear_launched: bool,
     /// Battery -> when it last fired a player-requested mission, for the
     /// per-battery `ArtilleryCfg::cooldown_secs`.
     pub(super) arty_last_fired: FxHashMap<GroupId, DateTime<Utc>>,
@@ -677,6 +680,7 @@ impl Default for Ephemeral {
             actions_last_used: FxHashMap::default(),
             missile_ws3: FxHashMap::default(),
             clone_templates: FxHashMap::default(),
+            nuclear_launched: false,
             arty_last_fired: FxHashMap::default(),
             delayspawnq: BTreeMap::default(),
             awacs_stn: 0o77777,

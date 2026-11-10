@@ -184,6 +184,10 @@ pub struct Persisted {
     /// `crate::db::carrier`.
     #[serde(default)]
     pub carriers: MapS<UnitId, super::carrier::Carried>,
+    /// The round's nuclear strike (`StoryEffect::NuclearStrike`,
+    /// `crate::db::nuclear`): ordered, in the air, or done. Once a round.
+    #[serde(default)]
+    pub nuclear: Option<super::nuclear::NuclearState>,
     /// Mirror of `Ephemeral::last_stand_state`, written on snapshot and read
     /// back on load. The live value is ephemeral so readers outside the db
     /// module keep working; persisting it is what stops a scheduled restart

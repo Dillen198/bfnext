@@ -66,6 +66,7 @@ pub mod logistics;
 pub mod map_layer;
 pub mod markup;
 pub mod mizinit;
+pub mod nuclear;
 pub mod objective;
 pub mod persisted;
 pub mod player;

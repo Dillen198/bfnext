@@ -1,10 +1,33 @@
 # Changelog
 
-What changed for players, newest first. Current version: **v3.2**. Each update
+What changed for players, newest first. Current version: **v3.3**. Each update
 gets the next number. Below v2.0 is the list of what this engine does
 differently from stock Fowl Engine. Where an entry gives a campaign number, it
 is read from the server selected at the top of the page; where a later entry or
 a linked page says otherwise, the later one is right.
+
+## v3.3 — November 10, 2026
+
+**The Last Stand**
+- A side about to lose can have one last card: when its story says so, an AI
+  aircraft flies a nuclear weapon at the enemy's biggest push. The other side
+  is warned the moment it takes off and can shoot it down; if it gets there
+  the blast destroys everything near the base, both sides' units alike. Once
+  a round. On Southern Flank 1985 it is the Soviets' MiG-21bis. See
+  [The Last Stand](../advanced/campaign-events.md#the-last-stand-nuclear-strike).
+
+**Southern Flank 1985 brought up to date**
+- Supply crates by kind, wingmen by role in period types, naval convoys on
+  six Black Sea lanes and warship patrols off Poti and Novorossiysk, fog of
+  war on the F10 map, and action cooldowns.
+- New actions: CAS, attack helicopters, air assault and a NATO paradrop,
+  supply and repair runs, Reinforce Base, recon flights, artillery fire
+  missions, and fighter, attack and SEAD waypoints.
+- Many more deployables, all 1985 kit: Patriot and S-300PS, Stinger and Igla
+  teams, Chieftain, AAV7, BMP-1, BMD-1, MT-LB, BTR-60, the 2B11 mortar and
+  more, and whole platoons and batteries.
+- Each hidden SAM site has its own close-in defence group now, which stays
+  awake when the site goes dark.
 
 ## v3.2 — November 9, 2026
 

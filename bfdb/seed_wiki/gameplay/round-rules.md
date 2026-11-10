@@ -145,6 +145,10 @@ TUAPSE BURNS: The Tuapse refinery is burning after a strike by Shade and Kilo.
 The dashboard lists the events that have fired, and the daily war news leads
 with them.
 
+A story can also give a losing side a last card: a nuclear strike flown by
+an AI aircraft, which the other side is warned about and can shoot down. See
+[The Last Stand](../advanced/campaign-events.md#the-last-stand-nuclear-strike).
+
 ## Scheduled restarts
 
 Restarts are not the end of a round: the campaign is saved and carries on.

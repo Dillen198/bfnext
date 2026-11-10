@@ -65,7 +65,8 @@ pub use balance::{fmt_mult, EmergencyRepairCfg, PopulationScalingCfg};
 pub use command::{rank_min_score, rank_tier, CommandCfg, HuntersCfg, RANK_MIN_SCORE};
 pub use economy::{split_by_weight, EconomyCfg};
 pub use story::{
-    StoryCfg, StoryEffect, StoryEventCfg, StoryTrigger, STORY_MAX_WINDOW_MINUTES,
+    NuclearStrikeCfg, StoryCfg, StoryEffect, StoryEventCfg, StoryTrigger,
+    STORY_MAX_WINDOW_MINUTES,
 };
 pub use war_will::WarWillCfg;
 
