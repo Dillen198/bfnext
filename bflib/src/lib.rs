@@ -908,6 +908,16 @@ fn try_occupy_slot(
             ) {
                 chatcmd::commander_guide(ctx, id);
             }
+            // Close the aircraft they are leaving before announcing the new
+            // slot -- see `Db::player_changing_slot`. A touchdown inside the
+            // ten seconds `return_lives` waits is still a landing.
+            let touched_down = ctx
+                .db
+                .player(&ifo.ucid)
+                .and_then(|p| p.current_slot.as_ref())
+                .and_then(|(old, _)| ctx.db.ephemeral.get_object_id_by_slot(old))
+                .is_some_and(|oid| ctx.recently_landed.contains_key(oid));
+            ctx.db.player_changing_slot(&ifo.ucid, touched_down);
             ctx.do_bg_task(Task::Stat(Stat::Slot { id: ifo.ucid, slot, typ }));
             Ok(true)
         }

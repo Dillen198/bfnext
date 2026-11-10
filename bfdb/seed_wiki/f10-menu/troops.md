@@ -100,6 +100,9 @@ stay put:
 those troops are holding Megiddo while it consolidates -- they can't be extracted until the capture is settled
 ```
 
+They are not lost: once the base consolidates your squads are released where
+they stand and can be extracted again.
+
 Otherwise the failure is `no troops in range`.
 
 **Return** hands the last squad aboard back to a friendly base and refunds
@@ -133,6 +136,8 @@ One squad per vehicle, never more:
   and use Embark. It comes back aboard at the strength it has left.
 - If the squad is **killed**, deleted or lifted out by a helicopter, the
   vehicle has **nobody left** and can't deploy troops again.
+- A squad that took a base can't embark while the base consolidates. Once it
+  has, the squad is released where it stands and can embark again.
 - A vehicle that is **destroyed** lets out whoever is aboard, and nobody if
   its squad is already out or lost.
 - An AI formation that sends a vehicle's squad into a base uses it up the

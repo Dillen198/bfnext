@@ -77,6 +77,9 @@ const CIV_HIT_MEMORY_SECS: i64 = 180;
 const RTB_GIVEUP_SECS: i64 = 1200;
 /// A wingman whose player has been on the ground this long is sent home.
 const WINGMAN_GROUND_GRACE_SECS: i64 = 60;
+/// A wingman called on the ground waits this long for its player to take
+/// off -- start-up and taxi -- before it is sent home.
+const WINGMAN_TAKEOFF_WAIT_SECS: i64 = 20 * 60;
 /// An arriving airliner is removed this long after it touches down.
 const CIV_ROLLOUT_SECS: i64 = 45;
 /// Overflights and departures are removed within this distance of their exit.
@@ -167,6 +170,10 @@ struct Wingman {
     engage: f64,
     expires_at: DateTime<Utc>,
     landed_since: Option<DateTime<Utc>>,
+    /// When the wingman was called on the ground, the player has not taken
+    /// off yet: until they do, being on the ground is not "landed", and the
+    /// wingman holds over the field instead of escorting a parked aircraft.
+    waiting_since: Option<DateTime<Utc>>,
     /// Off the ground and given its first task. Until then orders other than
     /// ROE and formation wait: a task on the takeoff waypoint is thrown away
     /// when the takeoff starts, and the wingman just flew its route.
@@ -585,11 +592,11 @@ fn request_wingman(
     let Some(inst) = player.current_slot.as_ref().and_then(|(_, i)| i.as_ref()) else {
         return Ok("Get in an aircraft first.".into());
     };
-    if !inst.in_air {
-        return Ok(
-            "Call your wingman once you are airborne -- it joins you in the air.".into()
-        );
-    }
+    // On the ground is fine: the wingman starts up at the nearest field,
+    // which is usually the player's own, and holds overhead until they are
+    // up. It used to have to be called in the air, from when it spawned in
+    // the air; now it taxis and takes off like the player does.
+    let on_ground = !inst.in_air;
     let pilots = side_pilots(ctx, side);
     if cfg.max_side_pilots > 0 && pilots > cfg.max_side_pilots {
         return Ok(format_compact!(
@@ -712,6 +719,19 @@ fn request_wingman(
         land.as_ref().and_then(|l| l.get_height(LuaVec2(field.pos)).ok()).unwrap_or(0.);
     // Waypoint 0 is the field: the spawn turns it into the takeoff. The
     // route then points it at the player until it is up to take the escort.
+    // Called on the ground, it circles over the player until they are up
+    // (`join_up` waits for both) instead of flying past the end of its route.
+    let hold = if on_ground {
+        vec![Task::Orbit {
+            pattern: OrbitPattern::Circle,
+            point: Some(LuaVec2(here)),
+            point2: None,
+            speed: Some(speed),
+            altitude: Some(altitude),
+        }]
+    } else {
+        vec![]
+    };
     let mission = vec![
         air_point(
             field.pos,
@@ -719,7 +739,7 @@ fn request_wingman(
             speed,
             Task::ComboTask(wingman_options(AirRoe::WeaponFree)),
         ),
-        air_point(here, altitude, speed, Task::ComboTask(vec![])),
+        air_point(here, altitude, speed, Task::ComboTask(hold)),
     ];
 
     let spctx = SpawnCtx::new(lua)?;
@@ -778,16 +798,26 @@ fn request_wingman(
             engage,
             expires_at: now + Duration::seconds(cfg.lifetime_secs as i64),
             landed_since: None,
+            waiting_since: on_ground.then_some(now),
             joined: false,
             roe: AirRoe::WeaponFree,
             spread: false,
-            doing: "taking off to join you".into(),
+            doing: if on_ground {
+                "taking off, then waiting over you".into()
+            } else {
+                "taking off to join you".into()
+            },
         },
     );
+    let joins = if on_ground {
+        "It takes off, holds over you until you are airborne, then joins on your wing"
+    } else {
+        "It takes off and joins on your wing"
+    };
     Ok(format_compact!(
-        "{label}: a {typ} ({}) is starting up at {} ({:.0} km from you){}. It takes off and \
-         joins on your wing, and stays for {} min, or until you land or release it. \
-         F10 > Wingman > Orders to direct it.",
+        "{label}: a {typ} ({}) is starting up at {} ({:.0} km from you){}. {joins}, and \
+         stays for {} min, or until you land or release it. F10 > Wingman > Orders to direct \
+         it.",
         role_name(role),
         field.name,
         dist(field.pos, here) / 1000.,
@@ -994,7 +1024,8 @@ fn wingman_status(
 /// the player, at the ROE they have set meanwhile.
 fn join_up(lua: MizLua, ctx: &mut Context, ucid: Ucid) {
     let Some(w) = ctx.airlife.wingmen.get(&ucid) else { return };
-    if w.joined {
+    // Called on the ground: it holds overhead until its player is up too.
+    if w.joined || w.waiting_since.is_some() {
         return;
     }
     let mut tasks = wingman_options(w.roe);
@@ -1052,6 +1083,11 @@ fn tick_wingmen(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
         let why: Option<&str> = match inst {
             Some((unit, _)) if unit != w.unit_name => Some(""),
             None => Some(""),
+            // Called on the ground and the player has not taken off yet.
+            Some((_, false)) if w.waiting_since.is_some() => w
+                .waiting_since
+                .filter(|since| (now - *since).num_seconds() >= WINGMAN_TAKEOFF_WAIT_SECS)
+                .map(|_| "you did not take off"),
             Some((_, false)) => {
                 let since = *ctx
                     .airlife
@@ -1066,6 +1102,7 @@ fn tick_wingmen(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
             Some((_, true)) => {
                 if let Some(w) = ctx.airlife.wingmen.get_mut(&ucid) {
                     w.landed_since = None;
+                    w.waiting_since = None;
                 }
                 (now >= ctx.airlife.wingmen[&ucid].expires_at)
                     .then_some("it is out of time")

@@ -62,7 +62,7 @@ full as the root gets.
    {"label":"Cancel Recon Pass"},
    {"label":"Recon Status","says":"Recon on Senaki: 45% (54/120s)"}]},
   {"label":"Wingman","note":"Every aircraft slot, on servers with AI wingmen on.","items":[
-   {"label":"Request","note":"The wingmen you can call, each with its price, and on some servers a copy of your own aircraft. Only once you are airborne. See Wingmen, AI Packages & Civil Traffic."},
+   {"label":"Request","note":"The wingmen you can call, each with its price, and on some servers a copy of your own aircraft. On the ground or in the air. See Wingmen, AI Packages & Civil Traffic."},
    {"label":"Orders","note":"Cover me, engage air, attack near me or at your map mark, hold, ROE, formation."},
    {"label":"Status","says":"Fighter escort (F-16C bl.50, fighter): 1/1 aircraft, 3.4 nm from you, covering you, weapons free, close formation, 52 min left."},
    {"label":"Release (RTB)","says":"Fighter escort released, RTB."}]}]},

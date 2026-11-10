@@ -234,6 +234,12 @@ pub struct Ephemeral {
     /// `Db::takeoff`) and only the deslot that follows a landing closes it (see
     /// `Db::player_deslot`), so land-rearm-launch counts once instead of twice.
     pub(super) open_sorties: FxHashMap<Ucid, Option<DateTime<Utc>>>,
+    /// Pilots whose `Stat::Deslot` already went out when they picked a new
+    /// slot (see `Db::player_changing_slot`). DCS asks about the new slot
+    /// before it pulls the pilot out of the old aircraft, so the deslot that
+    /// follows would reach bfdb after the new `Stat::Slot` and wipe it. Set
+    /// until the pilot is born into the new slot or picks another one.
+    pub(super) deslot_sent: FxHashSet<Ucid>,
     pub(super) cargo: FxHashMap<SlotId, Cargo>,
     /// C-130 physical cargo tracking: crate_name -> C130Cargo (tracked by name because DCS changes object ID when loading/dropping)
     pub(super) c130_crates: FxHashMap<String, C130Cargo>,
@@ -626,6 +632,7 @@ impl Default for Ephemeral {
             to_bg: None,
             players_by_slot: IndexMap::default(),
             open_sorties: FxHashMap::default(),
+            deslot_sent: FxHashSet::default(),
             cargo: FxHashMap::default(),
             c130_crates: FxHashMap::default(),
             c130_spawn_queue: BTreeMap::default(),
