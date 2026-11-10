@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildParams, byPlugin, canSeeBotConsole, cell, cellFor, duration, initialValue, inputKind, label, mainTable,
   mayUse, serverControls, statusTone, topLevelChanges, setPath, getPath, scheduleRows,
-  presetFieldValue, setPresetField, parseFleetEvent,
+  presetFieldValue, setPresetField, parseFleetEvent, cloudsName,
 } from './botconsole'
 import type { BotActionInfo, BotParam } from '../api'
 
@@ -153,5 +153,24 @@ describe('config editing', () => {
     expect(parseFleetEvent('{"servers":[],"nodes":[]}')).toEqual({ servers: [], nodes: [] })
     expect(parseFleetEvent('{"servers":1}')).toBeNull()
     expect(parseFleetEvent('nope')).toBeNull()
+  })
+})
+
+describe('clouds name', () => {
+  it('takes a preset name as it is', () => {
+    expect(cloudsName({ preset: 'Preset7' })).toBe('Preset7')
+  })
+  it("names a running mission's DCS preset table, not [object Object]", () => {
+    const table = {
+      levelMap: {}, layers: [], visibleInGUI: true, presetAltMin: 2400, presetAltMax: 4000,
+      readableName: '04 ##Scattered 3 \nMETAR:SCT 9/10', thumbnailName: 'x', detailNoiseMapSize: 1, precipitationPower: 0,
+    }
+    expect(cloudsName({ preset: { ...table, readableNameShort: 'Scattered 3' } })).toBe('Scattered 3')
+    expect(cloudsName({ preset: table })).toBe('Scattered 3')
+  })
+  it('falls back to the base, then to nothing', () => {
+    expect(cloudsName({ base: 1500.4, thickness: 200 })).toBe('base 1500 m')
+    expect(cloudsName(null)).toBeNull()
+    expect(cloudsName({ preset: { layers: [] } })).toBeNull()
   })
 })

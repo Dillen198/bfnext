@@ -225,6 +225,26 @@ export function getPath(v: unknown, path: readonly PathKey[]): unknown {
   return cur
 }
 
+/**
+ * What a mission's (or a preset's) clouds are called. `clouds.preset` is a
+ * name ("Preset7") in presets.yaml, but the bot reports a running mission's
+ * as DCS's whole preset table (readableNameShort, readableName, layers...),
+ * whose readableName reads like "01 ##Few Scattered Clouds \nMETAR:...".
+ * Without a preset, the cloud base. Null when there is nothing to say.
+ */
+export function cloudsName(clouds: unknown): string | null {
+  const p = getPath(clouds, ['preset'])
+  if (typeof p === 'string' && p) return p
+  const short = getPath(p, ['readableNameShort'])
+  if (typeof short === 'string' && short.trim()) return short.trim()
+  const long = getPath(p, ['readableName'])
+  if (typeof long === 'string' && long.trim()) {
+    return long.split('\n')[0].replace(/^\s*\d*\s*##\s*/, '').trim() || null
+  }
+  const base = getPath(clouds, ['base'])
+  return typeof base === 'number' && Number.isFinite(base) ? `base ${base.toFixed(0)} m` : null
+}
+
 /** `v` with the value at `path` replaced (undefined = removed), copying only
  *  what is on the way down. Missing objects on the way are created. */
 export function setPath(v: unknown, path: readonly PathKey[], value: unknown): unknown {

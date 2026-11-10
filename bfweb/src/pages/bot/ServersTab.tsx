@@ -3,7 +3,7 @@
 
 import { useRef, useState } from 'react'
 import { api, type BotFleet, type BotServer } from '../../api'
-import { duration, getPath, scheduleRows, serverControls, statusTone, type ServerControl } from '../../lib/botconsole'
+import { cloudsName, duration, getPath, scheduleRows, serverControls, statusTone, type ServerControl } from '../../lib/botconsole'
 import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { Btn, Card, ConfirmBtn, Empty, LinkBtn, Pill, Table, useAction, useRead, useRunner } from './ui'
@@ -329,7 +329,7 @@ function OverviewCard({ s }: { s: BotServer }) {
     ['Temperature', num(getPath(w, ['season', 'temperature'])) && `${num(getPath(w, ['season', 'temperature']))} °C`],
     ['QNH', num(getPath(w, ['qnh'])) && `${num(getPath(w, ['qnh']))} mmHg`],
     ['Wind (ground)', num(wind.speed, 1) && `${num(wind.dir)}° / ${num(wind.speed, 1)} m/s`],
-    ['Clouds', (getPath(d?.clouds, ['preset']) as string | undefined) ?? (num(getPath(d?.clouds, ['base'])) && `base ${num(getPath(d?.clouds, ['base']))} m`)],
+    ['Clouds', cloudsName(d?.clouds)],
     ['Visibility', d?.visibility ? `${Math.round(d.visibility).toLocaleString()} m (live)` : num(getPath(w, ['visibility', 'distance'])) && `${num(getPath(w, ['visibility', 'distance']))} m`],
     ['Mission date', s.mission?.date ? String(s.mission.date).slice(0, 10) : null],
   ]

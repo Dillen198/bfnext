@@ -13,7 +13,7 @@ import {
   api, type BotAccessRow, type BotConfigDoc, type BotConfigFile, type BotRole,
 } from '../../api'
 import {
-  PRESET_FIELDS, getPath, label, presetFieldValue, setPath, setPresetField, topLevelChanges, type PathKey,
+  PRESET_FIELDS, cloudsName, getPath, label, presetFieldValue, setPath, setPresetField, topLevelChanges, type PathKey,
 } from '../../lib/botconsole'
 import { Btn, Card, ConfirmBtn, Empty, Pill, useRunner } from './ui'
 import { CELL, DIM, INPUT, MONO, RED, TH, errText } from './style'
@@ -365,7 +365,7 @@ function PresetFile({ file }: { file: BotConfigFile }) {
         const isOpen = open === name
         const summary = Array.isArray(p) ? `combines ${p.join(', ')}` :
           [getPath(p, ['start_time']), getPath(p, ['temperature']) !== undefined ? `${String(getPath(p, ['temperature']))}°C` : null,
-            typeof getPath(p, ['clouds']) === 'string' ? getPath(p, ['clouds']) : getPath(p, ['clouds', 'preset'])].filter(Boolean).join(' · ')
+            typeof getPath(p, ['clouds']) === 'string' ? getPath(p, ['clouds']) : cloudsName(getPath(p, ['clouds']))].filter(Boolean).join(' · ')
         return (
           <div key={name} style={{ borderBottom: '1px solid var(--border)' }}>
             <button type="button" onClick={() => setOpen(isOpen ? null : name)} className="flex items-center gap-3"
