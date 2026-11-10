@@ -55,6 +55,7 @@ struct SiteAssets;
 mod admin;
 mod atc;
 mod botlink;
+mod cockpit_dash;
 mod cockpit_wiki;
 mod command;
 mod db;
@@ -2604,6 +2605,27 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(websec::with_client_ip())
         .then(api_cockpit_context);
 
+    // The DASH tab (cockpit_dash): the dashboard in one answer, and its map.
+    let cockpit_dash_route = warp::path!("api" / "cockpit" / "dash")
+        .and(warp::get())
+        .and(extract_session_cookie())
+        .and(cockpit_query())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .and(websec::with_client_ip())
+        .then(cockpit_dash::api_dash)
+        .or(warp::path!("api" / "cockpit" / "dash" / "map")
+            .and(warp::get())
+            .and(extract_session_cookie())
+            .and(cockpit_query())
+            .and(with_db(db.clone()))
+            .and(with_bot_link_cfg(bot_link_cfg.clone()))
+            .and(with_instance(db.clone()))
+            .and(websec::with_client_ip())
+            .then(cockpit_dash::api_map))
+        .boxed();
+
     let cockpit_menu_route = warp::path!("api" / "cockpit" / "menu")
         .and(warp::get())
         .and(extract_session_cookie())
@@ -3081,6 +3103,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .or(cockpit_plugin_installer_route)
         .or(cockpit_context_route)
         .or(cockpit_menu_route)
+        .or(cockpit_dash_route)
         .or(cockpit_messages_route)
         .or(cockpit_cargo_route)
         .or(cockpit_ewr_report_route)

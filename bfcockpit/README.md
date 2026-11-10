@@ -101,7 +101,7 @@ opens, but can only tell you the DLL is missing.
 | `Ctrl+Alt+C` (change it in Options → Special) | show / hide, from anywhere |
 | `Ctrl+Alt+W` (change it in Options → Special) | the wheel (below) |
 
-The panel has seven tabs (the last, WHEEL, edits the wheel -- see below):
+The panel has eight tabs (the last, WHEEL, edits the wheel -- see below):
 
 - **MENU** — your whole F10 menu, live from the engine. Click a submenu to go
   in, **< Back** to come out, click a command to run it. Whatever F10 answers
@@ -116,6 +116,16 @@ The panel has seven tabs (the last, WHEEL, edits the wheel -- see below):
 - **STATUS** — who you are, your side, points, lives and crates; your aircraft,
   position, altitude, heading and speed; your home base, the base you're
   parked at, and the nearest objective with range and bearing.
+- **DASH** — the campaign dashboard: the round and the time to the restart,
+  who is online and flying, the bases at risk, each side's share of the
+  objectives, a map of the theatre (each side's ground, the front line, the
+  bases, and you), the bases that need attention with range and bearing from
+  your jet, what each side is flying, the latest kills and captures, and the
+  weather. Refreshes every 15 seconds while it is open. Works in single
+  player too (it then shows the campaign's main server). **WEB VIEW** at the
+  top swaps in the hosted dashboard, dashboard.vectorstrike.org, in DCS's
+  built-in browser, on this server's campaign; **NATIVE** goes back, and so
+  does the panel by itself if the page doesn't load.
 - **EWR** — threats, friendlies or ground intel, plus EWR calls on/off and
   imperial/metric.
 - **LOG** — every message the server has sent you, newest first, tagged YOU /
@@ -270,7 +280,8 @@ to the Discord.
 and, if you don't already have one, `<DCS profile>\Config\BFCockpit.lua`. The
 WIKI tab keeps the pages and pictures it has shown in
 `Mods\Services\BFCockpit\cache\wiki\` (a few MB at most; safe to delete;
-**Uninstall** removes it with the rest).
+**Uninstall** removes it with the rest), and the DASH tab its current map in
+`Mods\Services\BFCockpit\cache\dash\` (one picture).
 DCS itself stores the Special-page choices in its own `Config\options.lua`. No
 DCS install files are modified, nothing is written to the registry, and
 nothing is added to startup.
@@ -392,9 +403,39 @@ PNGs scaled to the panel's width, SVG diagrams rasterised to PNG by resvg on
 the server, JPEGs as they are (dxgui scales them). A 1.0 DLL has no
 `download`: the tab still works, with the pictures' alt text in their place.
 
+**The DASH tab.** One request, `/api/cockpit/dash` (`bfdb/src/cockpit_dash.rs`),
+every 15 s while the tab shows: the public web dashboard's data
+(`/api/objectives`, `/api/frontline`, `/api/stats`, kills, captures, who is
+online) put together on the server, so the GUI thread decodes one small table.
+It needs no key on a public campaign; a non-public one wants the panel's key.
+The map is a PNG bfdb draws (an SVG rasterised by resvg): each base's ground
+shaded by its owner (the web map's Voronoi territory, cut to the coast where
+`bfweb/src/lib/territory.ts` has one), the engine's front line and the bases.
+The answer names it by a `rev` that changes only when what it shows does, so
+the panel downloads a new picture only then (`/api/cockpit/dash/map?w=&rev=`,
+no key: the rev comes only with the dashboard answer) and deletes the old one.
+Your position is a marker the panel puts over the picture from its bounds and
+your STATUS position, so it moves between pictures and one picture serves
+everyone.
+
+**WEB VIEW** (opt-in, `dash_web` in `BFCockpit.lua`, set by the button) loads
+the hosted dashboard (`dashboard_url`, `https://dashboard.vectorstrike.org`)
+with `?server=<DCS server name>` (or `?instance=` when pinned) and
+`&theme=dark` into a dxgui `WebViewWidget` in the pane's place: bfweb itself,
+as players see it in a browser. This is how version 1 drew the whole panel, given up
+because DCS's embedded browser changes between builds and a page that fails
+is a grey box; so the browser is made only when WEB VIEW is picked, the page
+is loaded on `browserCreated` (with a 2 s fallback, v1's lesson), and if it
+has not reported itself loaded within 10 s, or `onMountFailed` fires, the
+panel goes back to its native view for the session and says why in the
+status line. No key goes in the address, so it shows public campaigns only,
+and your own position is not on its map.
+
 **Testing outside DCS.** `D:\DCS World\bin-mt\luae.exe` is a plain interpreter
 on DCS's `lua.dll`, so the DLL can be exercised for real with it. The script
 runs under it too: `luae.exe bfcockpit\tools\luatest.lua` loads the real
 `bfcockpit.lua` with stand-ins for the dxgui modules, `net` and the DLL, puts
-every `bfdb/seed_wiki` page through the WIKI tab and checks the tab bar fits.
+every `bfdb/seed_wiki` page through the WIKI tab, a sample dashboard through
+the DASH tab (map download, the marker's place, a new map replacing the old)
+and checks the tab bar fits.
 The pixels still need a look in DCS.

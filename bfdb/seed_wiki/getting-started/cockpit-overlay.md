@@ -61,7 +61,7 @@ All three can be changed in **Options → Special → Vector Strike** (see
 ## The panel
 
 Every tab shares the same frame: the **tabs** across the top (MENU, CARGO,
-STATUS, EWR, LOG, WIKI, WHEEL), **-** / **+** to
+STATUS, DASH, EWR, LOG, WIKI, WHEEL), **-** / **+** to
 make the panel more see-through or more solid, **X** to hide it, and a **status
 line** at the bottom that shows the result of what you just did (or your keys).
 Drag the panel by its title bar and resize it from its edges; its position,
@@ -136,6 +136,42 @@ heading and speed, airborne or on the ground, your **home base**, the base
 you're parked at, the **nearest objective** with range and bearing, and any
 **takeoff hold** still counting down.
 
+### DASH — the campaign at a glance
+
+The front page of the web dashboard, in the cockpit. It refreshes every 15
+seconds while it is open.
+
+- **The round**: its number and scenario, how long it has run, and how long
+  until the server restarts.
+- **The numbers**: pilots online, pilots flying, bases at risk (about to fall,
+  under attack or badly damaged) and kills in the last hour, then a bar with
+  each side's share of the objectives.
+- **The map**: each side's ground shaded in its colour, the front line, and
+  every base (squares are airbases, triangles FOBs, diamonds logistics hubs,
+  dots FARPs and the rest). An orange ring is a base under attack, a dashed
+  yellow ring one ready to capture. A **yellow crosshair** is you. The picture
+  is drawn by the server and only downloaded again when a base changes hands
+  or comes under attack; your crosshair moves every few seconds.
+- **Front line**: the bases that need attention, most urgent first, with why
+  (ready to capture, under attack, defences, supply or fuel low, just taken)
+  and their **range and bearing from your jet**.
+- **Air picture**: how many of each side are online and flying, and in what.
+- **Kills** and **captures**: the latest few, with how long ago.
+- **Weather**: wind, temperature, QNH, cloud base and visibility.
+
+It needs no key, so it works in single player too: there it shows the
+campaign's main server.
+
+**NATIVE / WEB VIEW.** The two buttons at the top choose how the tab is drawn.
+NATIVE (the default) is the panel's own view described above. WEB VIEW shows
+the [web dashboard](https://dashboard.vectorstrike.org) itself in DCS's
+built-in browser instead, on the server you're flying on. Your choice is
+remembered. DCS's browser is not always reliable (it changes with DCS
+updates and may not work in VR), so if the page doesn't load within ten
+seconds the panel goes back to NATIVE on its own and says why in the status
+line; press WEB VIEW to try again. The web view doesn't show your own
+position on its map, and works only on public campaigns.
+
 ### EWR — the radar picture
 
 ![The EWR tab showing threats with BRAA calls](/api/wiki/images/9e5839e7-b4cc-46a0-a092-497663354263)
@@ -184,8 +220,8 @@ leaving the sim. It works in single player too.
 - **On the wheel.** Add the WIKI tab to your wheel with **+ PANEL** in the
   [WHEEL editor](#building-your-own-wheel).
 
-The panel is at least 500 pixels wide (at 100% panel size) so pages stay
-readable.
+The panel is at least 520 pixels wide (at 100% panel size) so pages stay
+readable and all eight tabs fit.
 
 A page open in the WIKI tab looks like this (an illustration: the rows depend
 on the page):

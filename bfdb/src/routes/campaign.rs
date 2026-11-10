@@ -286,6 +286,24 @@ pub(crate) async fn api_objectives(
     round_id: Option<u64>,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
+    let (entries, live_ok) = objectives_entries(&db, round_id, &inst).await?;
+    let data = serde_json::to_string(&entries).map_err(|e| Error(e.into()))?;
+    // Also as a header, so a consumer can tell a degraded response from an
+    // empty one without inspecting every element.
+    Ok(warp::reply::with_header(
+        json_response(data),
+        "x-fowl-live",
+        if live_ok { "1" } else { "0" },
+    ))
+}
+
+/// What `/api/objectives` lists, and whether the values came from the running
+/// engine. Shared with the cockpit's DASH tab (`cockpit_dash`).
+pub(crate) async fn objectives_entries(
+    db: &StatsDb,
+    round_id: Option<u64>,
+    inst: &Inst,
+) -> std::result::Result<(Vec<serde_json::Value>, bool), Error> {
     let (mut entries, is_active) =
         task::block_in_place(|| -> Result<(Vec<serde_json::Value>, bool)> {
             let rounds = db.latest_rounds_for(&inst.id)?;
@@ -360,7 +378,7 @@ pub(crate) async fn api_objectives(
     // the Discord bot's poller, which has its own 10s client timeout).
     let mut live_ok = false;
     if is_active {
-        let live = engine_objectives(&db, &inst).await;
+        let live = engine_objectives(db, inst).await;
         // An error was already logged when the (cached) call was made.
         if let Ok(json) = &*live {
             if let Ok(live) =
@@ -400,15 +418,7 @@ pub(crate) async fn api_objectives(
             }
         }
     }
-
-    let data = serde_json::to_string(&entries).map_err(|e| Error(e.into()))?;
-    // Also as a header, so a consumer can tell a degraded response from an
-    // empty one without inspecting every element.
-    Ok(warp::reply::with_header(
-        json_response(data),
-        "x-fowl-live",
-        if live_ok { "1" } else { "0" },
-    ))
+    Ok((entries, live_ok))
 }
 
 /// GET /api/frontline?round=N — the dividing line between blue-held and
@@ -421,27 +431,38 @@ pub(crate) async fn api_frontline(
     round_id: Option<u64>,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
+    let v = frontline_value(&db, round_id, &inst).await?;
+    Ok(json_response(serde_json::to_string(&v).map_err(anyhow::Error::from)?))
+}
+
+/// `/api/frontline`'s answer: `{mid, blue, red}`, or `[]` when there is no
+/// line to draw. Shared with the cockpit's DASH map (`cockpit_dash`).
+pub(crate) async fn frontline_value(
+    db: &StatsDb,
+    round_id: Option<u64>,
+    inst: &Inst,
+) -> std::result::Result<serde_json::Value, Error> {
     // Only the live map can be checked against the engine; see api_objectives
     // for why objectives it doesn't have are left out.
     let in_engine = match round_id {
-        None => engine_objective_names(&db, &inst).await,
+        None => engine_objective_names(db, inst).await,
         Some(_) => None,
     };
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = task::block_in_place(|| -> Result<serde_json::Value> {
         let rounds = db.latest_rounds_for(&inst.id)?;
         let active =
             rounds.iter().find(|(_, _, r)| r.end.is_none()).map(|(_, rid, _)| *rid);
         let rid = match round_id {
             // Another instance's round is not this instance's to show.
             Some(id) if db.round_instance_of(db::RoundId(id)) != inst.id => {
-                return Ok("[]".to_string())
+                return Ok(serde_json::json!([]))
             }
             Some(id) => db::RoundId(id),
             None => match active {
                 Some(rid) => rid,
                 None => match rounds.first() {
                     Some((_, rid, _)) => *rid,
-                    None => return Ok("[]".to_string()),
+                    None => return Ok(serde_json::json!([])),
                 },
             },
         };
@@ -463,7 +484,7 @@ pub(crate) async fn api_frontline(
             .map(|(_, o)| (o.pos.latitude, o.pos.longitude, o.owner))
             .collect();
         if ll.len() < 4 {
-            return Ok("[]".to_string());
+            return Ok(serde_json::json!([]));
         }
 
         // Project lat/lon to a local equirectangular frame in metres so the
@@ -499,9 +520,9 @@ pub(crate) async fn api_frontline(
             "blue": cvt(&fl.blue),
             "red": cvt(&fl.red),
         });
-        Ok(serde_json::to_string(&out)?)
+        Ok(out)
     })?;
-    Ok(json_response(data))
+    Ok(data)
 }
 
 /// GET /api/briefing — the caller's own coalition kneeboard briefing (navaids,
@@ -895,6 +916,16 @@ pub(crate) async fn api_stats(
     bot_cfg: Arc<Option<BotLinkConfig>>,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
+    let value = stats_value(&db, &bot_cfg, &inst).await?;
+    Ok(json_response(serde_json::to_string(&value).map_err(anyhow::Error::from)?))
+}
+
+/// `/api/stats`'s answer. Shared with the cockpit's DASH tab.
+pub(crate) async fn stats_value(
+    db: &StatsDb,
+    bot_cfg: &Arc<Option<BotLinkConfig>>,
+    inst: &Inst,
+) -> std::result::Result<serde_json::Value, Error> {
     // The per-round leaderboard behind this walks the whole aggregates tree;
     // every dashboard polls it. See ROUTE_CACHE.
     static STATS: std::sync::LazyLock<websec::CacheMap<InstanceId, serde_json::Value>> =
@@ -907,9 +938,9 @@ pub(crate) async fn api_stats(
             task::block_in_place(|| stats_summary(&db2, &inst2)).map_err(Error)
         })
         .await?;
-    let bot_info = fetch_bot_server_info(&bot_cfg, &inst).await;
-    stats_apply_bot_info(&db, &inst, &mut value, bot_info).await;
-    Ok(json_response(serde_json::to_string(&value).map_err(anyhow::Error::from)?))
+    let bot_info = fetch_bot_server_info(bot_cfg, inst).await;
+    stats_apply_bot_info(db, inst, &mut value, bot_info).await;
+    Ok(value)
 }
 
 /// The DB-derived half of `/api/stats`.

@@ -21,7 +21,7 @@ These need no DCS, no netidx resolver and no network. CI (`.github/workflows/bui
 | Dashboard and Manager UI | `npm --prefix bfweb test` | vitest |
 | Range site | `npm --prefix bfrange-web test` | vitest |
 | DCSServerBot plugin | `pip install -r DCSServerBot/tests/requirements.txt`, then `python -m pytest -q` in `DCSServerBot/tests` | Fakes of the bot's core: no bot, Discord, DCS or database |
-| Cockpit panel script (WIKI tab) | `"D:\DCS World\bin-mt\luae.exe" bfcockpit\tools\luatest.lua` | Runs `bfcockpit.lua` on DCS's own Lua 5.1 with stand-ins for dxgui and the DLL, every `bfdb/seed_wiki` page through the renderer. Not in CI (needs a DCS install). `LUATEST_PAGE=<slug>` prints one page as laid out |
+| Cockpit panel script (WIKI and DASH tabs) | `"D:\DCS World\bin-mt\luae.exe" bfcockpit\tools\luatest.lua` | Runs `bfcockpit.lua` on DCS's own Lua 5.1 with stand-ins for dxgui and the DLL, every `bfdb/seed_wiki` page through the renderer. Not in CI (needs a DCS install). `LUATEST_PAGE=<slug>` prints one page as laid out |
 
 They do not cover the DCS runtime (spawns, events, F10 menus, slots), real Discord posts, the Windows service or real GitHub releases. The tables below do.
 
@@ -751,7 +751,7 @@ Needs plugin 3.5 (script and `bfcockpit_net.dll` 1.1) and a bfdb with `/api/cock
 
 | # | Item | Steps | Expected | Pass |
 |---|------|-------|----------|------|
-| 27D.1 | Tab bar | Smallest panel (drag it as narrow as it goes, then reopen), Panel size 100% and 70% | Seven tabs, every label readable, none under the `-` `+` `X` buttons | |
+| 27D.1 | Tab bar | Smallest panel (drag it as narrow as it goes, then reopen), Panel size 100% and 70% | Eight tabs, every label readable, none under the `-` `+` `X` buttons | |
 | 27D.2 | Home | Open WIKI | The sections in the web wiki's sidebar order, each with its page count | |
 | 27D.3 | Section and page | Pick a section, then a page; `< Back` twice | Pages in the sidebar's order; the crumb reads `WIKI > Section > Title`; Back returns to the section (at the same scroll position) and then home | |
 | 27D.4 | Markdown | Open a page with headings, lists, a table and a code block (e.g. Theatre HQ, Chat Commands) | Headings bold and green, lists indented, tables as columns (or one card per row when the panel is narrow), code in the mono font; no `**`, `[`, `](` or backticks left | |
@@ -768,6 +768,29 @@ Needs plugin 3.5 (script and `bfcockpit_net.dll` 1.1) and a bfdb with `/api/cock
 | 27D.15 | Old DLL | Copy the 1.0 `bfcockpit_net.dll` over the new one | Pages work; pictures show `[picture -- needs the newer bfcockpit_net.dll]` with their caption; status line warns about the DLL | |
 | 27D.16 | Wheel shortcut | WHEEL tab: + PANEL > WIKI; open the wheel and pick it | The panel opens on the WIKI tab | |
 | 27D.17 | No sim stalls | Open several picture-heavy pages quickly in a busy mission | No frame hitch while pages and pictures load | |
+
+### 27E. DASH tab
+
+Needs plugin 3.6 and a bfdb with `/api/cockpit/dash`.
+
+| # | Item | Steps | Expected | Pass |
+|---|------|-------|----------|------|
+| 27E.1 | Numbers | Open DASH on a running campaign; compare with the web dashboard | Round, restart countdown, online, flying, at risk, kills in the last hour and the objective bar match the web (within 15 s) | |
+| 27E.2 | Map | Wait for the map | The theatre with each side's ground, the front line and the bases; readable on the panel at 100% and 135% (VR); `Mods\Services\BFCockpit\cache\dash\map-<rev>-<w>x<h>.png` written | |
+| 27E.3 | You on the map | In a jet, fly a few miles | The yellow crosshair sits where you are against the bases (check against F10) and moves within a few seconds | |
+| 27E.4 | Map refresh | A base changes hands or comes under attack | Within about 15 s a new map; the old file is gone from the cache folder | |
+| 27E.5 | Front line | Compare the list with the web's Front Line panel | Same bases in the same order; range and bearing agree with F10's ruler | |
+| 27E.6 | Kills, captures, air | Shoot something down; take a base | The kill and the capture appear with "ago" times; the air picture counts your type | |
+| 27E.7 | Single player | Open DASH in a single-player mission | The campaign's main server, with the "Single player" line | |
+| 27E.8 | Private campaign | On a non-public test instance | DASH works in the panel (with its key); `/api/cockpit/dash?instance=<id>` in a browser, logged out, answers 401 | |
+| 27E.9 | Old bfdb | Point the panel at a bfdb without the route | "This server's campaign API has no dashboard for the panel yet." | |
+| 27E.10 | Wheel shortcut | WHEEL tab: + PANEL > DASHBOARD; pick it on the wheel | The panel opens on DASH | |
+| 27E.11 | No sim stalls | Keep DASH open in a busy mission for a few minutes | No hitch every 15 s when it refreshes | |
+| 27E.12 | Web view | Press WEB VIEW | dashboard.vectorstrike.org fills the pane within a few seconds, on this server's campaign; `dcs.log`: `dashboard web view: loading https://dashboard.vectorstrike.org/?server=...` then `page loaded` | |
+| 27E.13 | Web view input | In WEB VIEW: scroll, open the menu, click a page, then click back into the cockpit | Scrolling and clicks work in the page; keys reach the cockpit afterwards | |
+| 27E.14 | Web view remembered | Close the panel and DCS; start again, open DASH | Opens in WEB VIEW; NATIVE switches back and is remembered too | |
+| 27E.15 | Web view fallback | Point `api` at an address that serves nothing (or block it), press WEB VIEW | Within 10 s the native view returns, the status line says `Web view did not load (...)`; WEB VIEW retries | |
+| 27E.16 | Web view in VR | Try WEB VIEW in VR | Note whether it draws and can be clicked; NATIVE always works | |
 
 ---
 
@@ -876,6 +899,7 @@ On the server box. `deploy/auto-update.md` is the reference; `DCSServerBot/plugi
 | 27B. Cockpit: Panel & Wheel | | | | |
 | 27C. Cockpit: Updates | | | | |
 | 27D. Cockpit: WIKI tab | | | | |
+| 27E. Cockpit: DASH tab | | | | |
 | 28A. Releases, Staging & Rollback | | | | |
 | 28B. OPS Page & /feops | | | | |
 | 28C. Fowl Engine Manager | | | | |

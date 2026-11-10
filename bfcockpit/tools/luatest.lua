@@ -1,4 +1,4 @@
--- Runs Scripts/Hooks/bfcockpit.lua outside DCS and checks the WIKI tab.
+-- Runs Scripts/Hooks/bfcockpit.lua outside DCS and checks the WIKI and DASH tabs.
 --
 --   "D:\DCS World\bin-mt\luae.exe" bfcockpit\tools\luatest.lua
 --
@@ -190,7 +190,7 @@ function Widget:getBounds() return self.x, self.y, self.w, self.h end
 function Widget:getPosition() return self.x, self.y end
 function Widget:getSize() return self.w, self.h end
 function Widget:getClientRectSize() return self.w, self.h - 24 end
-function Widget:insertWidget(c) self.children[#self.children + 1] = c end
+function Widget:insertWidget(c) self.children[#self.children + 1] = c; c.inserted = true end
 function Widget:addMouseUpCallback(fn) self.cbs.up = fn end
 function Widget:addChangeCallback(fn) self.cbs.change = fn end
 function Widget:addHotKeyCallback(k, fn) self.cbs[k] = fn end
@@ -221,6 +221,15 @@ package.loaded.Button = module("Button")
 package.loaded.ScrollPane = module("ScrollPane")
 package.loaded.EditBox = module("EditBox")
 package.loaded.Skin = setmetatable({}, { __index = function() return skin end })
+-- DCS's embedded browser: remembers its callbacks and the address it was given
+package.loaded.WebViewWidget = { new = function()
+    local w = new_widget("WebView")
+    w.browserCreated = function(self, cb) self.cbs.created = cb end
+    w.onPageLoaded = function(self, cb) self.cbs.loaded = cb end
+    w.onMountFailed = function(self, cb) self.cbs.failed = cb end
+    w.cefLoadUrl = function(self, url) self.url = url end
+    return w
+end }
 
 -- ── the DLL, answering from bfdb/seed_wiki ──
 
@@ -251,6 +260,8 @@ do
 end
 
 local requests, queue, next_id = {}, {}, 1
+-- what /api/cockpit/dash and /api/cockpit/context answer (the DASH tests)
+local dash_reply, dash_status, ctx_reply = nil, 200, nil
 local function answer(id, status, body) queue[#queue + 1] = { id = id, status = status, body = body } end
 
 local function route(method, url)
@@ -260,6 +271,11 @@ local function route(method, url)
         q[k] = v:gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end)
     end
     if path == "/api/cockpit/plugin/version" then return 200, { version = VERSION } end
+    if path == "/api/cockpit/dash" then
+        if dash_status ~= 200 then return dash_status, nil end
+        return 200, dash_reply
+    end
+    if path == "/api/cockpit/context" and ctx_reply then return 200, ctx_reply end
     if path == "/api/cockpit/wiki/index" then
         local rows, secs, seen = {}, {}, {}
         for _, e in ipairs(page_list) do
@@ -458,12 +474,12 @@ eq(wid.crumb.text, "WIKI", "crumb at home")
 check(find_button("Introduction") and find_button("F10 Menu Systems"), "home lists the sections")
 check(not wid.back.enabled, "back is off at home")
 
--- tab bar: seven tabs, at the smallest panel
-wid.window:setBounds(0, 0, P.px(500), P.px(300))
+-- tab bar: eight tabs, at the smallest panel
+wid.window:setBounds(0, 0, P.px(520), P.px(300))
 P.render()
 do
     local tabs = wid.tabs
-    local order = { "menu", "cargo", "status", "ewr", "log", "wiki", "wheel" }
+    local order = { "menu", "cargo", "status", "dash", "ewr", "log", "wiki", "wheel" }
     local right = 0
     local widths = {}
     for _, id in ipairs(order) do
@@ -476,7 +492,7 @@ do
         widths[#widths + 1] = id .. "=" .. b.w
     end
     -- the opacity/close buttons start at cw - pad - 3*26 - 2*4
-    check(right <= P.px(500) - P.px(8) - 3 * P.px(26) - 2 * P.px(4), "tabs run into the tool buttons: " .. right)
+    check(right <= P.px(520) - P.px(8) - 3 * P.px(26) - 2 * P.px(4), "tabs run into the tool buttons: " .. right)
     print("tab widths at the smallest panel: " .. table.concat(widths, " "))
 end
 wid.window:setBounds(0, 0, 560, 640)
@@ -629,6 +645,162 @@ if show_page then
         print(string.format("%4d %s %s", r.x, kind, r.pic and (r.w .. "x" .. r.h) or r.text))
     end
 end
+
+-- ── the DASH tab ──
+local DASH = BFCOCKPIT_TEST.dash
+check(DASH, "dashboard test hooks")
+do
+    local d, b = DASH.range_brg(42, 41, 43, 41)
+    check(math.abs(d / 1852 - 60) < 0.3, "a degree of latitude is about 60 nm: " .. d / 1852)
+    check(math.abs(b) < 1e-6, "due north: " .. b)
+    local _, b2 = DASH.range_brg(42, 41, 42, 42)
+    check(math.abs(b2 - 89.67) < 0.5, "about east: " .. b2)
+    local _, b3 = DASH.range_brg(42, 42, 41.5, 41.5)
+    check(b3 > 180 and b3 < 270, "south-west: " .. b3)
+    eq(DASH.snap(1), 320, "map width snaps up from the smallest")
+    eq(DASH.snap(481), 560, "map width snaps up")
+    eq(DASH.snap(5000), 1280, "map width stops at the largest")
+end
+
+local function dash_data(rev)
+    return {
+        round = { number = 12, scenario = "Southern Flank", age = "3h" },
+        live = true, restart_in = 5400, updated = "12:34:56Z",
+        kpi = { online = 5, flying = 4, blue_obj = 4, red_obj = 3, neutral_obj = 0, at_risk = 2, kills_1h = 1 },
+        front = {
+            { name = "Sukhumi", kind = "Airbase", owner = "Red", lat = 42.86, lon = 41.13, health = 80,
+              rank = 1, tone = "crit", reasons = { "Under attack" } },
+            { name = "Stennis", kind = "Carrier Group", owner = "Blue", health = 100,
+              rank = 0, tone = "crit", reasons = { "Ready to capture" } },
+        },
+        kills = { { ago = "2m", killer = "Viper", killer_side = "Blue", airframe = "F-16C_50", weapon = "AIM-120C",
+                    victim = "Su-27", victim_side = "Red", air = true } },
+        captures = { { ago = "30m", objective = "Senaki", side = "Blue", by = "Viper, Goose" } },
+        air = { blue = { online = 4, types = { { type = "F-16C_50", n = 2 }, { type = "A-10C_2", n = 1 } } },
+                red = { online = 1, types = { { type = "Su-27", n = 1 } } } },
+        weather = { temp_c = 14, wind_speed_kts = 8, wind_from_deg = 270, qnh_hpa = 1013 },
+        map = { rev = rev, north = 44, south = 40, west = 38, east = 46, aspect = 0.6667,
+                widths = { 320, 400, 480, 560, 640, 800, 960, 1280 } },
+    }
+end
+dash_reply = dash_data("abc123def456")
+ctx_reply = { name = "Viper", side = "blue", points = 10, slot = { airframe = "F-16C_50", lat = 42, lon = 42, in_air = true } }
+P.select_tab("dash")
+local n_dl = #downloads
+for _ = 1, 40 do frame(0.1) end
+local dtext = all_text()
+check(dtext:find("ROUND 12", 1, true) and dtext:find("Southern Flank", 1, true), "round heading:\n" .. dtext:sub(1, 400))
+check(dtext:find("restart in 1:%d%d"), "restart countdown")
+check(dtext:find("AT RISK", 1, true) and dtext:find("KILLS 1H", 1, true), "headline numbers")
+check(dtext:find("BLUE 4", 1, true) and dtext:find("RED 3", 1, true), "territory bar")
+check(dtext:find("Sukhumi  Airbase", 1, true) and dtext:find("Under attack", 1, true), "front line")
+check(dtext:find("%d+ nm  %d%d%d°"), "range and bearing to a base")
+check(dtext:find("Viper (F-16C_50) killed Su-27", 1, true), "kill feed")
+check(dtext:find("Senaki taken by BLUE", 1, true), "captures")
+check(dtext:find("F-16C_50 ×2", 1, true) and dtext:find("BLUE  4 online, 3 flying", 1, true), "air picture")
+check(dtext:find("Wind 270° 8 kt", 1, true) and dtext:find("QNH 1013", 1, true), "weather")
+eq(#downloads, n_dl + 1, "one map download")
+local mdl = downloads[#downloads]
+check(mdl and mdl.path:find("Mods\\Services\\BFCockpit\\cache\\dash\\map-abc123def456-560x373.png", 1, true),
+    "map cached under BFCockpit: " .. tostring(mdl and mdl.path))
+check(mdl and mdl.url:find("/api/cockpit/dash/map?", 1, true) and mdl.url:find("rev=abc123def456", 1, true)
+    and mdl.url:find("w=560", 1, true), "map from the dash route: " .. tostring(mdl and mdl.url))
+check(mdl and not mdl.url:find("ckey", 1, true), "the map URL carries no key")
+local map_row, marker
+for _, r in ipairs(visible_rows()) do
+    if r.pic and r.skin and r.skin.skinData then
+        local pic = r.skin.skinData.states.released[1].picture
+        if pic and mdl and pic.file == mdl.path then map_row = r end
+        if pic and pic.file == DASH.MARKER then marker = r end
+    end
+end
+check(map_row, "a map row")
+check(marker, "a marker for the player's own position")
+if map_row and marker then
+    check(math.abs(map_row.h - map_row.w * 0.6667) <= 1, "map keeps its shape: " .. map_row.w .. "x" .. map_row.h)
+    -- 42N 42E on a 40-44N, 38-46E map: half way across, half way down
+    local cx, cy = marker.x + marker.w / 2, marker.y + marker.h / 2
+    check(math.abs(cx - (map_row.x + map_row.w / 2)) <= 1, "marker across: " .. cx)
+    check(math.abs(cy - (map_row.y + map_row.h / 2)) <= 1, "marker down: " .. cy)
+end
+-- the same rev again: no new download; a new rev replaces the file
+for _ = 1, 160 do frame(0.1) end
+eq(#downloads, n_dl + 1, "same map, not downloaded again")
+dash_reply = dash_data("fedcba987654")
+for _ = 1, 160 do frame(0.1) end
+eq(#downloads, n_dl + 2, "a new map when it changes")
+check(io.open(DASH.DASH_DIR .. "map-abc123def456-560x373.png", "rb") == nil, "the old map is deleted")
+local newest = io.open(DASH.DASH_DIR .. "map-fedcba987654-560x373.png", "rb")
+check(newest ~= nil, "the new map is kept")
+if newest then newest:close() end
+-- a bfdb without the route
+dash_status = 404
+BFCOCKPIT_TEST.panel.dash_api.reset()
+for _ = 1, 5 do frame(0.1) end
+check(all_text():find("no dashboard for the panel yet", 1, true), "an older bfdb says so")
+dash_status = 200
+-- WEB VIEW: the page in DCS's browser, the native view as the fallback
+dash_status = 200
+for _ = 1, 160 do frame(0.1) end
+do
+    local native_b, web_b = DASH.buttons()
+    check(native_b and web_b and native_b.visible and web_b.visible, "NATIVE / WEB VIEW buttons on the DASH tab")
+    eq(native_b and native_b.skin, P.skins.tab_on, "NATIVE is the default")
+    web_b:click()
+    frame(0.1)
+    local wv = DASH.WEB.view
+    check(wv, "WEB VIEW makes the browser")
+    eq(P.cfg.dash_web, true, "the choice is saved")
+    eq(web_b.skin, P.skins.tab_on, "WEB VIEW lit")
+    if wv then
+        check(wv.visible and not wid.pane.visible, "the browser takes the pane's place")
+        check(wv.w == wid.pane.w and wv.h == wid.pane.h and wv.y == wid.pane.y, "at the pane's bounds")
+        check(wv.inserted, "inserted into the window")
+        eq(rawget(wv, "url"), nil, "nothing loaded before the browser exists")
+        wv.cbs.created()
+        check(wv.url and wv.url:find("https://dashboard.vectorstrike.org/?", 1, true) and wv.url:find("server=Test%20Server", 1, true)
+            and wv.url:find("theme=dark", 1, true), "loads the hosted dashboard: " .. tostring(wv.url))
+        check(wv.url and not wv.url:find("ckey", 1, true), "the page address carries no key")
+        wv.cbs.loaded()
+        local n = #requests
+        for _ = 1, 160 do frame(0.1) end
+        eq(DASH.WEB.failed, nil, "a page that loaded is kept")
+        local native_fetches = 0
+        for i = n + 1, #requests do
+            if requests[i].url:find("/api/cockpit/dash?", 1, true) then native_fetches = native_fetches + 1 end
+        end
+        eq(native_fetches, 0, "the native view does not fetch while the page shows")
+        P.hide()
+        check(not wv.visible, "the browser hides with the panel")
+        P.show()
+        frame(0.1)
+        check(wv.visible and not wid.pane.visible, "and comes back with it")
+        -- a new server: the page loads again, and this time never answers
+        local first = rawget(wv, "url")
+        wv.url = nil
+        BFCOCKPIT_TEST.panel.dash_api.reset()
+        frame(0.1)
+        check(rawget(wv, "url") ~= nil, "loaded again for a new server")
+        for _ = 1, 110 do frame(0.1) end
+        check(DASH.WEB.failed and DASH.WEB.failed:find("no answer", 1, true), "given up when the page never answers: " .. tostring(DASH.WEB.failed))
+        check(not wv.visible and wid.pane.visible, "back to the native view")
+        for _ = 1, 30 do frame(0.1) end
+        check(all_text():find("ROUND 12", 1, true), "the native view shows again")
+        check(table.concat(log, "\n"):find("dashboard web view given up", 1, true), "logged why")
+        -- picking WEB VIEW again tries again; NATIVE turns it off
+        web_b:click()
+        frame(0.1)
+        check(wv.visible and DASH.WEB.failed == nil, "WEB VIEW again retries")
+        wv.cbs.failed()
+        check(DASH.WEB.failed and not wv.visible, "onMountFailed falls back at once")
+        native_b:click()
+        eq(P.cfg.dash_web, false, "NATIVE turns it off")
+        check(first ~= nil, "first load had an address")
+    end
+end
+check(not table.concat(log, "\n"):find("errored", 1, true), "nothing errored on the DASH tab:\n" .. table.concat(log, "\n"):sub(1, 2000))
+P.select_tab("menu")
+
 
 print(string.format("%d checks, %d failed", checks, failures))
 os.execute('rmdir /s /q "' .. TMP .. '" 2>nul')

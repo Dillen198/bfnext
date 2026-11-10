@@ -66,7 +66,7 @@
 -- copy it was built with to answer /api/cockpit/plugin/version, and the panel
 -- compares that with its own to tell the player when to update. Keep the
 -- format exactly as it is.
-local BFCOCKPIT_VERSION = "3.5.0"
+local BFCOCKPIT_VERSION = "3.6.0"
 
 local net = require('net')
 
@@ -156,6 +156,11 @@ local DEFAULTS = {
 
     -- 0.3 (ghost) .. 1.0 (solid).
     opacity = 0.95,
+
+    -- The DASH tab as the hosted web dashboard in DCS's own browser instead
+    -- of the panel's native view (the WEB VIEW button), and where that is.
+    dash_web = false,
+    dashboard_url = "https://dashboard.vectorstrike.org",
 
     -- Used only until the Special options page has been saved once; after
     -- that the page wins.
@@ -961,6 +966,9 @@ local TABS = {
     { id = "menu",   label = "MENU",   fetch = { "menu", "status" }, every = 5 },
     { id = "cargo",  label = "CARGO",  fetch = { "cargo", "menu" }, every = 5 },
     { id = "status", label = "STATUS", fetch = { "status" },        every = 3 },
+    -- the dashboard fetches for itself (dash_api.tick); "status" is only for
+    -- the player's own position on its map
+    { id = "dash",   label = "DASH",   fetch = { "status" },        every = 5 },
     { id = "ewr",    label = "EWR",    fetch = { "ewr" },           every = 5 },
     { id = "log",    label = "LOG",    fetch = {},                  every = 30 },
     -- the wiki fetches for itself (wiki_api.tick): it needs no key
@@ -1009,6 +1017,8 @@ local render_wheel           -- forward
 -- What the WIKI tab (see "Wiki") gives the rest of the panel: crumb, back,
 -- create, layout, tick, ... -- one table, for Lua 5.1's 200 locals.
 local wiki_api = {}
+-- The same for the DASH tab (see "Dashboard").
+local dash_api = {}
 local create_wheel, destroy_wheel, wheel_key_pressed  -- forward, see "Wheel"
 local wheel_update, close_wheel  -- forward, see "Wheel"
 local pin_index, toggle_pin   -- forward, see "Wheel"
@@ -1286,9 +1296,9 @@ local function geometry()
     if gw and gh and gs and gs > 0 and math.abs(gs - settings.scale) > 0.001 then
         gw, gh = math.floor(gw * settings.scale / gs + 0.5), math.floor(gh * settings.scale / gs + 0.5)
     end
-    -- 500 (it was 460 with six tabs): the narrowest the seven tabs fit at
-    -- (bfcockpit/tools/luatest.lua checks it)
-    local w = math.max(px(500), math.min(gw or dw, sw))
+    -- 520 (500 with seven tabs, 460 with six): the narrowest the eight tabs
+    -- fit at (bfcockpit/tools/luatest.lua checks it)
+    local w = math.max(px(520), math.min(gw or dw, sw))
     local h = math.max(px(300), math.min(gh or dh, sh))
     local x = math.max(0, math.min(tonumber(g.x) or dx, sw - w))
     local y = math.max(0, math.min(tonumber(g.y) or dy, sh - h))
@@ -1331,9 +1341,9 @@ local function layout()
         w_tools[i]:setBounds(rx, pad, small, row)
         rx = rx - small - gap
     end
-    -- Each tab as wide as its label needs, out of what is left: seven fit
-    -- the narrowest panel only because MENU, EWR, LOG and WIKI give way to
-    -- STATUS and CARGO. The widths are a guess at the bold font's glyphs.
+    -- Each tab as wide as its label needs, out of what is left: eight fit
+    -- the narrowest panel only because MENU, DASH, EWR, LOG and WIKI give way
+    -- to STATUS and CARGO. The widths are a guess at the bold font's glyphs.
     local labels, units = {}, 0
     for i, t in ipairs(TABS) do
         labels[i] = t.id == "log" and state.unread > 0 and ("LOG " .. state.unread) or t.label
@@ -1384,12 +1394,16 @@ local function layout()
     -- The wiki's search box, on a row of its own under the crumb.
     if wiki_api.widgets then show_only(wiki_api.widgets(), state.tab == "wiki") end
     if state.tab == "wiki" and wiki_api.layout then top = top + wiki_api.layout(pad, top, cw, row, gap) end
+    -- The DASH tab's NATIVE / WEB VIEW row.
+    if dash_api.layout then top = top + dash_api.layout(pad, top, cw, row, gap, state.tab == "dash") end
 
     local status_h = px(20)
     local em = w_emblem and px(22) or 0
     if w_emblem then w_emblem:setBounds(pad, ch - pad - status_h, em, status_h) end
     w_status:setBounds(pad + em, ch - pad - status_h, cw - pad * 2 - em, status_h)
     w_pane:setBounds(pad, top, cw - pad * 2, math.max(px(40), ch - pad - status_h - px(4) - top))
+    -- In WEB VIEW the browser takes the pane's place.
+    if dash_api.place then dash_api.place(pad, top, cw - pad * 2, math.max(px(40), ch - pad - status_h - px(4) - top)) end
 end
 
 -- ── Content rows ─────────────────────────────────────────────────────
@@ -1463,7 +1477,8 @@ end
 -- rows: each { text=, skin=, button=bool, action=fn, enabled=bool,
 --              x=, w=, h=, same_line=bool, mono=bool }
 -- `x`/`w` place a row inside the line (for side-by-side buttons);
--- `same_line` puts it on the previous row's line.
+-- `same_line` puts it on the previous row's line; `dy` moves it down inside
+-- its line without making the line taller (the DASH map's "you" marker).
 local function draw_rows(rows)
     local width = content_width()
     local button_h, text_h, mono_h, gap = px(26), px(19), px(16), px(3)
@@ -1479,18 +1494,19 @@ local function draw_rows(rows)
         end
         local x = px(4) + (r.x or 0)
         local w = r.w or (width - (r.x or 0))
+        local ry = y + (r.dy or 0)
         if r.pic then
             np = np + 1
             local pc = pooled_pic(np)
             pc:setSkin(r.pic_skin or row_pic_skin(r.pic, math.min(w, h) - px(2), h))
-            pc:setBounds(x, y, w, h)
+            pc:setBounds(x, ry, w, h)
             pc:setVisible(true)
         elseif r.button then
             nb = nb + 1
             local b = pooled_button(nb)
             b:setText(r.text or "")
             b:setSkin(r.skin or skins.row)
-            b:setBounds(x, y, w, h)
+            b:setBounds(x, ry, w, h)
             b:setEnabled(r.enabled ~= false)
             b:setVisible(true)
             pool_actions[nb] = r.action
@@ -1499,7 +1515,7 @@ local function draw_rows(rows)
             local t = pooled_text(nt)
             t:setText(r.text or "")
             t:setSkin(r.skin or skins.text)
-            t:setBounds(x, y, w, h)
+            t:setBounds(x, ry, w, h)
             t:setVisible(true)
         end
     end
@@ -1884,6 +1900,10 @@ render = function()
             -- anywhere, single player included.
             draw_rows(renderers.wiki())
             if wiki_api.after_draw then wiki_api.after_draw() end
+        -- The dashboard needs no key either: in single player it shows the
+        -- campaign's main server, in multiplayer this one once it is known.
+        elseif state.tab == "dash" and not (in_multiplayer() and server_refused()) then
+            draw_rows(renderers.dash())
         -- No server, no engine, no key to register: nothing would ever load.
         elseif not in_multiplayer() then
             draw_rows(message_rows("The panel works on the Vector Strike multiplayer servers. Join one and open it again."))
@@ -2000,6 +2020,9 @@ local function tab_widgets()
     if wiki_api.widgets then
         for _, w in ipairs(wiki_api.widgets()) do list_[#list_ + 1] = w end
     end
+    if dash_api.widgets then
+        for _, w in ipairs(dash_api.widgets()) do list_[#list_ + 1] = w end
+    end
     return list_
 end
 
@@ -2062,6 +2085,7 @@ local function create()
     w_ewr.friendly = tool_button("FRIENDLIES", "Friendly air picture", ewr_mode("friendly"))
     w_ewr.intel = tool_button("GROUND INTEL", "Known enemy ground units", ewr_mode("intel"))
     if wiki_api.create then wiki_api.create() end
+    if dash_api.create then dash_api.create() end
 
 
     w_pane = ScrollPane.new()
@@ -2251,6 +2275,7 @@ local PANEL_TABS = {
     menu = { label = "F10 MENU", icon = "panel" },
     cargo = { label = "CARGO", icon = "crate" },
     status = { label = "STATUS", icon = "info" },
+    dash = { label = "DASHBOARD", icon = "flag" },
     ewr = { label = "EWR", icon = "ewr" },
     log = { label = "LOG", icon = "chat" },
     wheel = { label = "WHEEL EDITOR", icon = "gear" },
@@ -3370,7 +3395,7 @@ renderers.wheel = function()
                                 action = function() add({ kind = "info", what = what }) end }
         end
     elseif state.wheel_add == "panel" then
-        for _, tab in ipairs({ "menu", "cargo", "status", "ewr", "log", "wiki", "wheel" }) do
+        for _, tab in ipairs({ "menu", "cargo", "status", "dash", "ewr", "log", "wiki", "wheel" }) do
             rows[#rows + 1] = { button = true, skin = skins.row, text = "  + " .. PANEL_TABS[tab].label,
                                 action = function() add({ kind = "panel", tab = tab }) end }
         end
@@ -4673,6 +4698,626 @@ end
 end
 wiki_module()
 
+-- ── Dashboard ────────────────────────────────────────────────────────
+-- The campaign dashboard (the web dashboard's front page) as a tab: the
+-- round and restart, the headline numbers, each side's ground, the map, the
+-- bases that need attention with range and bearing from your jet, who is
+-- flying what, the kills and captures, and the weather.
+--
+-- One request, /api/cockpit/dash (bfdb/src/cockpit_dash.rs), every
+-- DASH_EVERY seconds while the tab shows. It needs no key on a public
+-- campaign, so it also works in single player (showing the campaign API's
+-- main campaign); in multiplayer it waits until this server is confirmed.
+--
+-- The map is a PNG bfdb draws (dxgui shows pictures only from local files),
+-- downloaded into Mods\Services\BFCockpit\cache\dash\ when what it shows
+-- changes -- its `rev` -- and the one before it deleted. Your own position
+-- is a marker put over it here, from the map's bounds, so it follows you
+-- between pictures and one picture serves every player.
+
+local function dash_module()
+
+local DASH_DIR = lfs.writedir() .. [[Mods\Services\BFCockpit\cache\dash\]]
+local DASH_EVERY = 15      -- seconds between fetches while the tab shows
+local MAP_RETRY = 60       -- seconds before a failed map is asked for again
+-- The widths bfdb draws the map at (MAP_WIDTHS in cockpit_dash.rs; the
+-- answer carries them too, and wins).
+local MAP_WIDTHS = { 320, 400, 480, 560, 640, 800, 960, 1280 }
+local MARKER = lfs.writedir() .. [[Mods\Services\BFCockpit\Theme\wheel\icons\target.png]]
+local MARKER_COLOR = "0xffe14aff"
+
+local D = {
+    data = nil,        -- the last /api/cockpit/dash
+    got_at = 0,        -- os.clock() when it came
+    err = nil,
+    at = -1e9,         -- when it was last asked for
+    inflight = false,
+    maps = {},         -- "<rev>@<width>" -> { state, file, why, at }
+    dirs_made = false,
+}
+
+local function mkdirs()
+    if D.dirs_made then return end
+    D.dirs_made = true
+    local base = lfs.writedir() .. [[Mods\Services\BFCockpit\]]
+    for _, d in ipairs({ base, base .. [[cache\]], DASH_DIR }) do
+        pcall(lfs.mkdir, (d:gsub("\\$", "")))
+    end
+end
+
+local function server_key() return tostring(cfg.instance or server_name() or "") end
+
+-- The smallest width the server draws that is at least `w`.
+local function snap(w, widths)
+    widths = (type(widths) == 'table' and #widths > 0) and widths or MAP_WIDTHS
+    for _, s in ipairs(widths) do
+        if (tonumber(s) or 0) >= w then return tonumber(s) end
+    end
+    return tonumber(widths[#widths]) or MAP_WIDTHS[#MAP_WIDTHS]
+end
+
+-- Great-circle range (m) and true bearing (degrees) from 1 to 2.
+local function range_brg(lat1, lon1, lat2, lon2)
+    local r = math.pi / 180
+    local p1, p2, dl = lat1 * r, lat2 * r, (lon2 - lon1) * r
+    local a = math.sin((p2 - p1) / 2) ^ 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ^ 2
+    local d = 2 * 6371000 * math.asin(math.min(1, math.sqrt(a)))
+    local y = math.sin(dl) * math.cos(p2)
+    local x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
+    return d, (math.deg(math.atan2(y, x)) + 360) % 360
+end
+
+-- Where the player's jet is, when the STATUS data has one.
+local function me()
+    local s = state.status
+    local slot = type(s) == 'table' and type(s.slot) == 'table' and s.slot or nil
+    local lat, lon = slot and tonumber(slot.lat), slot and tonumber(slot.lon)
+    if lat and lon and not (lat == 0 and lon == 0) then return lat, lon end
+end
+
+-- ── Fetching ──
+
+local function can_ask()
+    if not in_multiplayer() then return true end
+    if server_refused() then return false end
+    return server_confirmed()
+end
+
+-- ── WEB VIEW ──
+-- Opt-in: the hosted web dashboard (cfg.dashboard_url) in DCS's own embedded
+-- browser (dxgui's WebViewWidget, CEF), in the pane's place. Version 1 of
+-- this plugin was a web page and was given up because that browser changes
+-- between DCS builds and a page that fails is a grey box with no console,
+-- so here the native view is the default, and anything short of the page
+-- reporting itself loaded within WEB_DEADLINE seconds puts it back, with a
+-- note saying why. The timing below is v1's, learned the hard way: when the
+-- browser exists has flipped between DCS builds, so the load hangs off
+-- browserCreated, registered before insertWidget, with a fallback if it
+-- never fires.
+
+local WEB_CREATED_WAIT = 2    -- seconds to wait for browserCreated
+local WEB_DEADLINE = 10       -- seconds for the page to report itself loaded
+
+local WebViewWidget = nil
+do
+    local ok, mod = pcall(require, 'WebViewWidget')
+    if ok and type(mod) == 'table' then WebViewWidget = mod end
+end
+
+local WEB = {
+    view = nil,         -- the WebViewWidget, made the first time WEB VIEW is picked
+    ready = false,      -- browserCreated has fired (or its wait ran out)
+    created_at = 0,
+    loaded_for = nil,   -- the server the page was loaded for
+    deadline = nil,     -- os.clock() by which onPageLoaded must have come
+    failed = nil,       -- why it was given up this session
+    shown = false,
+}
+local w_native, w_web
+
+-- WEB VIEW is what the player chose and it has not failed this session.
+local function web_on()
+    return cfg.dash_web == true and WebViewWidget ~= nil and not WEB.failed
+end
+
+local function web_fail(why)
+    if WEB.failed then return end
+    WEB.failed = tostring(why)
+    WEB.deadline = nil
+    logmsg("dashboard web view given up: " .. WEB.failed)
+    set_note("Web view did not load (" .. WEB.failed .. ") -- showing the panel's own view", true)
+    render()
+end
+
+-- The hosted dashboard, on this server's campaign: it reads ?instance= and
+-- ?server= (the DCS server's own name) like the panel's API calls do.
+local function web_url()
+    local base = (tostring(cfg.dashboard_url or "https://dashboard.vectorstrike.org"):gsub("/+$", ""))
+    local which = cfg.instance and ("instance=" .. urlencode(cfg.instance))
+        or (server_name() and ("server=" .. urlencode(server_name())))
+    return base .. "/?" .. (which and (which .. "&") or "") .. "theme=dark"
+end
+
+local function web_load(reason)
+    if not WEB.view then return end
+    local url = web_url()
+    local ok, err = pcall(function() WEB.view:cefLoadUrl(url) end)
+    if not ok then return web_fail("cefLoadUrl: " .. tostring(err)) end
+    WEB.loaded_for = server_key()
+    WEB.deadline = os.clock() + WEB_DEADLINE
+    logmsg("dashboard web view: loading " .. url .. " (" .. reason .. ")")
+end
+
+local function web_make()
+    if WEB.view or not window then return end
+    local ok, err = pcall(function()
+        local v = WebViewWidget.new()
+        WEB.view, WEB.ready, WEB.created_at = v, false, os.clock()
+        pcall(function()
+            v:browserCreated(function()
+                WEB.ready = true
+                if web_on() and can_ask() then web_load("browserCreated") end
+            end)
+        end)
+        pcall(function()
+            v:onPageLoaded(function()
+                WEB.deadline = nil
+                logmsg("dashboard web view: page loaded")
+            end)
+        end)
+        pcall(function()
+            v:onMountFailed(function() web_fail("the page failed to load") end)
+        end)
+        v:setVisible(false)
+        window:insertWidget(v)
+    end)
+    if not ok then
+        WEB.view = nil
+        web_fail("could not make the browser: " .. tostring(err))
+    end
+end
+
+dash_api.create = function()
+    -- a new window: its old browser went with the old one
+    WEB.view, WEB.ready, WEB.loaded_for, WEB.deadline, WEB.shown = nil, false, nil, nil, false
+    local function mode(web)
+        return function()
+            if web and not WebViewWidget then
+                set_note("This DCS has no web view (WebViewWidget) -- the panel's own view it is", true)
+                return
+            end
+            cfg.dash_web = web
+            save_config()
+            if web then WEB.failed, WEB.loaded_for = nil, nil end
+            render()
+        end
+    end
+    w_native = tool_button("NATIVE", "The panel's own dashboard", mode(false))
+    w_web = tool_button("WEB VIEW", "The web dashboard, in DCS's browser", mode(true))
+end
+
+dash_api.widgets = function()
+    local out = {}
+    for _, w in ipairs({ w_native, w_web, WEB.view }) do if w then out[#out + 1] = w end end
+    return out
+end
+
+-- The mode row at y, when the tab shows; returns the height it took.
+dash_api.layout = function(pad, y, cw, row, gap, on)
+    for _, w in ipairs({ w_native, w_web }) do w:setVisible(on) end
+    if not on then return 0 end
+    local bw = math.floor((cw - pad * 2 - gap) / 2)
+    local web = web_on()
+    w_native:setBounds(pad, y, bw, row)
+    w_web:setBounds(pad + bw + gap, y, bw, row)
+    w_native:setSkin(web and skins.tool or skins.tab_on)
+    w_web:setSkin(web and skins.tab_on or skins.tool)
+    return row + px(6)
+end
+
+-- The browser in the pane's place while WEB VIEW is on; the pane otherwise.
+dash_api.place = function(x, y, w, h)
+    local on = visible and state.tab == "dash" and web_on() and (not in_multiplayer() or can_ask())
+    if on and not WEB.view then web_make() end
+    if WEB.view then
+        pcall(function()
+            WEB.view:setBounds(x, y, w, h)
+            WEB.view:setVisible(on)
+        end)
+    end
+    WEB.shown = on and WEB.view ~= nil
+    pcall(function() w_pane:setVisible(not WEB.shown) end)
+end
+
+-- Every frame while the tab shows (from dash_api.tick).
+local function web_tick(now)
+    if not WEB.shown then return end
+    if not WEB.ready and now - WEB.created_at > WEB_CREATED_WAIT then
+        WEB.ready = true
+        logmsg("dashboard web view: browserCreated never fired, loading anyway")
+    end
+    if WEB.ready and WEB.loaded_for ~= server_key() and can_ask() then web_load("shown") end
+    if WEB.deadline and now > WEB.deadline then
+        web_fail("no answer from the page in " .. WEB_DEADLINE .. " s")
+    end
+end
+
+local function fetch()
+    D.inflight = true
+    local asked_for = server_key()
+    api_call("GET", "/api/cockpit/dash", nil, nil, true, function(data, err, status)
+        D.inflight = false
+        if asked_for ~= server_key() then return end
+        on_auth_error(status)
+        if type(data) == 'table' then
+            D.data, D.err, D.got_at = data, nil, os.clock()
+        else
+            D.err = status == 404 and "This server's campaign API has no dashboard for the panel yet." or err
+        end
+        if state.tab == "dash" then redraw() end
+    end)
+end
+
+dash_api.tick = function(now)
+    web_tick(now)
+    -- the web page fetches for itself
+    if WEB.shown or D.inflight or now - D.at < DASH_EVERY or not can_ask() then return end
+    D.at = now
+    fetch()
+end
+
+dash_api.reset = function()
+    D.data, D.err, D.at, D.inflight = nil, nil, -1e9, false
+    WEB.loaded_for, WEB.deadline = nil, nil
+    for k, m in pairs(D.maps) do
+        if m.state ~= "ready" then D.maps[k] = nil end
+    end
+end
+
+-- ── The map ──
+
+local pic_skins, pic_count = {}, 0
+
+local function pic_skin(file, w, h, color)
+    local key = file .. "|" .. w .. "|" .. h .. "|" .. (color or "")
+    local s = pic_skins[key]
+    if s then return s end
+    if pic_count > 64 then pic_skins, pic_count = {}, 0 end
+    s = deep_copy(Skin.staticSkin())
+    for _, st in pairs(s.skinData.states) do
+        for i in pairs(st) do
+            st[i].picture = { file = file, color = color or "0xffffffff", horzAlign = { type = "min", offset = 0 },
+                              vertAlign = { type = "min", offset = 0 }, size = { horz = w, vert = h }, userTexSampler = 0 }
+        end
+    end
+    pic_skins[key] = s
+    pic_count = pic_count + 1
+    return s
+end
+
+-- Every map file but `keep`: a new rev replaces the old picture.
+local function prune(keep)
+    pcall(function()
+        for f in lfs.dir(DASH_DIR) do
+            if f:match("^map%-.*%.png$") and DASH_DIR .. f ~= keep then os.remove(DASH_DIR .. f) end
+        end
+    end)
+end
+
+-- The map's file for this width once it is on disk; otherwise nil and what
+-- to say instead. Starts the download the first time it is asked.
+local function map_for(m, bw, bh)
+    local key = tostring(m.rev) .. "@" .. bw
+    local e = D.maps[key]
+    if e and e.state == "failed" and os.clock() - e.at > MAP_RETRY then
+        D.maps[key], e = nil, nil
+    end
+    if not e then
+        local file = DASH_DIR .. "map-" .. tostring(m.rev):gsub("[^%w]", "") .. "-" .. bw .. "x" .. bh .. ".png"
+        if lfs.attributes(file, "mode") == "file" then
+            e = { state = "ready", file = file }
+        elseif not (http and http.download) then
+            return nil, "the map needs the newer bfcockpit_net.dll -- re-run the Vector Strike installer"
+        else
+            mkdirs()
+            e = { state = "downloading", file = file, at = os.clock() }
+            -- no key: the rev opens the map (cockpit_dash.rs, api_map)
+            local url = api_url("/api/cockpit/dash/map", { w = tostring(bw), rev = tostring(m.rev) })
+            local id, derr = http.download(url, file, 60)
+            if not id then
+                e.state, e.why = "failed", derr
+            else
+                pending_raw[id] = function(r)
+                    if r.status >= 200 and r.status < 300 and not r.error then
+                        e.state = "ready"
+                        prune(file)
+                    else
+                        e.state, e.why, e.at = "failed", r.error or ("HTTP " .. tostring(r.status)), os.clock()
+                        logmsg("dashboard map: " .. tostring(e.why))
+                    end
+                    if state.tab == "dash" then redraw() end
+                end
+            end
+        end
+        D.maps[key] = e
+    end
+    if e.state == "ready" then return e.file end
+    return nil, e.state == "failed" and ("no map: " .. tostring(e.why)) or "drawing the map..."
+end
+
+-- ── Rows ──
+
+local box_cache = {}
+
+-- A coloured box with its text centred, for the territory bar.
+local function box(bkg, fg)
+    local key = bkg .. fg .. px(FONT_PX) .. (settings.text_scale or 1)
+    local s = box_cache[key]
+    if not s then
+        s = deep_copy(Skin.staticSkin())
+        s.skinData.params.textWrapping = false
+        for _, st in pairs(s.skinData.states) do
+            for i in pairs(st) do
+                st[i].text = text_style(fg, FONT_BOLD, px(FONT_PX), "middle")
+                st[i].bkg = { center_center = bkg }
+            end
+        end
+        box_cache[key] = s
+    end
+    return s
+end
+
+local function side_skin(side)
+    side = tostring(side or ""):lower()
+    return side == "blue" and skins.blue or (side == "red" and skins.red or skins.text)
+end
+
+local function n(v) return tonumber(v) or 0 end
+
+local function hm(secs)
+    secs = math.max(0, math.floor(n(secs)))
+    return string.format("%d:%02d", math.floor(secs / 3600), math.floor(secs % 3600 / 60))
+end
+
+local function text(rows, s, skin, x, width)
+    for _, line in ipairs(wrap(s, width - (x or 0))) do
+        rows[#rows + 1] = { text = line, skin = skin or skins.text, x = x }
+    end
+end
+
+local function head(rows, s)
+    rows[#rows + 1] = { text = "", h = px(6) }
+    rows[#rows + 1] = { text = s, skin = skins.head }
+end
+
+-- Label over value, `cells` across: { label, value, skin }.
+local function grid(rows, cells, width)
+    local gap = px(4)
+    local w = math.floor((width - gap * (#cells - 1)) / #cells)
+    for i, c in ipairs(cells) do
+        rows[#rows + 1] = { text = c[1], skin = skins.label, x = (i - 1) * (w + gap), w = w, h = px(16), same_line = i > 1 }
+    end
+    for i, c in ipairs(cells) do
+        rows[#rows + 1] = { text = tostring(c[2]), skin = c[3] or skins.h1, x = (i - 1) * (w + gap), w = w, h = px(22), same_line = i > 1 }
+    end
+end
+
+-- Each side's share of the objectives, as one bar.
+local function territory(rows, k, width)
+    local parts = {
+        { n(k.blue_obj), "0x2d5d96ff", "BLUE " },
+        { n(k.neutral_obj), "0x3a4030ff", "" },
+        { n(k.red_obj), "0x96352dff", "RED " },
+    }
+    local total = parts[1][1] + parts[2][1] + parts[3][1]
+    if total == 0 then return end
+    local x, first = 0, true
+    for i, p in ipairs(parts) do
+        local w = i == #parts and (width - x) or math.floor(width * p[1] / total + 0.5)
+        if p[1] > 0 and w > 0 then
+            local label = (w > px(64) and p[3] or "") .. p[1]
+            rows[#rows + 1] = { text = label, skin = box(p[2], "0xf2f2e8ff"), x = x, w = w, h = px(20), same_line = not first }
+            first = false
+        end
+        x = x + w
+    end
+end
+
+local function map_rows(rows, m, width)
+    local aspect = tonumber(m.aspect)
+    if not (aspect and aspect > 0) then return end
+    local bw = snap(width, m.widths)
+    local bh = math.floor(bw * aspect + 0.5)
+    local file, why = map_for(m, bw, bh)
+    if not file then
+        text(rows, "[" .. why .. "]", skins.label, 0, width)
+        return
+    end
+    local dw = math.min(width, bw)
+    local dh = math.floor(dw * aspect + 0.5)
+    local max_h = px(560)
+    if dh > max_h then dw, dh = math.floor(dw * max_h / dh + 0.5), max_h end
+    rows[#rows + 1] = { pic = file, pic_skin = pic_skin(file, dw, dh), x = 0, w = dw, h = dh }
+    local lat, lon = me()
+    local north, south, west, east = tonumber(m.north), tonumber(m.south), tonumber(m.west), tonumber(m.east)
+    if lat and north and south and west and east and lat < north and lat > south and lon > west and lon < east then
+        local ms = px(22)
+        local mx = (lon - west) / (east - west) * dw
+        local my = (north - lat) / (north - south) * dh
+        rows[#rows + 1] = { pic = MARKER, pic_skin = pic_skin(MARKER, ms, ms, MARKER_COLOR), same_line = true,
+                            x = math.floor(mx - ms / 2 + 0.5), w = ms, h = ms, dy = math.floor(my - ms / 2 + 0.5) }
+    end
+    text(rows, "Squares: airbases. Triangles: FOBs. Diamonds: logistics hubs. Dots: FARPs and the rest. "
+        .. "Orange ring: under attack. Yellow ring: ready to capture."
+        .. (lat and "  Yellow crosshair: you." or ""), skins.label, 0, width)
+end
+
+local function front_rows(rows, d, width)
+    local items = list(d.front)
+    head(rows, "FRONT LINE" .. (#items > 0 and ("  (" .. #items .. ")") or ""))
+    if #items == 0 then
+        text(rows, "Nothing needs attention: no base under attack, short of stock or newly taken.", skins.label, 0, width)
+        return
+    end
+    local lat, lon = me()
+    local rw = px(118)
+    for _, f in ipairs(items) do
+        if type(f) == 'table' then
+            local where = ""
+            if lat and present(f.lat) and present(f.lon) then
+                local dist, brg = range_brg(lat, lon, tonumber(f.lat), tonumber(f.lon))
+                where = string.format("%d nm  %03d°", math.floor(dist / 1852 + 0.5), math.floor(brg + 0.5) % 360)
+            end
+            local name = tostring(f.name or "?") .. (present(f.kind) and ("  " .. tostring(f.kind)) or "")
+            rows[#rows + 1] = { text = name, skin = side_skin(f.owner), w = width - rw - px(4) }
+            if where ~= "" then
+                rows[#rows + 1] = { text = where, skin = skins.text, x = width - rw, w = rw, same_line = true }
+            end
+            local tone = f.tone == "crit" and skins.bad or (f.tone == "warn" and skins.warn or skins.label)
+            local reasons = {}
+            for _, r in ipairs(list(f.reasons)) do reasons[#reasons + 1] = tostring(r) end
+            text(rows, table.concat(reasons, "  ·  "), tone, px(14), width)
+        end
+    end
+end
+
+local function air_rows(rows, d, width)
+    local air = type(d.air) == 'table' and d.air or {}
+    head(rows, "AIR PICTURE")
+    for _, side in ipairs({ "blue", "red" }) do
+        local a = type(air[side]) == 'table' and air[side] or {}
+        local types, flying = {}, 0
+        for _, t in ipairs(list(a.types)) do
+            if type(t) == 'table' and present(t.type) then
+                types[#types + 1] = tostring(t.type) .. (n(t.n) > 1 and (" ×" .. n(t.n)) or "")
+                flying = flying + n(t.n)
+            end
+        end
+        rows[#rows + 1] = { text = string.format("%s  %d online, %d flying", side:upper(), n(a.online), flying),
+                            skin = side_skin(side) }
+        if #types > 0 then text(rows, table.concat(types, ",  "), skins.text, px(14), width) end
+    end
+end
+
+-- "ago" in a narrow column, then the line in the side's colour.
+local function feed_rows(rows, ago, line, side, width)
+    for i, l in ipairs(wrap(line, width - px(44))) do
+        if i == 1 then
+            rows[#rows + 1] = { text = tostring(ago or ""), skin = skins.label, w = px(40) }
+            rows[#rows + 1] = { text = l, skin = side_skin(side), x = px(44), same_line = true }
+        else
+            rows[#rows + 1] = { text = l, skin = skins.text, x = px(44) }
+        end
+    end
+end
+
+local function kill_rows(rows, d, width)
+    local kills = list(d.kills)
+    if #kills == 0 then return end
+    head(rows, "KILLS")
+    for _, k in ipairs(kills) do
+        if type(k) == 'table' then
+            local who = present(k.killer) and tostring(k.killer) or (present(k.airframe) and tostring(k.airframe) or "?")
+            local flown = (present(k.killer) and present(k.airframe)) and (" (" .. tostring(k.airframe) .. ")") or ""
+            local with = present(k.weapon) and ("  --  " .. tostring(k.weapon)) or ""
+            feed_rows(rows, k.ago, who .. flown .. " killed " .. tostring(k.victim or "?") .. with, k.killer_side, width)
+        end
+    end
+end
+
+local function capture_rows(rows, d, width)
+    local caps = list(d.captures)
+    if #caps == 0 then return end
+    head(rows, "CAPTURES")
+    for _, c in ipairs(caps) do
+        if type(c) == 'table' then
+            local by = (present(c.by) and tostring(c.by) ~= "") and ("  by " .. tostring(c.by)) or ""
+            feed_rows(rows, c.ago, tostring(c.objective or "?") .. " taken by " .. tostring(c.side or "?"):upper() .. by,
+                c.side, width)
+        end
+    end
+end
+
+local function weather_rows(rows, d, width)
+    local w = d.weather
+    if type(w) ~= 'table' then return end
+    local parts = {}
+    if present(w.wind_from_deg) and present(w.wind_speed_kts) then
+        parts[#parts + 1] = string.format("Wind %03d° %d kt", math.floor(n(w.wind_from_deg) + 0.5) % 360,
+            math.floor(n(w.wind_speed_kts) + 0.5))
+    end
+    if present(w.temp_c) then parts[#parts + 1] = string.format("%d°C", math.floor(n(w.temp_c) + 0.5)) end
+    if present(w.qnh_hpa) then
+        parts[#parts + 1] = string.format("QNH %d (%.2f)", math.floor(n(w.qnh_hpa) + 0.5), n(w.qnh_hpa) * 0.0295300)
+    end
+    if present(w.cloud_base_m) and n(w.cloud_density) > 0 then
+        parts[#parts + 1] = string.format("Cloud base %d ft", math.floor(n(w.cloud_base_m) * 3.28084 / 100 + 0.5) * 100)
+    end
+    if present(w.visibility_m) and n(w.visibility_m) > 0 then
+        parts[#parts + 1] = string.format("Vis %d km", math.floor(n(w.visibility_m) / 1000 + 0.5))
+    end
+    if #parts == 0 then return end
+    head(rows, "WEATHER")
+    text(rows, table.concat(parts, "  ·  "), skins.text, 0, width)
+end
+
+renderers.dash = function()
+    if WEB.shown then return {} end
+    if in_multiplayer() and not server_confirmed() then
+        return message_rows("Asking the campaign API about this server...")
+    end
+    local d = D.data
+    if type(d) ~= 'table' then
+        return message_rows(D.err or "Reading the campaign...", D.err and skins.bad or nil)
+    end
+    local width = content_width()
+    local rows = {}
+    if D.err then text(rows, D.err, skins.bad, 0, width) end
+
+    local r = type(d.round) == 'table' and d.round or nil
+    rows[#rows + 1] = { text = r and string.format("ROUND %s  ·  %s", tostring(r.number or "?"), tostring(r.scenario or ""))
+                                  or "NO ROUND RUNNING", skin = skins.head }
+    local sub = {}
+    if r and present(r.age) then sub[#sub + 1] = tostring(r.age) .. " in" end
+    if present(d.restart_in) then sub[#sub + 1] = "restart in " .. hm(n(d.restart_in) - (os.clock() - D.got_at)) end
+    if present(d.updated) then sub[#sub + 1] = "updated " .. tostring(d.updated) end
+    text(rows, table.concat(sub, "  ·  "), skins.label, 0, width)
+    if d.live == false then
+        text(rows, "The campaign server is not answering: this is its last saved state.", skins.warn, 0, width)
+    end
+    if not in_multiplayer() then
+        text(rows, "Single player: this is the campaign at " .. tostring(cfg.api) .. ".", skins.label, 0, width)
+    end
+    rows[#rows + 1] = { text = "", h = px(4) }
+
+    local k = type(d.kpi) == 'table' and d.kpi or {}
+    grid(rows, {
+        { "ONLINE", n(k.online) },
+        { "FLYING", n(k.flying) },
+        { "AT RISK", n(k.at_risk), n(k.at_risk) > 0 and skins.red or skins.h1 },
+        { "KILLS 1H", n(k.kills_1h) },
+    }, width)
+    rows[#rows + 1] = { text = "", h = px(4) }
+    territory(rows, k, width)
+    if type(d.map) == 'table' then
+        rows[#rows + 1] = { text = "", h = px(6) }
+        map_rows(rows, d.map, width)
+    end
+    front_rows(rows, d, width)
+    air_rows(rows, d, width)
+    kill_rows(rows, d, width)
+    capture_rows(rows, d, width)
+    weather_rows(rows, d, width)
+    return rows
+end
+
+if rawget(_G, "BFCOCKPIT_TEST") then
+    BFCOCKPIT_TEST.dash = { D = D, WEB = WEB, range_brg = range_brg, snap = snap, DASH_DIR = DASH_DIR, MARKER = MARKER,
+                            buttons = function() return w_native, w_web end }
+end
+end
+dash_module()
+
 -- ── DCS callbacks ────────────────────────────────────────────────────
 
 local create_failed = false
@@ -4683,6 +5328,7 @@ local function reset_session()
     state.feed, state.feed_next, state.feed_off, state.unread, state.answer = {}, 0, false, 0, nil
     state.checked_version = false
     if wiki_api.reset then pcall(wiki_api.reset) end
+    if dash_api.reset then pcall(dash_api.reset) end
 end
 
 -- Throw the window away so the next frame builds a new one -- for a changed
@@ -4801,6 +5447,11 @@ DCS.setUserCallbacks({
             local ok_k, err_k = pcall(wiki_api.tick, now)
             if not ok_k then logmsg("wiki update errored: " .. tostring(err_k)) end
         end
+        -- So does the dashboard (dash_api.tick asks for a known server).
+        if visible and state.tab == "dash" and dash_api.tick then
+            local ok_d, err_d = pcall(dash_api.tick, now)
+            if not ok_d then logmsg("dashboard update errored: " .. tostring(err_d)) end
+        end
 
         if (visible or wheel.open) and key_ready_at and now >= key_ready_at then
             if now >= state.next_fetch then
@@ -4861,7 +5512,7 @@ save_config()
 -- stand-ins for dxgui and the DLL. Never set inside DCS.
 if rawget(_G, "BFCOCKPIT_TEST") then
     BFCOCKPIT_TEST.panel = {
-        state = state, cfg = cfg, settings = settings, skins = skins, wiki_api = wiki_api,
+        state = state, cfg = cfg, settings = settings, skins = skins, wiki_api = wiki_api, dash_api = dash_api,
         show = function() show() end, hide = function() hide() end,
         select_tab = function(id) select_tab(id) end, render = function() render() end,
         widgets = function() return { tabs = w_tabs, back = w_back, crumb = w_crumb, pane = w_pane, window = window } end,
