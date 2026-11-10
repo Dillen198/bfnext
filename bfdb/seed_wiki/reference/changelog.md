@@ -1,10 +1,37 @@
 # Changelog
 
-What changed for players, newest first. Current version: **v3.2**. Each update
+What changed for players, newest first. Current version: **v3.3**. Each update
 gets the next number. Below v2.0 is the list of what this engine does
 differently from stock Fowl Engine. Where an entry gives a campaign number, it
 is read from the server selected at the top of the page; where a later entry or
 a linked page says otherwise, the later one is right.
+
+## v3.3 — November 10, 2026
+
+Fixes from player reports.
+
+**Landed flights show as landed**
+- A flight that landed and then changed slot or went to spectators was shown
+  as **No landing** on the dashboard, and counted as a lost aircraft in K/D
+  and deaths. It is recorded as landed now, including a touchdown the server
+  had not finished registering. Leaving the slot in the air is still not a
+  landing. Flights already recorded keep their old outcome.
+- Changing straight from one aircraft into another no longer loses the next
+  flight's record either.
+
+**Call your wingman on the ground**
+- F10 → Wingman → Request now works before takeoff. The wingman starts up at
+  the nearest field (usually yours), circles overhead until you are airborne,
+  then joins you. If you have not taken off within 20 minutes it goes home.
+  See [Calling a wingman](../advanced/air-life.md#calling-a-wingman).
+
+**Squads that take a base are not lost when it consolidates**
+- A squad you carried in (by helicopter, or dismounted from an IFV, APC or
+  truck) can't be picked up while the base it took is consolidating. When
+  consolidation finished it used to be removed, leaving its vehicle with no
+  troops. Now it stays where it is and can be embarked or extracted again.
+  AI assault squads are still stood down. See
+  [Consolidation](../gameplay/capturing-objectives.md#step-5-consolidation).
 
 ## v3.2 — November 9, 2026
 
