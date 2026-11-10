@@ -241,11 +241,20 @@ pub(crate) async fn api_squadrons(
     Ok(paged_response(data))
 }
 
+/// A squadron tag from a URL path. warp hands path segments over still
+/// percent-encoded, and tags carry symbols: "[.ID]" arrives as "%5B.ID%5D".
+fn path_tag(seg: &str) -> std::result::Result<String, Error> {
+    urlencoding::decode(seg)
+        .map(|t| t.into_owned())
+        .map_err(|_| Error(websec::bad_request("not a valid squadron tag")))
+}
+
 /// GET /api/squadrons/{tag} -- one squadron with its members.
 pub(crate) async fn api_squadron(
     tag: String,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
+    let tag = path_tag(&tag)?;
     let data = blocking(move || -> Result<String> {
         let s = db
             .squadrons()
@@ -294,6 +303,7 @@ pub(crate) async fn api_squadron_join(
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<impl warp::Reply, Error> {
+    let tag = path_tag(&tag)?;
     let ucid = session_player(session_id, &db, &bot_cfg).await?;
     task::block_in_place(|| db.squadrons().join(ucid, &tag))
         .map_err(|e| websec::bad_request(e.to_string()))?;

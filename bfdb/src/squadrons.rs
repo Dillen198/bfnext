@@ -1,4 +1,4 @@
-//! Squadrons: a 2-5 character tag, a name, an owner and up to
+//! Squadrons: a short tag ("[.ID]", "VS1"), a name, an owner and up to
 //! `MAX_MEMBERS` pilots. A squadron's XP is what its members earned while
 //! they were in it -- time served, not a pilot's whole history -- so the
 //! squadron leaderboard can't be won by recruiting veterans.
@@ -41,32 +41,113 @@ pub(crate) struct Squadrons {
     of_pilot: Tree<Ucid, String>,
 }
 
-/// Tags are case-insensitive and stored upper case, A-Z and 0-9 only: they
-/// go in URLs, on the rendered pilot cards and in chat, where anything else
-/// breaks or draws as a box. The numero sign is read as the "No" it stands
-/// for, so a "№15" squadron is NO15 rather than an error.
+/// The longest tag, symbols included: room for "[.VFA]" or "|TFG-1|".
+pub(crate) const MAX_TAG: usize = 8;
+
+/// Symbols a tag may not use: the ones that break a URL path even
+/// percent-encoded (proxies refuse or rewrite `%2F` and `%5C`), `%` itself,
+/// and the backtick, which opens a code span in Discord.
+const TAG_BANNED: &[char] = &['/', '\\', '%', '?', '#', '`'];
+
+/// Tags are written the way they sit in a DCS name, "[.ID]", "=VS1=",
+/// "|TFG|": letters, digits and ASCII symbols, 2 to `MAX_TAG` characters,
+/// at least one of them a letter or digit. They are case-insensitive and
+/// stored upper case. Spaces and anything outside ASCII are refused (the
+/// pilot card's font draws those as boxes), except the numero sign, which
+/// is read as the "No" it stands for, so "№15" is NO15.
 ///
-/// Pilots type the tag the way it sits in their DCS name, "[.ID]" or
-/// "=VS1=", so ASCII punctuation and spaces are dropped rather than refused:
-/// "[.ID]" is the ID squadron. Membership goes by linked UCID, never by the
-/// name, so the DCS name keeps its brackets. Anything else (other scripts,
-/// emoji) is still an error rather than silently vanishing.
+/// Membership goes by linked UCID, never by the DCS name, so a pilot's name
+/// can carry the tag in any form.
 pub(crate) fn norm_tag(tag: &str) -> Result<String> {
-    let t: String = tag
-        .replace('№', "NO")
-        .chars()
-        .filter(|c| !c.is_ascii_punctuation() && !c.is_whitespace())
-        .collect::<String>()
-        .to_uppercase();
-    if !(2..=5).contains(&t.chars().count())
-        || !t.chars().all(|c| c.is_ascii_alphanumeric())
-    {
-        bail!(
-            "a squadron tag is 2 to 5 letters (A-Z) or digits; \
-             brackets and symbols are left out, so [.ID] is ID"
-        )
+    let t = tag.trim().replace('№', "NO").to_uppercase();
+    let n = t.chars().count();
+    if !(2..=MAX_TAG).contains(&n) {
+        bail!("a squadron tag is 2 to {MAX_TAG} characters")
+    }
+    if let Some(c) = t.chars().find(|c| !c.is_ascii_graphic() || TAG_BANNED.contains(c)) {
+        if c == ' ' {
+            bail!("a squadron tag has no spaces")
+        }
+        bail!("a squadron tag can't use {c:?}: letters, digits and symbols like [ ] . = - | only")
+    }
+    if !t.chars().any(|c| c.is_ascii_alphanumeric()) {
+        bail!("a squadron tag needs at least one letter or digit")
     }
     Ok(t)
+}
+
+/// A tag as it is shown beside a name: a plain one gets brackets ("[VS1]"),
+/// one that brings its own symbols ("[.ID]", "=VS1=") is shown as it is.
+pub(crate) fn shown_tag(tag: &str) -> String {
+    if tag.chars().all(|c| c.is_ascii_alphanumeric()) {
+        format!("[{tag}]")
+    } else {
+        tag.to_string()
+    }
+}
+
+/// The letters and digits of a tag, for telling squadrons apart: "[.ID]",
+/// "=ID=" and "ID" are one squadron's tag, so only one of them can exist.
+fn tag_core(tag: &str) -> String {
+    tag.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_uppercase()
+}
+
+/// Words a tag or squadron name may not contain anywhere: none of these
+/// turns up inside an ordinary word.
+const BAD_STEMS: &[&str] = &[
+    "FUCK", "SHIT", "CUNT", "NIGG", "NIGA", "FAGG", "FAGOT", "RETARD", "WHORE", "BITCH",
+    "PUSSY", "PENIS", "VAGIN", "DILDO", "TWAT", "WANK", "PORN", "JIZZ", "ASSHOL", "PISS",
+    "BOOB", "HITLER", "NAZI", "1488", "KKK", "PIZD", "BLYAT", "BLYAD", "EBLAN", "MUDAK",
+    "PIDOR", "SIEGHEIL",
+];
+
+/// Words that are only bad on their own: "COCK" is fine in "COCKPIT", "ASS"
+/// in "CLASS", "RAPE" in "GRAPE".
+const BAD_WORDS: &[&str] = &[
+    "ASS", "ARSE", "COCK", "DICK", "CUM", "SEX", "FAG", "TITS", "TITTY", "SLUT", "RAPE",
+    "RAPIST", "KIKE", "CHINK", "SPIC", "GOOK", "COON", "WOG", "SUKA", "HUY", "HUI",
+    "XYU", "SS", "HEIL",
+];
+
+/// `word` read with the usual digit and symbol stand-ins for letters, so
+/// "SH1T" and "A$$" are caught. Only used when the word has a letter in it:
+/// "455" is a squadron number, not "ASS".
+fn unleet(word: &str) -> String {
+    word.chars()
+        .filter_map(|c| match c {
+            '0' => Some('O'),
+            '1' | '!' | '|' => Some('I'),
+            '3' => Some('E'),
+            '4' | '@' => Some('A'),
+            '5' | '$' => Some('S'),
+            '7' => Some('T'),
+            '8' => Some('B'),
+            c if c.is_alphanumeric() => Some(c),
+            _ => None,
+        })
+        .collect::<String>()
+        .to_uppercase()
+}
+
+/// Whether one word (letters, digits and symbols, no spaces) is offensive.
+fn bad_word(word: &str) -> bool {
+    let raw: String =
+        word.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_uppercase();
+    let mut forms = vec![raw.clone()];
+    if raw.chars().any(|c| c.is_alphabetic()) {
+        forms.push(unleet(word));
+    }
+    forms.iter().any(|f| {
+        !f.is_empty()
+            && (BAD_STEMS.iter().any(|s| f.contains(s))
+                || BAD_WORDS.contains(&f.as_str()))
+    })
+}
+
+/// Whether `text` (a tag or a squadron name) has a bad word in it. Names are
+/// checked a word at a time, so "Push It" doesn't read as "PUSHIT".
+pub(crate) fn offensive(text: &str) -> bool {
+    text.split_whitespace().any(bad_word)
 }
 
 impl Squadrons {
@@ -100,11 +181,21 @@ impl Squadrons {
         if name.is_empty() || name.chars().count() > 40 {
             bail!("a squadron name is 1 to 40 characters")
         }
+        if offensive(&tag) {
+            bail!("that tag isn't allowed, pick another")
+        }
+        if offensive(name) {
+            bail!("that squadron name isn't allowed, pick another")
+        }
         if self.of_pilot.get(&owner)?.is_some() {
             bail!("leave your current squadron first")
         }
-        if self.by_tag.get(&tag)?.is_some() {
-            bail!("the tag {tag} is taken")
+        let core = tag_core(&tag);
+        for r in self.by_tag.iter() {
+            let (other, _) = r?;
+            if tag_core(&other) == core {
+                bail!("the tag {tag} is taken (by {other})")
+            }
         }
         let now = Utc::now();
         let sq = Squadron {
@@ -226,15 +317,58 @@ mod tests {
     fn tags_are_normalised_and_checked() {
         assert_eq!(norm_tag(" vs1 ").unwrap(), "VS1");
         assert!(norm_tag("A").is_err());
-        assert!(norm_tag("TOOLONG").is_err());
-        assert_eq!(norm_tag("A-B").unwrap(), "AB");
-        assert_eq!(norm_tag("[.ID]").unwrap(), "ID");
-        assert_eq!(norm_tag("=VS 1=").unwrap(), "VS1");
-        assert!(norm_tag("[.I]").is_err());
+        assert!(norm_tag("TOOLONGER").is_err());
+        assert_eq!(norm_tag("[.id]").unwrap(), "[.ID]");
+        assert_eq!(norm_tag("=VS1=").unwrap(), "=VS1=");
+        assert_eq!(norm_tag("|TFG-1|").unwrap(), "|TFG-1|");
+        assert_eq!(norm_tag("A-B").unwrap(), "A-B");
+        assert!(norm_tag("[.I]").is_ok());
         assert!(norm_tag("[TOOLONG]").is_err());
+        assert!(norm_tag("=VS 1=").is_err());
+        assert!(norm_tag("[..]").is_err());
+        assert!(norm_tag("A/B").is_err());
         assert!(norm_tag("ЯК52").is_err());
         assert_eq!(norm_tag("№15").unwrap(), "NO15");
-        assert!(norm_tag("№1234").is_err());
+        assert!(norm_tag("№1234567").is_err());
+    }
+
+    #[test]
+    fn bad_words_are_refused_and_ordinary_ones_are_not() {
+        for bad in
+            ["FUCK", "[SH1T]", "A$$", "=ASS=", "1488", "Fuck Off", "N1GGA", "B1tch Wing"]
+        {
+            assert!(offensive(bad), "{bad} should be refused");
+        }
+        for ok in [
+            "[.ID]",
+            "455",
+            "VS1",
+            "|TFG|",
+            "Garuda virtual Air Wing",
+            "Cockpit Cowboys",
+            "Assault Group",
+            "Push It",
+            "VFA-103",
+            "F-14 Tomcats",
+            "B-52 Stratos",
+            "Class Act",
+        ] {
+            assert!(!offensive(ok), "{ok} should be allowed");
+        }
+    }
+
+    #[test]
+    fn tags_with_the_same_letters_are_one_squadron() {
+        let db = yats::Db::temporary_sled().unwrap();
+        let sq = Squadrons::new(&db).unwrap();
+        let a: Ucid = "0123456789abcdef0123456789abcdef".parse().unwrap();
+        let b: Ucid = "fedcba9876543210fedcba9876543210".parse().unwrap();
+        assert_eq!(sq.create(a, "[.ID]", "Garuda").unwrap().tag, "[.ID]");
+        assert!(sq.create(b, "ID", "Copycat").is_err());
+        assert!(sq.create(b, "=id=", "Copycat").is_err());
+        assert!(sq.create(b, "[SH1T]", "Nope").is_err());
+        sq.join(b, "[.id]").unwrap();
+        assert_eq!(sq.of(&b).unwrap().as_deref(), Some("[.ID]"));
     }
 
     #[test]

@@ -65,7 +65,10 @@ They are read from your all-time stats, so your whole history counts.
 
 You make or join a squadron on the dashboard's **SQUADRONS** page.
 
-- A tag is 2–5 letters or digits. A squadron holds up to 50 pilots.
+- A tag is 2–8 characters: letters, digits and symbols, written the way it
+  sits in your DCS name (`[.ID]`, `=VS1=`, `|TFG|`), no spaces. `[.ID]`,
+  `=ID=` and `ID` count as the same tag, so only one squadron can have it.
+  Tags and names with bad words are refused. A squadron holds up to 50 pilots.
 - You can be in one squadron at a time.
 - **A squadron's XP is what its members earned while they were in it.** A
   pilot's history from before they joined doesn't count, so the squadron

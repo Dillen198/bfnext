@@ -23,6 +23,13 @@ export function sl(sorties: number, landings: number): string {
 
 /** Decimal hours as "3h 05m". Rounds to the nearest minute first, so 1.999h
  *  reads 2h 00m rather than 1h 60m. */
+/** A squadron tag as shown beside a name: a plain one gets brackets
+ *  ("[VS1]"), one that brings its own symbols ("[.ID]", "=VS1=") is shown
+ *  as it is. Matches bfdb's `squadrons::shown_tag`. */
+export function shownTag(tag: string): string {
+  return /^[A-Za-z0-9]+$/.test(tag) ? `[${tag}]` : tag
+}
+
 export function fmtHours(h: number): string {
   const total = Math.round(h * 60)
   const hh = Math.floor(total / 60)

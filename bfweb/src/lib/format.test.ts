@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   kd, sl, fmtHours, fmtDuration, fmtTimeZ, ago,
-  windDir, visStr, cloudStr, classifyTargetClass,
+  windDir, visStr, cloudStr, classifyTargetClass, shownTag,
 } from './format'
 
 describe('kd', () => {
@@ -148,5 +148,15 @@ describe('classifyTargetClass', () => {
     expect(classifyTargetClass('Some Unmapped Thing')).toBe('GND')
     expect(classifyTargetClass(null)).toBe('GND')
     expect(classifyTargetClass('')).toBe('GND')
+  })
+})
+
+describe('shownTag', () => {
+  it('brackets a plain tag', () => {
+    expect(shownTag('VS1')).toBe('[VS1]')
+  })
+  it('shows a tag with its own symbols as it is, not [[.ID]]', () => {
+    expect(shownTag('[.ID]')).toBe('[.ID]')
+    expect(shownTag('=VS1=')).toBe('=VS1=')
   })
 })

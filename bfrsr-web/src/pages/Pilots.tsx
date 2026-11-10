@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useCallback } from 'react'
 import { BRAND } from '../config/redstorm'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import QueryState from '../components/QueryState'
-import { kd, sl, fmtHours, fmtDuration } from '../lib/format'
+import { kd, sl, fmtHours, fmtDuration, shownTag } from '../lib/format'
 import { Link as RouterLink, useSearchParams } from 'react-router-dom'
 import type { FlightRow } from '../replay/data'
 import { api, type Pilot, type PilotSortie, type TheaterBreakdown, type PilotKill, type PilotDeploy, type PilotProgression, type Challenge } from '../api'
@@ -555,7 +555,7 @@ function PilotCardView({ pilot, p }: { pilot: Pilot; p: PilotProgression }) {
       <div className="flex items-start gap-3">
         <div style={{ minWidth: 0 }}>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.7rem', letterSpacing: '0.06em', lineHeight: 1.05, color: 'var(--text)', overflowWrap: 'anywhere' }}>
-            {p.squadron && <span style={{ color: 'var(--accent-bright)' }}>[{p.squadron}] </span>}
+            {p.squadron && <span style={{ color: 'var(--accent-bright)' }}>{shownTag(p.squadron)} </span>}
             {pilot.name}
           </div>
           <div className="font-mono" style={{ fontSize: '0.62rem', letterSpacing: '0.12em', color: 'var(--accent-bright)', marginTop: 4 }}>
@@ -586,7 +586,7 @@ function ProgressionCard({ p, dim, ucid, pilot }: { p: PilotProgression; dim: Re
         <Shield size={12} style={{ color: 'var(--accent)' }} />
         <span style={dim}>Progression</span>
         <span className="ml-auto font-mono" style={{ fontSize: '0.7rem', color: 'var(--text)' }}>
-          {p.squadron ? `[${p.squadron}] · ` : ''}LEVEL {p.level} · {p.xp.toLocaleString()} XP
+          {p.squadron ? `${shownTag(p.squadron)} · ` : ''}LEVEL {p.level} · {p.xp.toLocaleString()} XP
         </span>
         <a href={api.pilotCardUrl(ucid)} target="_blank" rel="noreferrer" title="Open the card image to share (Discord /card posts the same one)"
           style={{ fontSize: '0.58rem', letterSpacing: '0.1em', color: 'var(--accent-bright)', textDecoration: 'none', whiteSpace: 'nowrap' }}>

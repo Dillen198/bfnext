@@ -10,6 +10,7 @@ import { useDashLook } from '../lib/look'
 import { Card, Tape } from '../components/Levant'
 import { Pilot as PilotIcon } from '@icons'
 import './levant/rounds.css'
+import { shownTag } from '../lib/format'
 
 /** A date bfdb sent, or nothing when it sent none it can read. */
 function day(iso: string | undefined): string | null {
@@ -145,7 +146,7 @@ export default function SquadronsPage() {
                 <Card tape="Your squadron" tone="rust" className="sq-me" bodyClass="sq-me-body">
                   <div className="sq-me-id">
                     <Tape tone="rust" className="sm">{myTag}</Tape>
-                    <span className="sq-me-name">{mySquadron?.name ?? `[${myTag}]`}</span>
+                    <span className="sq-me-name">{mySquadron?.name ?? shownTag(myTag)}</span>
                   </div>
                   <button type="button" className="ds-btn ghost sq-btn" onClick={() => run(api.leaveSquadron())}>Leave</button>
                   {error && <span className="sq-err">{error}</span>}
@@ -153,14 +154,14 @@ export default function SquadronsPage() {
               ) : (
                 <Card tape="Found a squadron" tone="rust" className="sq-me" bodyClass="sq-me-body">
                   <div className="sq-form">
-                    <input className="vs-input sq-tag" placeholder="TAG" maxLength={12} value={tag} onChange={e => setTag(e.target.value)}
-                      aria-label="Squadron tag" title="2 to 5 letters (A-Z) or digits; brackets and symbols are left out" />
+                    <input className="vs-input sq-tag" placeholder="TAG" maxLength={8} value={tag} onChange={e => setTag(e.target.value)}
+                      aria-label="Squadron tag" title="2 to 8 characters: letters, digits and symbols like [ ] . = - |" />
                     <input className="vs-input sq-name-in" placeholder="Squadron name" maxLength={40} value={name} onChange={e => setName(e.target.value)}
                       aria-label="Squadron name" />
                     <button type="button" className="ds-btn sq-btn" disabled={!tag || !name} onClick={() => run(api.createSquadron(tag, name))}>Create</button>
                     <span className="sq-or">or join one below</span>
                   </div>
-                  <span className="sq-hint">The tag is 2 to 5 letters (A-Z) or digits. Brackets and symbols are left out, so [.ID] becomes ID; your DCS name keeps them.</span>
+                  <span className="sq-hint">The tag is 2 to 8 characters, written the way it sits in your DCS name: [.ID], =VS1=, |TFG|. No spaces. Tags and names with bad words are refused.</span>
                   {error && <span className="sq-err">{error}</span>}
                 </Card>
               )
@@ -232,19 +233,19 @@ export default function SquadronsPage() {
         <div className="card" style={{ padding: 12, marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
           {myTag ? (
             <>
-              <span>You fly for <strong>[{myTag}]</strong>.</span>
+              <span>You fly for <strong>{shownTag(myTag)}</strong>.</span>
               <button type="button" className="vs-btn" onClick={() => run(api.leaveSquadron())}>Leave</button>
             </>
           ) : (
             <>
               <span>Found a squadron:</span>
-              <input className="vs-input" placeholder="TAG" maxLength={12} value={tag} onChange={e => setTag(e.target.value)} style={{ width: 80 }}
-                title="2 to 5 letters (A-Z) or digits; brackets and symbols are left out" />
+              <input className="vs-input" placeholder="TAG" maxLength={8} value={tag} onChange={e => setTag(e.target.value)} style={{ width: 80 }}
+                title="2 to 8 characters: letters, digits and symbols like [ ] . = - |" />
               <input className="vs-input" placeholder="Squadron name" maxLength={40} value={name} onChange={e => setName(e.target.value)} />
               <button type="button" className="vs-btn" disabled={!tag || !name} onClick={() => run(api.createSquadron(tag, name))}>Create</button>
               <span style={{ color: 'var(--text-dim)' }}>or join one below.</span>
               <span style={{ color: 'var(--text-dim)', fontSize: '0.7rem', width: '100%' }}>
-                The tag is 2 to 5 letters (A-Z) or digits. Brackets and symbols are left out, so [.ID] becomes ID; your DCS name keeps them.
+                The tag is 2 to 8 characters, written the way it sits in your DCS name: [.ID], =VS1=, |TFG|. No spaces. Tags and names with bad words are refused.
               </span>
             </>
           )}

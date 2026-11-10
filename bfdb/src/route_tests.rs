@@ -247,6 +247,21 @@ async fn squadron_posts_route_instead_of_405() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn squadron_tag_with_symbols_is_found_by_its_encoded_path() {
+    // Tags carry symbols ("[.ID]"); the dashboard percent-encodes them and
+    // warp hands the segment over still encoded.
+    let h = harness();
+    let owner: dcso3::net::Ucid = "0123456789abcdef0123456789abcdef".parse().unwrap();
+    h.db.squadrons().create(owner, "[.ID]", "Garuda virtual Air Wing").unwrap();
+    let r = h.get("/api/squadrons/%5B.ID%5D", None).await;
+    assert_eq!(r.status(), 200);
+    let v: serde_json::Value = serde_json::from_slice(r.body()).unwrap();
+    assert_eq!(v["tag"], "[.ID]");
+    let r = h.get("/api/squadrons/%5B.id%5D", None).await;
+    assert_eq!(r.status(), 200);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn ops_proxy_get_without_content_length_reaches_the_handler() {
     // "warp's content_length_limit also *requires* a Content-Length header,
     // which browsers never send on a GET -- so every GET the OPS page made was

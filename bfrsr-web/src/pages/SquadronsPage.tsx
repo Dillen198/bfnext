@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext'
 import QueryState from '../components/QueryState'
 import PageHeader from '../components/PageHeader'
 import { Pilot as PilotIcon } from '@icons'
+import { shownTag } from '../lib/format'
 
 function Detail({ tag, myUcid, mine }: { tag: string; myUcid?: string; mine: boolean }) {
   const qc = useQueryClient()
@@ -94,19 +95,19 @@ export default function SquadronsPage() {
         <div className="vs-card" style={{ padding: '12px 16px', display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', fontSize: '0.75rem' }}>
           {myTag ? (
             <>
-              <span>You fly for <strong style={{ color: 'var(--accent)' }}>[{myTag}]</strong>.</span>
+              <span>You fly for <strong style={{ color: 'var(--accent)' }}>{shownTag(myTag)}</strong>.</span>
               <button type="button" className="vs-btn vs-btn-outline" onClick={() => run(api.leaveSquadron())}>Leave</button>
             </>
           ) : (
             <>
               <span className="rsr-form-label">Found a squadron</span>
-              <input className="vs-input" placeholder="TAG" maxLength={12} value={tag} onChange={e => setTag(e.target.value)} style={{ width: 80 }}
-                title="2 to 5 letters (A-Z) or digits; brackets and symbols are left out" />
+              <input className="vs-input" placeholder="TAG" maxLength={8} value={tag} onChange={e => setTag(e.target.value)} style={{ width: 80 }}
+                title="2 to 8 characters: letters, digits and symbols like [ ] . = - |" />
               <input className="vs-input" placeholder="Squadron name" maxLength={40} value={name} onChange={e => setName(e.target.value)} />
               <button type="button" className="vs-btn" disabled={!tag || !name} onClick={() => run(api.createSquadron(tag, name))}>Create</button>
               <span style={{ color: 'var(--text-dim)' }}>or join one below.</span>
               <span style={{ color: 'var(--text-dim)', fontSize: '0.7rem', width: '100%' }}>
-                The tag is 2 to 5 letters (A-Z) or digits. Brackets and symbols are left out, so [.ID] becomes ID; your DCS name keeps them.
+                The tag is 2 to 8 characters, written the way it sits in your DCS name: [.ID], =VS1=, |TFG|. No spaces. Tags and names with bad words are refused.
               </span>
             </>
           )}

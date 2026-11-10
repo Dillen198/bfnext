@@ -65,7 +65,12 @@ pub(crate) fn svg(c: &CardInput) -> String {
     let name = esc(c.name);
     let squadron = c
         .squadron
-        .map(|s| format!(r##"<tspan fill="{ACCENT_BRIGHT}">[{}]</tspan> "##, esc(s)))
+        .map(|s| {
+            format!(
+                r##"<tspan fill="{ACCENT_BRIGHT}">{}</tspan> "##,
+                esc(&crate::squadrons::shown_tag(s))
+            )
+        })
         .unwrap_or_default();
     // Flight time the way the dashboard writes it ("2h 15m"), not bare hours.
     let mins = (t.hours as f64 * 60.0).round() as u64;
