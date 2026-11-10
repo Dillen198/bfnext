@@ -76,8 +76,12 @@ What it goes after depends on what you called:
 - **A copy of your aircraft** is your own type, with the loadout and paint
   your slot is briefed with, not whatever you have rearmed to since.
   Transports can't be copied, and a server can price types differently.
-- **Call it once you are airborne.** On the ground the request is refused.
-  Allow for the start-up and the flight out: call it before you need it.
+- **Call it on the ground or in the air.** Called before you take off, it
+  usually starts up at your own field, circles overhead until you are
+  airborne and then joins you; the reply says `It takes off, holds over you
+  until you are airborne, then joins on your wing`. If you have not taken off
+  within 20 minutes it goes home. In the air, allow for the start-up and the
+  flight out: call it before you need it.
 - A fixed-wing wingman covers out to
   {{cfg:air_life.wingman.engage_dist_m|40000}} m from you, a helicopter
   {{cfg:air_life.wingman.rotary_engage_dist_m|8000}} m.
@@ -115,7 +119,8 @@ are refused with `Your wingman is still taking off.`
 
 It goes home by itself when you:
 
-- land and stay down for a minute,
+- land and stay down for a minute (once you have taken off),
+- called it on the ground and have not taken off 20 minutes later,
 - leave the slot, change aircraft or die,
 - release it (**Release (RTB)**), or
 - reach its limit of
@@ -146,6 +151,10 @@ Your wingman (Fighter escort) is RTB: you are on the ground.
 Your wingman (Fighter escort) is RTB: it is out of time.
 ```
 
+```dcsmessage
+Your wingman (Fighter escort) is RTB: you did not take off.
+```
+
 ### When a request is refused
 
 | Reply | Why |
@@ -154,7 +163,6 @@ Your wingman (Fighter escort) is RTB: it is out of time.
 | `You already have a wingman (Fighter escort). Release it first (F10 > Wingman > Release).` | One wingman per pilot. |
 | `Your last wingman was lost. A new one is available in 4m 12s.` | The cooldown after losing one. |
 | `Get in an aircraft first.` | You are not in a slot. |
-| `Call your wingman once you are airborne -- it joins you in the air.` | You are on the ground. |
 | `Wingmen are for quiet servers: available while your side has 4 or fewer pilots up (it has 6).` | Your side is busy enough. |
 | `CAS pair costs 400 points and you have 150.` | Not enough points. |
 | `A C-130J-30 can't be copied on this server.` | That type is excluded from copies. |
