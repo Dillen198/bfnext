@@ -1130,6 +1130,17 @@ impl Db {
             }
         }
 
+        // Score every fleet now its task force is linked. A carrier objective
+        // starts a fresh round at health 0, and nothing rescored it until one
+        // of its ships was hit, so every fleet read UNDEFENDED and capturable
+        // from the first minute (Southern Flank, 2 and 10 November 2026).
+        let now = self.ephemeral.now();
+        for cg_id in &self.persisted.carrier_groups.clone() {
+            if let Err(e) = self.update_objective_status(cg_id, now) {
+                warn!("[CARRIER_INIT] scoring carrier group {cg_id:?}: {e:?}");
+            }
+        }
+
         Ok(())
     }
 
