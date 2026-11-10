@@ -48,6 +48,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Lock,
+  Printer,
 } from '@icons'
 
 // ── Nav config ────────────────────────────────────────────────────────────────
@@ -111,6 +112,7 @@ const ABOUT_NAV = { to: '/about', icon: Info, label: 'ABOUT' }
 const ADMIN_NAV = { to: '/admin', icon: Admin, label: 'ADMIN' }
 const CONFIG_NAV = { to: '/admin/config', icon: Config, label: 'CONFIG' }
 const SERVER_OPS_NAV = { to: '/admin/ops', icon: Server, label: 'OPS' }
+const REPORT_NAV = { to: '/admin/report', icon: Printer, label: 'REPORT' }
 const BOT_NAV = { to: '/admin/bot', icon: Terminal, label: 'SERVER BOT' }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -386,7 +388,7 @@ export default function Layout() {
     ],
     [
       ABOUT_NAV,
-      ...(user?.is_admin ? [ADMIN_NAV, CONFIG_NAV, SERVER_OPS_NAV] : []),
+      ...(user?.is_admin ? [ADMIN_NAV, CONFIG_NAV, SERVER_OPS_NAV, REPORT_NAV] : []),
       // ops and moderation roles get the bot console too: the plugin
       // checks each action against the role it needs
       ...(canSeeBotConsole(user) ? [BOT_NAV] : []),

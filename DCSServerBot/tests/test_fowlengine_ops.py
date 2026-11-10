@@ -58,7 +58,7 @@ if PKG.exists():
 PKG.mkdir()
 (PKG / "__init__.py").write_text("")
 for name in ("autoupdate.py", "opsapi.py", "console.py", "botconfig.py", "loganalyzer.py", "procman.py", "upload.py", "rangefeed.py",
-             "minisign.py", "icons.py", "heartbeat.py"):
+             "minisign.py", "icons.py", "heartbeat.py", "weeklyreport.py"):
     shutil.copy(PLUGIN / name, PKG / name)
 sys.path.insert(0, str(HERE))
 
@@ -779,6 +779,52 @@ def test_ops_api_http(world):
 
     api.unregister()
     assert not [r for r in app.router.routes if str(getattr(r, "path", "")).startswith(base)]
+
+
+def test_ops_api_report_post(world):
+    """POST report/post checks the upload, then hands it to the cog."""
+    import base64
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    posted = []
+
+    async def post_weekly_report(**kw):
+        posted.append(kw)
+        if kw["instance"] == "nowhere":
+            return {"ok": False, "error": "no report_channel"}
+        return {"ok": True, "channel": "war-reports", "url": "https://discord.com/channels/1/2/3"}
+
+    world.cog.post_weekly_report = post_weekly_report
+    world.cog.weekly_report_status = lambda instance, server: {"server": "vs1", "scheduled": False}
+    api = oa.OpsApi(world.cog)
+    app = FastAPI()
+    api.mount(app)
+    c = TestClient(app)
+    base = "/stats/fowlengine/ops"
+    H = {"X-API-Key": "KEY123", "X-Fowl-Actor": "Dill%20W"}
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 64).decode()
+    assert c.post(f"{base}/report/post", json={"text": "x", "image": png}).status_code == 403
+    ok = c.post(f"{base}/report/post", headers=H,
+                json={"instance": "vs1", "text": " Week 3 ", "image": png, "filename": "week 3.png"})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["channel"] == "war-reports" and "#war-reports" in ok.json()["message"]
+    sent = posted[-1]
+    assert sent["text"] == "Week 3" and sent["filename"] == "week-3.png" and sent["who"] == "Dill W"
+    assert sent["png"].startswith(b"\x89PNG")
+    # bad uploads never reach the cog
+    n = len(posted)
+    assert c.post(f"{base}/report/post", headers=H, json={"text": "x", "image": "not base64!"}).status_code == 400
+    assert c.post(f"{base}/report/post", headers=H, json={"text": "", "image": png}).status_code == 400
+    gif = base64.b64encode(b"GIF89a....").decode()
+    assert c.post(f"{base}/report/post", headers=H, json={"text": "x", "image": gif}).status_code == 400
+    assert len(posted) == n
+    # the cog could not post it
+    r = c.post(f"{base}/report/post", headers=H, json={"instance": "nowhere", "text": "x", "image": png})
+    assert r.status_code == 409 and "report_channel" in r.json()["error"]
+    st = c.get(f"{base}/report/status", headers=H, params={"instance": "vs1"})
+    assert st.status_code == 200 and st.json() == {"ok": True, "server": "vs1", "scheduled": False}
+    api.unregister()
 
 
 # ---- the BFBinaries extension hands its swap to probation ---------------------------

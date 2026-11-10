@@ -1154,3 +1154,114 @@ async fn api_oob_shows_losses_to_all_and_stock_to_those_who_may_see_it() {
         (serde_json::json!([]), serde_json::json!([]))
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn weekly_report_has_the_board_the_week_and_the_last_stand() {
+    use bfprotocols::{
+        db::objective::{ObjectiveId, ObjectiveKind},
+        stats::{Stat, StoryEventStat},
+    };
+    use dcso3::coalition::Side;
+    // a round with nothing in it yet
+    let h = harness_with(
+        serde_json::json!({ "instances": [{
+            "id": "weekly", "theme": "redstorm", "brand_name": "Southern Flank 1985",
+            "blue_faction": "NATO", "red_faction": "USSR",
+        }] }),
+        |_| (),
+    );
+    // (answers are cached for a few seconds per query: each call below asks
+    // a different one)
+    let v = body_json(h.get("/api/report/weekly?days=2", None).await);
+    assert_eq!(v["report"], serde_json::Value::Null, "no round, no report: {v}");
+    assert_eq!(v["theme"], "redstorm");
+    assert_eq!(v["blue_label"], "NATO");
+    assert_eq!(v["days"], 2);
+
+    let pilot: dcso3::net::Ucid = "01234567890abcdef0123456789abcdf".parse().unwrap();
+    let pos = dcso3::coord::LLPos { latitude: 41.6, longitude: 41.6, altitude: 0. };
+    let obj = |id: u32, name: &str, owner, kind| Stat::Objective {
+        name: name.into(),
+        id: ObjectiveId::from(id as i64),
+        pos,
+        owner,
+        kind,
+    };
+    let story = |id: &str, effects: Vec<dcso3::String>, side| {
+        Stat::StoryEvent(StoryEventStat {
+            id: id.into(),
+            time: chrono::Utc::now() - chrono::Duration::hours(1),
+            title: format!("{id} title").into(),
+            text: "".into(),
+            caused_by: vec!["Shade".into()],
+            side,
+            effects,
+        })
+    };
+    h.db.ingest_test_stats(
+        "weekly",
+        vec![
+            Stat::NewRound { sortie: "campaign".into() },
+            Stat::Register {
+                name: "Shade".into(),
+                id: pilot,
+                side: Side::Blue,
+                initial_points: 100,
+            },
+            obj(1, "Batumi", Side::Blue, ObjectiveKind::Airbase),
+            obj(2, "Sochi", Side::Red, ObjectiveKind::Airbase),
+            obj(3, "SA-10 Gudauta", Side::Red, ObjectiveKind::SpecialSamSite),
+            obj(
+                4,
+                "Moskva group",
+                Side::Red,
+                ObjectiveKind::CarrierGroup {
+                    carrier_template: "".into(),
+                    waypoint: None,
+                    parent_naval_base: None,
+                    repair_start_time: None,
+                },
+            ),
+            Stat::Capture {
+                id: ObjectiveId::from(2),
+                by: smallvec::smallvec![pilot],
+                side: Side::Blue,
+            },
+            story(
+                "collapse",
+                vec!["Red orders a nuclear strike".into()],
+                Some(Side::Red),
+            ),
+            story("last_stand_intercepted", vec![], Some(Side::Red)),
+        ],
+    );
+    let v = body_json(h.get("/api/report/weekly", None).await);
+    assert_eq!(v["days"], 7);
+    let r = &v["report"];
+    assert_eq!(v["round_number"], 1, "{v}");
+    assert_eq!(v["round_active"], true);
+    assert_eq!(r["forces"]["blue"]["airfields"], 2, "Sochi was taken: {r}");
+    assert_eq!(r["forces"]["blue"]["captured"], 1);
+    assert_eq!(r["forces"]["red"]["sam_sites"], 1);
+    assert_eq!(r["forces"]["red"]["fleets"], serde_json::json!(["Moskva group"]));
+    assert_eq!(r["forces"]["red"]["objectives"], 1, "the SAM site is not counted");
+    assert_eq!(r["capture_count"], 1);
+    assert_eq!(r["captures"][0]["objective"], "Sochi");
+    assert_eq!(r["captures"][0]["by"], serde_json::json!(["Shade"]));
+    assert_eq!(r["story"].as_array().map(|a| a.len()), Some(2));
+    assert_eq!(r["last_stand"]["outcome"], "intercepted");
+    assert_eq!(r["last_stand"]["this_week"], true);
+    assert_eq!(r["pilots"][0]["name"], "Shade");
+    assert_eq!(r["pilots"][0]["side"], "Blue");
+    assert_eq!(r["pilots"][0]["score"], 30);
+    assert_eq!(r["active_pilots"], 1);
+
+    // a window that ends before any of it: an empty week on the same board
+    let v = body_json(
+        h.get("/api/report/weekly?days=1&until=2020-01-01T00:00:00Z", None).await,
+    );
+    assert_eq!(v["report"]["capture_count"], 0, "{v}");
+    assert_eq!(v["report"]["last_stand"]["this_week"], false);
+    assert_eq!(v["report"]["forces"]["blue"]["airfields"], 2);
+    assert_eq!(h.get("/api/report/weekly?until=yesterday", None).await.status(), 400);
+}

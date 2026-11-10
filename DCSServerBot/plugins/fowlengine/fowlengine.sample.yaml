@@ -794,6 +794,27 @@ DEFAULT:
   # news_channel: 123456789012345678
 
   # ---------------------------------------------
+  # Weekly campaign report poster
+  # ---------------------------------------------
+  # The dashboard's REPORT page (/admin/report, OPS login) draws a one-page
+  # poster of the war -- the FORCES board, the week's captures and story
+  # events, the Last Stand, the best pilots and squadrons, and a dispatch
+  # the admin can edit -- in the campaign's own look, and posts it here with
+  # Post to Discord. Per server; unset falls back to news_channel.
+  # report_channel: 123456789012345678
+  #
+  # The optional schedule posts it with no one looking: the bot opens the
+  # dashboard's /report/print page in the status map's Edge/Chrome
+  # (status_map_browser, status_map_url), which draws the poster with the
+  # automatic dispatch. OFF unless enabled; per server. A slot the bot was
+  # down for is posted up to 6 hours late, then skipped until next week.
+  # weekly_report:
+  #   enabled: false
+  #   weekday: sun      # mon..sun
+  #   hour: 18          # UTC
+  #   days: 7           # how far back the report looks
+
+  # ---------------------------------------------
   # Coalition roles, mirrored from the engine
   # ---------------------------------------------
   # Every ~5 minutes the bot reads bfdb's /api/admin/pilot-sides (the engine's
@@ -890,6 +911,8 @@ DEFAULT:
 #   red_briefing_channel: 100000000000000009
 #   news_channel: 100000000000000012          # the war diary, one post per filed day
 #   round_channel: 100000000000000013         # round over: who won and the rundown (also posted to news_ and alerts_channel)
+#   report_channel: 100000000000000014        # the weekly report poster (dashboard REPORT page; else news_channel)
+#   weekly_report: {enabled: false, weekday: sun, hour: 18}   # post it on its own every week
 #   coalition_roles:
 #     manage: true
 #     blue: 100000000000000010      # this server's OWN Blue role

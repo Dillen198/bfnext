@@ -102,6 +102,7 @@ export function moreGroups(user: Viewer, links: { wikiUrl?: string; donationUrl?
         { to: '/admin', label: 'Admin' },
         { to: '/admin/config', label: 'Config' },
         { to: '/admin/ops', label: 'Server ops' },
+        { to: '/admin/report', label: 'Weekly report' },
       ],
     })
   }

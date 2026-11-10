@@ -1843,6 +1843,12 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
             api_capture_events(db, round_id, limit, offset, inst)
         });
 
+    let weekly_report = warp::path!("api" / "report" / "weekly")
+        .and(with_db(db.clone()))
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .and(with_instance(db.clone()))
+        .then(api_weekly_report);
+
     let pilot =
         warp::path!("api" / "pilot" / String).and(with_db(db.clone())).then(api_pilot);
 
@@ -3058,6 +3064,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .or(oob)
         .or(kills)
         .or(capture_events)
+        .or(weekly_report)
         .or(pilot_sorties)
         .or(pilot_sortie)
         .or(pilot_breakdown)
