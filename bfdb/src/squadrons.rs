@@ -45,12 +45,26 @@ pub(crate) struct Squadrons {
 /// go in URLs, on the rendered pilot cards and in chat, where anything else
 /// breaks or draws as a box. The numero sign is read as the "No" it stands
 /// for, so a "№15" squadron is NO15 rather than an error.
+///
+/// Pilots type the tag the way it sits in their DCS name, "[.ID]" or
+/// "=VS1=", so ASCII punctuation and spaces are dropped rather than refused:
+/// "[.ID]" is the ID squadron. Membership goes by linked UCID, never by the
+/// name, so the DCS name keeps its brackets. Anything else (other scripts,
+/// emoji) is still an error rather than silently vanishing.
 pub(crate) fn norm_tag(tag: &str) -> Result<String> {
-    let t = tag.trim().replace('№', "NO").to_uppercase();
+    let t: String = tag
+        .replace('№', "NO")
+        .chars()
+        .filter(|c| !c.is_ascii_punctuation() && !c.is_whitespace())
+        .collect::<String>()
+        .to_uppercase();
     if !(2..=5).contains(&t.chars().count())
         || !t.chars().all(|c| c.is_ascii_alphanumeric())
     {
-        bail!("a squadron tag is 2 to 5 letters (A-Z) or digits, no spaces or symbols")
+        bail!(
+            "a squadron tag is 2 to 5 letters (A-Z) or digits; \
+             brackets and symbols are left out, so [.ID] is ID"
+        )
     }
     Ok(t)
 }
@@ -213,7 +227,12 @@ mod tests {
         assert_eq!(norm_tag(" vs1 ").unwrap(), "VS1");
         assert!(norm_tag("A").is_err());
         assert!(norm_tag("TOOLONG").is_err());
-        assert!(norm_tag("A-B").is_err());
+        assert_eq!(norm_tag("A-B").unwrap(), "AB");
+        assert_eq!(norm_tag("[.ID]").unwrap(), "ID");
+        assert_eq!(norm_tag("=VS 1=").unwrap(), "VS1");
+        assert!(norm_tag("[.I]").is_err());
+        assert!(norm_tag("[TOOLONG]").is_err());
+        assert!(norm_tag("ЯК52").is_err());
         assert_eq!(norm_tag("№15").unwrap(), "NO15");
         assert!(norm_tag("№1234").is_err());
     }

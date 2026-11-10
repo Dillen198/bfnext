@@ -321,7 +321,8 @@ bases, and **Who carried it** (the **MVP** and a table of the top pilots).
 
 ## SQUADRONS
 
-Make a squadron (a **TAG** of 2 to 5 letters or digits, and a name, then
+Make a squadron (a **TAG** of 2 to 5 letters or digits -- brackets and
+symbols are left out, so `[.ID]` is `ID` -- and a name, then
 **Create**), or **Join** one. Your own shows **You fly for** with a **Leave**
 button; its owner can **Remove** members. See
 [XP, Levels & Squadrons](../gameplay/progression.md#squadrons).
