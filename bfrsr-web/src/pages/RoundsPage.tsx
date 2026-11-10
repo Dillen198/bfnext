@@ -4,18 +4,19 @@
 //
 // ?round=<id> selects a round, so a round report can be linked.
 
-import React, { useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import React, { useMemo, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine,
 } from 'recharts'
-import { api, roundNo, type Round, type RoundReport, type RoundReportBucket, type RoundSummary } from '../api'
+import { api, roundNo, roundTitle, type Round, type RoundReport, type RoundReportBucket, type RoundSummary } from '../api'
 import { campaign } from '../config/campaign'
 import QueryState from '../components/QueryState'
 import PageHeader from '../components/PageHeader'
 import { fmtHours } from '../lib/format'
 import { Award } from '@icons'
+import { useAuth } from '../context/AuthContext'
 
 const BLUE = 'var(--blue)'
 const RED = 'var(--red)'
@@ -285,7 +286,7 @@ function Report({ round }: { round: Round }) {
           <div style={{ minWidth: 0 }}>
             <div style={label}>Round {roundNo(round)}{round.instance ? ` · ${round.instance}` : ''}</div>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.6rem', letterSpacing: '0.06em', color: 'var(--text)', lineHeight: 1.1 }}>
-              {round.scenario || `Round ${roundNo(round)}`}
+              {roundTitle(round)}
             </div>
             <div className="font-mono" style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginTop: 2 }}>
               {fmtDate(round.start)} → {round.end ? fmtDate(round.end) : 'now'} · {duration(round)}
@@ -341,6 +342,126 @@ function Report({ round }: { round: Round }) {
   )
 }
 
+/** Admins only: rename the selected round, merge it into another of its
+ *  server's rounds, or delete it. bfdb refuses deleting the live round, and
+ *  a merge with the live round keeps the live round's id. */
+function EditRound({ round, rounds, onPick, onClose }: {
+  round: Round
+  rounds: Round[]
+  onPick: (id: number | null) => void
+  onClose: () => void
+}) {
+  const qc = useQueryClient()
+  const [name, setName] = useState(round.name ?? '')
+  const [into, setInto] = useState<number | ''>('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState<string | null>(null)
+  const others = rounds.filter(r => r.id !== round.id && (r.instance ?? '') === (round.instance ?? ''))
+  const what = `Round ${roundNo(round)}${round.name || round.scenario ? ` (${round.name || round.scenario})` : ''}`
+
+  const run = async (f: () => Promise<string>) => {
+    setBusy(true)
+    setError(null)
+    setDone(null)
+    try {
+      setDone(await f())
+      // Round numbers, names, leaderboards and pilot totals can all move.
+      await qc.invalidateQueries()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const rename = (n: string | null) => run(async () => {
+    const r = await api.admin.renameRound(round.id, n)
+    setName(r.name ?? '')
+    return r.name ? `Renamed to "${r.name}".` : 'Name cleared; the scenario shows again.'
+  })
+  const merge = () => {
+    const target = others.find(r => r.id === into)
+    if (!target) return
+    if (!window.confirm(
+      `Merge ${what} into Round ${roundNo(target)}?\n\n` +
+      'Their kills, captures, sorties and reports become one round. This cannot be undone.' +
+      (round.active ? `\n\n${what} is live, so the merged round keeps its id.` : ''),
+    )) return
+    void run(async () => {
+      const r = await api.admin.mergeRound(round.id, target.id)
+      onPick(r.id)
+      return 'Merged.'
+    })
+  }
+  const remove = () => {
+    if (!window.confirm(
+      `Delete ${what}?\n\nEvery kill, capture, sortie and report in it goes, and pilots' lifetime totals lose ` +
+      'what they earned in it. Later rounds are renumbered. This cannot be undone.',
+    )) return
+    void run(async () => {
+      await api.admin.deleteRound(round.id)
+      onPick(null)
+      return `${what} deleted.`
+    })
+  }
+
+  const small: React.CSSProperties = { fontSize: '0.66rem', padding: '4px 12px' }
+  const field: React.CSSProperties = {
+    background: 'var(--bg)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 4,
+    fontSize: '0.75rem', padding: '5px 8px', minWidth: 0,
+  }
+  const row: React.CSSProperties = {
+    display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '10px 16px', borderBottom: '1px solid var(--border)',
+  }
+  const rowLabel: React.CSSProperties = { ...label, width: 70, flexShrink: 0 }
+  return (
+    <div className="vs-card p-0" style={{ marginBottom: 16 }}>
+      <div className="rsr-panel-head flex items-center gap-2 px-4 py-2.5">
+        <span className="rsr-panel-title" style={{ fontSize: '0.66rem' }}>Edit round · Round {roundNo(round)}</span>
+        {busy && <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>working…</span>}
+        {error && <span role="alert" style={{ fontSize: '0.65rem', color: 'var(--red)' }}>{error}</span>}
+        {done && !error && <span style={{ fontSize: '0.65rem', color: 'var(--accent)' }}>{done}</span>}
+        <span className="ml-auto">
+          <button type="button" className="vs-btn-ghost" style={{ ...small, padding: '4px 10px' }} onClick={onClose}>Close</button>
+        </span>
+      </div>
+      <form style={row} onSubmit={e => { e.preventDefault(); void rename(name) }}>
+        <span style={rowLabel}>Name</span>
+        <input value={name} onChange={e => setName(e.target.value)} maxLength={80} aria-label="Round name"
+          placeholder={round.scenario || `Round ${roundNo(round)}`} style={{ ...field, flex: '1 1 220px' }} />
+        <button type="submit" className="vs-btn" style={small} disabled={busy || name.trim() === (round.name ?? '')}>SAVE</button>
+        {round.name && (
+          <button type="button" className="vs-btn-ghost" style={small} disabled={busy} onClick={() => void rename(null)}
+            title="Show the scenario name again">CLEAR</button>
+        )}
+      </form>
+      <div style={row}>
+        <span style={rowLabel}>Merge</span>
+        <select value={into} onChange={e => setInto(e.target.value ? Number(e.target.value) : '')} aria-label="Round to merge into"
+          style={{ ...field, flex: '1 1 220px' }} disabled={others.length === 0}>
+          <option value="">{others.length ? 'Merge this round into…' : 'No other rounds on this server'}</option>
+          {others.map(r => (
+            <option key={r.id} value={r.id}>
+              Round {roundNo(r)} · {r.name || r.scenario} · {fmtDate(r.start)}{r.active ? ' · live' : ''}
+            </option>
+          ))}
+        </select>
+        <button type="button" className="vs-btn-outline" style={small} disabled={busy || into === ''} onClick={merge}>MERGE</button>
+      </div>
+      <div style={{ ...row, borderBottom: 'none' }}>
+        <span style={rowLabel}>Delete</span>
+        <span style={{ fontSize: '0.66rem', color: 'var(--text-dim)', flex: '1 1 220px' }}>
+          {round.active
+            ? 'The live round cannot be deleted; end it first, or merge an old round into it.'
+            : 'Removes this round and everything recorded in it.'}
+        </span>
+        <button type="button" className="vs-btn-outline" style={{ ...small, color: 'var(--red)', borderColor: 'var(--red)' }}
+          disabled={busy || round.active} onClick={remove}>DELETE</button>
+      </div>
+    </div>
+  )
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function RoundsPage() {
@@ -350,14 +471,31 @@ export default function RoundsPage() {
   const wanted = Number(params.get('round'))
   const selected = rounds.find(r => r.id === wanted) ?? rounds.find(r => r.active) ?? rounds[0]
   const pick = (id: number) => setParams(p => { p.set('round', String(id)); return p }, { replace: true })
+  // After a delete there is no round to show: fall back to the live (or latest) one.
+  const pickOrLatest = (id: number | null) => (id == null
+    ? setParams(p => { p.delete('round'); return p }, { replace: true })
+    : pick(id))
+  const { user } = useAuth()
+  const [editing, setEditing] = useState(false)
+  const editBtn = user?.is_admin && selected
+    ? (
+      <button type="button" className="vs-btn-outline" onClick={() => setEditing(p => !p)} aria-pressed={editing}
+        title="Rename, merge or delete this round" style={{ fontSize: '0.68rem', padding: '5px 12px' }}>
+        EDIT ROUND
+      </button>
+    )
+    : undefined
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <PageHeader art="flanker" title="AFTER-ACTION REPORTS" file="After-action reports"
         stamp={<span className="stamp stamp--dim">Filed</span>}
-        sub={`${rounds.length} round${rounds.length === 1 ? '' : 's'} of the campaign on file`} icon={Award} />
+        sub={`${rounds.length} round${rounds.length === 1 ? '' : 's'} of the campaign on file`} icon={Award} right={editBtn} />
       <div className="flex-1 overflow-auto p-4">
         <QueryState isLoading={q.isLoading} isError={q.isError} error={q.error} isEmpty={rounds.length === 0} what="rounds" onRetry={q.refetch} />
+        {editing && user?.is_admin && selected && (
+          <EditRound key={selected.id} round={selected} rounds={rounds} onPick={pickOrLatest} onClose={() => setEditing(false)} />
+        )}
         {selected && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start' }}>
             {/* Round list: a column beside the report on wide screens, above it on narrow ones. */}
@@ -381,7 +519,7 @@ export default function RoundsPage() {
                         </span>
                       </div>
                       <div style={{ fontSize: '0.62rem', color: 'var(--text-dim)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {r.scenario} · {fmtDate(r.start)} · {duration(r)}
+                        {r.name || r.scenario} · {fmtDate(r.start)} · {duration(r)}
                       </div>
                     </button>
                   )
