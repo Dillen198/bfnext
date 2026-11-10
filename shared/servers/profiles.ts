@@ -95,7 +95,7 @@ export const SERVERS: ServerProfile[] = [
       'The war in Central Europe is a week old. NATO has come ashore in western ' +
       'Georgia to cut the supply lines of the Soviet Transcaucasus Front, with ' +
       '1985 aircraft and 1985 weapons only.',
-    browserName: '[VS] Vector Strike | RSR',
+    browserName: '[VS] Vector Strike | Cold War 1985 PvP',
     livesEnforced: true,
     blueLabel: 'NATO',
     redLabel: 'Soviet',
