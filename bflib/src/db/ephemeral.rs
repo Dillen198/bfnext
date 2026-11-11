@@ -763,6 +763,24 @@ const AIRBASE_GONE_RETRY_MIN: i64 = 10;
 
 pub(super) const RAMP_BLOCK_SECS: i64 = 30 * 60;
 
+/// Whether an objective of this kind is meant to have a DCS airbase a flight
+/// can start from: an airfield, a FARP or FOB pad, or a carrier deck. Hubs,
+/// factories, ports, SAM sites and command centres are only trigger zones, so
+/// a flight launched from one air-starts by design rather than by fault.
+fn kind_has_dcs_airfield(kind: &ObjectiveKind) -> bool {
+    match kind {
+        ObjectiveKind::Airbase
+        | ObjectiveKind::Fob
+        | ObjectiveKind::Farp { .. }
+        | ObjectiveKind::CarrierGroup { .. } => true,
+        ObjectiveKind::Logistics
+        | ObjectiveKind::NavalBase
+        | ObjectiveKind::Factory { .. }
+        | ObjectiveKind::SpecialSamSite
+        | ObjectiveKind::CommandCenter => false,
+    }
+}
+
 fn bucket_eta(secs: i64) -> i64 {
     if secs <= 0 {
         return 0;
@@ -3216,6 +3234,22 @@ impl Ephemeral {
                                 group.name
                             )
                         }
+                        // A logistics hub, factory or port has no runway and
+                        // no pad, so an air cargo flight dispatched from one
+                        // air-starts near it by design (`spawn_air_route`)
+                        // and still delivers. That is not a missing airbase
+                        // and used to raise a warning on every dispatch.
+                        _ if ab_start.is_none()
+                            && !group.tags.contains(UnitTag::CAP)
+                            && launch_oid
+                                .and_then(|o| persisted.objectives.get(&o))
+                                .is_some_and(|o| !kind_has_dcs_airfield(&o.kind)) =>
+                        {
+                            info!(
+                                "[GROUND_START] {} starts in the air near its origin {:?}: that objective has no airfield or pad",
+                                group.name, group.origin
+                            )
+                        }
                         _ => warn!(
                             "[GROUND_START] {} has no resolvable airbase for {:?} -- leaving template waypoint 0, so this flight will air-start (a CAP is then scrapped by enforce_cap_ground_start)",
                             group.name, group.origin
@@ -3638,6 +3672,23 @@ impl Ephemeral {
             record_perf(&mut perf.spawn, ts);
             Ok(Some(spawned))
         }
+    }
+}
+
+#[cfg(test)]
+mod airfield_kind_tests {
+    use super::*;
+
+    /// Air cargo dispatched from a hub air-starts on purpose; only an
+    /// objective that should have a field is worth a warning when none
+    /// resolves (the IL-76/C-17 logistics flights warned on every dispatch).
+    #[test]
+    fn hubs_have_no_field_airbases_do() {
+        assert!(!kind_has_dcs_airfield(&ObjectiveKind::Logistics));
+        assert!(!kind_has_dcs_airfield(&ObjectiveKind::NavalBase));
+        assert!(!kind_has_dcs_airfield(&ObjectiveKind::CommandCenter));
+        assert!(kind_has_dcs_airfield(&ObjectiveKind::Airbase));
+        assert!(kind_has_dcs_airfield(&ObjectiveKind::Fob));
     }
 }
 
