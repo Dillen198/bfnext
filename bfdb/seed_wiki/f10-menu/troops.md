@@ -80,11 +80,6 @@ No hint means there is no enemy or neutral objective within about 5 km.
 
 **Refusals**
 
-- `you can't deploy troops here while enemies are near`: you are inside one of
-  your **own** bases and it is threatened. Wait for the threat to clear
-  ({{cfg:threatened_cooldown|300}} s after the last enemy is out of sight), or
-  unload outside it. This check applies only inside your own base, not at the
-  enemy objective you are attacking.
 - `the maximum number of Mortar troops are already deployed`: that squad type
   refuses at the limit instead of replacing the oldest.
 

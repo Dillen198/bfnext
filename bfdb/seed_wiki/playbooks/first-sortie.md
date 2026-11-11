@@ -115,16 +115,6 @@ Lives: standard 3/3 (life returned)
 - **You can't load from a broken base.** Troops and crates only come from a
   friendly base whose logistics are above 0% and which is **not capturable**.
   Stage from a base further back.
-- **You can't unload troops in your own threatened base.** Inside one of your
-  own bases with an enemy in sight, Unload answers:
-
-```dcsmessage
-you can't deploy troops here while enemies are near
-```
-
-  Wait until {{cfg:threatened_cooldown|300}} seconds after the last enemy is
-  out of sight, or unload outside the base. The enemy base you are attacking
-  has no such rule.
 - **Menus with `>>` need selecting first**, and long lists continue under
   `More >>`. See [Understanding the Menus](../getting-started/hud-and-menus.md).
 

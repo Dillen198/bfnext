@@ -8,6 +8,13 @@ a linked page says otherwise, the later one is right.
 
 ## v3.4 — November 10, 2026
 
+**Troops can be unloaded anywhere**
+- Unload Troops no longer refuses inside your own base while it is
+  threatened (`you can't deploy troops here while enemies are near`). Front
+  bases near an enemy garrison stayed threatened for good, so their troops
+  could never be put down. Troops now go down at your own base, at the enemy
+  base, or out in the open.
+
 **The Last Stand**
 - A side about to lose can have one last card: when its story says so, an AI
   aircraft flies a nuclear weapon at the enemy's biggest push. The other side

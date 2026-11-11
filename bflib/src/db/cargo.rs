@@ -1894,12 +1894,11 @@ impl Db {
         )
         .map(|(_, _, o)| o.id);
         let point = Vector2::new(pos.p.x, pos.p.z);
-        match self.point_near_logistics(side, point) {
-            Ok((_, obj)) if obj.threatened => {
-                bail!("you can't deploy troops here while enemies are near")
-            }
-            Ok(_) | Err(_) => (),
-        }
+        // Troops can be unloaded anywhere: inside a threatened friendly base,
+        // at an enemy objective, or out in the open. The old refusal at a
+        // threatened base counted any armed enemy ground unit within the
+        // 20 km wake distance, so front-line bases next to an enemy garrison
+        // never cleared and their troops could not be put down at all.
         let cargo = self
             .ephemeral
             .cargo

@@ -142,9 +142,8 @@ neutral base within 5 km of its edge:
 | `these troops are 340m outside Kuweires's ring -- they only capture from inside it` | Move them in. |
 | `Igla troops can't capture -- bring a squad that can to take Kuweires` | Wrong squad. |
 
-The enemy being near the target is no reason not to unload there. The only
-unload that is blocked by enemies is inside **your own** base while it is
-threatened: `you can't deploy troops here while enemies are near`.
+Enemies never stop an unload: troops can go down at the enemy base, inside
+your own base while it is threatened, or out in the open.
 
 No helicopter? [AI Helo Missions](../advanced/helo-missions.md) and a
 [ground war](../advanced/ground-war.md) formation with infantry can both put
