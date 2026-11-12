@@ -2,7 +2,7 @@
 // battles, destinations), each memoised on what it actually shows so a new
 // picture every 2 s only touches the ones that changed.
 import { memo, type MouseEvent, type ReactElement } from 'react'
-import { Marker } from 'react-map-gl/maplibre'
+import { Marker } from '../../components/GLMap'
 import { Defend, Objective as ObjIcon } from '@icons'
 import type { GroundBattle, GroundEnemyContact, GroundFormation, GroundObjective } from '../../api'
 import { fmtAge, offset } from './geo'

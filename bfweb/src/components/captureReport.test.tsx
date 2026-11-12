@@ -9,6 +9,9 @@ vi.mock('react-map-gl/maplibre', () => ({
   Marker: ({ children }: { children?: unknown }) => <>{children as never}</>,
 }))
 vi.mock('maplibre-gl/dist/maplibre-gl.css', () => ({}))
+// ...and this runs without a browser, which would read as "no WebGL" and take
+// the Leaflet stand-in (components/GLMap): the MapLibre path is the one here.
+vi.mock('../lib/webgl', () => ({ webglSupport: () => ({ ok: true }) }))
 vi.mock('@shared/web/theme', () => ({ useTheme: () => ({ theme: 'dark', toggle: () => {} }) }))
 
 const { default: CaptureBlockers } = await import('./CaptureBlockers')

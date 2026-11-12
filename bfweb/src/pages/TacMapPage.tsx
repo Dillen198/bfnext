@@ -15,7 +15,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import Map, { type MapRef, type ViewStateChangeEvent } from 'react-map-gl/maplibre'
+import type { MapRef, ViewStateChangeEvent } from 'react-map-gl/maplibre'
+// MapLibre, or the Leaflet map where the browser has no WebGL (DCS's)
+import Map from '../components/GLMap'
 import type { MapLibreEvent, Map as MlMap } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 

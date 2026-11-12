@@ -10,6 +10,8 @@
 //    bursts, drifting smoke), fire lines, order previews and range rings;
 //  * the flowing dash on planned routes.
 import maplibregl, { type GeoJSONSource, type Map as MlMap } from 'maplibre-gl'
+import { isShimMap } from '../../lib/leafletgl/context'
+import type { ShimMap } from '../../lib/leafletgl/shim'
 import type { Feature, FeatureCollection, Point } from 'geojson'
 import type { GroundPicture, LatLon, LivePlayer } from '../../api'
 import { dist, lerp, lerpHeading, offset, offsetEN } from './geo'
@@ -60,7 +62,7 @@ interface VehTrack extends Track {
   enemy: boolean
 }
 interface PlayerTrack extends Track {
-  marker: maplibregl.Marker
+  marker: PinnedMarker
   el: HTMLDivElement
   ico: HTMLDivElement
   tag: HTMLDivElement
@@ -89,6 +91,19 @@ function trackPos(t: Track, at: number): { pos: LatLon; hdg: number } {
 
 function rand(a: number, b: number) {
   return a + Math.random() * (b - a)
+}
+
+/** What the engine needs of a marker: maplibregl.Marker's, or lib/leafletgl's DomMarker. */
+interface PinnedMarker {
+  setLngLat(p: [number, number]): PinnedMarker
+  remove(): unknown
+}
+
+/** A DOM marker on whichever map this is: MapLibre, or the Leaflet stand-in (no WebGL). */
+function pinMarker(map: MlMap, el: HTMLElement, at: [number, number]): PinnedMarker {
+  if (isShimMap(map)) return (map as unknown as ShimMap).addDomMarker(el, 'center').setLngLat(at)
+  // MapLibre needs the position before addTo.
+  return new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat(at).addTo(map)
 }
 
 export class BattlefieldEngine {
@@ -267,7 +282,7 @@ export class BattlefieldEngine {
         const tag = document.createElement('div')
         tag.className = 'gw-pl-tag'
         el.append(ico, tag)
-        const marker = new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat([p.pos[1], p.pos[0]]).addTo(map)
+        const marker = pinMarker(map, el, [p.pos[1], p.pos[0]])
         tr = { marker, el, ico, tag, from: p.pos, to: ahead, h0: p.heading, h1: p.heading, t0: t, dur, mps, cat: p.category, self: p.is_self, label: '' }
         this.players.set(p.name, tr)
       } else {

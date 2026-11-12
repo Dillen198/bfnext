@@ -9,7 +9,7 @@
 // the engine checks every one: the asset is ours, the treasury can pay, the
 // battery is in range and reloaded.
 import { memo, useMemo, type ReactElement, type ReactNode } from 'react'
-import { Layer, Marker, Source } from 'react-map-gl/maplibre'
+import { Layer, Marker, Source } from '../../components/GLMap'
 import type { Feature, FeatureCollection } from 'geojson'
 import { X } from '@icons'
 import {

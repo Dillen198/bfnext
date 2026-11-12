@@ -16,7 +16,9 @@ import ServerGuidePage from './servers/ServerGuidePage'
 // under `vite dev`: the import is dropped from production builds.
 const BlocksFixturePage = import.meta.env.DEV ? lazy(() => import('./pages/BlocksFixturePage')) : null
 
-const THEME: ThemeOptions = { storageKey: 'bfwiki-theme' }
+// `?theme=dark`: the cockpit panel's WIKI tab loads this site in DCS's
+// embedded browser, whose profile reports a light OS theme.
+const THEME: ThemeOptions = { storageKey: 'bfwiki-theme', urlParam: true }
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 10_000, retry: 1 } },

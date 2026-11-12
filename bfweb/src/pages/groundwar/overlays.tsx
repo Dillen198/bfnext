@@ -11,7 +11,7 @@
 // All of it is our own side's picture: the engine and /ws/tacmap only ever
 // send a side what it is entitled to know.
 import { memo, useMemo, type ReactElement } from 'react'
-import { Layer, Source } from 'react-map-gl/maplibre'
+import { Layer, Source } from '../../components/GLMap'
 import circle from '@turf/circle'
 import type { Feature, FeatureCollection } from 'geojson'
 import type { DefenceRing, GroundObjective, LatLon, SupplyLine, TacPicture } from '../../api'

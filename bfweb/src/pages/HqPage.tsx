@@ -6,7 +6,9 @@
 import { useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import QueryState from '../components/QueryState'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import Map, { Marker, type MapRef } from 'react-map-gl/maplibre'
+import type { MapRef } from 'react-map-gl/maplibre'
+// MapLibre, or the Leaflet map where the browser has no WebGL (DCS's)
+import Map, { Marker } from '../components/GLMap'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 import {

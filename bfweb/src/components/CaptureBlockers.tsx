@@ -1,5 +1,6 @@
 import { useMemo, useState, type CSSProperties } from 'react'
-import Map, { Marker } from 'react-map-gl/maplibre'
+// MapLibre, or Leaflet where the browser has no WebGL (DCS's)
+import Map, { Marker } from './GLMap'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import type { CaptureReport } from '../api'
 import { useTheme } from '@shared/web/theme'

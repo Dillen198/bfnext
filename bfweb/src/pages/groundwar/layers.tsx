@@ -3,7 +3,7 @@
 // engine), and every vehicle. The vehicle source's data is pushed by the
 // engine, never by React, so it can ease positions ten times a second.
 import { memo, useMemo, type ReactElement } from 'react'
-import { Layer, Source } from 'react-map-gl/maplibre'
+import { Layer, Source } from '../../components/GLMap'
 import type { Feature, FeatureCollection } from 'geojson'
 import type { Frontlines, GroundFormation } from '../../api'
 import { EMPTY_FC, PATH_FLOW_LAYER, VEH_SOURCE } from './engine'

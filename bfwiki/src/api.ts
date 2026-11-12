@@ -25,7 +25,9 @@ export const snapshot = createSnapshotSource(import.meta.env.VITE_SNAPSHOT_URL)
 // Same mechanism as bfweb: `undefined` means "let bfdb pick its default", which
 // is what a single-server deployment wants.
 
-const instanceStore = createInstanceStore({ storageKey: 'bfwiki.instance' })
+// `?server=<DCS server name>`: the cockpit panel's WIKI tab knows the
+// server's name, not bfdb's id, like the dashboard's.
+const instanceStore = createInstanceStore({ storageKey: 'bfwiki.instance', serverParam: true })
 
 /** The instance facts are currently being read from, if any. */
 export const getInstance = instanceStore.get

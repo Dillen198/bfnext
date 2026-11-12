@@ -12,7 +12,9 @@
 // and the mouse controller.
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactElement } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import Map, { type MapRef, type ViewStateChangeEvent } from 'react-map-gl/maplibre'
+import type { MapRef, ViewStateChangeEvent } from 'react-map-gl/maplibre'
+// MapLibre, or the Leaflet map where the browser has no WebGL (DCS's)
+import Map from '../components/GLMap'
 import type { MapLibreEvent, Map as MlMap } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { Aircraft, ChevronsLeft, Defend, Info, Pin, Plus, Shield, Strike, X } from '@icons'

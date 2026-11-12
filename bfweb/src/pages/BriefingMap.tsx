@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
-import Map, { Layer, Marker, Source } from 'react-map-gl/maplibre'
+// MapLibre, or the Leaflet map where the browser has no WebGL (DCS's)
+import Map, { Layer, Marker, Source } from '../components/GLMap'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useQuery } from '@tanstack/react-query'
 import {

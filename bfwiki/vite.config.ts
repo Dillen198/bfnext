@@ -15,6 +15,11 @@ export default defineConfig(({ mode }) => {
   const target = env.VITE_BFDB_URL || 'http://localhost:8880'
   return {
     plugins: [react(), tailwindcss()],
+    // The cockpit panel's WIKI tab shows this site in DCS World's embedded
+    // CEF, Chromium 106 (bin-mt/libcef.dll), older than Vite's default
+    // baseline: a syntax error there is a blank panel with no console. Same
+    // as bfweb's vite.config.ts.
+    build: { target: 'chrome106' },
     resolve: {
       // One icon set for every front end in the repo -- see shared/icons/README.md.
       // It sits outside this app, so it has no node_modules to resolve React
