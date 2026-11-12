@@ -18,10 +18,12 @@
 --           what you are carrying and what is lying nearby
 --   STATUS  side, points, lives, crates, aircraft, position, nearest objective
 --   EWR     threat / friendly picture, ground intel, EWR on/off and units
+--   JTAC    your side's JTACs, nearest first: laser code, what each is
+--           lasing, what it sees, threats near its target; a button to its
+--           F10 commands
 --   LOG     every message the server sent you, newest first
---   WIKI    the player wiki: its sections and pages, a search box, the
---           pictures, and this server's own numbers; a link to another
---           page is a button. Works outside multiplayer too
+--   WIKI    wiki.vectorstrike.org in DCS's browser (the panel's own wiki
+--           pages if it does not load). Works outside multiplayer too
 --
 -- UPDATES: when the server has a newer version this downloads its installer
 -- (from the project's GitHub release for that version) and starts it hidden;
@@ -66,7 +68,7 @@
 -- copy it was built with to answer /api/cockpit/plugin/version, and the panel
 -- compares that with its own to tell the player when to update. Keep the
 -- format exactly as it is.
-local BFCOCKPIT_VERSION = "3.6.0"
+local BFCOCKPIT_VERSION = "3.6.1"
 
 local net = require('net')
 
@@ -148,6 +150,10 @@ local DEFAULTS = {
     -- yourself.
     api = "https://api.vectorstrike.org",
 
+    -- The training range's API, asked when the campaign API does not know
+    -- the server. On the range only the air-refuelling lights run.
+    range_api = "https://range-api.vectorstrike.org",
+
     -- Pin to one bfdb instance id (e.g. "vs1") instead of letting the server
     -- name decide. Leave nil unless the panel shows the wrong server. A pin
     -- also tells the panel to trust whatever server you are on with its key
@@ -157,10 +163,9 @@ local DEFAULTS = {
     -- 0.3 (ghost) .. 1.0 (solid).
     opacity = 0.95,
 
-    -- The DASH tab as the hosted web dashboard in DCS's own browser instead
-    -- of the panel's native view (the WEB VIEW button), and where that is.
-    dash_web = false,
+    -- The hosted sites the DASH and WIKI tabs show in DCS's own browser.
     dashboard_url = "https://dashboard.vectorstrike.org",
+    wiki_url = "https://wiki.vectorstrike.org",
 
     -- Used only until the Special options page has been saved once; after
     -- that the page wins.
@@ -382,6 +387,9 @@ local function compute_settings()
     s.wheel_opacity = math.max(0.4, math.min(1.0, tonumber(opt("wheelOpacity", cfg.wheel_opacity)) or 0.9))
     s.wheel_open_at = tostring(opt("wheelOpenAt", cfg.wheel_open_at) or "center")
     s.wheel_nav = tostring(opt("wheelNav", cfg.wheel_nav) or "arrows")
+    s.aar_lights = opt("aarLights", cfg.aar_lights) ~= false
+    s.aar_size = math.max(0.5, math.min(2.0, tonumber(opt("aarSize", cfg.aar_size)) or 1.0))
+    s.aar_pos = tostring(opt("aarPos", cfg.aar_pos) or "right")
 
     local scale = p and tonumber(p.uiScale) or nil
     if not scale or scale <= 0 then scale = tonumber(cfg.scale) end
@@ -399,6 +407,9 @@ local function compute_settings()
 end
 
 settings = compute_settings()
+-- Scale GUI as DCS started with it. It needs a restart to change, so a value
+-- saved in options.lua since then is not what is on screen.
+local GUI_SCALE = settings.gui_scale or 1
 logmsg(string.format("VR %s, scale %.2f, key %s, wheel key %s, comms key %s (from %s)",
     settings.vr and "on" or "off", settings.scale, tostring(settings.toggle_key), tostring(settings.wheel_key),
     settings.open_on_comms and "opens it" or "does not", settings.from_special and "Special options" or "BFCockpit.lua"))
@@ -449,15 +460,19 @@ end
 local skins = {}
 local FONT_PX = 13
 
-local function build_skins()
-    local hdr = px(24)
+-- "0xRRGGBBAA" with its alpha multiplied by `k`.
+local function fade(color, k)
+    local a = tonumber(color:sub(9, 10), 16) or 255
+    return color:sub(1, 8) .. string.format("%02x", math.floor(a * math.max(0, math.min(1, k)) + 0.5))
+end
 
-    -- Window: dark body, our header colours, no close button (the panel has
-    -- its own) and a header tall enough to grab in VR.
+-- Window: dark body, our header colours, no close button (the panel has its
+-- own) and a header tall enough to grab in VR. `body` is the body's colour.
+local function window_skin(body)
     local w = deep_copy(Skin.windowSkin())
     local sd = w.skinData
-    sd.params.headerHeight = hdr
-    sd.states.released[1].bkg = { center_center = C.bg }
+    sd.params.headerHeight = px(24)
+    sd.states.released[1].bkg = { center_center = body }
     local h = sd.skins.header.skinData
     h.params.hasCloseButton = false
     for _, st in pairs(h.states) do
@@ -466,7 +481,11 @@ local function build_skins()
             st[i].text = text_style(C.accent, FONT_BOLD, px(13))
         end
     end
-    skins.window = w
+    return w
+end
+
+local function build_skins()
+    skins.window = window_skin(C.bg)
 
     -- What the window wears while "hidden". DCS's own, so it is known to
     -- draw nothing visible (scratchpad has relied on it for years).
@@ -676,7 +695,9 @@ end
 
 -- What "Is this a Vector Strike server?" found out, for the server `name`.
 local function fresh_server_check()
-    return { name = nil, answer = nil, asking = false, retry_at = -1e9 }
+    -- api: the API this server answered on, when it is not cfg.api (the
+    -- range's); range: true on the training range.
+    return { name = nil, answer = nil, asking = false, retry_at = -1e9, api = nil, range = false }
 end
 local server_check = fresh_server_check()
 
@@ -702,8 +723,8 @@ local pending_raw = {}  -- id -> callback(result), for http.update
 local key_in_query = not (http and http.headers)
 
 -- `params.instance` / `params.server` replace the one this adds itself.
-local function api_url(path, params, authed)
-    local parts = { (tostring(cfg.api):gsub("/+$", "")), path }
+local function api_url(path, params, authed, root)
+    local parts = { (tostring(root or server_check.api or cfg.api):gsub("/+$", "")), path }
     local sep = "?"
     local function add(k, v)
         if v == nil then return end
@@ -729,7 +750,7 @@ end
 
 -- cb(data, err, status): data is the decoded JSON on a 2xx, otherwise err is
 -- a sentence fit to show the player.
-local function api_call(method, path, params, body, authed, cb)
+local function api_call(method, path, params, body, authed, cb, root)
     if not http then
         cb(nil, "bfcockpit_net.dll is missing -- re-run the Vector Strike installer", 0)
         return
@@ -740,7 +761,7 @@ local function api_call(method, path, params, body, authed, cb)
         if not ok then cb(nil, "could not encode request: " .. tostring(s), 0) return end
         json = s
     end
-    local url = api_url(path, params, authed)
+    local url = api_url(path, params, authed, root)
     if cfg.debug then logmsg(method .. " " .. url:gsub("ckey=[^&]*", "ckey=<hidden>")) end
     local headers = nil
     if authed and cockpit_key and http.headers then
@@ -787,7 +808,13 @@ local function deliver(r)
         if ok then data = decoded end
     end
     if r.status >= 200 and r.status < 300 then
-        cb(data, nil, r.status)
+        if data == nil and type(r.body) == 'string' and r.body:match("^%s*<") then
+            -- A bfdb without this route answers it with the dashboard's web
+            -- page (200, HTML) rather than a 404: the same thing to the panel.
+            cb(nil, "not supported by this server yet", 404)
+        else
+            cb(data, nil, r.status)
+        end
     elseif r.status == 404 and type(data) ~= 'table' then
         -- A route this server's bfdb does not have yet (an older deploy).
         cb(nil, "not supported by this server yet", 404)
@@ -834,6 +861,22 @@ local function server_answer(name, yes, why)
     if yes then register_key() end
 end
 
+-- The campaign API did not know `name`: perhaps the training range's does.
+local function ask_range(name, why)
+    local root = cfg.range_api
+    if type(root) ~= 'string' or root == "" then return server_answer(name, false, why) end
+    api_call("GET", "/api/cockpit/plugin/version", { instance = name }, nil, false, function(_, err, status)
+        if server_check.name ~= name then return end
+        if status == 200 then
+            server_check.api, server_check.range = root, true
+            return server_answer(name, true, "the training range API knows " .. name)
+        elseif status == 400 or status == 404 then
+            return server_answer(name, false, why)
+        end
+        return server_answer(name, nil, err)
+    end, root)
+end
+
 local function ask_about_server(name)
     server_check.asking = true
     api_call("GET", "/api/cockpit/plugin/version", { instance = name }, nil, false, function(_, err, status)
@@ -846,7 +889,7 @@ local function ask_about_server(name)
         -- instances turns an unknown one away with 400 here as well.
         api_call("GET", "/api/instances", nil, nil, false, function(data, err2, status2)
             if status2 == 400 then
-                return server_answer(name, false, name .. " is not a server the campaign API knows")
+                return ask_range(name, name .. " is not a server the campaign API knows")
             elseif type(data) ~= 'table' then
                 return server_answer(name, nil, err2)
             end
@@ -856,7 +899,7 @@ local function ask_about_server(name)
             if unnamed then
                 server_answer(name, true, "the campaign API has one campaign and no server names")
             else
-                server_answer(name, false, name .. " is not a server the campaign API knows")
+                ask_range(name, name .. " is not a server the campaign API knows")
             end
         end)
     end)
@@ -881,6 +924,10 @@ end
 
 -- What the panel says on a server that is not confirmed, or nil.
 local function server_refused()
+    if server_check.range and not cfg.instance then
+        return "This is the Vector Strike training range. The panel's campaign features (F10 menu, cargo, "
+            .. "EWR) are not on the range; the air-refuelling lights are, behind any tanker."
+    end
     if cfg.instance or server_check.answer ~= false then return nil end
     return "The campaign API does not know this server (" .. tostring(server_check.name) .. "), so the panel "
         .. "stays off here and does not send its key. If this is a Vector Strike server, set "
@@ -970,6 +1017,8 @@ local TABS = {
     -- the player's own position on its map
     { id = "dash",   label = "DASH",   fetch = { "status" },        every = 5 },
     { id = "ewr",    label = "EWR",    fetch = { "ewr" },           every = 5 },
+    -- "status" for your own position, to put the JTACs in range order
+    { id = "jtac",   label = "JTAC",   fetch = { "jtac", "status" }, every = 5 },
     { id = "log",    label = "LOG",    fetch = {},                  every = 30 },
     -- the wiki fetches for itself (wiki_api.tick): it needs no key
     { id = "wiki",   label = "WIKI",   fetch = {},                  every = 60 },
@@ -989,6 +1038,8 @@ local state = {
     status = nil,        -- last /context
     ewr = nil,           -- last report text
     ewr_mode = "enemy",  -- "enemy" | "friendly" | "intel"
+    jtac = nil,          -- last /jtac: { side, jtacs, me }
+    want_here = nil,     -- { path, until } -- a submenu MENU should open once it exists
     feed = {},           -- messages, oldest first
     feed_next = 0,
     feed_off = false,    -- this server has no /messages yet
@@ -1113,6 +1164,15 @@ fetchers.ewr = function(done)
         on_auth_error(status)
         -- A reply for the mode we have since left is not this mode's picture.
         if data and mode == state.ewr_mode then state.ewr = tostring(data.report or "") end
+        done(err)
+    end)
+end
+
+fetchers.jtac = function(done)
+    api_call("GET", "/api/cockpit/jtac", nil, nil, true, function(data, err, status)
+        on_auth_error(status)
+        if type(data) == 'table' then state.jtac = data end
+        if status == 404 then err = "This server's campaign API has no JTAC list for the panel yet." end
         done(err)
     end)
 end
@@ -1278,7 +1338,7 @@ local function default_geometry()
         w = math.floor(math.min(sw * 0.5, px(600)))
         h = math.floor(math.min(sh * 0.65, px(660)))
     else
-        w = math.floor(math.min(sw * 0.35, px(560)))
+        w = math.floor(math.min(sw * 0.35, px(600)))
         h = math.floor(math.min(sh * 0.6, px(640)))
     end
     return math.floor((sw - w) / 2), math.floor((sh - h) / 2), w, h
@@ -1296,9 +1356,9 @@ local function geometry()
     if gw and gh and gs and gs > 0 and math.abs(gs - settings.scale) > 0.001 then
         gw, gh = math.floor(gw * settings.scale / gs + 0.5), math.floor(gh * settings.scale / gs + 0.5)
     end
-    -- 520 (500 with seven tabs, 460 with six): the narrowest the eight tabs
+    -- 580 (520 with eight tabs, 500 with seven): the narrowest the nine tabs
     -- fit at (bfcockpit/tools/luatest.lua checks it)
-    local w = math.max(px(520), math.min(gw or dw, sw))
+    local w = math.max(px(580), math.min(gw or dw, sw))
     local h = math.max(px(300), math.min(gh or dh, sh))
     local x = math.max(0, math.min(tonumber(g.x) or dx, sw - w))
     local y = math.max(0, math.min(tonumber(g.y) or dy, sh - h))
@@ -1363,7 +1423,10 @@ local function layout()
     -- Second row, per tab.
     local y2 = pad + row + px(6)
     local top = y2
-    local crumb = (state.tab == "menu") or (state.tab == "cargo" and state.cargo_cat ~= nil) or state.tab == "wiki"
+    -- the wiki site brings its own navigation and search
+    local wiki_site = state.tab == "wiki" and wiki_api.web_wanted and wiki_api.web_wanted()
+    local crumb = (state.tab == "menu") or (state.tab == "cargo" and state.cargo_cat ~= nil)
+        or (state.tab == "wiki" and not wiki_site)
     w_back:setVisible(crumb)
     w_crumb:setVisible(crumb)
     show_only(w_ewr, state.tab == "ewr")
@@ -1392,17 +1455,15 @@ local function layout()
         top = y2 + row + px(6)
     end
     -- The wiki's search box, on a row of its own under the crumb.
-    if wiki_api.widgets then show_only(wiki_api.widgets(), state.tab == "wiki") end
-    if state.tab == "wiki" and wiki_api.layout then top = top + wiki_api.layout(pad, top, cw, row, gap) end
-    -- The DASH tab's NATIVE / WEB VIEW row.
-    if dash_api.layout then top = top + dash_api.layout(pad, top, cw, row, gap, state.tab == "dash") end
+    if wiki_api.widgets then show_only(wiki_api.widgets(), state.tab == "wiki" and not wiki_site) end
+    if state.tab == "wiki" and not wiki_site and wiki_api.layout then top = top + wiki_api.layout(pad, top, cw, row, gap) end
 
     local status_h = px(20)
     local em = w_emblem and px(22) or 0
     if w_emblem then w_emblem:setBounds(pad, ch - pad - status_h, em, status_h) end
     w_status:setBounds(pad + em, ch - pad - status_h, cw - pad * 2 - em, status_h)
     w_pane:setBounds(pad, top, cw - pad * 2, math.max(px(40), ch - pad - status_h - px(4) - top))
-    -- In WEB VIEW the browser takes the pane's place.
+    -- On the DASH and WIKI tabs a browser takes the pane's place.
     if dash_api.place then dash_api.place(pad, top, cw - pad * 2, math.max(px(40), ch - pad - status_h - px(4) - top)) end
 end
 
@@ -1594,6 +1655,18 @@ renderers.menu = function()
     local items = state.menu
     if state.errors.menu and not items then return message_rows(state.errors.menu, skins.bad) end
     if not items then return message_rows("Reading your F10 menu...") end
+
+    -- A submenu another tab asked for (the JTAC tab's button): open it as
+    -- soon as it exists, which for one F10 expands on click is a refresh
+    -- after the click.
+    local want = state.want_here
+    if want then
+        if submenu_exists(items, want.path) then
+            state.here, state.want_here = copy_path(want.path), nil
+        elseif os.clock() > want.until_t then
+            state.want_here = nil
+        end
+    end
 
     -- The submenu we were in can vanish under us (an objective flips, a
     -- crate is picked up). Climb until we are somewhere that exists.
@@ -1867,6 +1940,160 @@ renderers.ewr = function()
     return rows
 end
 
+-- ── JTAC ──
+-- Your side's JTACs from /api/cockpit/jtac (the engine's close-air-support
+-- picture, the one the voice controller reads): where each is, its laser
+-- code, what it is lasing or looking at, and the air defences near its
+-- target. Nearest first when your own position is known. The commands stay
+-- in F10 (JTAC > location > JTAC), which this tab opens: that menu is built
+-- lazily by location, so mirroring it here would drift from the real one.
+
+local JTAC_MENU = { "JTAC" }
+local JTAC_EXPAND = { "JTAC>>" }  -- the F10 entry before it is first opened
+
+-- Metres and true bearing from (lat1, lon1) to (lat2, lon2).
+local function range_bearing(lat1, lon1, lat2, lon2)
+    local r = math.rad
+    local p1, p2, dl = r(lat1), r(lat2), r(lon2 - lon1)
+    local a = math.sin((p2 - p1) / 2) ^ 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ^ 2
+    local d = 2 * 6371000 * math.asin(math.min(1, math.sqrt(a)))
+    local y = math.sin(dl) * math.cos(p2)
+    local x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
+    return d, (math.deg(math.atan2(y, x)) + 360) % 360
+end
+
+local function nm(m) return string.format("%.1f nm", (tonumber(m) or 0) / 1852) end
+
+local CARDINAL = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" }
+local function cardinal(deg) return CARDINAL[math.floor(((tonumber(deg) or 0) + 22.5) / 45) % 8 + 1] end
+
+-- "4 T-72B, 2 BTR-80"
+local function groups_text(groups)
+    local parts = {}
+    for _, g in ipairs(list(groups)) do
+        if type(g) == 'table' then parts[#parts + 1] = tostring(tonumber(g.count) or 1) .. " " .. tostring(g.typ or "?") end
+    end
+    return table.concat(parts, ", ")
+end
+
+-- MENU at F10 > JTAC, expanding it first when F10 has not built it yet.
+local function open_jtac_menu()
+    local items = state.menu
+    state.tab = "menu"
+    state.here = {}
+    if type(items) == 'table' and submenu_exists(items, JTAC_MENU) then
+        state.here = copy_path(JTAC_MENU)
+    else
+        local expand = false
+        for _, it in ipairs(list(items)) do
+            if it.command and type(it.path) == 'table' and #it.path == 1 and it.path[1] == JTAC_EXPAND[1] then
+                expand = true
+            end
+        end
+        if expand then invoke(copy_path(JTAC_EXPAND)) end
+        state.want_here = { path = copy_path(JTAC_MENU), until_t = os.clock() + 15 }
+    end
+    refresh_now()
+    render()
+end
+
+renderers.jtac = function()
+    local rows = {}
+    local width = content_width()
+    rows[#rows + 1] = { button = true, x = 0, w = width, skin = skins.go, text = "JTAC COMMANDS IN F10  >",
+                        action = open_jtac_menu }
+    rows[#rows + 1] = { text = "", h = px(4) }
+
+    local d = state.jtac
+    if state.errors.jtac and not d then
+        add_text(rows, state.errors.jtac, skins.bad)
+        return rows
+    end
+    if type(d) ~= 'table' then
+        add_text(rows, "Asking for your side's JTACs...", skins.label)
+        return rows
+    end
+    if state.errors.jtac then add_text(rows, state.errors.jtac, skins.bad) end
+    local side = tostring(d.side or "")
+    if side ~= "blue" and side ~= "red" then
+        add_text(rows, "Pick a slot on a side to see its JTACs.", skins.label)
+        return rows
+    end
+
+    -- Nearest first, from your own position when the server knows it.
+    local slot = type(state.status) == 'table' and type(state.status.slot) == 'table' and state.status.slot or nil
+    local mlat, mlon = slot and tonumber(slot.lat), slot and tonumber(slot.lon)
+    local js = {}
+    for _, j in ipairs(list(d.jtacs)) do
+        if type(j) == 'table' then
+            local e = { j = j }
+            if mlat and mlon and tonumber(j.lat) and tonumber(j.lon) then
+                e.rng, e.brg = range_bearing(mlat, mlon, tonumber(j.lat), tonumber(j.lon))
+            end
+            js[#js + 1] = e
+        end
+    end
+    table.sort(js, function(a, b)
+        if a.rng and b.rng then return a.rng < b.rng end
+        return a.rng ~= nil and b.rng == nil
+    end)
+    if #js == 0 then
+        add_text(rows, "Your side has no JTACs in the field. Deploy one from F10 > Actions, or ask for one.", skins.label)
+        return rows
+    end
+    add_text(rows, string.format("%d JTAC%s on %s", #js, #js == 1 and "" or "s", side:upper()),
+        side == "blue" and skins.blue or skins.red)
+
+    for _, e in ipairs(js) do
+        local j = e.j
+        rows[#rows + 1] = { text = "", h = px(6) }
+        local kind = j.airborne and "airborne" or "ground"
+        rows[#rows + 1] = { text = string.format("%s   CODE %s   %s", tostring(j.callsign or j.id or "JTAC"):upper(),
+            tostring(j.laser_code or "?"), kind:upper()), skin = skins.head }
+        if e.rng then
+            add_text(rows, string.format("From you %03d° %s", math.floor(e.brg + 0.5), nm(e.rng)), skins.text)
+        end
+        if present(j.location_name) then
+            add_text(rows, string.format("Working %s, %03d° %s from it", tostring(j.location_name),
+                tonumber(j.location_brg) or 0, nm(j.location_rng_m)), skins.label)
+        end
+        if tonumber(j.lat) and tonumber(j.lon) then
+            add_text(rows, string.format("At %s %s  %d ft", ddm(tonumber(j.lat), "N", "S", 2), ddm(tonumber(j.lon), "E", "W", 3),
+                math.floor((tonumber(j.alt_m) or 0) * 3.28084 + 0.5)), skins.label)
+        end
+        local t = j.target
+        if type(t) == 'table' then
+            local what = tostring(t.typ or "target")
+            if (tonumber(t.group_size) or 0) > 1 then what = what .. " (" .. tostring(t.group_size) .. " in the area)" end
+            add_text(rows, (t.lasing and "LASING " or "TARGET ") .. what, t.lasing and skins.good or skins.warn)
+            add_text(rows, string.format("  %03d° %s from the JTAC, elev %d ft", tonumber(t.brg) or 0, nm(t.rng_m),
+                tonumber(t.elev_ft) or 0), skins.text)
+            if tonumber(t.lat) and tonumber(t.lon) then
+                add_text(rows, "  " .. ddm(tonumber(t.lat), "N", "S", 2) .. " " .. ddm(tonumber(t.lon), "E", "W", 3), skins.text)
+            end
+        else
+            add_text(rows, "No target", skins.label)
+        end
+        local n = tonumber(j.contact_count) or 0
+        if n > 0 then
+            local g = groups_text(j.contacts)
+            add_text(rows, string.format("Sees %d%s", n, g ~= "" and (": " .. g) or ""), skins.text)
+        end
+        local th = groups_text(j.threats)
+        if th ~= "" then add_text(rows, "Threats near the target: " .. th, skins.bad) end
+        local f = tonumber(j.nearest_friendly_m)
+        if f then
+            add_text(rows, string.format("Friendlies %d m %s of the target%s", math.floor(f + 0.5),
+                cardinal(j.nearest_friendly_brg), f < 1000 and " -- DANGER CLOSE" or ""), f < 1000 and skins.bad or skins.label)
+        end
+        local extra = {}
+        if j.ir_pointer then extra[#extra + 1] = "IR pointer on" end
+        if j.artillery_available then extra[#extra + 1] = "artillery available" end
+        if #extra > 0 then add_text(rows, table.concat(extra, "  ·  "), skins.label) end
+    end
+    return rows
+end
+
 local SCOPE_SKIN = { you = "good", side = "blue", all = "text", chat = "label" }
 local SCOPE_TAG = { you = "YOU", side = "SIDE", all = "ALL", chat = "CHAT" }
 
@@ -1895,7 +2122,10 @@ render = function()
     if not window or not visible then return end
     local ok, err = pcall(function()
         layout()
-        if state.tab == "wiki" then
+        if state.tab == "wiki" and wiki_api.web_shown and wiki_api.web_shown() then
+            -- the wiki site is in the pane's place
+            draw_rows({})
+        elseif state.tab == "wiki" then
             -- Public pages: no key and no server check, so the wiki reads
             -- anywhere, single player included.
             draw_rows(renderers.wiki())
@@ -1957,9 +2187,25 @@ local function label_widget(text)
     return s
 end
 
+-- With Scale GUI at anything but 1, DCS draws a window whose opacity is below
+-- 1 as its frame and title only: every button and line of text in it goes.
+-- There the window stays solid and the see-through setting fades its body.
+local function apply_opacity()
+    local op = math.max(0.3, math.min(1.0, tonumber(cfg.opacity) or 0.95))
+    if math.abs(GUI_SCALE - 1) < 0.001 then
+        window:setOpacity(op)
+    else
+        window:setOpacity(1)
+        window:setSkin(op < 1 and window_skin(fade(C.bg, op)) or skins.window)
+    end
+end
+
 local function set_opacity(v)
     cfg.opacity = math.max(0.3, math.min(1.0, v))
-    if window and visible then pcall(function() window:setOpacity(cfg.opacity) end) end
+    if window and visible then
+        local ok, err = pcall(apply_opacity)
+        if not ok then logmsg("opacity failed: " .. tostring(err)) end
+    end
     geometry_dirty = true
 end
 
@@ -2130,6 +2376,9 @@ hide = function()
     visible = false
     local ok, err = pcall(function()
         if wiki_api.unfocus then wiki_api.unfocus() end
+        -- the browsers ignore setVisible: shrink them (dash_api.place) first,
+        -- since that also decides whether the pane shows
+        if dash_api.place then dash_api.place(0, 0, 0, 0) end
         for _, c in ipairs(children()) do c:setVisible(false) end
         for _, c in ipairs(tab_widgets()) do c:setVisible(false) end
         window:setSkin(skins.hidden)
@@ -2155,7 +2404,7 @@ show = function()
             window:setVisible(true)
             window:setSkin(skins.window)
             window:setBounds(x, y, w, h)
-            window:setOpacity(tonumber(cfg.opacity) or 0.95)
+            apply_opacity()
             window:setHasCursor(true)
             for _, c in ipairs(children()) do c:setVisible(true) end
         end)
@@ -4783,20 +5032,23 @@ local function can_ask()
     return server_confirmed()
 end
 
--- ── WEB VIEW ──
--- Opt-in: the hosted web dashboard (cfg.dashboard_url) in DCS's own embedded
--- browser (dxgui's WebViewWidget, CEF), in the pane's place. Version 1 of
--- this plugin was a web page and was given up because that browser changes
--- between DCS builds and a page that fails is a grey box with no console,
--- so here the native view is the default, and anything short of the page
--- reporting itself loaded within WEB_DEADLINE seconds puts it back, with a
--- note saying why. The timing below is v1's, learned the hard way: when the
--- browser exists has flipped between DCS builds, so the load hangs off
--- browserCreated, registered before insertWidget, with a fallback if it
--- never fires.
+-- ── WEB VIEWS ──
+-- The DASH and WIKI tabs are the hosted sites -- the dashboard
+-- (cfg.dashboard_url) and the wiki (cfg.wiki_url) -- in DCS's own embedded
+-- browser (dxgui's WebViewWidget, CEF), in the pane's place, one browser
+-- each. Version 1 of this plugin was a web page and was given up because that
+-- browser changes between DCS builds and a page that fails is a grey box with
+-- no console, so each tab's native view stays as its fallback: a DCS without
+-- the browser, or a page that has not reported itself loaded within
+-- WEB_DEADLINE seconds, gets it, with a note saying why, until the next
+-- server. There is no button for it. The timing below is v1's, learned the
+-- hard way: when the browser exists has flipped between DCS builds, so the
+-- load hangs off browserCreated, registered before insertWidget, with a
+-- fallback if it never fires.
 
 local WEB_CREATED_WAIT = 2    -- seconds to wait for browserCreated
 local WEB_DEADLINE = 10       -- seconds for the page to report itself loaded
+local WEB_HIDDEN = 1          -- a hidden browser's size; see dash_api.place
 
 local WebViewWidget = nil
 do
@@ -4804,141 +5056,168 @@ do
     if ok and type(mod) == 'table' then WebViewWidget = mod end
 end
 
-local WEB = {
-    view = nil,         -- the WebViewWidget, made the first time WEB VIEW is picked
-    ready = false,      -- browserCreated has fired (or its wait ran out)
-    created_at = 0,
-    loaded_for = nil,   -- the server the page was loaded for
-    deadline = nil,     -- os.clock() by which onPageLoaded must have come
-    failed = nil,       -- why it was given up this session
-    shown = false,
-}
-local w_native, w_web
-
--- WEB VIEW is what the player chose and it has not failed this session.
-local function web_on()
-    return cfg.dash_web == true and WebViewWidget ~= nil and not WEB.failed
-end
-
-local function web_fail(why)
-    if WEB.failed then return end
-    WEB.failed = tostring(why)
-    WEB.deadline = nil
-    logmsg("dashboard web view given up: " .. WEB.failed)
-    set_note("Web view did not load (" .. WEB.failed .. ") -- showing the panel's own view", true)
-    render()
-end
-
--- The hosted dashboard, on this server's campaign: it reads ?instance= and
--- ?server= (the DCS server's own name) like the panel's API calls do.
-local function web_url()
-    local base = (tostring(cfg.dashboard_url or "https://dashboard.vectorstrike.org"):gsub("/+$", ""))
+-- A hosted site, on this server's campaign: both read ?instance= and
+-- ?server= (the DCS server's own name) like the panel's API calls do, and
+-- ?theme=dark (DCS's browser profile reports a light OS theme).
+local function site_url(base)
+    base = (tostring(base):gsub("/+$", ""))
     local which = cfg.instance and ("instance=" .. urlencode(cfg.instance))
         or (server_name() and ("server=" .. urlencode(server_name())))
     return base .. "/?" .. (which and (which .. "&") or "") .. "theme=dark"
 end
 
-local function web_load(reason)
-    if not WEB.view then return end
-    local url = web_url()
-    local ok, err = pcall(function() WEB.view:cefLoadUrl(url) end)
-    if not ok then return web_fail("cefLoadUrl: " .. tostring(err)) end
-    WEB.loaded_for = server_key()
-    WEB.deadline = os.clock() + WEB_DEADLINE
-    logmsg("dashboard web view: loading " .. url .. " (" .. reason .. ")")
+-- One tab's browser. `needs_server`: wait until this server is confirmed
+-- (the dashboard; the wiki is public and reads anywhere).
+local function new_web(tab, label, url, needs_server)
+    return {
+        tab = tab, label = label, url = url, needs_server = needs_server,
+        view = nil,         -- the WebViewWidget, made the first time its tab shows
+        ready = false,      -- browserCreated has fired (or its wait ran out)
+        created_at = 0,
+        loaded_for = nil,   -- the server the page was loaded for
+        deadline = nil,     -- os.clock() by which onPageLoaded must have come
+        failed = nil,       -- why it was given up on this server
+        shown = false,
+    }
 end
 
-local function web_make()
-    if WEB.view or not window then return end
+local WEB = new_web("dash", "dashboard",
+    function() return site_url(cfg.dashboard_url or "https://dashboard.vectorstrike.org") end, true)
+local WIKI_WEB = new_web("wiki", "wiki",
+    function() return site_url(cfg.wiki_url or "https://wiki.vectorstrike.org") end, false)
+local WEBS = { WEB, WIKI_WEB }
+
+-- This DCS has the browser and the page has not failed on this server.
+local function web_on(web)
+    return WebViewWidget ~= nil and not web.failed
+end
+
+local function web_may_load(web)
+    return not web.needs_server or can_ask()
+end
+
+local function web_fail(web, why)
+    if web.failed then return end
+    web.failed = tostring(why)
+    web.deadline = nil
+    logmsg(web.label .. " web view given up: " .. web.failed)
+    set_note("The " .. web.label .. " did not load (" .. web.failed .. ") -- showing the panel's own view", true)
+    render()
+end
+
+local function web_load(web, reason)
+    if not web.view then return end
+    local url = web.url()
+    local ok, err = pcall(function() web.view:cefLoadUrl(url) end)
+    if not ok then return web_fail(web, "cefLoadUrl: " .. tostring(err)) end
+    web.loaded_for = server_key()
+    web.deadline = os.clock() + WEB_DEADLINE
+    logmsg(web.label .. " web view: loading " .. url .. " (" .. reason .. ")")
+end
+
+local function web_make(web)
+    if web.view or not window then return end
     local ok, err = pcall(function()
         local v = WebViewWidget.new()
-        WEB.view, WEB.ready, WEB.created_at = v, false, os.clock()
+        web.view, web.ready, web.created_at = v, false, os.clock()
         pcall(function()
             v:browserCreated(function()
-                WEB.ready = true
-                if web_on() and can_ask() then web_load("browserCreated") end
+                web.ready = true
+                if web_on(web) and web_may_load(web) then web_load(web, "browserCreated") end
             end)
         end)
         pcall(function()
             v:onPageLoaded(function()
-                WEB.deadline = nil
-                logmsg("dashboard web view: page loaded")
+                web.deadline = nil
+                logmsg(web.label .. " web view: page loaded")
             end)
         end)
         pcall(function()
-            v:onMountFailed(function() web_fail("the page failed to load") end)
+            v:onMountFailed(function() web_fail(web, "the page failed to load") end)
         end)
+        -- never an empty size, even for a moment (WEB_HIDDEN)
+        v:setBounds(0, 0, WEB_HIDDEN, WEB_HIDDEN)
         v:setVisible(false)
         window:insertWidget(v)
     end)
     if not ok then
-        WEB.view = nil
-        web_fail("could not make the browser: " .. tostring(err))
+        web.view = nil
+        web_fail(web, "could not make the browser: " .. tostring(err))
+    end
+end
+
+-- Every frame while its tab shows: the page is due (a new server cleared a
+-- failure, or this one was just confirmed) but the native view still shows,
+-- so redraw to swap them; then load it, or give up on it.
+local function web_tick(web, now)
+    if visible and state.tab == web.tab and not web.shown and web_on(web) and web_may_load(web) then render() end
+    if not web.shown then return end
+    if not web.ready and now - web.created_at > WEB_CREATED_WAIT then
+        web.ready = true
+        logmsg(web.label .. " web view: browserCreated never fired, loading anyway")
+    end
+    if web.ready and web.loaded_for ~= server_key() and web_may_load(web) then web_load(web, "shown") end
+    if web.deadline and now > web.deadline then
+        web_fail(web, "no answer from the page in " .. WEB_DEADLINE .. " s")
     end
 end
 
 dash_api.create = function()
-    -- a new window: its old browser went with the old one
-    WEB.view, WEB.ready, WEB.loaded_for, WEB.deadline, WEB.shown = nil, false, nil, nil, false
-    local function mode(web)
-        return function()
-            if web and not WebViewWidget then
-                set_note("This DCS has no web view (WebViewWidget) -- the panel's own view it is", true)
-                return
-            end
-            cfg.dash_web = web
-            save_config()
-            if web then WEB.failed, WEB.loaded_for = nil, nil end
-            render()
-        end
+    -- a new window: its old browsers went with the old one
+    for _, web in ipairs(WEBS) do
+        web.view, web.ready, web.loaded_for, web.deadline, web.shown = nil, false, nil, nil, false
     end
-    w_native = tool_button("NATIVE", "The panel's own dashboard", mode(false))
-    w_web = tool_button("WEB VIEW", "The web dashboard, in DCS's browser", mode(true))
+    if not WebViewWidget then logmsg("this DCS has no WebViewWidget: DASH and WIKI are the panel's own views") end
 end
 
 dash_api.widgets = function()
     local out = {}
-    for _, w in ipairs({ w_native, w_web, WEB.view }) do if w then out[#out + 1] = w end end
+    for _, web in ipairs(WEBS) do if web.view then out[#out + 1] = web.view end end
     return out
 end
 
--- The mode row at y, when the tab shows; returns the height it took.
-dash_api.layout = function(pad, y, cw, row, gap, on)
-    for _, w in ipairs({ w_native, w_web }) do w:setVisible(on) end
-    if not on then return 0 end
-    local bw = math.floor((cw - pad * 2 - gap) / 2)
-    local web = web_on()
-    w_native:setBounds(pad, y, bw, row)
-    w_web:setBounds(pad + bw + gap, y, bw, row)
-    w_native:setSkin(web and skins.tool or skins.tab_on)
-    w_web:setSkin(web and skins.tab_on or skins.tool)
-    return row + px(6)
+-- The WIKI tab is about to show its site (layout() leaves out the native
+-- wiki's crumb and search box then).
+wiki_api.web_wanted = function()
+    return visible and state.tab == "wiki" and web_on(WIKI_WEB)
 end
+wiki_api.web_shown = function() return WIKI_WEB.shown end
 
--- The browser in the pane's place while WEB VIEW is on; the pane otherwise.
+-- Each browser in the pane's place on its tab; the pane otherwise.
+--
+-- DCS keeps drawing a WebViewWidget's last page after setVisible(false), on
+-- top of whatever the panel shows next (seen in 2.9.31: the dashboard stayed
+-- over MENU), so a browser that should not show is also shrunk to 1x1.
+-- Not 0x0: CEF stops on an empty view size and takes DCS with it (a
+-- BREAKPOINT in libcef.dll on CrBrowserMain, 2.9.31).
 dash_api.place = function(x, y, w, h)
-    local on = visible and state.tab == "dash" and web_on() and (not in_multiplayer() or can_ask())
-    if on and not WEB.view then web_make() end
-    if WEB.view then
-        pcall(function()
-            WEB.view:setBounds(x, y, w, h)
-            WEB.view:setVisible(on)
-        end)
+    local any = false
+    for _, web in ipairs(WEBS) do
+        local on = visible and state.tab == web.tab and web_on(web) and web_may_load(web)
+        if on and not web.view then web_make(web) end
+        if web.view then
+            pcall(function()
+                if on then
+                    web.view:setBounds(x, y, w, h)
+                else
+                    web.view:setBounds(x, y, WEB_HIDDEN, WEB_HIDDEN)
+                end
+                web.view:setVisible(on)
+            end)
+        end
+        web.shown = on and web.view ~= nil
+        any = any or web.shown
     end
-    WEB.shown = on and WEB.view ~= nil
-    pcall(function() w_pane:setVisible(not WEB.shown) end)
+    pcall(function() w_pane:setVisible(not any) end)
 end
 
--- Every frame while the tab shows (from dash_api.tick).
-local function web_tick(now)
-    if not WEB.shown then return end
-    if not WEB.ready and now - WEB.created_at > WEB_CREATED_WAIT then
-        WEB.ready = true
-        logmsg("dashboard web view: browserCreated never fired, loading anyway")
-    end
-    if WEB.ready and WEB.loaded_for ~= server_key() and can_ask() then web_load("shown") end
-    if WEB.deadline and now > WEB.deadline then
-        web_fail("no answer from the page in " .. WEB_DEADLINE .. " s")
+-- The WIKI tab's frame: the site's, else the native wiki's.
+do
+    local native_tick = wiki_api.tick
+    wiki_api.tick = function(now)
+        web_tick(WIKI_WEB, now)
+        if WIKI_WEB.shown then return end
+        if native_tick then native_tick(now) end
     end
 end
 
@@ -4959,7 +5238,7 @@ local function fetch()
 end
 
 dash_api.tick = function(now)
-    web_tick(now)
+    web_tick(WEB, now)
     -- the web page fetches for itself
     if WEB.shown or D.inflight or now - D.at < DASH_EVERY or not can_ask() then return end
     D.at = now
@@ -4968,7 +5247,8 @@ end
 
 dash_api.reset = function()
     D.data, D.err, D.at, D.inflight = nil, nil, -1e9, false
-    WEB.loaded_for, WEB.deadline = nil, nil
+    -- a new server tries the pages again
+    for _, web in ipairs(WEBS) do web.loaded_for, web.deadline, web.failed = nil, nil, nil end
     for k, m in pairs(D.maps) do
         if m.state ~= "ready" then D.maps[k] = nil end
     end
@@ -5313,17 +5593,362 @@ end
 
 if rawget(_G, "BFCOCKPIT_TEST") then
     BFCOCKPIT_TEST.dash = { D = D, WEB = WEB, range_brg = range_brg, snap = snap, DASH_DIR = DASH_DIR, MARKER = MARKER,
-                            buttons = function() return w_native, w_web end }
+                            WIKI_WEB = WIKI_WEB, web_on = function() return web_on(WEB) end }
 end
 end
 dash_module()
+
+-- ── Refuelling lights ────────────────────────────────────────────────
+-- A small see-through repeater of a tanker's director lights, shown while
+-- you are behind a tanker (Options -> Special -> Air refuelling).
+--
+-- The server runs with object export off, so this script can read its own jet
+-- but not the tanker. The engine works out where you are relative to the
+-- tanker five times a second (bfprotocols/src/aar.rs) and bfdb serves your cue
+-- at /api/cockpit/aar. Behind a KC-135 the two columns are the tanker's own
+-- lights, read from its model; behind a drogue tanker they steer you to where
+-- your jet type has made contact before (or to a built-in estimate), with the
+-- pod's light below.
+--
+-- Between updates the cue is moved on with your own velocity in the tanker's
+-- frame (LoGetVectorVelocity, an own-ship export servers allow), so it
+-- follows your inputs at frame rate rather than five times a second.
+--
+-- Columns, top to bottom: UP/DOWN is D (red, green), centre, (green, red) U;
+-- FORE/AFT is F (red, green), centre, (green, red) A -- a lit D means fly
+-- down, a lit F means fly forward, as on the real tanker's belly.
+
+local aar_api = {}
+local function aar_module()
+local A = {
+    cue = nil,         -- the last cue from bfdb
+    got_at = 0,        -- os.clock() when it arrived
+    age0 = 0,          -- how old bfdb said it was then, seconds
+    inflight = false,
+    next_poll = 0,
+    win = nil, w = {}, shown = false, built_for = nil,
+}
+local POLL_ACTIVE, POLL_IDLE, POLL_UNSUPPORTED = 0.2, 2.0, 120
+-- Requests take about this long one way; the cue is that much older again.
+local LATENCY = 0.1
+-- Never move a cue on by more than this: past it, it is stale, not late.
+local MAX_AGE = 1.0
+
+local COL = {
+    red = "0xff3b30ff", green = "0x3ce25eff", amber = "0xffb020ff",
+    off = "0x1f241bd0", frame = "0x0d1009a0", text = "0xcdd4beff", dim = "0x8a9678ff",
+    ink = "0x0d1009ff",
+}
+
+local function dot(a, b) return a[1] * b[1] + a[2] * b[2] + a[3] * b[3] end
+
+-- Same bands as bfprotocols::aar::level: a positive error asks for a
+-- negative correction.
+local function level(err, tol)
+    local a = math.abs(err) / math.max(tol, 0.01)
+    local m = (a < 0.4 and 0) or (a < 1.2 and 1) or 2
+    if err > 0 then return -m end
+    return m
+end
+
+local function v3(t)
+    if type(t) ~= 'table' then return nil end
+    local x, y, z = tonumber(t[1] or t.x), tonumber(t[2] or t.y), tonumber(t[3] or t.z)
+    if not (x and y and z) then return nil end
+    return { x, y, z }
+end
+
+-- The cue moved on by `age` seconds of relative motion: returns the error
+-- (fwd, up, right; nil without one) and the lights to show { ud, fa, lat }.
+local function project(cue, vself, age)
+    local err = v3(cue.err)
+    local tvel, tx, ty, tz = v3(cue.tvel), v3(cue.tx), v3(cue.ty), v3(cue.tz)
+    if err and vself and tvel and tx and ty and tz then
+        age = math.max(0, math.min(MAX_AGE, age or 0))
+        local dv = { vself[1] - tvel[1], vself[2] - tvel[2], vself[3] - tvel[3] }
+        err = { err[1] + dot(dv, tx) * age, err[2] + dot(dv, ty) * age, err[3] + dot(dv, tz) * age }
+    end
+    local tol = v3(cue.tol) or { 3, 2, 2 }
+    local ud, fa, lat = tonumber(cue.ud), tonumber(cue.fa), tonumber(cue.lat)
+    if cue.source ~= "tanker" and err then
+        ud, fa = level(err[2], tol[2]), level(err[1], tol[1])
+    end
+    if err then lat = level(err[3], tol[3]) end
+    return err, { ud = ud, fa = fa, lat = lat }
+end
+aar_api.project = project
+aar_api.level = level
+
+-- Which of the five lamps in a column is lit (1 = top), and its colour.
+-- UD: -2 (fly down, red) at the top; FA: +2 (fly forward, red) at the top.
+local function lamp(column, v)
+    if v == nil then return nil end
+    v = math.max(-2, math.min(2, math.floor(v + 0.5)))
+    local row = column == "ud" and (v + 3) or (3 - v)
+    local color = (math.abs(v) == 2) and "red" or "green"
+    return row, color
+end
+aar_api.lamp = lamp
+
+local GLYPH = {
+    ud = { "▼", "▼", "‖", "▲", "▲" },
+    fa = { "■", "■", "‖", "■", "■" },
+}
+
+-- ── Drawing ──
+local skin_cache = {}
+local function box_skin(bkg, fg, size, bold)
+    local key = bkg .. fg .. size .. tostring(bold)
+    local s = skin_cache[key]
+    if not s then
+        s = deep_copy(Skin.staticSkin())
+        s.skinData.params.textWrapping = false
+        for _, st in pairs(s.skinData.states) do
+            for i in pairs(st) do
+                st[i].text = text_style(fg, bold and FONT_BOLD or FONT, size, "middle")
+                st[i].bkg = bkg ~= "" and { center_center = bkg } or nil
+            end
+        end
+        skin_cache[key] = s
+    end
+    return s
+end
+
+-- Layout, in units of the "Lights size" setting at 100%.
+local W, H = 150, 214
+local COLX = { ud = 26, fa = 88 }
+local LAMP_W, LAMP_H, LAMP_GAP, LAMP_TOP = 36, 20, 4, 44
+
+local function u(n) return math.floor(n * settings.aar_size * (settings.vr and 1.3 or 1) + 0.5) end
+
+local function shape()
+    return string.format("%.2f|%s|%s", settings.aar_size, settings.aar_pos, tostring(settings.vr))
+end
+
+local function destroy()
+    if A.win then pcall(function() A.win:kill() end) end
+    A.win, A.w, A.shown, A.built_for = nil, {}, false, nil
+end
+
+local function place()
+    local ok, sw, sh = pcall(function() return dxgui.GetScreenSize() end)
+    sw, sh = ok and tonumber(sw) or 1920, ok and tonumber(sh) or 1080
+    local w, h = u(W), u(H)
+    local x, y
+    local pos = settings.aar_pos
+    if pos == "left" then x, y = math.floor(sw * 0.38) - w, math.floor(sh * 0.45)
+    elseif pos == "top" then x, y = math.floor((sw - w) / 2), math.floor(sh * 0.10)
+    elseif pos == "bottom" then x, y = math.floor((sw - w) / 2), math.floor(sh * 0.68)
+    else x, y = math.floor(sw * 0.62), math.floor(sh * 0.45) end
+    return x, y, w, h
+end
+
+local function build()
+    destroy()
+    local x, y, w, h = place()
+    local win = Window.new(x, y, w, h, "")
+    win:setSkin(skins.hidden)
+    pcall(function() win:setZOrder(110) end)
+    pcall(function() win:setHasCursor(false) end)
+    -- clicks go through to the cockpit underneath
+    pcall(function() win:setTransparentForUserInput(true) end)
+    local function st()
+        local s = Static.new("")
+        win:insertWidget(s)
+        s:setVisible(false)
+        return s
+    end
+    A.w.frame = st()
+    A.w.title, A.w.tag = st(), st()
+    A.w.label = { ud = { st(), st() }, fa = { st(), st() } }
+    A.w.lamps = { ud = {}, fa = {} }
+    for i = 1, 5 do A.w.lamps.ud[i] = st(); A.w.lamps.fa[i] = st() end
+    A.w.left, A.w.right = st(), st()
+    A.w.pod = st()
+    A.w.info = st()
+    A.win = win
+    A.built_for = shape()
+    win:setVisible(false)
+end
+
+local function put(wdg, text, bkg, fg, size, bold, x, y, w, h)
+    local key = table.concat({ text or "", bkg, fg, size, tostring(bold), x, y, w, h }, "|")
+    if wdg.__k == key then return end
+    wdg.__k = key
+    wdg:setSkin(box_skin(bkg, fg, u(size), bold))
+    wdg:setText(text or "")
+    wdg:setBounds(u(x), u(y), u(w), u(h))
+    wdg:setVisible(true)
+end
+
+local function hide_w(wdg)
+    if wdg.__k ~= nil then
+        wdg.__k = nil
+        wdg:setVisible(false)
+    end
+end
+
+local SOURCE_TAG = { tanker = "TANKER", learned = "LEARNED", estimate = "EST" }
+local POD_TEXT = { red = "BACK OFF", amber = "CLEARED", green = "FUEL" }
+
+-- The correction to fly, as the lights say it: "DN 1.2  L 0.6  FWD 2.0 m".
+local function fmt_err(err)
+    local function axis(v, pos, neg)
+        if math.abs(v) < 0.3 then return nil end
+        return string.format("%s %.1f", v > 0 and neg or pos, math.abs(v))
+    end
+    local parts = {}
+    for _, p in ipairs({ axis(err[2], "UP", "DN") or false, axis(err[3], "R", "L") or false,
+                         axis(err[1], "FWD", "AFT") or false }) do
+        if p then parts[#parts + 1] = p end
+    end
+    if #parts == 0 then return "ON POSITION" end
+    return table.concat(parts, "  ") .. " m"
+end
+aar_api.fmt_err = fmt_err
+
+local function draw(cue, err, lights)
+    if not A.win then build() end
+    local w = A.w
+    put(w.frame, "", COL.frame, COL.text, 10, false, 0, 0, W, H)
+    put(w.title, tostring(cue.tanker or "TANKER"):upper(), "", COL.text, 11, true, 4, 2, W - 50, 18)
+    put(w.tag, SOURCE_TAG[cue.source] or "", "", COL.dim, 9, true, W - 48, 2, 44, 18)
+    for _, col in ipairs({ "ud", "fa" }) do
+        local letters = col == "ud" and { "D", "U" } or { "F", "A" }
+        put(w.label[col][1], letters[1], "", COL.dim, 11, true, COLX[col], 22, LAMP_W, 18)
+        put(w.label[col][2], letters[2], "", COL.dim, 11, true, COLX[col], LAMP_TOP + 5 * (LAMP_H + LAMP_GAP), LAMP_W, 18)
+        local row, color = lamp(col, lights[col])
+        for i = 1, 5 do
+            local lit = row == i
+            local bkg = lit and COL[color] or COL.off
+            local fg = lit and COL.ink or COL.dim
+            put(w.lamps[col][i], GLYPH[col][i], bkg, fg, 12, true,
+                COLX[col], LAMP_TOP + (i - 1) * (LAMP_H + LAMP_GAP), LAMP_W, LAMP_H)
+        end
+    end
+    -- left / right, beside the centre lamps
+    local lat = lights.lat
+    local cy = LAMP_TOP + 2 * (LAMP_H + LAMP_GAP)
+    local function side(wdg, glyph, on, x)
+        local c = on and (math.abs(lat) == 2 and COL.red or COL.green) or COL.off
+        put(wdg, glyph, c, on and COL.ink or COL.dim, 11, true, x, cy, 18, LAMP_H)
+    end
+    side(w.left, "◄", lat ~= nil and lat < 0, 4)
+    side(w.right, "►", lat ~= nil and lat > 0, W - 22)
+    -- the drogue pod's light; a boom shows CONTACT while connected
+    local pod = cue.pod
+    if cue.method == "boom" and cue.connected then pod = "green" end
+    local pod_y = LAMP_TOP + 5 * (LAMP_H + LAMP_GAP) + 20
+    if type(pod) == 'string' and COL[pod] then
+        local text = (cue.method == "boom" and pod == "green") and "CONTACT" or POD_TEXT[pod]
+        put(w.pod, text, COL[pod], COL.ink, 11, true, 8, pod_y, W - 16, 18)
+    else
+        hide_w(w.pod)
+    end
+    local info
+    if err then
+        info = fmt_err(err)
+    elseif cue.source == "none" then
+        info = string.format("%d m  %+.0f kt", math.floor((tonumber(cue.range_m) or 0) + 0.5),
+            tonumber(cue.closure_kts) or 0)
+    end
+    if info then
+        put(w.info, info, "", COL.text, 10, false, 2, pod_y + 20, W - 4, 16)
+    else
+        hide_w(w.info)
+    end
+    if not A.shown then
+        A.win:setVisible(true)
+        A.shown = true
+    end
+end
+
+local function hide_lights()
+    if A.win and A.shown then
+        pcall(function() A.win:setVisible(false) end)
+    end
+    A.shown = false
+end
+
+-- ── Polling ──
+local function own_velocity()
+    if type(Export) ~= 'table' or type(Export.LoGetVectorVelocity) ~= 'function' then return nil end
+    local ok, v = pcall(Export.LoGetVectorVelocity)
+    if ok then return v3(v) end
+    return nil
+end
+
+local function flying()
+    if type(Export) ~= 'table' or type(Export.LoGetSelfData) ~= 'function' then return false end
+    local ok, me = pcall(Export.LoGetSelfData)
+    return ok and type(me) == 'table'
+end
+
+local function poll()
+    A.inflight = true
+    api_call("GET", "/api/cockpit/aar", nil, nil, true, function(data, err, status)
+        A.inflight = false
+        local t = os.clock()
+        if status == 401 then on_auth_error(401) end
+        if type(data) == 'table' and type(data.cue) == 'table' then
+            A.cue, A.got_at = data.cue, t
+            A.age0 = (tonumber(data.age_ms) or 0) / 1000
+            A.next_poll = t + POLL_ACTIVE
+        else
+            A.cue = nil
+            -- an older bfdb has no such route: ask again much later
+            A.next_poll = t + (status == 404 and POLL_UNSUPPORTED or POLL_IDLE)
+            if status ~= 200 and status ~= 404 and cfg.debug then
+                logmsg("aar: " .. tostring(err))
+            end
+        end
+    end)
+end
+
+aar_api.tick = function(now)
+    if not (settings.aar_lights and in_multiplayer() and flying()) then
+        A.cue = nil
+        hide_lights()
+        return
+    end
+    if A.win and A.built_for ~= shape() then destroy() end
+    -- The panel's key; in a jet it is sent without opening the panel
+    -- (register_key asks the API first, and sends at most every 15 s).
+    if not key_ready_at then register_key() return end
+    if now < key_ready_at then return end
+    if not A.inflight and now >= A.next_poll then poll() end
+    local cue = A.cue
+    if not cue or now - A.got_at > 2 then
+        hide_lights()
+        return
+    end
+    local err, lights = project(cue, own_velocity(), (now - A.got_at) + A.age0 + LATENCY)
+    local ok, e = pcall(draw, cue, err, lights)
+    if not ok then
+        logmsg("aar: drawing the lights failed: " .. tostring(e))
+        destroy()
+    end
+end
+
+aar_api.reset = function()
+    A.cue, A.inflight, A.next_poll = nil, false, 0
+    hide_lights()
+end
+
+aar_api.destroy = destroy
+
+if rawget(_G, "BFCOCKPIT_TEST") then BFCOCKPIT_TEST.aar = { A = A, api = aar_api } end
+end
+aar_module()
 
 -- ── DCS callbacks ────────────────────────────────────────────────────
 
 local create_failed = false
 
 local function reset_session()
+    if aar_api.reset then pcall(aar_api.reset) end
     state.menu, state.status, state.ewr, state.cargo = nil, nil, nil, nil
+    state.jtac, state.want_here = nil, nil
     state.here, state.errors, state.note, state.cargo_cat = {}, {}, nil, nil
     state.feed, state.feed_next, state.feed_off, state.unread, state.answer = {}, 0, false, 0, nil
     state.checked_version = false
@@ -5340,6 +5965,7 @@ local function rebuild(reason)
     pcall(hide)
     unbind_keys()
     if destroy_wheel then destroy_wheel() end
+    if aar_api.destroy then pcall(aar_api.destroy) end
     pcall(function() window:kill() end)
     window, visible = nil, false
     state.reopen = was_visible
@@ -5441,6 +6067,9 @@ DCS.setUserCallbacks({
         local ok_w, err_w = pcall(wheel_update, now)
         if not ok_w then logmsg("wheel update errored: " .. tostring(err_w)) end
 
+        local ok_a, err_a = pcall(aar_api.tick, now)
+        if not ok_a then logmsg("refuelling lights errored: " .. tostring(err_a)) end
+
         -- The wiki fetches for itself: it needs neither the key nor a
         -- confirmed server.
         if visible and state.tab == "wiki" and wiki_api.tick then
@@ -5453,7 +6082,7 @@ DCS.setUserCallbacks({
             if not ok_d then logmsg("dashboard update errored: " .. tostring(err_d)) end
         end
 
-        if (visible or wheel.open) and key_ready_at and now >= key_ready_at then
+        if (visible or wheel.open) and key_ready_at and now >= key_ready_at and not server_check.range then
             if now >= state.next_fetch then
                 local t = visible and tab_def(state.tab) or nil
                 state.next_fetch = now + (t and t.every or 5)
@@ -5518,6 +6147,8 @@ if rawget(_G, "BFCOCKPIT_TEST") then
         widgets = function() return { tabs = w_tabs, back = w_back, crumb = w_crumb, pane = w_pane, window = window } end,
         rows = function() return pool, pool_actions end,
         label_em = label_em, wrap = wrap, px = px,
+        set_opacity = function(v) set_opacity(v) end,
+        gui_scale = function(v) GUI_SCALE = v end,
     }
 end
 

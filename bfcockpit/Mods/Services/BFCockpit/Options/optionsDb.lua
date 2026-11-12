@@ -91,6 +91,20 @@ return {
 		DbOption.Item("175%"):Value(1.75),
 		DbOption.Item("200%"):Value(2.0),
 	}),
+	aarLights   = DbOption.new():setValue(true):checkbox(),
+	aarSize     = DbOption.new():setValue(1.0):combo({
+		DbOption.Item("70%"):Value(0.7),
+		DbOption.Item("85%"):Value(0.85),
+		DbOption.Item("100%"):Value(1.0),
+		DbOption.Item("130%"):Value(1.3),
+		DbOption.Item("160%"):Value(1.6),
+	}),
+	aarPos      = DbOption.new():setValue("right"):combo({
+		DbOption.Item(_("Right of centre")):Value("right"),
+		DbOption.Item(_("Left of centre")):Value("left"),
+		DbOption.Item(_("Above centre")):Value("top"),
+		DbOption.Item(_("Below centre")):Value("bottom"),
+	}),
 	textScale   = DbOption.new():setValue(1.0):combo({
 		DbOption.Item("70%"):Value(0.7),
 		DbOption.Item("80%"):Value(0.8),

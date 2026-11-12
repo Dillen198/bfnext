@@ -583,6 +583,113 @@ pub(crate) async fn api_cockpit_context(
     Ok(json_response(json))
 }
 
+/// Cues older than this are not handed out: the engine stopped sending
+/// (its tick stalled, or the subscription is reconnecting).
+const AAR_STALE: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// GET /api/cockpit/aar — the caller's air-refuelling cue, for the cockpit
+/// plugin's director-light overlay (`bfprotocols::aar`).
+///
+/// The plugin polls this about five times a second while behind a tanker,
+/// so it never reaches the engine: the cues arrive over netidx
+/// (`aar_cues_loop`) and this answers from memory. The caller is resolved
+/// like every cockpit route, which costs an engine RPC only every
+/// `COCKPIT_ID_CACHE`. Works on campaign and range instances alike.
+///
+/// `{"cue": AarCue | null, "age_ms": n}`; `age_ms` is how old the engine's
+/// update is, for the plugin to move the cue on by.
+pub(crate) async fn api_cockpit_aar(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
+    ip: std::net::IpAddr,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip)
+        .await?;
+    let body = aar_reply(&inst.aar_cues, &ucid.to_string());
+    Ok(json_response(body))
+}
+
+pub(crate) fn aar_reply(
+    cues: &std::sync::Mutex<Option<(bfprotocols::aar::AarCues, std::time::Instant)>>,
+    ucid: &str,
+) -> std::string::String {
+    let g = cues.lock().unwrap_or_else(|e| e.into_inner());
+    let (cue, age) = match &*g {
+        Some((c, at)) if at.elapsed() < AAR_STALE => (c.cues.get(ucid), at.elapsed()),
+        _ => (None, std::time::Duration::ZERO),
+    };
+    serde_json::json!({ "cue": cue, "age_ms": age.as_millis() as u64 }).to_string()
+}
+
+/// GET /api/cockpit/jtac — the JTACs on the caller's side, for the cockpit
+/// panel's JTAC tab: each one's position, laser code, target (and whether it
+/// is lasing), what it can see and the air defences near its target.
+///
+/// Two engine RPCs: `cockpit-context` for the caller's side, then
+/// `query-cas` for that side's close-air-support picture (the one the voice
+/// controller reads). `jtac_reply` trims the picture to what the caller may
+/// see.
+pub(crate) async fn api_cockpit_jtac(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
+    ip: std::net::IpAddr,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip)
+        .await?;
+    use netidx::publisher::Value;
+    let context = call_engine_rpc_str(
+        &db,
+        &inst,
+        "cockpit-context",
+        vec![("ucid", Value::from(ucid.to_string()))],
+    )
+    .await?;
+    let side = serde_json::from_str::<serde_json::Value>(&context)
+        .ok()
+        .and_then(|v| v.get("side").and_then(|s| s.as_str()).map(str::to_owned))
+        .unwrap_or_default();
+    if side != "blue" && side != "red" {
+        return Ok(json_response(jtac_reply(&side, None, &ucid.to_string())));
+    }
+    let cas = call_engine_rpc_str(
+        &db,
+        &inst,
+        "query-cas",
+        vec![("side", Value::from(side.clone()))],
+    )
+    .await?;
+    let picture = serde_json::from_str::<bfprotocols::cas::CasPicture>(&cas)
+        .map_err(|e| anyhow::anyhow!("bad query-cas JSON: {e}"))?;
+    Ok(json_response(jtac_reply(&side, Some(picture), &ucid.to_string())))
+}
+
+/// `{"side", "jtacs": [CasJtac], "me": {nearest_jtac, jtac_brg, jtac_rng_m} | null}`.
+///
+/// The CAS picture also lists every human flight on the side, with their
+/// ucids: only the caller's own one is kept, and only its nearest-JTAC
+/// fields. No picture (a neutral or unslotted caller) is an empty list.
+pub(crate) fn jtac_reply(
+    side: &str,
+    picture: Option<bfprotocols::cas::CasPicture>,
+    ucid: &str,
+) -> std::string::String {
+    let picture = picture.unwrap_or_default();
+    let me = picture.flights.iter().find(|f| f.ucid == ucid).map(|f| {
+        serde_json::json!({
+            "nearest_jtac": f.nearest_jtac,
+            "jtac_brg": f.jtac_brg,
+            "jtac_rng_m": f.jtac_rng_m,
+        })
+    });
+    serde_json::json!({ "side": side, "jtacs": picture.jtacs, "me": me }).to_string()
+}
+
 /// GET /api/cockpit/menu — the caller's entire F10 menu tree.
 ///
 /// Mirrored out of the live menu rather than re-implemented (see

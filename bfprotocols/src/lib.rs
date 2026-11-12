@@ -1,3 +1,4 @@
+pub mod aar;
 pub mod api;
 pub mod atc;
 pub mod cas;

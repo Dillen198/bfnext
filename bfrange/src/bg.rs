@@ -67,6 +67,12 @@ pub enum Cmd {
         station: String,
         instructor: bool,
     },
+    /// The cockpit plugin's player id and key -> its ucid (the campaign's
+    /// RPC of the same name; see `crate::cockpit`).
+    ResolvePlayerId {
+        id: i64,
+        key: String,
+    },
 }
 
 pub type CmdQueue = Arc<SegQueue<(Cmd, oneshot::Sender<Value>)>>;
@@ -99,6 +105,9 @@ pub enum Task {
         range_max: Option<u64>,
         stats_max: Option<u64>,
     },
+    /// The air-refuelling cues (`bfprotocols::aar::AarCues`, JSON) for the
+    /// cockpit plugin, published at `<base>/<sortie>/aar-cues`.
+    AarCues(String),
 }
 
 impl fowlbg::Task for Task {
@@ -206,6 +215,7 @@ struct Rpcs {
     spawn: Proc,
     despawn: Proc,
     reset_station: Proc,
+    resolve_player_id: Proc,
 }
 
 impl Rpcs {
@@ -349,6 +359,20 @@ impl Rpcs {
             station: Chars = Value::Null; "The station id",
             instructor: bool = false; "The caller is an instructor/admin"
         )?;
+        let _q = Arc::clone(q);
+        let resolve_player_id = define_rpc!(
+            publisher,
+            base.append("resolve-player-id"),
+            "Resolve a connected player's local DCS player id (net.get_my_player_id()) to their ucid",
+            |c: RpcCall, id: i64, key: Chars| {
+                let (tx, rx) = oneshot::channel();
+                _q.push((Cmd::ResolvePlayerId { id, key: key.to_string() }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            id: i64 = Value::Null; "The player's local DCS player id",
+            key: Chars = Value::Null; "The key the player's cockpit plugin registered with -cockpitkey"
+        )?;
         Ok(Self {
             query_range,
             query_atc,
@@ -358,6 +382,7 @@ impl Rpcs {
             spawn,
             despawn,
             reset_station,
+            resolve_player_id,
         })
     }
 }
@@ -366,6 +391,7 @@ struct Background {
     sinks: Sinks,
     rpcs: Option<Rpcs>,
     publisher: Option<Publisher>,
+    aar: Option<netidx::publisher::Val>,
 }
 
 impl Background {
@@ -378,6 +404,7 @@ impl Background {
         // a mission restart starts again: retire the old RPCs first so
         // the resolver never lists two publishers for one path
         self.rpcs = None;
+        self.aar = None;
         self.publisher = None;
         let cfg =
             match load_config(net.config.as_deref().map(Path::new), net.tls.as_ref()) {
@@ -413,6 +440,10 @@ impl Background {
             Ok(r) => self.rpcs = Some(r),
             Err(e) => error!("failed to publish range RPCs: {e:?}"),
         }
+        match publisher.publish(base.append("aar-cues"), Value::from("{}")) {
+            Ok(v) => self.aar = Some(v),
+            Err(e) => error!("failed to publish aar-cues: {e:?}"),
+        }
         self.publisher = Some(publisher);
     }
 }
@@ -433,6 +464,13 @@ impl fowlbg::Handler for Background {
                 self.sinks.rotate_jsonl(range_max, stats_max)
             }
             Task::Start { sortie, net, q } => self.start(sortie, net, q).await,
+            Task::AarCues(json) => {
+                if let (Some(p), Some(v)) = (&self.publisher, &self.aar) {
+                    let mut batch = p.start_batch();
+                    v.update(&mut batch, Value::from(json));
+                    batch.commit(None).await
+                }
+            }
         }
     }
 }
@@ -445,7 +483,12 @@ pub fn init(write_dir: PathBuf) -> UnboundedSender<Task> {
     fowlbg::init(opts, move |_restart| {
         let write_dir = write_dir.clone();
         async move {
-            Background { sinks: Sinks::new(&write_dir), rpcs: None, publisher: None }
+            Background {
+                sinks: Sinks::new(&write_dir),
+                rpcs: None,
+                publisher: None,
+                aar: None,
+            }
         }
     })
 }

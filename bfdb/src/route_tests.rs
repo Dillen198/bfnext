@@ -217,6 +217,7 @@ async fn api_gets_are_answered_by_their_route_not_the_spa() {
         "/api/admin/cfg/schema",
         "/api/cockpit/plugin/version",
         "/api/cockpit/context",
+        "/api/cockpit/aar",
         "/api/replay/status",
     ] {
         let r = h.get(path, None).await;
@@ -555,6 +556,146 @@ async fn cockpit_auth() {
     let player = h.session(false);
     let r = h.get("/api/cockpit/context", Some(&player)).await;
     assert_eq!(r.status(), 403);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cockpit_aar_needs_the_key() {
+    let h = harness();
+    let r = h.get("/api/cockpit/aar", None).await;
+    assert_eq!(r.status(), 401);
+    let r = h.get("/api/cockpit/aar?playerid=3", None).await;
+    assert_eq!(r.status(), 401);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unknown_api_route_is_a_404_not_the_dashboard() {
+    let h = harness();
+    let r = h.get("/api/cockpit/no-such-route", None).await;
+    assert_eq!(r.status(), 404);
+    let body: serde_json::Value = serde_json::from_slice(r.body()).unwrap();
+    assert_eq!(body["error"], "no such API route");
+    // a dashboard page address still gets the dashboard
+    let r = h.get("/command", None).await;
+    assert_eq!(r.status(), 200);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cockpit_jtac_needs_the_key() {
+    let h = harness();
+    let r = h.get("/api/cockpit/jtac", None).await;
+    assert_eq!(r.status(), 401);
+    let r = h.get("/api/cockpit/jtac?playerid=3", None).await;
+    assert_eq!(r.status(), 401);
+}
+
+#[test]
+fn cockpit_jtac_reply() {
+    use bfprotocols::cas::{CasFlight, CasJtac, CasPicture, CasTarget};
+    let jtac = CasJtac {
+        id: "g42".into(),
+        callsign: "Axeman 1".into(),
+        lat: 33.5,
+        lon: 36.2,
+        alt_m: 600,
+        airborne: false,
+        laser_code: 1688,
+        ir_pointer: true,
+        location_name: "Rosh Pina".into(),
+        location_brg: 270,
+        location_rng_m: 4000,
+        target: Some(CasTarget {
+            typ: "T-72B".into(),
+            lat: 33.51,
+            lon: 36.21,
+            elev_ft: 820,
+            brg: 45,
+            rng_m: 3100,
+            lasing: true,
+            group_size: 4,
+        }),
+        contacts: vec![],
+        contact_count: 6,
+        nearest_friendly_m: Some(2500),
+        nearest_friendly_brg: 180,
+        artillery_available: false,
+        threats: vec![],
+    };
+    let flight = |ucid: &str, near: &str| CasFlight {
+        ucid: ucid.into(),
+        unit_id: Some(7),
+        callsign: "Hawg 1".into(),
+        player_name: "someone".into(),
+        lat: 33.0,
+        lon: 36.0,
+        alt_m: 3000,
+        heading: 90,
+        speed_ms: 150,
+        nearest_jtac: Some(near.into()),
+        jtac_brg: 12,
+        jtac_rng_m: 20000,
+    };
+    let picture = CasPicture {
+        jtacs: vec![jtac],
+        flights: vec![flight("me", "Axeman 1"), flight("them", "Other")],
+        bullseye: Some((33.0, 35.0)),
+    };
+    let v: serde_json::Value =
+        serde_json::from_str(&jtac_reply("blue", Some(picture), "me")).unwrap();
+    assert_eq!(v["side"], "blue");
+    assert_eq!(v["jtacs"][0]["callsign"], "Axeman 1");
+    assert_eq!(v["jtacs"][0]["laser_code"], 1688);
+    assert_eq!(v["jtacs"][0]["target"]["lasing"], true);
+    assert_eq!(v["me"]["nearest_jtac"], "Axeman 1");
+    assert_eq!(v["me"]["jtac_rng_m"], 20000);
+    // other pilots and their ucids, and the bullseye, never leave bfdb
+    let s = v.to_string();
+    assert!(!s.contains("them") && !s.contains("someone") && !s.contains("flights"));
+    assert!(v.get("bullseye").is_none());
+    // a caller with no side, or not in the picture
+    let v: serde_json::Value =
+        serde_json::from_str(&jtac_reply("neutral", None, "me")).unwrap();
+    assert_eq!(v["jtacs"].as_array().map(|a| a.len()), Some(0));
+    assert!(v["me"].is_null());
+}
+
+#[test]
+fn cockpit_aar_reply() {
+    use bfprotocols::aar::{AarCue, AarCues, CueSource, Station};
+    use bfprotocols::range::RefuelMethod;
+    let cue = AarCue {
+        tanker: "Texaco 1-1".into(),
+        typ: "KC-135".into(),
+        method: RefuelMethod::Boom,
+        station: Station::Centre,
+        source: CueSource::Tanker,
+        ud: Some(-1),
+        fa: Some(0),
+        lat: None,
+        err: None,
+        tol: [3.5, 2.5, 3.0],
+        rel: [-30., -9., 0.],
+        range_m: 31.3,
+        closure_kts: 1.,
+        connected: false,
+        pod: None,
+        tx: [1., 0., 0.],
+        ty: [0., 1., 0.],
+        tz: [0., 0., 1.],
+        tvel: [150., 0., 0.],
+    };
+    let mut cues = AarCues { t: 10., cues: Default::default() };
+    cues.cues.insert("abc".into(), cue);
+    let m = std::sync::Mutex::new(Some((cues, std::time::Instant::now())));
+    let v: serde_json::Value = serde_json::from_str(&aar_reply(&m, "abc")).unwrap();
+    assert_eq!(v["cue"]["ud"], -1);
+    assert_eq!(v["cue"]["source"], "tanker");
+    // someone else's: nothing
+    let v: serde_json::Value = serde_json::from_str(&aar_reply(&m, "xyz")).unwrap();
+    assert!(v["cue"].is_null());
+    // nothing from the engine yet
+    let none = std::sync::Mutex::new(None);
+    let v: serde_json::Value = serde_json::from_str(&aar_reply(&none, "abc")).unwrap();
+    assert!(v["cue"].is_null());
 }
 
 #[tokio::test(flavor = "multi_thread")]

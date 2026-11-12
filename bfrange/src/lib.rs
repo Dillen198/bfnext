@@ -21,6 +21,7 @@ mod atctraffic;
 mod bg;
 mod carrier;
 mod catalog;
+mod cockpit;
 mod csar;
 mod decks;
 mod ew;
@@ -399,10 +400,21 @@ fn on_player_try_send_chat(
     _all: bool,
 ) -> Result<Option<String>> {
     let m = msg.as_str().trim();
-    // The bfcockpit overlay registers its secret key with a "-cockpitkey
-    // <key>" chat line. The range has no use for it, but must not show it to
-    // everyone either.
-    if m.starts_with("-cockpitkey") {
+    // The cockpit plugin registers its secret key with a "-cockpitkey <key>"
+    // chat line (see `cockpit`). Swallowed whatever happens: it must never
+    // reach anyone's chat.
+    if let Some(key) = m.strip_prefix(cockpit::KEY_CMD) {
+        // SAFETY: as below -- a hooks-state callback, never inside a
+        // mission-side call.
+        let ctx = unsafe { Ctx::get() };
+        match ctx.players.pilot_by_id(id).map(|p| p.ucid) {
+            Some(ucid) => {
+                if !cockpit::register(id, ucid, key.trim()) {
+                    warn!("malformed cockpit key from player {id:?}");
+                }
+            }
+            None => warn!("cockpit key from player {id:?}, who is not connected"),
+        }
         return Ok(Some(String::from("")));
     }
     if !m.starts_with("-range") {
@@ -558,6 +570,7 @@ fn delayed_init_inner(lua: MizLua, ctx: &mut Ctx) -> Result<()> {
     bg::send(bg::Task::Start { sortie: sortie.clone(), net, q: ctx.cmds.clone() });
     let now = now_of(lua);
     ctx.ag.init(lua, &cfg, &mut ctx.spawns, now);
+    ctx.aar.load_learned(ctx.write_dir.join("fowl_aar_contacts.json"));
     ctx.aar.init(lua, &cfg, &mut ctx.spawns, now);
     ctx.cv.init(lua, &cfg);
     ctx.helo.init(lua, &cfg);
@@ -1668,6 +1681,17 @@ fn handle_cmd(lua: MizLua, ctx: &mut Ctx, cmd: bg::Cmd, now: f64) -> Value {
             Some(s) => Value::String(s.clone().into()),
             None => Value::Error("the range is starting".into()),
         },
+        bg::Cmd::ResolvePlayerId { id, key } => {
+            let id = PlayerId::from(id);
+            let holder = ctx.players.pilot_by_id(id).map(|p| p.ucid);
+            match cockpit::check(id, holder, &key) {
+                Some(ucid) => Value::String(ucid.to_string().into()),
+                None if holder.is_none() => Value::Error(
+                    format!("player {id:?} is not currently connected").into(),
+                ),
+                None => Value::Error(format!("bad cockpit key for player {id:?}").into()),
+            }
+        }
         bg::Cmd::QueryCatalog => match &ctx.catalog_json {
             Some(s) => Value::String(s.clone().into()),
             None => Value::Error("the range is starting".into()),

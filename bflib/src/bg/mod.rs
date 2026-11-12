@@ -459,6 +459,10 @@ pub(super) enum Task {
     },
     Shutdown(Arc<(Mutex<bool>, Condvar)>),
     Stat(Stat),
+    /// The air-refuelling cues (`bfprotocols::aar::AarCues`, as JSON), for
+    /// the cockpit plugin's director-light overlay: published at
+    /// `<base>/<sortie>/aar-cues`, where bfdb subscribes.
+    AarCues(String),
     /// Does nothing but move the heartbeat (see `BG_HEARTBEAT`).
     Ping,
 }
@@ -476,6 +480,7 @@ impl Task {
             Task::LogPerf { .. } => "LogPerf",
             Task::Shutdown(..) => "Shutdown",
             Task::Stat(..) => "Stat",
+            Task::AarCues(..) => "AarCues",
             Task::Ping => "Ping",
         }
     }
@@ -522,6 +527,7 @@ enum Logs {
         perf: PubPerf,
         stats: Statspub,
         log: LogPublisher,
+        aar: netidx::publisher::Val,
         stats_jsonl: Option<JsonlSink>,
     },
     Files {
@@ -673,15 +679,19 @@ impl Logs {
                         base.append("log"),
                     )
                     .context("starting log pub")?;
-                    Ok::<_, anyhow::Error>((perf, stats, log))
+                    let aar = publisher
+                        .publish(base.append("aar-cues"), Value::from("{}"))
+                        .context("publishing aar-cues")?;
+                    Ok::<_, anyhow::Error>((perf, stats, log, aar))
                 };
                 match go().await {
-                    Ok((perf, stats, log)) => {
+                    Ok((perf, stats, log, aar)) => {
                         *self = Self::Netidx {
                             publisher: publisher.clone(),
                             perf,
                             stats,
                             log,
+                            aar,
                             stats_jsonl: taken_jsonl,
                         };
                         Ok(())
@@ -697,6 +707,14 @@ impl Logs {
                     }
                 }
             }
+        }
+    }
+
+    async fn publish_aar(&self, json: String) {
+        if let Self::Netidx { publisher, aar, .. } = self {
+            let mut batch = publisher.start_batch();
+            aar.update(&mut batch, Value::from(json));
+            batch.commit(None).await
         }
     }
 
@@ -981,6 +999,7 @@ impl fowlbg::Handler for Background {
                     error!("could not write stat {st:?} {e:?}")
                 }
             }
+            Task::AarCues(json) => self.logs.publish_aar(json).await,
             Task::Ping => (),
         }
     }

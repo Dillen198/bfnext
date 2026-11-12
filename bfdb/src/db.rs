@@ -970,6 +970,11 @@ pub(crate) struct InstanceState {
     /// The newest stat ingested for this instance: (its timestamp, when bfdb
     /// read it). `None` until the first one arrives this run.
     pub(crate) last_stat: StdMutex<Option<(DateTime<Utc>, DateTime<Utc>)>>,
+    /// The engine's latest air-refuelling cues (`<base>/<sortie>/aar-cues`)
+    /// and when they arrived, for the cockpit plugin's director-light
+    /// overlay (`/api/cockpit/aar`).
+    pub(crate) aar_cues:
+        StdMutex<Option<(bfprotocols::aar::AarCues, std::time::Instant)>>,
 }
 
 impl InstanceState {
@@ -996,6 +1001,7 @@ impl InstanceState {
             engine_error_history: StdMutex::new(VecDeque::new()),
             jsonl_reset: AtomicBool::new(false),
             last_stat: StdMutex::new(None),
+            aar_cues: StdMutex::new(None),
             health_cache: tokio::sync::Mutex::new(None),
             cfg,
         }
@@ -1910,6 +1916,12 @@ impl StatsDb {
                         error!("[{}] engine log subscription failed {e:?}", _st.id)
                     }
                 });
+                let _st = st.clone();
+                task::spawn(async move {
+                    if let Err(e) = Self::aar_cues_loop(_st.clone()).await {
+                        error!("[{}] aar-cues subscription failed {e:?}", _st.id)
+                    }
+                });
             }
         }
         if t.0.states.values().all(|s| s.base.is_none()) {
@@ -2492,6 +2504,63 @@ impl StatsDb {
             // The subscription ended without the sortie changing: the engine
             // restarted or reloaded the mission. Pause and resubscribe rather
             // than giving up on the log for the rest of the process's life.
+            if inst.live_sortie().as_ref() == Some(&sortie) {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        }
+    }
+
+    /// Keep `inst.aar_cues` current from the engine's `<base>/<sortie>/aar-cues`
+    /// (bflib's and bfrange's director-light cues, about five updates a
+    /// second while anyone is behind a tanker). Resubscribes when the sortie
+    /// moves or the engine restarts, like `engine_log_loop`.
+    async fn aar_cues_loop(inst: Arc<InstanceState>) -> Result<()> {
+        use futures::{channel::mpsc, StreamExt};
+        use netidx::publisher::Value;
+        use netidx::subscriber::{Event, UpdatesFlags};
+
+        let (subscriber, base) = match (&inst.subscriber, &inst.base) {
+            (Some(s), Some(b)) => (s.clone(), b.clone()),
+            _ => return Ok(()),
+        };
+        loop {
+            let sortie = loop {
+                if let Some(s) = inst.live_sortie() {
+                    break s;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            };
+            let dval = subscriber.subscribe(base.append(&sortie).append("aar-cues"));
+            let (tx, mut rx) = mpsc::channel(10);
+            dval.updates(UpdatesFlags::empty(), tx);
+            let mut bad_logged = false;
+            while let Some(batch) = rx.next().await {
+                if inst.live_sortie().as_ref() != Some(&sortie) {
+                    break;
+                }
+                // only the newest update in a batch matters
+                let Some(json) = batch.iter().rev().find_map(|(_, ev)| match ev {
+                    Event::Update(Value::String(s)) => Some(s.clone()),
+                    _ => None,
+                }) else {
+                    continue;
+                };
+                match serde_json::from_str::<bfprotocols::aar::AarCues>(&json) {
+                    Ok(c) => {
+                        *inst.aar_cues.lock().unwrap_or_else(|e| e.into_inner()) =
+                            Some((c, std::time::Instant::now()));
+                    }
+                    Err(e) if !bad_logged => {
+                        bad_logged = true;
+                        log::warn!(
+                            "[{}] unreadable aar-cues from the engine: {e}",
+                            inst.id
+                        );
+                    }
+                    Err(_) => (),
+                }
+            }
+            *inst.aar_cues.lock().unwrap_or_else(|e| e.into_inner()) = None;
             if inst.live_sortie().as_ref() == Some(&sortie) {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             }

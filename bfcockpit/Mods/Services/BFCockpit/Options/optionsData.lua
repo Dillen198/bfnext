@@ -24,4 +24,9 @@ cdata = {
 	BFC_WHEEL_NAV    = _("Wheel keys (while it is open)"),
 	BFC_WHEEL_NAV_INFO = _("Drive the wheel without the mouse or head tracking: left / right step round the ring, up moves out onto a group's arc, down comes back, select fires, back goes back. Only taken while the wheel is open. Map them to a HOTAS hat with your stick's software."),
 	BFC_WHEEL_VR     = _("In VR the wheel is drawn larger and always opens where you are looking. Build your own wheels in the panel's WHEEL tab."),
+	BFC_AAR_SECTION  = _("Air refuelling"),
+	BFC_AAR_LIGHTS   = _("Show the tanker's director lights when you are behind one"),
+	BFC_AAR_SIZE     = _("Lights size"),
+	BFC_AAR_POS      = _("Lights position"),
+	BFC_AAR_INFO     = _("Behind a KC-135 the lights copy the tanker's own UP/DOWN and FORE/AFT lights. Behind a drogue tanker they steer you to the basket from where your jet type has made contact before (an estimate until it has), with the pod's red / amber / green light. Clicks go through them to the cockpit."),
 }

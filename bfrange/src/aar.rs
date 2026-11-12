@@ -20,6 +20,7 @@ use crate::{
     util::{self, Frame, V3},
 };
 use anyhow::{Result, anyhow, bail};
+use bfprotocols::aar::{self as aarcue, ReceiverObs, TankerObs};
 use bfprotocols::range::{
     AarResult, LiveTanker, PilotRef, RangeResult, RefuelMethod, RelSample, Stability,
     TankerState, Track,
@@ -81,6 +82,12 @@ pub struct Aar {
     pub tankers: Vec<Tanker>,
     sessions: FxHashMap<String, Session>,
     tacan_pool: u8,
+    /// The cockpit overlay's director-light cues (`bfprotocols::aar`).
+    cues: aarcue::Tracker,
+    cues_published: bool,
+    learned_path: Option<std::path::PathBuf>,
+    learned_saved: f64,
+    learned_unsaved: bool,
 }
 
 /// DCS flies AI speeds as true airspeed; the config gives tankers theirs
@@ -186,6 +193,13 @@ pub fn spawn_tanker(
 }
 
 impl Aar {
+    /// Where the learned contact points live: read now, written as they
+    /// change (at most once a minute).
+    pub fn load_learned(&mut self, path: std::path::PathBuf) {
+        self.cues = aarcue::Tracker::new(aarcue::Learned::load(&path));
+        self.learned_path = Some(path);
+    }
+
     pub fn init(&mut self, lua: MizLua, cfg: &RangeCfg, spawns: &mut Spawns, now: f64) {
         for t in cfg.tankers.iter().filter(|t| t.permanent) {
             let start = match crate::ag::resolve(lua, &t.loc) {
@@ -417,18 +431,35 @@ impl Aar {
         now: f64,
     ) {
         let mut frames: Vec<(String, String, Frame, V3)> = vec![];
+        let mut obs: Vec<TankerObs> = vec![];
         for t in self.tankers.iter().filter(|t| t.state == TankerState::OnStation) {
             if let Ok(u) = Unit::get_by_name(lua, &t.unit_name())
                 && let (Ok(p), Ok(v)) = (u.get_position(), u.get_velocity())
             {
-                frames.push((
-                    t.cfg.id.clone(),
-                    format!("{}{}", t.cfg.callsign, t.cfg.callsign_number),
-                    Frame::from_pos(&p),
-                    v.0,
-                ));
+                let cs = format!("{}{}", t.cfg.callsign, t.cfg.callsign_number);
+                let fr = Frame::from_pos(&p);
+                let a = |v: V3| [v.x, v.y, v.z];
+                obs.push(TankerObs {
+                    unit: t.unit_name(),
+                    callsign: aarcue::pretty_callsign(&cs),
+                    typ: t.cfg.typ.clone(),
+                    side: side_u8(spawn::side_of_str(&t.cfg.side)),
+                    p: a(fr.p),
+                    x: a(fr.x),
+                    y: a(fr.y),
+                    z: a(fr.z),
+                    vel: a(v.0),
+                    pdl: aarcue::has_pdl_args(&t.cfg.typ).then(|| {
+                        (
+                            u.get_draw_argument_value(aarcue::PDL_UD_ARG).unwrap_or(0.),
+                            u.get_draw_argument_value(aarcue::PDL_FA_ARG).unwrap_or(0.),
+                        )
+                    }),
+                });
+                frames.push((t.cfg.id.clone(), cs, fr, v.0));
             }
         }
+        let mut receivers: Vec<ReceiverObs> = vec![];
         // start sessions
         for f in players.flying.values_mut() {
             if !f.in_air || f.is_ground || self.sessions.contains_key(&f.unit_name) {
@@ -522,6 +553,17 @@ impl Aar {
                 records::to_group(lua, s.group_id, &format!("{cs}: disconnect"), 3);
             }
             s.connected = connected;
+            self.cues.set_connected(unit, connected);
+            if let Some(ucid) = &s.pilot.ucid {
+                receivers.push(ReceiverObs {
+                    key: ucid.clone(),
+                    unit: unit.clone(),
+                    typ: s.typ.clone(),
+                    side: side_u8(s.side),
+                    p: [p.x, p.y, p.z],
+                    vel: [v.x, v.y, v.z],
+                });
+            }
             if connected {
                 s.time_connected += dt;
             }
@@ -548,6 +590,7 @@ impl Aar {
                 ended.push(unit.clone());
             }
         }
+        self.publish_cues(&obs, &receivers, now);
         for unit in ended {
             if let Some(s) = self.sessions.remove(&unit) {
                 if let Some(f) = players.flying.get_mut(&unit) {
@@ -559,6 +602,38 @@ impl Aar {
     }
 
     /// The receiver left its aircraft: close their session now.
+    /// The cockpit overlay's cues for everyone in a session, to the
+    /// background thread (`<base>/<sortie>/aar-cues`); one empty update once
+    /// the last session ends, then nothing.
+    fn publish_cues(
+        &mut self,
+        tankers: &[TankerObs],
+        receivers: &[ReceiverObs],
+        now: f64,
+    ) {
+        let cues = self.cues.update(now, tankers, receivers);
+        if self.cues.take_dirty() {
+            self.learned_unsaved = true;
+        }
+        if self.learned_unsaved && now - self.learned_saved >= 60. {
+            if let Some(path) = &self.learned_path
+                && let Err(e) = self.cues.learned.save(path)
+            {
+                warn!("aar: saving learned contacts to {path:?}: {e:?}");
+            }
+            self.learned_unsaved = false;
+            self.learned_saved = now;
+        }
+        let any = !cues.cues.is_empty();
+        if any || self.cues_published {
+            self.cues_published = any;
+            match serde_json::to_string(&cues) {
+                Ok(json) => crate::bg::send(crate::bg::Task::AarCues(json)),
+                Err(e) => warn!("aar: serialising cues: {e:?}"),
+            }
+        }
+    }
+
     pub fn player_left(
         &mut self,
         lua: MizLua,
@@ -756,6 +831,14 @@ fn contact_stability(samples: &[RelSample]) -> Stability {
         mean_fwd_m,
         mean_right_m,
         mean_up_m,
+    }
+}
+
+fn side_u8(s: dcso3::coalition::Side) -> u8 {
+    match s {
+        dcso3::coalition::Side::Neutral => 0,
+        dcso3::coalition::Side::Red => 1,
+        dcso3::coalition::Side::Blue => 2,
     }
 }
 

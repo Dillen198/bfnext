@@ -130,9 +130,17 @@ dialog = {
 				["wheelNavComboList"]   = combo(ctrlX, 785),
 				["wheelNavHelp"]        = static("$BFC_WHEEL_NAV_INFO", left, 815, 850, 36, HelpSkin),
 				["wheelVrHelp"]         = static("$BFC_WHEEL_VR", left, 857, 850, 36, HelpSkin),
+
+				["aarSectionLabel"]     = static("$BFC_AAR_SECTION", left, 905, 850, 24, LabelSkin),
+				["aarLightsCheckbox"]   = checkbox("$BFC_AAR_LIGHTS", left, 937, 700),
+				["aarSizeLabel"]        = static("$BFC_AAR_SIZE", left, 970, labelW, rowH, LabelSkin),
+				["aarSizeComboList"]    = combo(ctrlX, 970),
+				["aarPosLabel"]         = static("$BFC_AAR_POS", left, 1005, labelW, rowH, LabelSkin),
+				["aarPosComboList"]     = combo(ctrlX, 1005),
+				["aarHelp"]             = static("$BFC_AAR_INFO", left, 1037, 850, 54, HelpSkin),
 			},
 			["params"] = {
-				["bounds"] = { ["x"] = 0, ["y"] = 0, ["w"] = 974, ["h"] = 915 },
+				["bounds"] = { ["x"] = 0, ["y"] = 0, ["w"] = 974, ["h"] = 1100 },
 				["enabled"] = true, ["text"] = "", ["tooltip"] = "", ["visible"] = true, ["zindex"] = 2,
 			},
 			["skin"] = { ["params"] = { ["name"] = "panelSkin" } },

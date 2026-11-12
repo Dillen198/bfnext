@@ -1,4 +1,5 @@
--- Runs Scripts/Hooks/bfcockpit.lua outside DCS and checks the WIKI and DASH tabs.
+-- Runs Scripts/Hooks/bfcockpit.lua outside DCS and checks the WIKI and DASH
+-- tabs and the refuelling lights.
 --
 --   "D:\DCS World\bin-mt\luae.exe" bfcockpit\tools\luatest.lua
 --
@@ -197,6 +198,7 @@ function Widget:addHotKeyCallback(k, fn) self.cbs[k] = fn end
 function Widget:setVertScrollValue(v) self.scroll = v end
 function Widget:getVertScrollValue() return self.scroll end
 function Widget:setFocused(v) self.focused = v end
+function Widget:setOpacity(v) self.opacity = v end
 function Widget:setHintText(t) self.hint = t end
 function Widget:click() if self.cbs.up then self.cbs.up(self) end end
 function Widget:type(t) self.text = t; if self.cbs.change then self.cbs.change(self) end end
@@ -260,8 +262,14 @@ do
 end
 
 local requests, queue, next_id = {}, {}, 1
+-- what /api/cockpit/aar answers (the refuelling lights tests set it)
+local aar_reply = nil
 -- what /api/cockpit/dash and /api/cockpit/context answer (the DASH tests)
 local dash_reply, dash_status, ctx_reply = nil, 200, nil
+-- what /api/cockpit/jtac answers (the JTAC tab tests); nil is an older bfdb
+local jtac_reply = nil
+-- a bfdb from before the route: its catch-all answers with the dashboard page
+local jtac_html = false
 local function answer(id, status, body) queue[#queue + 1] = { id = id, status = status, body = body } end
 
 local function route(method, url)
@@ -271,11 +279,17 @@ local function route(method, url)
         q[k] = v:gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end)
     end
     if path == "/api/cockpit/plugin/version" then return 200, { version = VERSION } end
+    if path == "/api/cockpit/aar" then return 200, aar_reply or {} end
     if path == "/api/cockpit/dash" then
         if dash_status ~= 200 then return dash_status, nil end
         return 200, dash_reply
     end
     if path == "/api/cockpit/context" and ctx_reply then return 200, ctx_reply end
+    if path == "/api/cockpit/jtac" then
+        if jtac_html then return 200, nil, "<!doctype html>\n<html lang=\"en\"><head></head></html>" end
+        if jtac_reply then return 200, jtac_reply end
+        return 404, nil
+    end
     if path == "/api/cockpit/wiki/index" then
         local rows, secs, seen = {}, {}, {}
         for _, e in ipairs(page_list) do
@@ -318,8 +332,8 @@ package.loaded.bfcockpit_net = {
     request = function(method, url, body, timeout, headers)
         local id = next_id; next_id = next_id + 1
         requests[#requests + 1] = { method = method, url = url }
-        local status, data = route(method, url)
-        answer(id, status, data and json_encode(data) or "")
+        local status, data, raw = route(method, url)
+        answer(id, status, raw or (data and json_encode(data) or ""))
         return id
     end,
     download = function(url, path, timeout)
@@ -439,6 +453,32 @@ frame()  -- creates the window
 local wid = P.widgets()
 check(wid.window ~= nil, "window created")
 P.show()
+
+-- See-through: at Scale GUI 1 the whole window fades. At any other Scale GUI
+-- DCS stops drawing a faded window's children, so only its body fades.
+do
+    local win = wid.window
+    P.set_opacity(0.6)
+    eq(win.opacity, 0.6, "Scale GUI 1: window opacity")
+    check(win.skin == P.skins.window, "Scale GUI 1: the window keeps its skin")
+    P.gui_scale(2)
+    P.set_opacity(0.6)
+    eq(win.opacity, 1, "Scale GUI 2: the window stays solid")
+    check(win.skin ~= P.skins.window, "Scale GUI 2: a faded skin")
+    eq(win.skin.skinData.states.released[1].bkg.center_center, "0x0d100991", "Scale GUI 2: body alpha 0xf2 * 0.6")
+    P.hide()
+    P.show()
+    eq(win.opacity, 1, "Scale GUI 2: still solid when shown again")
+    eq(win.skin.skinData.states.released[1].bkg.center_center, "0x0d100991", "Scale GUI 2: still faded when shown again")
+    P.set_opacity(1.0)
+    check(win.skin == P.skins.window, "Scale GUI 2: fully solid uses the normal skin")
+    P.gui_scale(1)
+    P.set_opacity(0.95)
+end
+
+-- The native wiki first: it is what the WIKI tab shows when the wiki site
+-- has failed (the site itself is checked after the DASH tab).
+BFCOCKPIT_TEST.dash.WIKI_WEB.failed = "test: the native wiki"
 P.select_tab("wiki")
 settle()
 
@@ -474,12 +514,12 @@ eq(wid.crumb.text, "WIKI", "crumb at home")
 check(find_button("Introduction") and find_button("F10 Menu Systems"), "home lists the sections")
 check(not wid.back.enabled, "back is off at home")
 
--- tab bar: eight tabs, at the smallest panel
-wid.window:setBounds(0, 0, P.px(520), P.px(300))
+-- tab bar: nine tabs, at the smallest panel
+wid.window:setBounds(0, 0, P.px(580), P.px(300))
 P.render()
 do
     local tabs = wid.tabs
-    local order = { "menu", "cargo", "status", "dash", "ewr", "log", "wiki", "wheel" }
+    local order = { "menu", "cargo", "status", "dash", "ewr", "jtac", "log", "wiki", "wheel" }
     local right = 0
     local widths = {}
     for _, id in ipairs(order) do
@@ -492,7 +532,7 @@ do
         widths[#widths + 1] = id .. "=" .. b.w
     end
     -- the opacity/close buttons start at cw - pad - 3*26 - 2*4
-    check(right <= P.px(520) - P.px(8) - 3 * P.px(26) - 2 * P.px(4), "tabs run into the tool buttons: " .. right)
+    check(right <= P.px(580) - P.px(8) - 3 * P.px(26) - 2 * P.px(4), "tabs run into the tool buttons: " .. right)
     print("tab widths at the smallest panel: " .. table.concat(widths, " "))
 end
 wid.window:setBounds(0, 0, 560, 640)
@@ -685,6 +725,8 @@ local function dash_data(rev)
 end
 dash_reply = dash_data("abc123def456")
 ctx_reply = { name = "Viper", side = "blue", points = 10, slot = { airframe = "F-16C_50", lat = 42, lon = 42, in_air = true } }
+-- The native view first: it is what shows when the browser has failed.
+DASH.WEB.failed = "test: the native view"
 P.select_tab("dash")
 local n_dl = #downloads
 for _ = 1, 40 do frame(0.1) end
@@ -736,22 +778,25 @@ if newest then newest:close() end
 -- a bfdb without the route
 dash_status = 404
 BFCOCKPIT_TEST.panel.dash_api.reset()
+DASH.WEB.failed = "test: the native view"
 for _ = 1, 5 do frame(0.1) end
 check(all_text():find("no dashboard for the panel yet", 1, true), "an older bfdb says so")
 dash_status = 200
--- WEB VIEW: the page in DCS's browser, the native view as the fallback
-dash_status = 200
+-- The web view: the page in DCS's browser, the native view only as the
+-- fallback, and no button to pick between them.
 for _ = 1, 160 do frame(0.1) end
 do
-    local native_b, web_b = DASH.buttons()
-    check(native_b and web_b and native_b.visible and web_b.visible, "NATIVE / WEB VIEW buttons on the DASH tab")
-    eq(native_b and native_b.skin, P.skins.tab_on, "NATIVE is the default")
-    web_b:click()
+    local labels = {}
+    for _, c in ipairs(wid.window.children) do
+        if c.visible and (c.text == "NATIVE" or c.text == "WEB VIEW") then labels[#labels + 1] = c.text end
+    end
+    eq(#labels, 0, "no NATIVE / WEB VIEW buttons on the DASH tab")
+    -- a new server clears the failure: the page is what shows
+    BFCOCKPIT_TEST.panel.dash_api.reset()
     frame(0.1)
+    check(DASH.web_on(), "the web view is on by default")
     local wv = DASH.WEB.view
-    check(wv, "WEB VIEW makes the browser")
-    eq(P.cfg.dash_web, true, "the choice is saved")
-    eq(web_b.skin, P.skins.tab_on, "WEB VIEW lit")
+    check(wv, "the DASH tab makes the browser")
     if wv then
         check(wv.visible and not wid.pane.visible, "the browser takes the pane's place")
         check(wv.w == wid.pane.w and wv.h == wid.pane.h and wv.y == wid.pane.y, "at the pane's bounds")
@@ -787,20 +832,224 @@ do
         for _ = 1, 30 do frame(0.1) end
         check(all_text():find("ROUND 12", 1, true), "the native view shows again")
         check(table.concat(log, "\n"):find("dashboard web view given up", 1, true), "logged why")
-        -- picking WEB VIEW again tries again; NATIVE turns it off
-        web_b:click()
+        -- the next server tries the page again
+        BFCOCKPIT_TEST.panel.dash_api.reset()
         frame(0.1)
-        check(wv.visible and DASH.WEB.failed == nil, "WEB VIEW again retries")
+        check(wv.visible and DASH.WEB.failed == nil, "a new server retries the page")
         wv.cbs.failed()
-        check(DASH.WEB.failed and not wv.visible, "onMountFailed falls back at once")
-        native_b:click()
-        eq(P.cfg.dash_web, false, "NATIVE turns it off")
+        frame(0.1)
+        check(DASH.WEB.failed and not wv.visible and wid.pane.visible, "onMountFailed falls back at once")
         check(first ~= nil, "first load had an address")
     end
 end
 check(not table.concat(log, "\n"):find("errored", 1, true), "nothing errored on the DASH tab:\n" .. table.concat(log, "\n"):sub(1, 2000))
 P.select_tab("menu")
 
+-- ── the WIKI tab as the wiki site ──
+do
+    local WW = DASH.WIKI_WEB
+    WW.failed = nil
+    P.select_tab("wiki")
+    frame(0.1)
+    local v = WW.view
+    check(v, "the WIKI tab makes its own browser")
+    if v then
+        check(v ~= DASH.WEB.view, "not the dashboard's browser")
+        check(v.visible and not wid.pane.visible, "the site takes the pane's place")
+        check(not wid.crumb.visible and not wid.back.visible, "no crumb or back button over the site")
+        for _, w in ipairs(P.wiki_api.widgets()) do check(not w.visible, "no search box over the site") end
+        -- DCS keeps drawing a browser after setVisible(false): it has to be
+        -- shrunk to nothing as well
+        local dv = DASH.WEB.view
+        check(dv == nil or (not dv.visible and dv.w == 1 and dv.h == 1), "the dashboard's browser is hidden and shrunk")
+        P.select_tab("menu")
+        check(not v.visible and v.w == 1 and v.h == 1, "leaving WIKI shrinks its browser to 1x1, never 0x0")
+        check(wid.pane.visible, "MENU gets the pane back")
+        P.select_tab("wiki")
+        check(v.visible and v.w == wid.pane.w and v.h > 0, "back on WIKI it is full size again")
+        P.hide()
+        check(not v.visible and v.w == 1 and v.h == 1, "hiding the panel shrinks the browser to 1x1")
+        check(not wid.pane.visible, "and leaves the pane hidden")
+        P.show()
+        frame(0.1)
+        check(v.visible and v.w > 0, "showing the panel brings it back")
+        v.cbs.created()
+        check(v.url and v.url:find("https://wiki.vectorstrike.org/?", 1, true) and v.url:find("server=Test%20Server", 1, true)
+            and v.url:find("theme=dark", 1, true), "loads the wiki site: " .. tostring(v.url))
+        v.cbs.loaded()
+        local n = #requests
+        for _ = 1, 50 do frame(0.1) end
+        eq(WW.failed, nil, "a site that loaded is kept")
+        local native = 0
+        for i = n + 1, #requests do
+            if requests[i].url:find("wiki", 1, true) then native = native + 1 end
+        end
+        eq(native, 0, "the native wiki does not fetch while the site shows")
+        v.cbs.failed()
+        frame(0.1)
+        check(WW.failed and not v.visible and wid.pane.visible and wid.crumb.visible, "a failed site falls back to the native wiki")
+        for _ = 1, 20 do frame(0.1) end
+        check(#visible_rows() > 0, "the native wiki draws again")
+    end
+    P.select_tab("menu")
+end
+
+
+-- ── the JTAC tab ──
+do
+    -- an older bfdb without the route says so
+    P.select_tab("jtac")
+    settle()
+    check(all_text():find("no JTAC list for the panel yet", 1, true), "an older bfdb says it has no JTAC list")
+    -- the same bfdb as it really answers: its web page, with a 200
+    jtac_html = true
+    P.state.errors.jtac = nil
+    for _ = 1, 60 do frame(0.1) end
+    check(all_text():find("no JTAC list for the panel yet", 1, true),
+        "a web page where JSON should be is 'not supported yet', not a wait: " .. all_text():sub(1, 200))
+    check(not all_text():find("Asking for your side", 1, true), "and it does not keep asking forever")
+    jtac_html = false
+
+    jtac_reply = { side = "blue", jtacs = {
+        { id = "g2", callsign = "Far 2", lat = 44, lon = 44, alt_m = 3000, airborne = true, laser_code = 1511,
+          location_name = "Far Hill", location_brg = 0, location_rng_m = 0, contacts = {}, contact_count = 0, threats = {} },
+        { id = "g1", callsign = "Axeman 1", lat = 42.1, lon = 42.0, alt_m = 300, airborne = false, laser_code = 1688,
+          ir_pointer = true, location_name = "Senaki", location_brg = 90, location_rng_m = 3000,
+          target = { typ = "T-72B", lat = 42.11, lon = 42.01, elev_ft = 820, brg = 45, rng_m = 3100, lasing = true, group_size = 4 },
+          contacts = { { typ = "T-72B", count = 4 }, { typ = "BTR-80", count = 2 } }, contact_count = 6,
+          nearest_friendly_m = 800, nearest_friendly_brg = 180, threats = { { typ = "SA-15", count = 1 } } },
+    } }
+    for _ = 1, 60 do frame(0.1) end
+    local t = all_text()
+    check(t:find("2 JTACs on BLUE", 1, true), "counts your side's JTACs")
+    check(t:find("AXEMAN 1   CODE 1688   GROUND", 1, true), "callsign, code and kind: " .. t:sub(1, 400))
+    check(t:find("LASING T-72B (4 in the area)", 1, true), "what it is lasing")
+    check(t:find("Sees 6: 4 T-72B, 2 BTR-80", 1, true), "what it can see")
+    check(t:find("Threats near the target: 1 SA-15", 1, true), "air defences near the target")
+    check(t:find("800 m S of the target -- DANGER CLOSE", 1, true), "danger close")
+    check(t:find("IR pointer on", 1, true), "IR pointer")
+    check(t:find("Working Senaki", 1, true), "where it is working")
+    check(t:find("From you %d%d%d° ") ~= nil, "range and bearing from you")
+    local a, f = t:find("AXEMAN 1", 1, true), t:find("FAR 2", 1, true)
+    check(a and f and a < f, "nearest first")
+    check(t:find("FAR 2   CODE 1511   AIRBORNE", 1, true), "an airborne JTAC")
+
+    -- the F10 button: straight to F10 > JTAC when it is built
+    local b = find_button("JTAC COMMANDS IN F10")
+    check(b, "a button to the JTAC commands")
+    P.state.menu = { { path = { "JTAC" }, name = "JTAC" },
+                     { path = { "JTAC", "Senaki (2 JTAC)>>" }, name = "Senaki (2 JTAC)>>", command = true } }
+    if b then b.action() end
+    eq(P.state.tab, "menu", "the button opens MENU")
+    eq(table.concat(P.state.here, ">"), "JTAC", "at F10 > JTAC")
+
+    -- not built yet: click "JTAC>>" first, then open it once it appears
+    P.select_tab("jtac")
+    settle()
+    P.state.menu = { { path = { "JTAC>>" }, name = "JTAC>>", command = true } }
+    local n = #requests
+    b = find_button("JTAC COMMANDS IN F10")
+    if b then b.action() end
+    local invoked = false
+    for i = n + 1, #requests do
+        if requests[i].url:find("/api/cockpit/menu/invoke", 1, true) then invoked = true end
+    end
+    check(invoked, "expands F10's JTAC>> first")
+    eq(#P.state.here, 0, "waits at the top until it exists")
+    P.state.menu = { { path = { "JTAC" }, name = "JTAC" } }
+    P.render()
+    eq(table.concat(P.state.here, ">"), "JTAC", "then opens F10 > JTAC")
+    eq(P.state.want_here, nil, "and forgets the wait")
+
+    jtac_reply = { side = "neutral", jtacs = {} }
+    P.select_tab("jtac")
+    P.state.jtac = nil
+    for _ = 1, 60 do frame(0.1) end
+    check(all_text():find("Pick a slot on a side", 1, true), "no side, no JTACs")
+    P.select_tab("menu")
+end
+check(not table.concat(log, "\n"):find("errored", 1, true), "nothing errored on the JTAC tab")
+
+-- ── refuelling lights ──
+local AAR = BFCOCKPIT_TEST.aar
+check(AAR and AAR.api, "refuelling lights test hooks")
+local aar = AAR.api
+eq(aar.level(0.3, 2.5), 0, "level: centred")
+eq(aar.level(2, 2.5), -1, "level: high, green down")
+eq(aar.level(-5, 2.5), 2, "level: low, red up")
+local row, color = aar.lamp("ud", -2)
+eq(row, 1, "red D lamp at the top")
+eq(color, "red", "red D lamp colour")
+row, color = aar.lamp("ud", 1)
+eq(row, 4, "green U lamp below the centre")
+eq(color, "green", "green U lamp colour")
+eq((aar.lamp("fa", 2)), 1, "red F lamp at the top")
+eq((aar.lamp("fa", -1)), 4, "green A lamp below the centre")
+eq((aar.lamp("ud", 0)), 3, "centre lamp")
+eq(aar.lamp("ud", nil), nil, "no light, no lamp")
+-- 1 m/s faster than the tanker for 0.5 s: 0.5 m further forward
+local dcue = { source = "estimate", method = "drogue", err = { -2, 0, 0 }, tol = { 3, 1.5, 1.5 },
+               tvel = { 150, 0, 0 }, tx = { 1, 0, 0 }, ty = { 0, 1, 0 }, tz = { 0, 0, 1 }, ud = 0, fa = 1, lat = 0 }
+local perr, plights = aar.project(dcue, { 151, 0, 0 }, 0.5)
+check(math.abs(perr[1] + 1.5) < 1e-9, "projected fore/aft error")
+eq(plights.fa, 1, "still short of the basket: fly forward, green")
+perr = aar.project(dcue, { 151, 0, 0 }, 5)
+check(math.abs(perr[1] + 1) < 1e-9, "projection capped at a second")
+-- the tanker's own lights are shown as they are
+local bcue = { tanker = "Texaco 1-1", typ = "KC-135", source = "tanker", method = "boom", station = "centre",
+               ud = -2, fa = 0, tol = { 3.5, 2.5, 3 }, rel = { -30, -7, 0 }, range_m = 30.8, closure_kts = 0.5,
+               connected = false, tx = { 1, 0, 0 }, ty = { 0, 1, 0 }, tz = { 0, 0, 1 }, tvel = { 150, 0, 0 } }
+perr, plights = aar.project(bcue, { 150, 0, 0 }, 0.3)
+eq(perr, nil, "a boom cue from the tanker's lights has no error")
+eq(plights.ud, -2, "the tanker's up/down light")
+eq(plights.fa, 0, "the tanker's fore/aft light")
+eq(aar.fmt_err({ 0.1, 1.2, -0.6 }), "DN 1.2  R 0.6 m", "correction text")
+eq(aar.fmt_err({ 0, 0.1, 0 }), "ON POSITION", "on position text")
+
+-- in a jet behind a KC-135
+Export = {
+    LoGetSelfData = function() return { Name = "F-16C_50" } end,
+    LoGetVectorVelocity = function() return { x = 150, y = 0, z = 0 } end,
+}
+aar_reply = { cue = bcue, age_ms = 40 }
+local before = #requests
+for _ = 1, 40 do frame(0.1) end
+local polls = 0
+for i = before + 1, #requests do
+    if requests[i].url:find("/api/cockpit/aar", 1, true) then polls = polls + 1 end
+end
+check(polls >= 10, "polls about five times a second behind a tanker (" .. polls .. " in 4 s)")
+check(AAR.A.shown, "lights shown behind a tanker")
+local function bkg(wdg)
+    local st = wdg and wdg.skin and wdg.skin.skinData.states.released[1]
+    return st and st.bkg and st.bkg.center_center
+end
+eq(bkg(AAR.A.w.lamps.ud[1]), "0xff3b30ff", "red D lamp lit")
+eq(bkg(AAR.A.w.lamps.fa[3]), "0x3ce25eff", "fore/aft centre lamp lit")
+eq(bkg(AAR.A.w.lamps.ud[3]), "0x1f241bd0", "up/down centre lamp off")
+eq(AAR.A.w.title.text, "TEXACO 1-1", "tanker callsign")
+-- a drogue tanker: the pod light and the steering from the error
+aar_reply = { cue = { tanker = "Arco 1-1", typ = "KC130", source = "estimate", method = "drogue", station = "right",
+                      err = { -1, 2.5, 0 }, tol = { 3, 1.5, 1.5 }, rel = { -30, -1, 11.5 }, range_m = 32,
+                      closure_kts = 2, connected = false, pod = "amber",
+                      tx = { 1, 0, 0 }, ty = { 0, 1, 0 }, tz = { 0, 0, 1 }, tvel = { 150, 0, 0 } }, age_ms = 0 }
+for _ = 1, 5 do frame(0.1) end
+eq(AAR.A.w.pod.text, "CLEARED", "amber pod light")
+eq(bkg(AAR.A.w.lamps.ud[1]), "0xff3b30ff", "2.5 m high on 1.5 m: red D")
+check(AAR.A.w.info.text:find("DN 2.5", 1, true), "drogue correction text: " .. tostring(AAR.A.w.info.text))
+-- off the tanker: the lights go
+aar_reply = {}
+for _ = 1, 5 do frame(0.1) end
+check(not AAR.A.shown, "lights hidden away from a tanker")
+-- out of the jet: no polling at all
+Export = nil
+before = #requests
+for _ = 1, 30 do frame(0.1) end
+polls = 0
+for i = before + 1, #requests do
+    if requests[i].url:find("/api/cockpit/aar", 1, true) then polls = polls + 1 end
+end
+eq(polls, 0, "no polling outside a jet")
 
 print(string.format("%d checks, %d failed", checks, failures))
 os.execute('rmdir /s /q "' .. TMP .. '" 2>nul')

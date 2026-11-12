@@ -2605,6 +2605,27 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(websec::with_client_ip())
         .then(api_cockpit_context);
 
+    // The JTAC tab: the caller's side's JTACs (query-cas, trimmed).
+    let cockpit_jtac_route = warp::path!("api" / "cockpit" / "jtac")
+        .and(warp::get())
+        .and(extract_session_cookie())
+        .and(cockpit_query())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .and(websec::with_client_ip())
+        .then(api_cockpit_jtac);
+
+    let cockpit_aar_route = warp::path!("api" / "cockpit" / "aar")
+        .and(warp::get())
+        .and(extract_session_cookie())
+        .and(cockpit_query())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .and(websec::with_client_ip())
+        .then(api_cockpit_aar);
+
     // The DASH tab (cockpit_dash): the dashboard in one answer, and its map.
     let cockpit_dash_route = warp::path!("api" / "cockpit" / "dash")
         .and(warp::get())
@@ -3055,10 +3076,23 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(warp::path::tail())
         .map(|tail: warp::path::Tail| serve_site_asset(tail.as_str()));
 
-    // Catch-all → embedded bfweb SPA
-    let static_files = warp::get()
-        .and(warp::path::tail())
-        .map(|tail: warp::path::Tail| serve_asset(tail.as_str()));
+    // Catch-all → embedded bfweb SPA. Not for /api/: an API route this build
+    // does not have is a 404, not the dashboard's index.html with a 200 --
+    // the cockpit plugin took that page for an empty answer and waited on a
+    // route the server had yet to be deployed with.
+    let static_files =
+        warp::get().and(warp::path::tail()).map(|tail: warp::path::Tail| {
+            if tail.as_str() == "api" || tail.as_str().starts_with("api/") {
+                return warp::reply::with_status(
+                    warp::reply::json(
+                        &serde_json::json!({ "error": "no such API route" }),
+                    ),
+                    warp::http::StatusCode::NOT_FOUND,
+                )
+                .into_response();
+            }
+            serve_asset(tail.as_str())
+        });
 
     // Box sub-chains to avoid warp filter type overflow
     let api_routes = instances_route
@@ -3103,6 +3137,8 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .or(cockpit_plugin_installer_route)
         .or(cockpit_context_route)
         .or(cockpit_menu_route)
+        .or(cockpit_aar_route)
+        .or(cockpit_jtac_route)
         .or(cockpit_dash_route)
         .or(cockpit_messages_route)
         .or(cockpit_cargo_route)

@@ -14,6 +14,7 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
+mod aar;
 mod admin;
 mod ai_fill;
 mod airlife;
@@ -490,6 +491,8 @@ struct Context {
     /// simulation stopping while the campaign's (wall-clock) timers ran on.
     last_tick_clocks: Option<(f64, DateTime<Utc>)>,
     last_bg_check: DateTime<Utc>,
+    /// The cockpit overlay's air-refuelling cues (`aar`).
+    aar: aar::AarState,
 }
 
 thread_local! {
@@ -1726,6 +1729,16 @@ fn handle_event(
         ev => debug!("onEvent: {:?}", ev),
     }
     match ev {
+        Event::Refueling(e) => {
+            if let Some(name) = e.initiator.as_ref().and_then(|o| o.get_name().ok()) {
+                aar::refuel_event(ctx, &name, true);
+            }
+        }
+        Event::RefuelingStop(e) => {
+            if let Some(name) = e.initiator.as_ref().and_then(|o| o.get_name().ok()) {
+                aar::refuel_event(ctx, &name, false);
+            }
+        }
         Event::Birth(b) => match b.initiator.as_ref() {
             Some(initiator) => handle_birth(lua, ctx, initiator)?,
             None => debug!("Birth with no initiator (object already gone)"),
@@ -6586,6 +6599,7 @@ fn start_timed_events(ctx: &mut Context, lua: MizLua, path: PathBuf) -> Result<(
     ctx.last_slow_timed_events = ctx.now();
     start_msgq_drain(lua)?;
     start_admin_drain(lua)?;
+    aar::start(lua)?;
     let timer = Timer::singleton(lua)?;
     timer.schedule_function(timer.get_time()? + 1., mlua::Value::Nil, {
         let path = path.clone();
