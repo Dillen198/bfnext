@@ -197,8 +197,6 @@ What it does:
   an enemy was seen.
 - The garrison is put on the map (if it was asleep) and moves out to meet enemy
   ground units.
-- Troops can't be unloaded inside your own threatened base: `you can't deploy
-  troops here while enemies are near`.
 - The F10 map draws the **yellow ring**, and the owner ring and icon flash. If
   the server turns on under-attack alerts, the owner also gets a red ring.
 - It shows as `[THREAT]` in the status lists and under `Bases Under Threat`.

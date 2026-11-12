@@ -45,9 +45,8 @@ message, for example
 `you are going too fast to unload your cargo, speed must be at or below 46 km/h, and altitude agl must be at or below 10 m`.
 Dynamic cargo and C-130 drops have no such check.
 
-**Threatened bases** don't stop crates. They stop **troops** being unloaded inside
-your own threatened base (`you can't deploy troops here while enemies are near`), for
-{{cfg:threatened_cooldown|300}} seconds after the last enemy is out of sight.
+**Threatened bases** don't stop crates or troops: both can be unloaded inside your
+own base while it is under threat.
 
 The full rules, failures and messages are on
 [Cargo Operations](../f10-menu/cargo.md#unpacking-the-rules).

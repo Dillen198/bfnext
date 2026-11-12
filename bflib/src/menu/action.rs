@@ -51,20 +51,11 @@ fn run_action(
     init_action_menu_for_slot(ctx, lua, &slot, &ucid)
 }
 
-fn do_pos_action(
-    ctx: &mut Context,
-    perf: &mut PerfInner,
-    lua: MizLua,
-    side: Side,
-    slot: SlotId,
-    ucid: Ucid,
-    name: String,
-    pos: LuaVec3,
-    mark: MarkId,
-    action: Action,
-) -> Result<()> {
-    let pos = Vector2::new(pos.0.x, pos.0.z);
-    let args = match &action.kind {
+/// The arguments of an action aimed at map position `pos`, or None if the
+/// action isn't a position action. Shared with the load test (loadtest.rs),
+/// so simulated players buy actions exactly as the F10 menu does.
+pub(crate) fn pos_action_args(kind: &ActionKind, pos: Vector2) -> Option<ActionArgs> {
+    Some(match kind {
         ActionKind::Attackers(cfg) => {
             ActionArgs::Attackers(WithPos { cfg: cfg.clone(), pos })
         }
@@ -109,9 +100,25 @@ fn do_pos_action(
         | ActionKind::CarrierRepair
         | ActionKind::CarrierRespawn
         | ActionKind::Reinforce(_)
-        | ActionKind::NavalCruiseMissileStrike(_) => {
-            bail!("invalid action type for this menu item")
-        }
+        | ActionKind::NavalCruiseMissileStrike(_) => return None,
+    })
+}
+
+fn do_pos_action(
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    lua: MizLua,
+    side: Side,
+    slot: SlotId,
+    ucid: Ucid,
+    name: String,
+    pos: LuaVec3,
+    mark: MarkId,
+    action: Action,
+) -> Result<()> {
+    let pos = Vector2::new(pos.0.x, pos.0.z);
+    let Some(args) = pos_action_args(&action.kind, pos) else {
+        bail!("invalid action type for this menu item")
     };
     let cmd = ActionCmd { name, action, args };
     run_action(ctx, perf, lua, side, slot, ucid, Some(mark), cmd)
@@ -646,6 +653,7 @@ fn run_global_artillery(
         cost: 0,
         penalty: None,
         limit: None,
+        cooldown_secs: None,
         geo_limit: ActionGeoLimit::Unlimited,
         kind: ActionKind::Artillery(cfg.clone()),
     };

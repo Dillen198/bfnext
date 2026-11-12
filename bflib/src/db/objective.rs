@@ -4005,14 +4005,26 @@ impl Db {
                 obj.last_activate = now;
                 gids
             };
-            // The squads that took the base are absorbed by the garrison that
+            // AI squads that took the base are absorbed by the garrison that
             // is moving in -- that is what "consolidated" means, and it is
             // what the no-consolidation path has always done at the moment of
             // capture. Leaving them spawned left every captured objective
-            // carrying its assault force forever: permanent extra units, and
-            // a squad that still counted as capture troops elsewhere.
-            let n = stood_down.len();
-            for gid in stood_down {
+            // carrying its assault force forever.
+            //
+            // A player's squad is different: someone paid for it and carried
+            // it in, and it could not be picked up while the hold ran. Deleting
+            // it here made it vanish from under the APC or helicopter waiting
+            // to lift it back out, so it is released from the hold instead and
+            // is an ordinary squad again, ready to be loaded.
+            let (kept, removed): (Vec<GroupId>, Vec<GroupId>) =
+                stood_down.into_iter().partition(|gid| {
+                    self.persisted
+                        .groups
+                        .get(gid)
+                        .is_some_and(|g| player_squad(&g.origin))
+                });
+            let n = removed.len();
+            for gid in removed {
                 if let Err(e) = self.delete_group(&gid) {
                     warn!("could not stand down assault group {gid}: {e:?}");
                 }
@@ -4021,13 +4033,7 @@ impl Db {
                 10,
                 false,
                 owner,
-                if n > 0 {
-                    format_compact!(
-                        "{name} consolidated -- garrison moving in, assault troops stood down"
-                    )
-                } else {
-                    format_compact!("{name} consolidated -- garrison moving in")
-                },
+                consolidated_msg(&name, n, kept.len()),
             );
             let obj = objective!(self, oid)?;
             self.ephemeral.create_objective_markup(&self.persisted, obj);
@@ -4917,9 +4923,80 @@ pub(super) fn sea_spot(
     None
 }
 
+/// A squad a player bought and carried in, as opposed to an AI assault
+/// squad (the all-zero ucid) or a dismount from a destroyed vehicle. These
+/// outlast a consolidation hold, see `Db::check_capture_hold`.
+fn player_squad(origin: &DeployKind) -> bool {
+    matches!(origin, DeployKind::Troop { player, .. } if *player != Ucid::default())
+}
+
+/// The side's "consolidated" line: `removed` AI squads were absorbed by the
+/// garrison, `kept` player squads were released to be picked up again.
+fn consolidated_msg(name: &str, removed: usize, kept: usize) -> CompactString {
+    match (removed > 0, kept > 0) {
+        (false, false) => format_compact!("{name} consolidated -- garrison moving in"),
+        (true, false) => format_compact!(
+            "{name} consolidated -- garrison moving in, assault troops stood down"
+        ),
+        (false, true) => format_compact!(
+            "{name} consolidated -- garrison moving in; the player squads holding it can be \
+             picked up again"
+        ),
+        (true, true) => format_compact!(
+            "{name} consolidated -- garrison moving in, AI assault troops stood down; the \
+             player squads holding it can be picked up again"
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn troop_origin(player: Ucid) -> DeployKind {
+        let spec = bfprotocols::cfg::Cfg::default()
+            .troops
+            .into_values()
+            .flatten()
+            .next()
+            .expect("the default config has troops");
+        DeployKind::Troop {
+            player,
+            origin: None,
+            moved_by: None,
+            spec,
+            cost_fraction: 1.,
+            jtac: None,
+        }
+    }
+
+    #[test]
+    fn only_player_squads_outlast_consolidation() {
+        let ucid: Ucid = "0123456789abcdef0123456789abcdef".parse().unwrap();
+        assert!(player_squad(&troop_origin(ucid)));
+        // The all-zero ucid is an AI squad.
+        assert!(!player_squad(&troop_origin(Ucid::default())));
+        assert!(!player_squad(&DeployKind::Dismount {
+            from_group: GroupId::from(7),
+            can_capture: true,
+        }));
+    }
+
+    #[test]
+    fn consolidation_message_says_what_happened_to_the_squads() {
+        assert_eq!(
+            consolidated_msg("Senaki", 0, 0),
+            "Senaki consolidated -- garrison moving in"
+        );
+        assert_eq!(
+            consolidated_msg("Senaki", 2, 0),
+            "Senaki consolidated -- garrison moving in, assault troops stood down"
+        );
+        assert!(consolidated_msg("Senaki", 0, 1).contains("can be picked up again"));
+        assert!(
+            consolidated_msg("Senaki", 1, 1).contains("AI assault troops stood down")
+        );
+    }
 
     #[test]
     fn carriers_put_to_sea_clear_of_the_coast() {

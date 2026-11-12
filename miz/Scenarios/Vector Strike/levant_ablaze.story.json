@@ -7,7 +7,7 @@
         "id": "shield_blind",
         "title": "The shield goes blind",
         "side": "Red",
-        "text": "{by} have knocked out the Air Defence Academy. Batteries across the south lose their cueing and start fighting on their own.",
+        "text": "{by} have knocked out the Air Defence Academy. Batteries from Homs to Aleppo, the coast and the Euphrates lose their cueing and start fighting on their own.",
         "trigger": { "ObjectiveDestroyed": { "objective": "Air Defence Academy HQ", "owner": "Red" } },
         "effects": [
           { "Will": { "side": "Red", "delta": -3 } },

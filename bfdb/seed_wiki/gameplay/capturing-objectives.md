@@ -121,7 +121,9 @@ This server's Blue squads, straight from its config:
 {{list:troops.Blue|_Squad list unavailable for this server: check F10 → Troops → Squads in game._}}
 
 Dismounted infantry from a killed APC can capture too, where the server sets
-that vehicle's dismounts as capture-capable.
+that vehicle's dismounts as capture-capable. A squad you put out of an IFV,
+APC or truck yourself is an ordinary troop squad of yours, and captures if
+its kind of squad can (see [Troops](../f10-menu/troops.md#troops-in-ifvs-apcs-and-trucks)).
 
 **Load from a different base.** `F10 → Troops → Squads → Load Standard squad`
 works only inside a friendly base that still has logistics and is not itself
@@ -140,9 +142,8 @@ neutral base within 5 km of its edge:
 | `these troops are 340m outside Kuweires's ring -- they only capture from inside it` | Move them in. |
 | `Igla troops can't capture -- bring a squad that can to take Kuweires` | Wrong squad. |
 
-The enemy being near the target is no reason not to unload there. The only
-unload that is blocked by enemies is inside **your own** base while it is
-threatened: `you can't deploy troops here while enemies are near`.
+Enemies never stop an unload: troops can go down at the enemy base, inside
+your own base while it is threatened, or out in the open.
 
 No helicopter? [AI Helo Missions](../advanced/helo-missions.md) and a
 [ground war](../advanced/ground-war.md) formation with infantry can both put
@@ -277,11 +278,14 @@ Kuweires: the assault force was wiped out -- the base is contested (Neutral)
 Because the light garrison is not on the map until consolidation ends, it
 cannot hold the base for you: losing the assault troops loses the base.
 
-**If they survive**, the base consolidates. The assault troops are stood down
-and the garrison moves in:
+**If they survive**, the base consolidates and the garrison moves in. AI
+assault troops are stood down. Squads a player carried in stay where they are,
+released from the hold: from then on they are ordinary troops, and the
+helicopter or APC that brought them can load them again (`F10 → Troops →
+Extract`).
 
 ```dcsmessage
-Kuweires consolidated -- garrison moving in, assault troops stood down
+Kuweires consolidated -- garrison moving in; the player squads holding it can be picked up again
 ```
 
 ## After the capture

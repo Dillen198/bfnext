@@ -107,7 +107,10 @@ The panel has eight tabs (the last, WHEEL, edits the wheel -- see below):
   in, **< Back** to come out, click a command to run it. Whatever F10 answers
   ("Need 3 crates", "you must land to spawn crates", the cargo list) appears
   in a box at the top of the list, instead of only flashing in the corner of
-  the screen. No `More >>` paging: the list scrolls.
+  the screen. No `More >>` paging: the F10 menu splits long lists into
+  pages of nine, and the panel and the wheel put the pages back together
+  into one list that scrolls. Clicking an opener such as `Actions>>` or
+  `Ground Forces>>` takes you straight into the menu it builds.
 - **CARGO** — what you are carrying and how much room is left, the crates
   lying near you (range and bearing), one-click Unpack / Load / Unload, the
   base-supply crates, and every deployable by category with **how many of

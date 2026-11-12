@@ -1,10 +1,143 @@
 # Changelog
 
-What changed for players, newest first. Current version: **v3.1**. Each update
+What changed for players, newest first. Current version: **v3.4**. Each update
 gets the next number. Below v2.0 is the list of what this engine does
 differently from stock Fowl Engine. Where an entry gives a campaign number, it
 is read from the server selected at the top of the page; where a later entry or
 a linked page says otherwise, the later one is right.
+
+## v3.4 — November 10, 2026
+
+**Troops can be unloaded anywhere**
+- Unload Troops no longer refuses inside your own base while it is
+  threatened (`you can't deploy troops here while enemies are near`). Front
+  bases near an enemy garrison stayed threatened for good, so their troops
+  could never be put down. Troops now go down at your own base, at the enemy
+  base, or out in the open.
+
+**The Last Stand**
+- A side about to lose can have one last card: when its story says so, an AI
+  aircraft flies a nuclear weapon at the enemy's biggest push. The other side
+  is warned the moment it takes off and can shoot it down; if it gets there
+  the blast destroys everything near the base, both sides' units alike. Once
+  a round. On Southern Flank 1985 it is the Soviets' MiG-21bis. See
+  [The Last Stand](../advanced/campaign-events.md#the-last-stand-nuclear-strike).
+
+**Southern Flank 1985 brought up to date**
+- Supply crates by kind, wingmen by role in period types, naval convoys on
+  six Black Sea lanes and warship patrols off Poti and Novorossiysk, fog of
+  war on the F10 map, and action cooldowns.
+- New actions: CAS, attack helicopters, air assault and a NATO paradrop,
+  supply and repair runs, Reinforce Base, recon flights, artillery fire
+  missions, and fighter, attack and SEAD waypoints.
+- Many more deployables, all 1985 kit: Patriot and S-300PS, Stinger and Igla
+  teams, Chieftain, AAV7, BMP-1, BMD-1, MT-LB, BTR-60, the 2B11 mortar and
+  more, and whole platoons and batteries.
+- Each hidden SAM site has its own close-in defence group now, which stays
+  awake when the site goes dark.
+
+## v3.3 — November 10, 2026
+
+Fixes from player reports.
+
+**Landed flights show as landed**
+- A flight that landed and then changed slot or went to spectators was shown
+  as **No landing** on the dashboard, and counted as a lost aircraft in K/D
+  and deaths. It is recorded as landed now, including a touchdown the server
+  had not finished registering. Leaving the slot in the air is still not a
+  landing. Flights already recorded keep their old outcome.
+- Changing straight from one aircraft into another no longer loses the next
+  flight's record either.
+
+**Call your wingman on the ground**
+- F10 → Wingman → Request now works before takeoff. The wingman starts up at
+  the nearest field (usually yours), circles overhead until you are airborne,
+  then joins you. If you have not taken off within 20 minutes it goes home.
+  See [Calling a wingman](../advanced/air-life.md#calling-a-wingman).
+
+**Squads that take a base are not lost when it consolidates**
+- A squad you carried in (by helicopter, or dismounted from an IFV, APC or
+  truck) can't be picked up while the base it took is consolidating. When
+  consolidation finished it used to be removed, leaving its vehicle with no
+  troops. Now it stays where it is and can be embarked or extracted again.
+  AI assault squads are still stood down. See
+  [Consolidation](../gameplay/capturing-objectives.md#step-5-consolidation).
+
+## v3.2 — November 9, 2026
+
+The engine for **Levant Ablaze**. Everything here is off unless a server's
+campaign turns it on; the linked pages say what this server does.
+
+**Put troops out of an IFV, APC or truck**
+- Driving one (Combined Arms) or one you deployed, you can dismount its squad
+  while it is stopped: F10 → Troops in the vehicle, or `-dismount` /
+  `-embark` / `-carriers` in chat. Before, the squad only got out when the
+  vehicle was destroyed.
+- One squad per vehicle: embark it again to redeploy it. If it is killed the
+  vehicle has no more troops. A destroyed vehicle only lets out a squad that
+  is actually aboard, and an armoured formation's assault uses up the squad
+  of the vehicle that sends it. See
+  [Troops](../f10-menu/troops.md#troops-in-ifvs-apcs-and-trucks).
+
+**Supply crates by kind**
+- Base Supply can offer one crate per kind of stock: fuel, air-to-air
+  missiles, air-to-ground munitions, guns, tanks and pods, ground equipment.
+  Each moves only its own kind, so a base short of AMRAAMs needs a load of
+  missiles flown in, not a slice of everything.
+- The fuel crate now moves only fuel and the weapons crate everything else,
+  whichever way it is delivered (the helicopter route used to move both).
+- A crate with nothing to move is refused (it stays on the ground), and a
+  C-130 supply run pays like any other transfer, but only when it moved
+  something. See [Logistics & Supply](../gameplay/logistics.md#supply-transfer-crates).
+
+**Wingmen by type**
+- F10 → Wingman → Request lists the kinds you can call, each priced: fighter
+  escort, CAS, strike, SEAD, an attack helicopter for helicopter pilots, and
+  on some servers a copy of your own aircraft with its slot's loadout.
+- **Orders**: cover me, engage air threats, attack near me or at your map
+  mark, hold, weapons free / return fire / hold, close or spread formation.
+  See [Wingmen](../advanced/air-life.md).
+
+**Naval convoys and patrols**
+- Cargo ships with an escort sail fixed sea lanes from a naval base to
+  coastal bases, as well as to carrier groups. The lane is drawn on the F10
+  map while a convoy is on it; sink the cargo ships and the load is lost.
+- Warship patrols sail a loop off each naval base for whoever holds it, and
+  are replaced {{cfg:naval_patrols.respawn_minutes|60}} minutes after they
+  are sunk. See
+  [Logistics & Supply](../gameplay/logistics.md#three-carriers).
+
+**Ground war**
+- Commanders can form a formation from their own deployed vehicles near them
+  (F10 → Ground Forces), and disband any formation: one formed this way
+  becomes their deployed units again where it stands, one raised from a
+  garrison goes straight back to its posts. See
+  [Ground War](../advanced/ground-war.md#a-formation-from-your-own-deployed-units).
+
+**Actions**
+- Actions can have a **cooldown** for the whole side after each use, whoever
+  called it. See [Actions Menu](../f10-menu/actions.md#costs-limits-and-refunds).
+- A bomber run counts each JTAC contact once, and a server can limit it to
+  contacts within a set radius of the aim point (before, one run could clear
+  several bases ~30 km apart).
+- At most one convoy ambush per side at a time, unless the server allows more.
+
+**Menus and the cockpit panel**
+- Every list the engine builds in F10 pages with `More >>`, including the
+  formation menus and Base Supply.
+- Cockpit panel 3.6: those pages read as one scrolling list, openers such as
+  `Actions>>` step straight into the menu they build, and supply crates say
+  what they carry.
+
+**Fixes**
+- The **Fuel** hex shows the kind of fuel a base is shortest of. An airfield
+  out of jet fuel used to read green because its other fuels were full, so
+  nothing ever relieved it.
+- On some servers AI flights (CAP, strikes, bombers, wingmen) won't take off
+  from a field low on fuel, because they burn its fuel and never give it back;
+  they use the next field out.
+- A naval convoy no longer tries to start on dry land at a naval base that
+  sits inland of the shore: it puts to sea in open water first.
 
 ## v3.1 — October 22, 2026
 
@@ -453,7 +586,7 @@ Recon-capable airframes (server-configured) get an **F10 → Recon** menu. Start
 Any target a JTAC (ground, drone, or player) has confirmed line-of-sight on now feeds the same intel picture automatically — no menu action needed. The mark stays at full confidence while the JTAC keeps watching; once it loses the target the confidence halves every {{cfg:elint.half_life_jtac_secs|3600}} seconds, so the mark stays on the map for hours instead of vanishing the moment the JTAC looks away. See [JTAC System](../f10-menu/jtac.md#f10-map-intel).
 
 **Mechanized Infantry**
-Infantry squads can board and dismount IFVs/APCs for overland transport, not just helicopters — troops embark near a friendly vehicle and can be dropped off anywhere it can drive.
+IFVs and APCs carry infantry: a squad gets out when the vehicle is destroyed, and armoured formations send it in to take a base. (Putting a squad out by hand came in v3.2.)
 
 **CSAR — Combat Search & Rescue**
 A lost aircraft's life can be won back. A downed pilot unit spawns at the crash site; a friendly helicopter can locate and extract them via the F10 → CSAR menu, giving the pilot the life back (where lives are enforced) and paying the rescuer {{cfg:csar.rescue_reward|0}} points. Come down inside a friendly objective's zone and the pilot recovers on their own — no helo needed. A downed pilot is held by an enemy-capture countdown ({{cfg:csar.capture_timer|15}} minutes here), but as long as a friendly rescue helicopter is near them the timer can't take them, so a pickup that's a few seconds late still works. See [Combat Search & Rescue](../f10-menu/csar.md).

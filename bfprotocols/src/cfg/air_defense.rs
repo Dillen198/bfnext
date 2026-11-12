@@ -553,6 +553,15 @@ pub struct SpecialSamSiteCfg {
     /// Inline unit definitions for Blue coalition. If non-empty, takes precedence over blue_template.
     #[serde(default)]
     pub blue_units: Vec<SpecialSamUnitCfg>,
+    /// The site's point defence for Red: a second group, spawned beside the
+    /// main one, that the IADN's emission control leaves alone so it stays
+    /// hot while the main group is dark. Its units count toward the site's
+    /// health. Empty: no defence group.
+    #[serde(default)]
+    pub red_defence: Vec<SpecialSamUnitCfg>,
+    /// The site's point defence for Blue (see red_defence).
+    #[serde(default)]
+    pub blue_defence: Vec<SpecialSamUnitCfg>,
     /// DCS country for Red inline units (ignored when using red_template).
     #[serde(default = "default_red_country")]
     pub red_country: Country,
@@ -566,4 +575,31 @@ pub struct SpecialSamSiteCfg {
     /// Crate type that repairs the site; if None the site is not repairable
     #[serde(default)]
     pub repair_crate: Option<Crate>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SITE: &str = r#"{
+        "name": "SA-6 Test", "pos": {"x": 1.0, "y": 2.0}, "coalition": "Red",
+        "red_units": [{"type": "Kub 1S91 str", "pos": {"x": 1.0, "y": 2.0}, "heading": 0.0}],
+        "red_template": null, "blue_template": null"#;
+
+    /// A site written before the defence group existed still reads, with none.
+    #[test]
+    fn a_site_without_a_defence_group() {
+        let s: SpecialSamSiteCfg = serde_json::from_str(&format!("{SITE}}}")).unwrap();
+        assert!(s.red_defence.is_empty() && s.blue_defence.is_empty());
+    }
+
+    #[test]
+    fn a_site_with_a_defence_group() {
+        let s: SpecialSamSiteCfg = serde_json::from_str(&format!(
+            r#"{SITE}, "red_defence": [{{"type": "ZSU-23-4 Shilka", "pos": {{"x": 3.0, "y": 4.0}}, "heading": 1.0}}]}}"#
+        ))
+        .unwrap();
+        assert_eq!(s.red_defence[0].typ.as_str(), "ZSU-23-4 Shilka");
+        assert!(s.blue_defence.is_empty());
+    }
 }

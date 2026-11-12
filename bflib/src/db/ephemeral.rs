@@ -234,6 +234,12 @@ pub struct Ephemeral {
     /// `Db::takeoff`) and only the deslot that follows a landing closes it (see
     /// `Db::player_deslot`), so land-rearm-launch counts once instead of twice.
     pub(super) open_sorties: FxHashMap<Ucid, Option<DateTime<Utc>>>,
+    /// Pilots whose `Stat::Deslot` already went out when they picked a new
+    /// slot (see `Db::player_changing_slot`). DCS asks about the new slot
+    /// before it pulls the pilot out of the old aircraft, so the deslot that
+    /// follows would reach bfdb after the new `Stat::Slot` and wipe it. Set
+    /// until the pilot is born into the new slot or picks another one.
+    pub(super) deslot_sent: FxHashSet<Ucid>,
     pub(super) cargo: FxHashMap<SlotId, Cargo>,
     /// C-130 physical cargo tracking: crate_name -> C130Cargo (tracked by name because DCS changes object ID when loading/dropping)
     pub(super) c130_crates: FxHashMap<String, C130Cargo>,
@@ -365,6 +371,18 @@ pub struct Ephemeral {
     pub(crate) artillery_targeted: FxHashMap<ObjectiveId, DateTime<Utc>>,
     pub(super) production_by_side: FxHashMap<Side, Arc<Production>>,
     pub(super) actions_taken: FxHashMap<Side, FxHashMap<String, u32>>,
+    /// Side -> action name -> when it was last used, for `Action::cooldown_secs`.
+    pub(super) actions_last_used: FxHashMap<Side, FxHashMap<String, DateTime<Utc>>>,
+    /// wsType level 3 of every missile in the DCS resource map, read once at
+    /// load: it is what tells an air-to-air missile from an air-to-ground
+    /// one for the split supply crates.
+    pub(super) missile_ws3: FxHashMap<String, i64>,
+    /// A player slot group in the .miz for each (side, aircraft type), for
+    /// "a copy of my aircraft" wingmen: its loadout and paint come along.
+    pub(crate) clone_templates: FxHashMap<(Side, String), String>,
+    /// This session launched the round's nuclear strike flight: one
+    /// from an earlier session was dropped by the restart.
+    pub(crate) nuclear_launched: bool,
     /// Battery -> when it last fired a player-requested mission, for the
     /// per-battery `ArtilleryCfg::cooldown_secs`.
     pub(super) arty_last_fired: FxHashMap<GroupId, DateTime<Utc>>,
@@ -614,6 +632,7 @@ impl Default for Ephemeral {
             to_bg: None,
             players_by_slot: IndexMap::default(),
             open_sorties: FxHashMap::default(),
+            deslot_sent: FxHashSet::default(),
             cargo: FxHashMap::default(),
             c130_crates: FxHashMap::default(),
             c130_spawn_queue: BTreeMap::default(),
@@ -665,6 +684,10 @@ impl Default for Ephemeral {
             artillery_targeted: FxHashMap::default(),
             production_by_side: FxHashMap::default(),
             actions_taken: FxHashMap::default(),
+            actions_last_used: FxHashMap::default(),
+            missile_ws3: FxHashMap::default(),
+            clone_templates: FxHashMap::default(),
+            nuclear_launched: false,
             arty_last_fired: FxHashMap::default(),
             delayspawnq: BTreeMap::default(),
             awacs_stn: 0o77777,
@@ -1655,6 +1678,17 @@ impl Ephemeral {
                     }
                     Entry::Vacant(e) => {
                         e.insert(fuel_cr.clone());
+                    }
+                }
+            }
+            // Register the split supply crates
+            for sc in whcfg.supply_crates.get(&side).into_iter().flatten() {
+                match idx.crates_by_name.entry(sc.crate_def.name.clone()) {
+                    Entry::Occupied(_) => {
+                        bail!("multiple {} crates for side {side}", sc.crate_def.name)
+                    }
+                    Entry::Vacant(e) => {
+                        e.insert(sc.crate_def.clone());
                     }
                 }
             }
@@ -2690,6 +2724,9 @@ impl Ephemeral {
                 unit_tbl.raw_set("skill", "High")?;
                 unit_tbl.raw_set("playerCanDrive", false)?;
                 unit_tbl.raw_set("coldAtStart", false)?;
+                if let Some(livery) = self.cfg.ground_liveries.get(su.typ.0.as_str()) {
+                    unit_tbl.raw_set("livery_id", livery.as_str())?;
+                }
                 units_tbl.raw_set(i + 1, unit_tbl)?;
             }
             let point = centroid2d(points.iter().copied());
@@ -2754,6 +2791,9 @@ impl Ephemeral {
                     format_compact!("getting template {}", group.template_name)
                 })?;
             template.group.set("lateActivation", false)?;
+            // A player slot used as a template (a wingman copy of the
+            // player's aircraft) must spawn as an AI flight, not a slot.
+            template.group.raw_remove("dynSpawnTemplate")?;
             template.group.set("hidden", false)?;
             template.group.set("visible", true)?;
             template.group.set_name(group.name.clone())?;
@@ -3328,6 +3368,11 @@ impl Ephemeral {
                                 }
                             }
                             unit.raw_remove("unitId")?;
+                            if let Ok(skill) = unit.raw_get::<String>("skill")
+                                && matches!(skill.as_str(), "Client" | "Player")
+                            {
+                                unit.raw_set("skill", "Excellent")?;
+                            }
                             if matches!(
                                 template.category,
                                 GroupKind::Plane | GroupKind::Helicopter

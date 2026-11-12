@@ -565,6 +565,19 @@ impl Story {
                         out,
                     )
                 }
+                StoryTrigger::ObjectivesHeldBelow { side, count } => {
+                    let held =
+                        world.objectives.iter().filter(|o| o.owner == *side).count();
+                    let side = *side;
+                    self.level(
+                        cfg,
+                        i,
+                        Some(held < *count as usize),
+                        |s| s.blame(side, false, world, now),
+                        now,
+                        out,
+                    )
+                }
                 StoryTrigger::WillAbove { side, value } => {
                     let v = side_idx(*side).and_then(|i| world.will[i]);
                     // its successes: the enemy's losses
@@ -1518,6 +1531,9 @@ impl Db {
                     w => fstr!("The round ends: {w:?} wins"),
                 })
             }
+            StoryEffect::NuclearStrike(c) => {
+                out.push(self.order_nuclear_strike(c, now).as_str().into());
+            }
             StoryEffect::Message { side, text } => {
                 let text = render(
                     text,
@@ -2176,5 +2192,59 @@ mod tests {
         assert_eq!(held.directive.defend, vec![1]);
         assert_eq!(held.expires - held.received, Duration::hours(2));
         assert_eq!(db.story_ending(), Some(Side::Blue));
+    }
+
+    #[test]
+    fn the_last_bases_trigger_fires_on_the_crossing() {
+        let cfg = story(
+            r#"{"events": [
+            {"id": "last_bases", "title": "Down to the last bases", "side": "Red",
+             "trigger": {"ObjectivesHeldBelow": {"side": "Red", "count": 3}}}
+        ]}"#,
+        );
+        let w = |red: usize| World {
+            objectives: (0..red)
+                .map(|i| obj(i as i64, &format!("R{i}"), Side::Red, 100))
+                .chain((0..5).map(|i| obj(100 + i, &format!("B{i}"), Side::Blue, 100)))
+                .collect(),
+            fuel: [None, None],
+            will: [None, None],
+            airframes: Default::default(),
+        };
+        let mut s = Story::default();
+        // 4 held: armed, nothing yet
+        assert!(s.step(&cfg, &w(4), t0()).is_empty());
+        assert_eq!(s.armed.len(), 1);
+        // down to 2: it fires, once
+        let f = s.step(&cfg, &w(2), t0() + mins(1));
+        assert_eq!(ids(&f, &cfg), vec!["last_bases"]);
+        s.step(&cfg, &w(4), t0() + mins(2));
+        assert!(s.step(&cfg, &w(1), t0() + mins(3)).is_empty());
+    }
+
+    #[test]
+    fn a_nuclear_strike_is_ordered_once_a_round() {
+        let (mut db, _) = db_with(&one_effect(
+            r#"[{"NuclearStrike": {"side": "Red", "template": "RNUKE", "aircraft": "MiG-21bis",
+                                   "will_on_detonation": 20, "enemy_will_on_detonation": -10}}]"#,
+        ));
+        let f = fire_now(&mut db, vec![]);
+        assert_eq!(strs(&f.effects), vec!["Red orders a nuclear strike"]);
+        let n = db.persisted.nuclear.clone().unwrap();
+        assert!(matches!(n.phase, super::super::nuclear::Phase::Ordered));
+        assert_eq!(n.cfg.aircraft, "MiG-21bis");
+        assert_eq!(n.cfg.will_on_detonation, 20.);
+        // a second order the same round changes nothing
+        let again = db.order_nuclear_strike(&n.cfg, t0());
+        assert!(again.contains("already ordered"));
+        assert!(matches!(
+            db.persisted.nuclear.as_ref().unwrap().phase,
+            super::super::nuclear::Phase::Ordered
+        ));
+        // and the order survives a save and reload
+        let saved = serde_json::to_string(&db.persisted.nuclear).unwrap();
+        let back: Option<super::super::nuclear::NuclearState> =
+            serde_json::from_str(&saved).unwrap();
+        assert_eq!(back.unwrap().cfg.template, "RNUKE");
     }
 }

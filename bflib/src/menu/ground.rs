@@ -97,6 +97,16 @@ fn release(_: MizLua, a: ArgTriple<Ucid, GroupId, u32>) -> Result<()> {
     Ok(())
 }
 
+fn form_deployed(_: MizLua, a: ArgTuple<Ucid, GroupId>) -> Result<()> {
+    queue(a.fst, a.snd, CmdKind::FormDeployed)?;
+    Ok(())
+}
+
+fn disband(_: MizLua, a: ArgTriple<Ucid, GroupId, u32>) -> Result<()> {
+    queue(a.fst, a.snd, CmdKind::Disband(a.trd))?;
+    Ok(())
+}
+
 /// Put the closed `Ground Forces>>` entry on a slot's F10 root.
 pub(super) fn init_ground_menu_for_slot(
     mc: &MissionCommands,
@@ -168,71 +178,23 @@ fn build(lua: MizLua, ucid: Ucid, group: GroupId) -> Result<()> {
         v.truncate(CHOICES);
         v
     };
-    for (id, name, pos, posture, pct, home) in &forms {
-        let state = match posture {
-            Posture::Moving => "moving",
-            Posture::Holding => "holding",
-            Posture::Assaulting => "assaulting",
-        };
-        let sub = p.submenu(&mc, format_compact!("{name} ({state}, {pct}%)").into())?;
-        let atk = mc.add_submenu_for_group(group, "Attack".into(), Some(sub.clone()))?;
-        let mut pa = Pager::new(group, atk);
-        for (oid, oname, opos, _) in nearest(*pos, false) {
-            let km = dist(*opos, *pos) / 1000.;
-            pa.command(
-                &mc,
-                format_compact!("{oname} ({km:.0} km)").into(),
-                attack,
-                ArgQuad { fst: ucid, snd: group, trd: *id, fth: *oid },
-            )?;
-        }
-        let def = mc.add_submenu_for_group(
-            group,
-            "Defend / move to".into(),
-            Some(sub.clone()),
-        )?;
-        let mut pd = Pager::new(group, def);
-        for (oid, oname, opos, _) in nearest(*pos, true) {
-            let km = dist(*opos, *pos) / 1000.;
-            pd.command(
-                &mc,
-                format_compact!("{oname} ({km:.0} km)").into(),
-                defend,
-                ArgQuad { fst: ucid, snd: group, trd: *id, fth: *oid },
-            )?;
-        }
-        mc.add_command_for_group(
-            group,
-            "Hold position".into(),
-            Some(sub.clone()),
-            hold,
-            ArgTriple { fst: ucid, snd: group, trd: *id },
-        )?;
-        // Home if it is still ours, else the nearest base that is.
-        let back = objs
-            .iter()
-            .find(|o| o.0 == *home && o.3)
-            .or_else(|| nearest(*pos, true).into_iter().next());
-        if let Some((oid, oname, _, _)) = back {
-            mc.add_command_for_group(
-                group,
-                format_compact!("Withdraw to {oname} and refit").into(),
-                Some(sub.clone()),
-                withdraw,
-                ArgQuad { fst: ucid, snd: group, trd: *id, fth: *oid },
-            )?;
-        }
-        mc.add_command_for_group(
-            group,
-            "Hand back to AI command".into(),
-            Some(sub),
-            release,
-            ArgTriple { fst: ucid, snd: group, trd: *id },
+    // Form and Raise go before the formation list, so they stay on the first
+    // page however many formations a side has. Raise: friendly bases that can
+    // spare troops, nearest the player (or the front, for someone not in an
+    // aircraft).
+    let cfg = ctx.db.ephemeral.cfg.ground_war.clone();
+    if let Some(cfg) = cfg.as_ref().filter(|c| c.enabled && c.form_from_deployed) {
+        p.command(
+            &mc,
+            format_compact!(
+                "Form a formation from my deployed units (within {:.0} km)",
+                cfg.form_radius_m / 1000.
+            )
+            .into(),
+            form_deployed,
+            ArgTuple { fst: ucid, snd: group },
         )?;
     }
-    // Raise: friendly bases that can spare troops, nearest the player (or
-    // the front, for someone not in an aircraft).
-    let cfg = ctx.db.ephemeral.cfg.ground_war.clone();
     if let Some(cfg) = cfg.filter(|c| c.enabled) {
         let at = me.or_else(|| forms.first().map(|f| f.2)).unwrap_or_default();
         let mut offers = vec![];
@@ -261,6 +223,76 @@ fn build(lua: MizLua, ucid: Ucid, group: GroupId) -> Result<()> {
                 )?;
             }
         }
+    }
+    for (id, name, pos, posture, pct, home) in &forms {
+        let state = match posture {
+            Posture::Moving => "moving",
+            Posture::Holding => "holding",
+            Posture::Assaulting => "assaulting",
+        };
+        let sub = p.submenu(&mc, format_compact!("{name} ({state}, {pct}%)").into())?;
+        // Six entries today; paged anyway so a seventh can't fall off.
+        let mut fp = Pager::new(group, sub);
+        let atk = fp.submenu(&mc, "Attack".into())?;
+        let mut pa = Pager::new(group, atk);
+        for (oid, oname, opos, _) in nearest(*pos, false) {
+            let km = dist(*opos, *pos) / 1000.;
+            pa.command(
+                &mc,
+                format_compact!("{oname} ({km:.0} km)").into(),
+                attack,
+                ArgQuad { fst: ucid, snd: group, trd: *id, fth: *oid },
+            )?;
+        }
+        let def = fp.submenu(&mc, "Defend / move to".into())?;
+        let mut pd = Pager::new(group, def);
+        for (oid, oname, opos, _) in nearest(*pos, true) {
+            let km = dist(*opos, *pos) / 1000.;
+            pd.command(
+                &mc,
+                format_compact!("{oname} ({km:.0} km)").into(),
+                defend,
+                ArgQuad { fst: ucid, snd: group, trd: *id, fth: *oid },
+            )?;
+        }
+        fp.command(
+            &mc,
+            "Hold position".into(),
+            hold,
+            ArgTriple { fst: ucid, snd: group, trd: *id },
+        )?;
+        // Home if it is still ours, else the nearest base that is.
+        let back = objs
+            .iter()
+            .find(|o| o.0 == *home && o.3)
+            .or_else(|| nearest(*pos, true).into_iter().next());
+        if let Some((oid, oname, _, _)) = back {
+            fp.command(
+                &mc,
+                format_compact!("Withdraw to {oname} and refit").into(),
+                withdraw,
+                ArgQuad { fst: ucid, snd: group, trd: *id, fth: *oid },
+            )?;
+        }
+        fp.command(
+            &mc,
+            "Hand back to AI command".into(),
+            release,
+            ArgTriple { fst: ucid, snd: group, trd: *id },
+        )?;
+        // formed from deployed units: they become deployed units again;
+        // raised from a garrison: it goes straight back to its posts
+        let formed = ctx.db.formation(*id).is_some_and(|f| f.formed);
+        fp.command(
+            &mc,
+            if formed {
+                "Disband into deployed units here".into()
+            } else {
+                "Disband (back to the garrison)".into()
+            },
+            disband,
+            ArgTriple { fst: ucid, snd: group, trd: *id },
+        )?;
     }
     Ok(())
 }

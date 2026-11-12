@@ -35,7 +35,7 @@ use anyhow::{Context as AnyhowContext, Result, anyhow, bail};
 use bfprotocols::{
     cfg::{
         Action, ActionKind, AiPackagesCfg, CivilAircraftCfg, CivilTrafficCfg, UnitTag,
-        WingmanCfg,
+        WingmanCfg, WingmanRole,
     },
     db::{
         group::GroupId,
@@ -52,7 +52,7 @@ use dcso3::{
     coalition::{Coalition, Side},
     controller::{
         ActionTyp, AiOption, AirOption, AirReactionToThreat, AirRoe, AltType, Command,
-        FollowParams, MissionPoint, PointType, Task, TurnMethod,
+        FollowParams, MissionPoint, OrbitPattern, PointType, Task, TurnMethod,
     },
     country::Country,
     env::miz,
@@ -77,6 +77,9 @@ const CIV_HIT_MEMORY_SECS: i64 = 180;
 const RTB_GIVEUP_SECS: i64 = 1200;
 /// A wingman whose player has been on the ground this long is sent home.
 const WINGMAN_GROUND_GRACE_SECS: i64 = 60;
+/// A wingman called on the ground waits this long for its player to take
+/// off -- start-up and taxi -- before it is sent home.
+const WINGMAN_TAKEOFF_WAIT_SECS: i64 = 20 * 60;
 /// An arriving airliner is removed this long after it touches down.
 const CIV_ROLLOUT_SECS: i64 = 45;
 /// Overflights and departures are removed within this distance of their exit.
@@ -86,9 +89,67 @@ pub(crate) fn is_civil(name: &str) -> bool {
     name.starts_with(CIV_PREFIX)
 }
 
+/// Which wingman F10 > Wingman > Request asked for.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum WingmanPick {
+    /// The single wingman of a config with no `types`.
+    Standard,
+    /// A copy of the player's own aircraft.
+    Clone,
+    /// `WingmanCfg::types[i]`.
+    Type(usize),
+}
+
+/// F10 > Wingman > Orders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WingmanOrder {
+    CoverMe,
+    EngageAir,
+    AttackNearMe,
+    AttackMark,
+    HoldHere,
+    WeaponsFree,
+    ReturnFire,
+    WeaponsHold,
+    Close,
+    Spread,
+}
+
+impl WingmanOrder {
+    /// In menu order.
+    pub(crate) const ALL: [WingmanOrder; 10] = [
+        WingmanOrder::CoverMe,
+        WingmanOrder::EngageAir,
+        WingmanOrder::AttackNearMe,
+        WingmanOrder::AttackMark,
+        WingmanOrder::HoldHere,
+        WingmanOrder::WeaponsFree,
+        WingmanOrder::ReturnFire,
+        WingmanOrder::WeaponsHold,
+        WingmanOrder::Close,
+        WingmanOrder::Spread,
+    ];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            WingmanOrder::CoverMe => "Cover me / rejoin",
+            WingmanOrder::EngageAir => "Engage air threats around me",
+            WingmanOrder::AttackNearMe => "Attack ground targets near me",
+            WingmanOrder::AttackMark => "Attack my latest map mark",
+            WingmanOrder::HoldHere => "Hold here (orbit)",
+            WingmanOrder::WeaponsFree => "Weapons free",
+            WingmanOrder::ReturnFire => "Return fire only",
+            WingmanOrder::WeaponsHold => "Weapons hold",
+            WingmanOrder::Close => "Formation: close",
+            WingmanOrder::Spread => "Formation: spread",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum WingmanCmd {
-    Request,
+    Request(WingmanPick),
+    Order(WingmanOrder),
     Release,
     Status,
 }
@@ -100,12 +161,27 @@ struct Wingman {
     /// died, respawned or changed aircraft) means the escort is over.
     unit_name: String,
     typ: String,
+    /// "Fighter escort", "Copy of my F-16C_50", ...
+    label: String,
+    role: WingmanRole,
+    /// The player's DCS group, which the escort follows.
+    escorted: miz::GroupId,
+    /// How far it goes from the player to engage while covering.
+    engage: f64,
     expires_at: DateTime<Utc>,
     landed_since: Option<DateTime<Utc>>,
-    /// The escort task, until the wingman is off the ground to take it: one
-    /// on the takeoff waypoint is thrown away when the takeoff starts, and
-    /// the wingman just flew its route somewhere else.
-    escort: Option<Task>,
+    /// When the wingman was called on the ground, the player has not taken
+    /// off yet: until they do, being on the ground is not "landed", and the
+    /// wingman holds over the field instead of escorting a parked aircraft.
+    waiting_since: Option<DateTime<Utc>>,
+    /// Off the ground and given its first task. Until then orders other than
+    /// ROE and formation wait: a task on the takeoff waypoint is thrown away
+    /// when the takeoff starts, and the wingman just flew its route.
+    joined: bool,
+    roe: AirRoe,
+    spread: bool,
+    /// What it is doing, for Status.
+    doing: CompactString,
 }
 
 #[derive(Debug)]
@@ -317,7 +393,8 @@ pub(crate) fn process_requests(
     let requests = std::mem::take(&mut ctx.airlife.requests);
     for (cmd, menu_gid, ucid) in requests {
         let msg = match cmd {
-            WingmanCmd::Request => request_wingman(lua, ctx, perf, ucid, now),
+            WingmanCmd::Request(pick) => request_wingman(lua, ctx, perf, ucid, pick, now),
+            WingmanCmd::Order(order) => order_wingman(lua, ctx, ucid, order),
             WingmanCmd::Release => release_wingman(lua, ctx, ucid, now),
             WingmanCmd::Status => wingman_status(lua, ctx, ucid, now),
         };
@@ -357,11 +434,134 @@ fn wingman_templates(
     out
 }
 
+/// What a wingman of `role` engages while it covers the player.
+fn cover_targets(role: WingmanRole) -> Vec<Attribute> {
+    match role {
+        WingmanRole::AttackHelo => vec![Attribute::Helicopters, Attribute::GroundUnits],
+        // a SEAD escort's job is the SAM shooting at you
+        WingmanRole::Sead => vec![Attribute::AirDefence],
+        WingmanRole::Fighter
+        | WingmanRole::Strike
+        | WingmanRole::Cas
+        | WingmanRole::Multirole => vec![Attribute::Air],
+    }
+}
+
+/// What "attack" means for a wingman of `role`.
+fn attack_targets(role: WingmanRole) -> Vec<Attribute> {
+    match role {
+        WingmanRole::Fighter => vec![Attribute::Air],
+        WingmanRole::Sead => vec![Attribute::AirDefence],
+        WingmanRole::AttackHelo => vec![Attribute::GroundUnits, Attribute::Helicopters],
+        WingmanRole::Strike | WingmanRole::Cas | WingmanRole::Multirole => {
+            vec![Attribute::GroundUnits]
+        }
+    }
+}
+
+fn role_name(role: WingmanRole) -> &'static str {
+    match role {
+        WingmanRole::Fighter => "fighter",
+        WingmanRole::Strike => "strike",
+        WingmanRole::Sead => "SEAD",
+        WingmanRole::Cas => "CAS",
+        WingmanRole::AttackHelo => "attack helicopter",
+        WingmanRole::Multirole => "multirole",
+    }
+}
+
+fn roe_name(roe: AirRoe) -> &'static str {
+    match roe {
+        AirRoe::WeaponFree | AirRoe::OpenFireWeaponFree | AirRoe::OpenFire => {
+            "weapons free"
+        }
+        AirRoe::ReturnFire => "return fire",
+        AirRoe::WeaponHold => "weapons hold",
+    }
+}
+
+/// The options a wingman flies with: unlimited fuel (it is there for the
+/// whole sortie; going bingo halfway and leaving defeats the point), its
+/// ROE, and evading fire.
+fn wingman_options(roe: AirRoe) -> Vec<Task> {
+    vec![
+        Task::WrappedCommand(Command::SetUnlimitedFuel(true)),
+        Task::WrappedOption(AiOption::Air(AirOption::Roe(roe))),
+        Task::WrappedOption(AiOption::Air(AirOption::ReactionOnThreat(
+            AirReactionToThreat::EvadeFire,
+        ))),
+    ]
+}
+
+/// Covering the player: DCS's Escort task on their group, at a close or a
+/// spread station.
+fn escort_task(w: &Wingman) -> Task {
+    let rotary = w.role.rotary();
+    let station = match (rotary, w.spread) {
+        (true, false) => Vector3::new(-100., 20., 120.),
+        (true, true) => Vector3::new(-300., 30., 400.),
+        (false, false) => Vector3::new(-200., 50., 300.),
+        (false, true) => Vector3::new(-600., 150., 1200.),
+    };
+    Task::Escort {
+        engagement_dist_max: w.engage,
+        target_types: cover_targets(w.role),
+        params: FollowParams {
+            group: w.escorted,
+            pos: LuaVec3(station),
+            last_waypoint_index: None,
+        },
+    }
+}
+
+/// Orbit over `at`, engaging `targets` within `radius` of it.
+fn orbit_and_engage(
+    at: Vector2,
+    alt: f64,
+    speed: f64,
+    radius: f64,
+    targets: Vec<Attribute>,
+) -> Task {
+    Task::ComboTask(vec![
+        Task::Orbit {
+            pattern: OrbitPattern::Circle,
+            point: Some(LuaVec2(at)),
+            point2: None,
+            speed: Some(speed),
+            altitude: Some(alt),
+        },
+        Task::EngageTargetsInZone {
+            point: LuaVec2(at),
+            zone_radius: radius,
+            target_types: targets,
+            priority: None,
+        },
+    ])
+}
+
+/// The newest F10 map mark the player dropped from `unit_name`.
+fn latest_mark(lua: MizLua, unit_name: &str) -> Option<Vector2> {
+    let mut best: Option<(dcso3::Time, Vector2)> = None;
+    for mk in World::singleton(lua).ok()?.get_mark_panels().ok()? {
+        let Ok(mk) = mk else { continue };
+        let mine = mk
+            .initiator
+            .as_ref()
+            .and_then(|u| u.get_name().ok())
+            .is_some_and(|n| n.as_str() == unit_name);
+        if mine && best.as_ref().is_none_or(|(t, _)| mk.time > *t) {
+            best = Some((mk.time, Vector2::new(mk.pos.0.x, mk.pos.0.z)));
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
 fn request_wingman(
     lua: MizLua,
     ctx: &mut Context,
     perf: &mut PerfInner,
     ucid: Ucid,
+    pick: WingmanPick,
     now: DateTime<Utc>,
 ) -> Result<CompactString> {
     let Some(cfg) = wingman_cfg(ctx) else {
@@ -370,8 +570,8 @@ fn request_wingman(
     if let Some(w) = ctx.airlife.wingmen.get(&ucid) {
         if alive(ctx, &w.gid) {
             return Ok(format_compact!(
-                "You already have a {} wingman. Release it first (F10 > Wingman > Release Wingman).",
-                w.typ
+                "You already have a wingman ({}). Release it first (F10 > Wingman > Release).",
+                w.label
             ));
         }
         ctx.airlife.wingmen.remove(&ucid);
@@ -392,11 +592,11 @@ fn request_wingman(
     let Some(inst) = player.current_slot.as_ref().and_then(|(_, i)| i.as_ref()) else {
         return Ok("Get in an aircraft first.".into());
     };
-    if !inst.in_air {
-        return Ok(
-            "Call your wingman once you are airborne -- it joins you in the air.".into()
-        );
-    }
+    // On the ground is fine: the wingman starts up at the nearest field,
+    // which is usually the player's own, and holds overhead until they are
+    // up. It used to have to be called in the air, from when it spawned in
+    // the air; now it taxis and takes off like the player does.
+    let on_ground = !inst.in_air;
     let pilots = side_pilots(ctx, side);
     if cfg.max_side_pilots > 0 && pilots > cfg.max_side_pilots {
         return Ok(format_compact!(
@@ -405,12 +605,11 @@ fn request_wingman(
             cfg.max_side_pilots
         ));
     }
-    if cfg.cost > 0 && points < cfg.cost {
-        return Ok(format_compact!(
-            "A wingman costs {} points and you have {points}.",
-            cfg.cost
-        ));
-    }
+    let my_typ = String::from(inst.typ.as_str());
+    let unit_name = inst.unit_name.clone();
+    let here = Vector2::new(inst.position.p.x, inst.position.p.z);
+    let player_alt = inst.position.p.y;
+    let my_speed = inst.velocity.norm();
     let rotary = ctx
         .db
         .ephemeral
@@ -419,20 +618,77 @@ fn request_wingman(
         .get(&inst.typ)
         .map(|t| t.contains(UnitTag::Helicopter))
         .unwrap_or(false);
-    let templates = wingman_templates(ctx, &cfg, side, rotary);
+
+    // What was asked for: its aircraft, role, price and name.
+    let (templates, role, cost, label): (Vec<String>, WingmanRole, i32, String) =
+        match pick {
+            WingmanPick::Standard => (
+                wingman_templates(ctx, &cfg, side, rotary),
+                if rotary { WingmanRole::AttackHelo } else { WingmanRole::Fighter },
+                cfg.cost,
+                String::from("Standard wingman"),
+            ),
+            WingmanPick::Type(i) => {
+                let Some(t) = cfg.types.get(i) else {
+                    return Ok("That wingman is no longer offered.".into());
+                };
+                if t.role.rotary() != rotary {
+                    return Ok(format_compact!(
+                        "A {} can't fly with a {}.",
+                        t.name,
+                        if rotary { "helicopter" } else { "jet" }
+                    ));
+                }
+                let mut list: Vec<String> = match side {
+                    Side::Blue => &t.templates_blue,
+                    _ => &t.templates_red,
+                }
+                .iter()
+                .map(|s| String::from(s.as_str()))
+                .collect();
+                list.shuffle(&mut thread_rng());
+                (list, t.role, t.cost, String::from(t.name.as_str()))
+            }
+            WingmanPick::Clone => {
+                let Some(cost) =
+                    cfg.clone.as_ref().and_then(|c| c.price(my_typ.as_str()))
+                else {
+                    return Ok(format_compact!(
+                        "A {my_typ} can't be copied on this server."
+                    ));
+                };
+                // Its own slot first (same loadout and paint as briefed), then
+                // any other slot of the type on this side.
+                let mut list: Vec<String> = vec![];
+                if let Ok(own) = Unit::get_by_name(lua, unit_name.as_str())
+                    .and_then(|u| u.get_group())
+                    .and_then(|g| g.get_name())
+                {
+                    list.push(own);
+                }
+                if let Some(t) =
+                    ctx.db.ephemeral.clone_templates.get(&(side, my_typ.clone()))
+                    && !list.contains(t)
+                {
+                    list.push(t.clone());
+                }
+                (
+                    list,
+                    if rotary { WingmanRole::AttackHelo } else { WingmanRole::Multirole },
+                    cost,
+                    String::from(format_compact!("Copy of my {my_typ}")),
+                )
+            }
+        };
+    if cost > 0 && points < cost {
+        return Ok(format_compact!("{label} costs {cost} points and you have {points}."));
+    }
     if templates.is_empty() {
         return Ok(format_compact!(
-            "No {} wingman is configured for your side.",
-            if rotary { "helicopter" } else { "fixed-wing" }
+            "No aircraft is configured for {label} on your side."
         ));
     }
-    let unit_name = inst.unit_name.clone();
-    let here = Vector2::new(inst.position.p.x, inst.position.p.z);
-    let player_alt = inst.position.p.y;
-    let speed = {
-        let v = inst.velocity.norm();
-        if rotary { v.max(40.) } else { v.max(130.) }
-    };
+    let speed = if rotary { my_speed.max(40.) } else { my_speed.max(130.) };
     // It comes up from the nearest friendly field that can launch it -- a
     // jet needs free parking at an airbase, a helicopter any airbase, FARP
     // or FOB -- starts up there and flies out to join, instead of appearing
@@ -461,53 +717,35 @@ fn request_wingman(
         .unwrap_or(player_alt);
     let field_elev =
         land.as_ref().and_then(|l| l.get_height(LuaVec2(field.pos)).ok()).unwrap_or(0.);
-    let (engage, targets) = if rotary {
-        (cfg.rotary_engage_dist_m, vec![Attribute::Helicopters, Attribute::GroundUnits])
-    } else {
-        (cfg.engage_dist_m, vec![Attribute::Air])
-    };
-    let station = if rotary {
-        LuaVec3(Vector3::new(-100., 20., 120.))
-    } else {
-        LuaVec3(Vector3::new(-200., 50., 300.))
-    };
-    let options = || {
-        vec![
-            // It is there for the player's whole sortie; going bingo halfway
-            // through and leaving would defeat the point.
-            Task::WrappedCommand(Command::SetUnlimitedFuel(true)),
-            Task::WrappedOption(AiOption::Air(AirOption::Roe(AirRoe::WeaponFree))),
-            Task::WrappedOption(AiOption::Air(AirOption::ReactionOnThreat(
-                AirReactionToThreat::EvadeFire,
-            ))),
-        ]
-    };
-    // Handed over by `tick_wingmen` once the wingman is airborne.
-    let mut escort = options();
-    escort.push(Task::Escort {
-        engagement_dist_max: engage,
-        target_types: targets,
-        params: FollowParams { group: escorted, pos: station, last_waypoint_index: None },
-    });
     // Waypoint 0 is the field: the spawn turns it into the takeoff. The
     // route then points it at the player until it is up to take the escort.
+    // Called on the ground, it circles over the player until they are up
+    // (`join_up` waits for both) instead of flying past the end of its route.
+    let hold = if on_ground {
+        vec![Task::Orbit {
+            pattern: OrbitPattern::Circle,
+            point: Some(LuaVec2(here)),
+            point2: None,
+            speed: Some(speed),
+            altitude: Some(altitude),
+        }]
+    } else {
+        vec![]
+    };
     let mission = vec![
-        air_point(field.pos, field_elev, speed, Task::ComboTask(options())),
-        air_point(here, altitude, speed, Task::ComboTask(vec![])),
+        air_point(
+            field.pos,
+            field_elev,
+            speed,
+            Task::ComboTask(wingman_options(AirRoe::WeaponFree)),
+        ),
+        air_point(here, altitude, speed, Task::ComboTask(hold)),
     ];
 
     let spctx = SpawnCtx::new(lua)?;
     let mut spawned = None;
     let mut last_err = None;
-    let mut mission = Some(mission);
     for template in &templates {
-        let m = match mission.take() {
-            Some(m) => m,
-            None => break,
-        };
-        // The mission is consumed by a failed attempt too, so rebuild it for
-        // the next template from the same parts.
-        let retry = m.clone();
         match ctx.db.spawn_air_flight(
             perf,
             &spctx,
@@ -518,7 +756,7 @@ fn request_wingman(
             field.pos,
             heading_of(here - field.pos),
             false,
-            m,
+            mission.clone(),
         ) {
             Ok(gid) => {
                 spawned = Some(gid);
@@ -527,7 +765,6 @@ fn request_wingman(
             Err(e) => {
                 warn!("air_life: wingman template {template} would not spawn: {e:?}");
                 last_err = Some(e);
-                mission = Some(retry);
             }
         }
     }
@@ -543,29 +780,194 @@ fn request_wingman(
         .and_then(|uid| ctx.db.persisted.units.get(&uid))
         .map(|u| String::from(u.typ.0.as_str()))
         .unwrap_or_default();
-    if cfg.cost > 0 {
-        ctx.db.adjust_points(&ucid, -cfg.cost, "for an AI wingman");
+    // Charged only once it exists: a wingman that would not spawn is free.
+    if cost > 0 {
+        ctx.db.adjust_points(&ucid, -cost, &format_compact!("for a wingman ({label})"));
     }
-    info!("air_life: {ucid} called a {typ} wingman ({gid:?}) for {unit_name}");
+    info!("air_life: {ucid} called {label}: {typ} ({gid:?}) for {unit_name}");
+    let engage = if rotary { cfg.rotary_engage_dist_m } else { cfg.engage_dist_m };
     ctx.airlife.wingmen.insert(
         ucid,
         Wingman {
             gid,
             unit_name,
             typ: typ.clone(),
+            label: label.clone(),
+            role,
+            escorted,
+            engage,
             expires_at: now + Duration::seconds(cfg.lifetime_secs as i64),
             landed_since: None,
-            escort: Some(Task::ComboTask(escort)),
+            waiting_since: on_ground.then_some(now),
+            joined: false,
+            roe: AirRoe::WeaponFree,
+            spread: false,
+            doing: if on_ground {
+                "taking off, then waiting over you".into()
+            } else {
+                "taking off to join you".into()
+            },
         },
     );
+    let joins = if on_ground {
+        "It takes off, holds over you until you are airborne, then joins on your wing"
+    } else {
+        "It takes off and joins on your wing"
+    };
     Ok(format_compact!(
-        "Your {typ} wingman is starting up at {} ({:.0} km from you). It takes off and joins on \
-         your wing, and stays for {} min, or until you land or release it (F10 > Wingman > \
-         Release Wingman).",
+        "{label}: a {typ} ({}) is starting up at {} ({:.0} km from you){}. {joins}, and \
+         stays for {} min, or until you land or release it. F10 > Wingman > Orders to direct \
+         it.",
+        role_name(role),
         field.name,
         dist(field.pos, here) / 1000.,
+        if cost > 0 { format_compact!(", {cost} points") } else { "".into() },
         cfg.lifetime_secs / 60
     ))
+}
+
+/// F10 > Wingman > Orders.
+fn order_wingman(
+    lua: MizLua,
+    ctx: &mut Context,
+    ucid: Ucid,
+    order: WingmanOrder,
+) -> Result<CompactString> {
+    let Some(w) = ctx.airlife.wingmen.get(&ucid) else {
+        return Ok("You have no wingman. F10 > Wingman > Request calls one.".into());
+    };
+    if !alive(ctx, &w.gid) {
+        return Ok("Your wingman is gone.".into());
+    }
+    let name = ctx
+        .db
+        .persisted
+        .groups
+        .get(&w.gid)
+        .map(|g| g.name.clone())
+        .ok_or_else(|| anyhow!("wingman group missing"))?;
+    let rotary = w.role.rotary();
+    let joined = w.joined;
+    let (here, alt) = match ctx
+        .db
+        .player(&ucid)
+        .and_then(|p| p.current_slot.as_ref())
+        .and_then(|(_, i)| i.as_ref())
+    {
+        Some(i) => (Vector2::new(i.position.p.x, i.position.p.z), i.position.p.y),
+        None => return Ok("Get back in your aircraft first.".into()),
+    };
+    let ground = Land::singleton(lua).ok().and_then(|l| l.get_height(LuaVec2(here)).ok());
+    let (floor, speed, attack_radius) =
+        if rotary { (100., 50., 4_000.) } else { (900., 190., 10_000.) };
+    let orbit_alt = ground.map(|g| alt.max(g + floor)).unwrap_or(alt);
+    let group = Group::get_by_name(lua, name.as_str()).context("finding your wingman")?;
+    let ctrl = group.get_controller()?;
+
+    // ROE and formation can be set any time; a task has to wait until it
+    // is off the ground (see `Wingman::joined`).
+    let roe = match order {
+        WingmanOrder::WeaponsFree => Some(AirRoe::WeaponFree),
+        WingmanOrder::ReturnFire => Some(AirRoe::ReturnFire),
+        WingmanOrder::WeaponsHold => Some(AirRoe::WeaponHold),
+        _ => None,
+    };
+    if let Some(roe) = roe {
+        ctrl.set_option(AiOption::Air(AirOption::Roe(roe)))?;
+        if let Some(w) = ctx.airlife.wingmen.get_mut(&ucid) {
+            w.roe = roe;
+        }
+        return Ok(format_compact!("Wingman: {}, copy.", roe_name(roe)));
+    }
+    if matches!(order, WingmanOrder::Close | WingmanOrder::Spread) {
+        let spread = order == WingmanOrder::Spread;
+        let w = ctx.airlife.wingmen.get_mut(&ucid).expect("present");
+        w.spread = spread;
+        let covering = w.joined && w.doing.as_str() == "covering you";
+        if covering {
+            ctrl.set_task(escort_task(w))?;
+        }
+        return Ok(format_compact!(
+            "Wingman: {} formation{}.",
+            if spread { "spread" } else { "close" },
+            if covering { "" } else { " when it next covers you" }
+        ));
+    }
+    if !joined {
+        return Ok(
+            "Your wingman is still taking off. It joins you first, then takes orders."
+                .into(),
+        );
+    }
+    let w = ctx.airlife.wingmen.get(&ucid).expect("present");
+    let (task, doing, reply): (Task, CompactString, CompactString) = match order {
+        WingmanOrder::CoverMe => (
+            escort_task(w),
+            "covering you".into(),
+            "Wingman: rejoining, covering you.".into(),
+        ),
+        WingmanOrder::EngageAir => (
+            orbit_and_engage(here, orbit_alt, speed, w.engage, vec![Attribute::Air]),
+            "engaging air threats around you".into(),
+            "Wingman: engaging air threats around you.".into(),
+        ),
+        WingmanOrder::AttackNearMe => (
+            orbit_and_engage(
+                here,
+                orbit_alt,
+                speed,
+                attack_radius,
+                attack_targets(w.role),
+            ),
+            "attacking targets near you".into(),
+            format_compact!(
+                "Wingman: attacking targets within {:.0} km of you.",
+                attack_radius / 1000.
+            ),
+        ),
+        WingmanOrder::AttackMark => {
+            let Some(mark) = latest_mark(lua, w.unit_name.as_str()) else {
+                return Ok(
+                    "Drop a mark on the F10 map first: your wingman attacks around your newest one."
+                        .into(),
+                );
+            };
+            let mark_alt = Land::singleton(lua)
+                .ok()
+                .and_then(|l| l.get_height(LuaVec2(mark)).ok())
+                .map(|g| orbit_alt.max(g + floor))
+                .unwrap_or(orbit_alt);
+            (
+                orbit_and_engage(
+                    mark,
+                    mark_alt,
+                    speed,
+                    attack_radius,
+                    attack_targets(w.role),
+                ),
+                "attacking your map mark".into(),
+                format_compact!(
+                    "Wingman: on the way to your mark, {:.0} km out.",
+                    dist(mark, here) / 1000.
+                ),
+            )
+        }
+        WingmanOrder::HoldHere => (
+            orbit_and_engage(here, orbit_alt, speed, w.engage, cover_targets(w.role)),
+            "holding where you ordered".into(),
+            "Wingman: holding here.".into(),
+        ),
+        WingmanOrder::WeaponsFree
+        | WingmanOrder::ReturnFire
+        | WingmanOrder::WeaponsHold
+        | WingmanOrder::Close
+        | WingmanOrder::Spread => unreachable!("handled above"),
+    };
+    ctrl.set_task(task)?;
+    if let Some(w) = ctx.airlife.wingmen.get_mut(&ucid) {
+        w.doing = doing;
+    }
+    Ok(reply)
 }
 
 fn release_wingman(
@@ -577,7 +979,7 @@ fn release_wingman(
     match ctx.airlife.wingmen.remove(&ucid) {
         Some(w) if alive(ctx, &w.gid) => {
             send_home(lua, ctx, w.gid, now);
-            Ok(format_compact!("{} wingman released, RTB.", w.typ))
+            Ok(format_compact!("{} released, RTB.", w.label))
         }
         _ => Ok("You have no wingman.".into()),
     }
@@ -590,9 +992,7 @@ fn wingman_status(
     now: DateTime<Utc>,
 ) -> Result<CompactString> {
     let Some(w) = ctx.airlife.wingmen.get(&ucid) else {
-        return Ok(
-            "You have no wingman. F10 > Wingman > Request Wingman calls one.".into()
-        );
+        return Ok("You have no wingman. F10 > Wingman > Request calls one.".into());
     };
     let (alive_n, total) = ctx.db.group_health(&w.gid).unwrap_or((0, 0));
     let left = (w.expires_at - now).num_minutes().max(0);
@@ -607,22 +1007,29 @@ fn wingman_status(
         let me = Unit::get_by_name(lua, w.unit_name.as_str()).ok()?.get_point().ok()?;
         Some(dist(Vector2::new(p.x, p.z), Vector2::new(me.x, me.z)) / 1852.)
     })();
-    Ok(match range {
-        Some(nm) => format_compact!(
-            "{} wingman: {alive_n}/{total} aircraft, {nm:.1} nm from you, {left} min left.",
-            w.typ
-        ),
-        None => format_compact!(
-            "{} wingman: {alive_n}/{total} aircraft, {left} min left.",
-            w.typ
-        ),
-    })
+    let range =
+        range.map(|nm| format_compact!(", {nm:.1} nm from you")).unwrap_or_default();
+    Ok(format_compact!(
+        "{} ({}, {}): {alive_n}/{total} aircraft{range}, {}, {}, {} formation, {left} min left.",
+        w.label,
+        w.typ,
+        role_name(w.role),
+        w.doing,
+        roe_name(w.roe),
+        if w.spread { "spread" } else { "close" },
+    ))
 }
 
-/// Give a wingman that has just got off the ground its escort task.
+/// Give a wingman that has just got off the ground its first task: cover
+/// the player, at the ROE they have set meanwhile.
 fn join_up(lua: MizLua, ctx: &mut Context, ucid: Ucid) {
     let Some(w) = ctx.airlife.wingmen.get(&ucid) else { return };
-    let Some(task) = w.escort.clone() else { return };
+    // Called on the ground: it holds overhead until its player is up too.
+    if w.joined || w.waiting_since.is_some() {
+        return;
+    }
+    let mut tasks = wingman_options(w.roe);
+    tasks.push(escort_task(w));
     let Some(name) = ctx.db.persisted.groups.get(&w.gid).map(|g| g.name.clone()) else {
         return;
     };
@@ -631,14 +1038,15 @@ fn join_up(lua: MizLua, ctx: &mut Context, ucid: Ucid) {
         if !g.get_unit(1)?.in_air()? {
             return Ok(false);
         }
-        g.get_controller()?.set_task(task)?;
+        g.get_controller()?.set_task(Task::ComboTask(tasks))?;
         Ok(true)
     })();
     match joined {
         Ok(true) => {
             info!("air_life: wingman {name} airborne, escorting {ucid}");
             if let Some(w) = ctx.airlife.wingmen.get_mut(&ucid) {
-                w.escort = None;
+                w.joined = true;
+                w.doing = "covering you".into();
             }
         }
         Ok(false) => (),
@@ -654,7 +1062,7 @@ fn tick_wingmen(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
         let Some(w) = ctx.airlife.wingmen.get(&ucid) else { continue };
         let gid = w.gid;
         if !alive(ctx, &gid) {
-            let typ = w.typ.clone();
+            let label = w.label.clone();
             ctx.airlife.wingmen.remove(&ucid);
             ctx.airlife.wingman_lost_at.insert(ucid, now);
             let _ = ctx.db.delete_group(&gid);
@@ -662,7 +1070,7 @@ fn tick_wingmen(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
                 &ctx.db.persisted,
                 12,
                 &ucid,
-                format_compact!("Your {typ} wingman is down."),
+                format_compact!("Your wingman ({label}) is down."),
             );
             continue;
         }
@@ -675,6 +1083,11 @@ fn tick_wingmen(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
         let why: Option<&str> = match inst {
             Some((unit, _)) if unit != w.unit_name => Some(""),
             None => Some(""),
+            // Called on the ground and the player has not taken off yet.
+            Some((_, false)) if w.waiting_since.is_some() => w
+                .waiting_since
+                .filter(|since| (now - *since).num_seconds() >= WINGMAN_TAKEOFF_WAIT_SECS)
+                .map(|_| "you did not take off"),
             Some((_, false)) => {
                 let since = *ctx
                     .airlife
@@ -689,6 +1102,7 @@ fn tick_wingmen(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
             Some((_, true)) => {
                 if let Some(w) = ctx.airlife.wingmen.get_mut(&ucid) {
                     w.landed_since = None;
+                    w.waiting_since = None;
                 }
                 (now >= ctx.airlife.wingmen[&ucid].expires_at)
                     .then_some("it is out of time")
@@ -702,7 +1116,7 @@ fn tick_wingmen(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
                     &ctx.db.persisted,
                     12,
                     &ucid,
-                    format_compact!("Your {} wingman is RTB: {why}.", w.typ),
+                    format_compact!("Your wingman ({}) is RTB: {why}.", w.label),
                 );
             }
             continue;
@@ -711,6 +1125,35 @@ fn tick_wingmen(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
     }
     // Cooldowns only matter for a while.
     ctx.airlife.wingman_lost_at.retain(|_, t| (now - *t).num_seconds() < 3600);
+}
+
+#[cfg(test)]
+mod wingman_tests {
+    use super::*;
+
+    #[test]
+    fn every_order_has_a_label_and_a_menu_slot() {
+        let mut seen = std::collections::HashSet::new();
+        for o in WingmanOrder::ALL {
+            assert!(seen.insert(o.label()), "{o:?} shares a label");
+        }
+        assert_eq!(seen.len(), 10);
+    }
+
+    #[test]
+    fn roles_engage_what_they_are_for() {
+        assert_eq!(cover_targets(WingmanRole::Fighter), vec![Attribute::Air]);
+        assert_eq!(cover_targets(WingmanRole::Sead), vec![Attribute::AirDefence]);
+        assert_eq!(attack_targets(WingmanRole::Sead), vec![Attribute::AirDefence]);
+        assert_eq!(attack_targets(WingmanRole::Strike), vec![Attribute::GroundUnits]);
+        assert_eq!(attack_targets(WingmanRole::Fighter), vec![Attribute::Air]);
+        assert!(
+            attack_targets(WingmanRole::AttackHelo).contains(&Attribute::Helicopters)
+        );
+        // a copy of your jet covers you in the air and attacks on the ground
+        assert_eq!(cover_targets(WingmanRole::Multirole), vec![Attribute::Air]);
+        assert_eq!(attack_targets(WingmanRole::Multirole), vec![Attribute::GroundUnits]);
+    }
 }
 
 // ---------------------------------------------------------------------------

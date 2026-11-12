@@ -59,6 +59,13 @@ The map is your coalition's picture, not the truth: enemy positions appear
 only once your side has found them. How to read all of it is on
 [Reading the F10 Map](../gameplay/reading-the-map.md).
 
+**Fog of war.** Some servers (Levant Ablaze among them) also run DCS's own
+fog of war on the F10 map: besides your side's units, it shows the enemy
+units your side's sensors detect right now, as ordinary DCS unit icons, and
+they disappear when the contact is lost. The engine's intel pins are what
+stays once nobody is looking. Spectators and observers see the map only,
+with no units at all.
+
 ### Your map marks
 
 The marks **you** place on the map are how you give the engine a position:
@@ -113,7 +120,9 @@ it again for fresh lists.
 
 **DCS silently drops anything past the tenth entry in a menu.** No error, no
 warning. Fowl Engine spends the last slot of a full page on **`More >>`**,
-which opens the next page of the same list.
+which opens the next page of the same list. Every list the engine builds
+pages this way: actions, Base Supply crates, Ground Forces, wingmen and the
+rest.
 
 So if something you expect is not in a list, **look for `More >>` at the
 bottom before assuming it isn't there.** Long base lists split into numbered

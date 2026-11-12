@@ -18,6 +18,7 @@ and each kind can be switched off on its own.
 | [Convoy ambush](#convoy-ambush) | The AI commander, the Theatre HQ or a player commander | Everyone: an F10 circle, no message |
 | [Reactive CAP and helo patrols](./ai-opposition.md) | Automatic, when enemy players push | The side being scrambled against |
 | [Commander CAP](#commander-cap) | The AI commander | The other side: an F10 circle |
+| [The Last Stand](#the-last-stand-nuclear-strike) | A story event, when a side is about to lose | Both sides, the moment it takes off |
 
 The **AI commander** here is the Smart Commander running without the Theatre
 HQ. It looks at each side every
@@ -100,7 +101,9 @@ spawns (the treasury is not refunded).
 There is no message, but an F10 circle about 1.5 km across, labelled
 `AMBUSH [Red]`, marks the ambush point **for both sides**. Once the force is in
 place it waits {{cfg:campaign_events.ambush_duration_secs|600}} seconds for the
-convoy, then goes.
+convoy, then goes. A side has at most
+{{cfg:campaign_events.ambush_max_per_side|1}} ambush out at once, however it
+was called, each after a different convoy.
 
 **What you can do:** if it is your convoy heading into the circle, escort it
 or clear the ambush from the air first; the force is a normal ground group.
@@ -124,6 +127,46 @@ The other side sees it like a reactive CAP: a solid circle about 25 km across
 around the launch field, labelled `Enemy CAP [Blue] — ACTIVE`. It uses the
 same flight templates as the [reactive CAP](./ai-opposition.md), and needs
 `enemy_cap_enabled`.
+
+## The Last Stand: nuclear strike
+
+On some servers a side that is about to lose the war has one last card. When
+its [story](../gameplay/round-rules.md#story-events) says so (on Southern
+Flank 1985: the Soviets' will to fight falls under 25, or they hold fewer
+than 8 bases, whichever comes first), a nuclear-armed aircraft takes off.
+No player calls it and no player can stop it being ordered. It happens once a
+round.
+
+It flies at the enemy's most dangerous push: the enemy-held base with the
+most of the enemy's ground forces round it, within reach of the side's own
+ground, and as few of its own troops under the blast as it can manage. On
+Southern Flank that is a MiG-21bis with an RN-28, low, with a MiG-23 pair
+flying cover.
+
+**The other side is warned the moment it is airborne**, with where it took
+off and where it is going:
+
+```dcsmessage
+FLASH -- a nuclear-armed MiG-21bis is airborne from Mozdok, heading for Gori (95 km). Shoot it down.
+```
+
+**Shoot it down** and nothing goes off: the striking side's will drops, and
+every pilot of yours in the air at that moment is paid. Its escort is fair
+game too, but only the bomber matters.
+
+**If it gets there** (within 3 km of the base), the engine sets off the
+blast. Everything within about 1.2 km is destroyed, **both sides' ground
+units and ships alike**, and about half of what stands out to 2.5 km. The
+base's garrison goes with it, so the striking side can take the base back.
+The striking side's will gets a reprieve and the target side's takes a hit,
+which buys time but does not win the war on its own:
+
+```dcsmessage
+NUCLEAR DETONATION over Gori: 47 units destroyed in the blast.
+```
+
+A server restart while it is in the air does not cancel it: it takes off
+again.
 
 ## Night and weather
 

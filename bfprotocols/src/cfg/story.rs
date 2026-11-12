@@ -137,6 +137,9 @@ pub enum StoryTrigger {
     FuelBelow { side: Side, pct: f64 },
     /// The side's war will (`war_will`) falls below `value`.
     WillBelow { side: Side, value: f64 },
+    /// The side holds fewer than `count` objectives (carrier groups
+    /// included): "down to its last bases".
+    ObjectivesHeldBelow { side: Side, count: u32 },
     /// The side's war will rises above `value`.
     WillAbove { side: Side, value: f64 },
     /// The side's airframes of `types` (DCS type names), summed over the
@@ -240,6 +243,91 @@ pub enum StoryEffect {
         side: Option<Side>,
         text: String,
     },
+    /// The side's last card (`db::nuclear`): an AI aircraft flies a nuclear
+    /// weapon at the enemy's most dangerous push. The enemy is warned when it
+    /// takes off and can shoot it down; if it gets there, the engine sets off
+    /// the blast. Once a round, whichever event orders it first.
+    NuclearStrike(NuclearStrikeCfg),
+}
+
+/// See `StoryEffect::NuclearStrike`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct NuclearStrikeCfg {
+    /// The side that strikes.
+    pub side: Side,
+    /// The aircraft's group in the .miz (plane section, late activation),
+    /// e.g. a MiG-21bis with the RN-28. Its loadout is for show: the engine
+    /// does the damage.
+    pub template: String,
+    /// Fighters that fly the same route as cover (group in the .miz).
+    #[serde(default)]
+    pub escort_template: Option<String>,
+    /// Shown in the warnings, e.g. "MiG-21bis".
+    #[serde(default = "default_nuke_aircraft")]
+    pub aircraft: String,
+    /// Metres above sea level for the run in (a low run is harder to
+    /// catch). Default 600.
+    #[serde(default = "default_nuke_alt")]
+    pub altitude_m: f64,
+    /// Metres per second. Default 220.
+    #[serde(default = "default_nuke_speed")]
+    pub speed_mps: f64,
+    /// How far from an enemy-held objective's centre it releases. Default
+    /// 3000 m.
+    #[serde(default = "default_nuke_release")]
+    pub release_m: f64,
+    /// Everything within this of the burst is destroyed, both sides'
+    /// ground units and ships. Default 1200 m.
+    #[serde(default = "default_nuke_kill")]
+    pub kill_radius_m: f64,
+    /// Between `kill_radius_m` and this, each unit is destroyed with
+    /// `damage_chance`. Default 2500 m.
+    #[serde(default = "default_nuke_damage")]
+    pub damage_radius_m: f64,
+    /// Default 0.5.
+    #[serde(default = "default_nuke_chance")]
+    pub damage_chance: f64,
+    /// Only enemy objectives within this of one of the side's own are
+    /// targets. Default 150 km.
+    #[serde(default = "default_nuke_reach")]
+    pub max_range_m: f64,
+    /// War will changes when it goes off: the striking side's (a reprieve)
+    /// and the target side's.
+    #[serde(default)]
+    pub will_on_detonation: f64,
+    #[serde(default)]
+    pub enemy_will_on_detonation: f64,
+    /// The striking side's war will change if the aircraft is shot down.
+    #[serde(default)]
+    pub will_on_intercept: f64,
+    /// Points to every enemy pilot in the air when it is shot down.
+    #[serde(default)]
+    pub intercept_points: i32,
+}
+
+fn default_nuke_aircraft() -> String {
+    "strike aircraft".into()
+}
+fn default_nuke_alt() -> f64 {
+    600.
+}
+fn default_nuke_speed() -> f64 {
+    220.
+}
+fn default_nuke_release() -> f64 {
+    3000.
+}
+fn default_nuke_kill() -> f64 {
+    1200.
+}
+fn default_nuke_damage() -> f64 {
+    2500.
+}
+fn default_nuke_chance() -> f64 {
+    0.5
+}
+fn default_nuke_reach() -> f64 {
+    150_000.
 }
 
 fn default_stock_item() -> String {
@@ -264,6 +352,7 @@ impl StoryTrigger {
             Self::SupplyRoutesDestroyed { .. }
             | Self::FuelBelow { .. }
             | Self::WillBelow { .. }
+            | Self::ObjectivesHeldBelow { .. }
             | Self::WillAbove { .. }
             | Self::StockBelow { .. }
             | Self::EventFired { .. } => None,
@@ -363,6 +452,9 @@ impl StoryCfg {
                         "story: event '{}' counts to 0: it fires on the first one",
                         e.id
                     )
+                }
+                StoryTrigger::ObjectivesHeldBelow { count: 0, .. } => {
+                    warn!("story: event '{}' waits for fewer than 0 objectives: it can never fire", e.id)
                 }
                 StoryTrigger::StockBelow { types, below, .. }
                     if types.is_empty() || *below == 0 =>
