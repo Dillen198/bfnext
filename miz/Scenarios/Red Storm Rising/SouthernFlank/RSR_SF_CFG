@@ -5872,7 +5872,13 @@
     "CVN_71": [
       "Boat"
     ],
+    "Forrestal": [
+      "Boat"
+    ],
     "REZKY": [
+      "Boat"
+    ],
+    "ALBATROS": [
       "Boat"
     ],
     "F-117A": [
@@ -15614,7 +15620,7 @@
           },
           {
             "Stock": {
-              "objective": "Kutaisi",
+              "objective": "Gori",
               "item": "fuel",
               "pct": 30
             }
@@ -15629,7 +15635,7 @@
             "Hq": {
               "side": "Red",
               "supply_priority": [
-                "Kutaisi",
+                "Surami tunnel",
                 "Gori"
               ],
               "hours": 8
@@ -23692,6 +23698,290 @@
               "y": 636701.4
             },
             "heading": 1.4234
+          }
+        ]
+      },
+      {
+        "objective": "Krasnodar",
+        "class": "AAA",
+        "name": "Krasnodar - AAA guns 2",
+        "red_units": [
+          {
+            "type": "ZSU-23-4 Shilka",
+            "pos": {
+              "x": 9693.9,
+              "y": 372968.3
+            },
+            "heading": 2.5937
+          },
+          {
+            "type": "ZSU-23-4 Shilka",
+            "pos": {
+              "x": 9668.7,
+              "y": 372934.7
+            },
+            "heading": 2.2429
+          },
+          {
+            "type": "ZSU-23-4 Shilka",
+            "pos": {
+              "x": 8531.7,
+              "y": 372826.6
+            },
+            "heading": 0.7781
+          },
+          {
+            "type": "ZSU-23-4 Shilka",
+            "pos": {
+              "x": 8507.3,
+              "y": 372849.7
+            },
+            "heading": 0.7781
+          }
+        ],
+        "blue_units": [
+          {
+            "type": "Vulcan",
+            "pos": {
+              "x": 9693.6,
+              "y": 372968.3
+            },
+            "heading": 2.3266
+          },
+          {
+            "type": "Vulcan",
+            "pos": {
+              "x": 9669.5,
+              "y": 372934.5
+            },
+            "heading": 2.2254
+          },
+          {
+            "type": "Vulcan",
+            "pos": {
+              "x": 8528.3,
+              "y": 372824.1
+            },
+            "heading": 0.7781
+          },
+          {
+            "type": "Vulcan",
+            "pos": {
+              "x": 8506.8,
+              "y": 372850.6
+            },
+            "heading": 0.7781
+          }
+        ]
+      },
+      {
+        "objective": "Krasnodar",
+        "class": "ARMOR",
+        "name": "Krasnodar - ARMOR security",
+        "red_units": [
+          {
+            "type": "BMP-2",
+            "pos": {
+              "x": 8888.9,
+              "y": 372178.9
+            },
+            "heading": 1.2232
+          },
+          {
+            "type": "BMP-2",
+            "pos": {
+              "x": 9539.8,
+              "y": 372751.9
+            },
+            "heading": 2.4052
+          },
+          {
+            "type": "BTR-70",
+            "pos": {
+              "x": 8551.3,
+              "y": 372796.4
+            },
+            "heading": 1.2232
+          },
+          {
+            "type": "BTR-70",
+            "pos": {
+              "x": 8026.3,
+              "y": 372897.2
+            },
+            "heading": 1.2232
+          }
+        ],
+        "blue_units": [
+          {
+            "type": "M-2 Bradley",
+            "pos": {
+              "x": 8888.9,
+              "y": 372178.9
+            },
+            "heading": 1.2232
+          },
+          {
+            "type": "M-2 Bradley",
+            "pos": {
+              "x": 9537.2,
+              "y": 372752.5
+            },
+            "heading": 2.4855
+          },
+          {
+            "type": "M-113",
+            "pos": {
+              "x": 8551.0,
+              "y": 372795.0
+            },
+            "heading": 1.2232
+          },
+          {
+            "type": "M-113",
+            "pos": {
+              "x": 8026.3,
+              "y": 372897.2
+            },
+            "heading": 1.2232
+          }
+        ]
+      },
+      {
+        "objective": "Krasnodar",
+        "class": "AAA",
+        "name": "Krasnodar - FLAK battery",
+        "red_units": [
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": 9702.2,
+              "y": 372782.2
+            },
+            "heading": 1.5478
+          },
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": 9662.7,
+              "y": 372760.6
+            },
+            "heading": 2.595
+          },
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": 9661.7,
+              "y": 372715.6
+            },
+            "heading": 3.6422
+          },
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": 9700.1,
+              "y": 372692.2
+            },
+            "heading": 4.6894
+          },
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": 9739.6,
+              "y": 372713.8
+            },
+            "heading": 5.7366
+          },
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": 9740.6,
+              "y": 372758.8
+            },
+            "heading": 0.5006
+          },
+          {
+            "type": "SON_9",
+            "pos": {
+              "x": 9701.2,
+              "y": 372737.2
+            },
+            "heading": 1.5478
+          }
+        ],
+        "blue_units": [
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": 9702.2,
+              "y": 372782.2
+            },
+            "heading": 1.5478
+          },
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": 9662.7,
+              "y": 372760.6
+            },
+            "heading": 2.595
+          },
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": 9661.7,
+              "y": 372715.6
+            },
+            "heading": 3.6422
+          },
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": 9700.1,
+              "y": 372692.2
+            },
+            "heading": 4.6894
+          },
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": 9739.6,
+              "y": 372713.8
+            },
+            "heading": 5.7366
+          },
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": 9740.6,
+              "y": 372758.8
+            },
+            "heading": 0.5006
+          }
+        ]
+      },
+      {
+        "objective": "Krasnodar",
+        "class": "SERVICES",
+        "name": "Krasnodar - SERVICES fuel",
+        "red_units": [
+          {
+            "type": "ATZ-5",
+            "pos": {
+              "x": 8324.5,
+              "y": 373011.8
+            },
+            "heading": 5.7366
+          }
+        ],
+        "blue_units": [
+          {
+            "type": "M978 HEMTT Tanker",
+            "pos": {
+              "x": 8324.5,
+              "y": 373011.8
+            },
+            "heading": 5.7366
           }
         ]
       },
@@ -31885,6 +32175,290 @@
         ]
       },
       {
+        "objective": "Pyatigorsk",
+        "class": "AAA",
+        "name": "Pyatigorsk - AAA guns 2",
+        "red_units": [
+          {
+            "type": "ZSU-23-4 Shilka",
+            "pos": {
+              "x": -70001.6,
+              "y": 706323.7
+            },
+            "heading": 3.2474
+          },
+          {
+            "type": "ZSU-23-4 Shilka",
+            "pos": {
+              "x": -70001.2,
+              "y": 706281.7
+            },
+            "heading": 2.8966
+          },
+          {
+            "type": "ZSU-23-4 Shilka",
+            "pos": {
+              "x": -70830.1,
+              "y": 705510.5
+            },
+            "heading": 1.4319
+          },
+          {
+            "type": "ZSU-23-4 Shilka",
+            "pos": {
+              "x": -70863.5,
+              "y": 705514.1
+            },
+            "heading": 1.4319
+          }
+        ],
+        "blue_units": [
+          {
+            "type": "Vulcan",
+            "pos": {
+              "x": -70001.8,
+              "y": 706323.5
+            },
+            "heading": 2.9804
+          },
+          {
+            "type": "Vulcan",
+            "pos": {
+              "x": -70000.4,
+              "y": 706282.1
+            },
+            "heading": 2.8792
+          },
+          {
+            "type": "Vulcan",
+            "pos": {
+              "x": -70831.3,
+              "y": 705506.5
+            },
+            "heading": 1.4319
+          },
+          {
+            "type": "Vulcan",
+            "pos": {
+              "x": -70864.5,
+              "y": 705514.4
+            },
+            "heading": 1.4319
+          }
+        ]
+      },
+      {
+        "objective": "Pyatigorsk",
+        "class": "ARMOR",
+        "name": "Pyatigorsk - ARMOR security",
+        "red_units": [
+          {
+            "type": "BMP-2",
+            "pos": {
+              "x": -70011.1,
+              "y": 705385.1
+            },
+            "heading": 1.877
+          },
+          {
+            "type": "BMP-2",
+            "pos": {
+              "x": -69992.3,
+              "y": 706058.2
+            },
+            "heading": 3.0589
+          },
+          {
+            "type": "BTR-70",
+            "pos": {
+              "x": -70796.1,
+              "y": 705498.4
+            },
+            "heading": 1.877
+          },
+          {
+            "type": "BTR-70",
+            "pos": {
+              "x": -71298.0,
+              "y": 705241.0
+            },
+            "heading": 1.877
+          }
+        ],
+        "blue_units": [
+          {
+            "type": "M-2 Bradley",
+            "pos": {
+              "x": -70011.1,
+              "y": 705385.1
+            },
+            "heading": 1.877
+          },
+          {
+            "type": "M-2 Bradley",
+            "pos": {
+              "x": -69994.8,
+              "y": 706057.1
+            },
+            "heading": 3.1392
+          },
+          {
+            "type": "M-113",
+            "pos": {
+              "x": -70795.6,
+              "y": 705497.2
+            },
+            "heading": 1.877
+          },
+          {
+            "type": "M-113",
+            "pos": {
+              "x": -71298.0,
+              "y": 705241.0
+            },
+            "heading": 1.877
+          }
+        ]
+      },
+      {
+        "objective": "Pyatigorsk",
+        "class": "AAA",
+        "name": "Pyatigorsk - FLAK battery",
+        "red_units": [
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": -69881.9,
+              "y": 706181.0
+            },
+            "heading": 2.2016
+          },
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": -69900.1,
+              "y": 706139.9
+            },
+            "heading": 3.2488
+          },
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": -69873.5,
+              "y": 706103.5
+            },
+            "heading": 4.296
+          },
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": -69828.8,
+              "y": 706108.3
+            },
+            "heading": 5.3432
+          },
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": -69814.4,
+              "y": 706158.7
+            },
+            "heading": 0.1072
+          },
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": -69837.1,
+              "y": 706185.8
+            },
+            "heading": 1.1544
+          },
+          {
+            "type": "SON_9",
+            "pos": {
+              "x": -69855.3,
+              "y": 706144.7
+            },
+            "heading": 2.2016
+          }
+        ],
+        "blue_units": [
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": -69881.9,
+              "y": 706181.0
+            },
+            "heading": 2.2016
+          },
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": -69900.1,
+              "y": 706139.9
+            },
+            "heading": 3.2488
+          },
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": -69873.5,
+              "y": 706103.5
+            },
+            "heading": 4.296
+          },
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": -69828.8,
+              "y": 706108.3
+            },
+            "heading": 5.3432
+          },
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": -69814.4,
+              "y": 706158.7
+            },
+            "heading": 0.1072
+          },
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": -69837.1,
+              "y": 706185.8
+            },
+            "heading": 1.1544
+          }
+        ]
+      },
+      {
+        "objective": "Pyatigorsk",
+        "class": "SERVICES",
+        "name": "Pyatigorsk - SERVICES fuel",
+        "red_units": [
+          {
+            "type": "ATZ-5",
+            "pos": {
+              "x": -71107.2,
+              "y": 705531.5
+            },
+            "heading": 0.1072
+          }
+        ],
+        "blue_units": [
+          {
+            "type": "M978 HEMTT Tanker",
+            "pos": {
+              "x": -71107.2,
+              "y": 705531.5
+            },
+            "heading": 0.1072
+          }
+        ]
+      },
+      {
         "objective": "Sachhere",
         "class": "AAA",
         "name": "Sachhere - AAA guns 2",
@@ -33078,6 +33652,290 @@
         ]
       },
       {
+        "objective": "Sochi",
+        "class": "AAA",
+        "name": "Sochi - AAA guns 2",
+        "red_units": [
+          {
+            "type": "ZSU-23-4 Shilka",
+            "pos": {
+              "x": -146789.2,
+              "y": 442285.4
+            },
+            "heading": 2.2483
+          },
+          {
+            "type": "ZSU-23-4 Shilka",
+            "pos": {
+              "x": -146824.4,
+              "y": 442262.4
+            },
+            "heading": 1.8974
+          },
+          {
+            "type": "ZSU-23-4 Shilka",
+            "pos": {
+              "x": -148043.9,
+              "y": 442837.9
+            },
+            "heading": 0.4327
+          },
+          {
+            "type": "ZSU-23-4 Shilka",
+            "pos": {
+              "x": -148059.0,
+              "y": 442867.9
+            },
+            "heading": 0.4327
+          }
+        ],
+        "blue_units": [
+          {
+            "type": "Vulcan",
+            "pos": {
+              "x": -146789.5,
+              "y": 442285.5
+            },
+            "heading": 1.9812
+          },
+          {
+            "type": "Vulcan",
+            "pos": {
+              "x": -146823.7,
+              "y": 442261.8
+            },
+            "heading": 1.88
+          },
+          {
+            "type": "Vulcan",
+            "pos": {
+              "x": -148047.9,
+              "y": 442836.7
+            },
+            "heading": 0.4327
+          },
+          {
+            "type": "Vulcan",
+            "pos": {
+              "x": -148059.1,
+              "y": 442868.9
+            },
+            "heading": 0.4327
+          }
+        ]
+      },
+      {
+        "objective": "Sochi",
+        "class": "ARMOR",
+        "name": "Sochi - ARMOR security",
+        "red_units": [
+          {
+            "type": "BMP-2",
+            "pos": {
+              "x": -147794.7,
+              "y": 442063.4
+            },
+            "heading": 0.8778
+          },
+          {
+            "type": "BMP-2",
+            "pos": {
+              "x": -146903.7,
+              "y": 442203.3
+            },
+            "heading": 2.0598
+          },
+          {
+            "type": "BTR-70",
+            "pos": {
+              "x": -148035.7,
+              "y": 442802.7
+            },
+            "heading": 0.8778
+          },
+          {
+            "type": "BTR-70",
+            "pos": {
+              "x": -148493.7,
+              "y": 443085.6
+            },
+            "heading": 0.8778
+          }
+        ],
+        "blue_units": [
+          {
+            "type": "M-2 Bradley",
+            "pos": {
+              "x": -147794.7,
+              "y": 442063.4
+            },
+            "heading": 0.8778
+          },
+          {
+            "type": "M-2 Bradley",
+            "pos": {
+              "x": -146906.0,
+              "y": 442204.7
+            },
+            "heading": 2.14
+          },
+          {
+            "type": "M-113",
+            "pos": {
+              "x": -148036.4,
+              "y": 442801.6
+            },
+            "heading": 0.8778
+          },
+          {
+            "type": "M-113",
+            "pos": {
+              "x": -148493.7,
+              "y": 443085.6
+            },
+            "heading": 0.8778
+          }
+        ]
+      },
+      {
+        "objective": "Sochi",
+        "class": "AAA",
+        "name": "Sochi - FLAK battery",
+        "red_units": [
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": -146890.4,
+              "y": 442218.3
+            },
+            "heading": 1.2024
+          },
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": -146870.0,
+              "y": 442254.7
+            },
+            "heading": 2.2496
+          },
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": -146951.1,
+              "y": 442169.4
+            },
+            "heading": 3.2968
+          },
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": -146907.4,
+              "y": 442227.2
+            },
+            "heading": 4.344
+          },
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": -146884.2,
+              "y": 442255.4
+            },
+            "heading": 5.3912
+          },
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": -146846.8,
+              "y": 442276.2
+            },
+            "heading": 0.1552
+          },
+          {
+            "type": "SON_9",
+            "pos": {
+              "x": -146921.9,
+              "y": 442213.3
+            },
+            "heading": 1.2024
+          }
+        ],
+        "blue_units": [
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": -146890.4,
+              "y": 442218.3
+            },
+            "heading": 1.2024
+          },
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": -146870.0,
+              "y": 442254.7
+            },
+            "heading": 2.2496
+          },
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": -146951.1,
+              "y": 442169.4
+            },
+            "heading": 3.2968
+          },
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": -146907.4,
+              "y": 442227.2
+            },
+            "heading": 4.344
+          },
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": -146884.2,
+              "y": 442255.4
+            },
+            "heading": 5.3912
+          },
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": -146846.8,
+              "y": 442276.2
+            },
+            "heading": 0.1552
+          }
+        ]
+      },
+      {
+        "objective": "Sochi",
+        "class": "SERVICES",
+        "name": "Sochi - SERVICES fuel",
+        "red_units": [
+          {
+            "type": "ATZ-5",
+            "pos": {
+              "x": -148176.1,
+              "y": 443082.2
+            },
+            "heading": 5.3912
+          }
+        ],
+        "blue_units": [
+          {
+            "type": "M978 HEMTT Tanker",
+            "pos": {
+              "x": -148176.1,
+              "y": 443082.2
+            },
+            "heading": 5.3912
+          }
+        ]
+      },
+      {
         "objective": "Sochi-Adler",
         "class": "AAA",
         "name": "Sochi-Adler - AAA guns 1",
@@ -33609,6 +34467,290 @@
               "y": 463536.7
             },
             "heading": 1.2834
+          }
+        ]
+      },
+      {
+        "objective": "Sukhumi",
+        "class": "AAA",
+        "name": "Sukhumi - AAA guns 2",
+        "red_units": [
+          {
+            "type": "ZSU-23-4 Shilka",
+            "pos": {
+              "x": -206025.8,
+              "y": 553250.8
+            },
+            "heading": 5.1319
+          },
+          {
+            "type": "ZSU-23-4 Shilka",
+            "pos": {
+              "x": -205985.9,
+              "y": 553264.1
+            },
+            "heading": 4.7811
+          },
+          {
+            "type": "ZSU-23-4 Shilka",
+            "pos": {
+              "x": -204996.5,
+              "y": 552713.7
+            },
+            "heading": 3.3164
+          },
+          {
+            "type": "ZSU-23-4 Shilka",
+            "pos": {
+              "x": -204989.6,
+              "y": 552680.8
+            },
+            "heading": 3.3164
+          }
+        ],
+        "blue_units": [
+          {
+            "type": "Vulcan",
+            "pos": {
+              "x": -206025.5,
+              "y": 553250.7
+            },
+            "heading": 4.8649
+          },
+          {
+            "type": "Vulcan",
+            "pos": {
+              "x": -205986.5,
+              "y": 553264.8
+            },
+            "heading": 4.7637
+          },
+          {
+            "type": "Vulcan",
+            "pos": {
+              "x": -204992.3,
+              "y": 552713.8
+            },
+            "heading": 3.3164
+          },
+          {
+            "type": "Vulcan",
+            "pos": {
+              "x": -204989.7,
+              "y": 552679.8
+            },
+            "heading": 3.3164
+          }
+        ]
+      },
+      {
+        "objective": "Sukhumi",
+        "class": "ARMOR",
+        "name": "Sukhumi - ARMOR security",
+        "red_units": [
+          {
+            "type": "BMP-2",
+            "pos": {
+              "x": -205030.3,
+              "y": 553523.5
+            },
+            "heading": 3.7615
+          },
+          {
+            "type": "BMP-2",
+            "pos": {
+              "x": -205776.1,
+              "y": 553341.6
+            },
+            "heading": 4.9434
+          },
+          {
+            "type": "BTR-70",
+            "pos": {
+              "x": -204995.5,
+              "y": 552749.8
+            },
+            "heading": 3.7615
+          },
+          {
+            "type": "BTR-70",
+            "pos": {
+              "x": -204595.8,
+              "y": 552351.8
+            },
+            "heading": 3.7615
+          }
+        ],
+        "blue_units": [
+          {
+            "type": "M-2 Bradley",
+            "pos": {
+              "x": -205030.3,
+              "y": 553523.5
+            },
+            "heading": 3.7615
+          },
+          {
+            "type": "M-2 Bradley",
+            "pos": {
+              "x": -205774.2,
+              "y": 553339.6
+            },
+            "heading": 5.0237
+          },
+          {
+            "type": "M-113",
+            "pos": {
+              "x": -204994.5,
+              "y": 552750.7
+            },
+            "heading": 3.7615
+          },
+          {
+            "type": "M-113",
+            "pos": {
+              "x": -204595.8,
+              "y": 552351.8
+            },
+            "heading": 3.7615
+          }
+        ]
+      },
+      {
+        "objective": "Sukhumi",
+        "class": "AAA",
+        "name": "Sukhumi - FLAK battery",
+        "red_units": [
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": -205927.0,
+              "y": 553408.8
+            },
+            "heading": 4.0861
+          },
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": -205882.2,
+              "y": 553404.1
+            },
+            "heading": 5.1333
+          },
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": -205855.8,
+              "y": 553440.6
+            },
+            "heading": 6.1805
+          },
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": -205874.2,
+              "y": 553481.7
+            },
+            "heading": 0.9445
+          },
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": -205919.0,
+              "y": 553486.3
+            },
+            "heading": 1.9917
+          },
+          {
+            "type": "S-60_Type59_Artillery",
+            "pos": {
+              "x": -205945.3,
+              "y": 553449.8
+            },
+            "heading": 3.0389
+          },
+          {
+            "type": "SON_9",
+            "pos": {
+              "x": -205900.6,
+              "y": 553445.2
+            },
+            "heading": 4.0861
+          }
+        ],
+        "blue_units": [
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": -205927.0,
+              "y": 553408.8
+            },
+            "heading": 4.0861
+          },
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": -205882.2,
+              "y": 553404.1
+            },
+            "heading": 5.1333
+          },
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": -205855.8,
+              "y": 553440.6
+            },
+            "heading": 6.1805
+          },
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": -205874.2,
+              "y": 553481.7
+            },
+            "heading": 0.9445
+          },
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": -205919.0,
+              "y": 553486.3
+            },
+            "heading": 1.9917
+          },
+          {
+            "type": "Gepard",
+            "pos": {
+              "x": -205945.3,
+              "y": 553449.8
+            },
+            "heading": 3.0389
+          }
+        ]
+      },
+      {
+        "objective": "Sukhumi",
+        "class": "SERVICES",
+        "name": "Sukhumi - SERVICES fuel",
+        "red_units": [
+          {
+            "type": "ATZ-5",
+            "pos": {
+              "x": -204931.0,
+              "y": 552443.7
+            },
+            "heading": 1.9917
+          }
+        ],
+        "blue_units": [
+          {
+            "type": "M978 HEMTT Tanker",
+            "pos": {
+              "x": -204931.0,
+              "y": 552443.7
+            },
+            "heading": 1.9917
           }
         ]
       },

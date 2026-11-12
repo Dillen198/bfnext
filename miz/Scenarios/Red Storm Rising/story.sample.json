@@ -232,7 +232,7 @@
           },
           {
             "Stock": {
-              "objective": "Kutaisi",
+              "objective": "Gori",
               "item": "fuel",
               "pct": 30
             }
@@ -247,7 +247,7 @@
             "Hq": {
               "side": "Red",
               "supply_priority": [
-                "Kutaisi",
+                "Surami tunnel",
                 "Gori"
               ],
               "hours": 8
