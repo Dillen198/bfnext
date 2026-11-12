@@ -4549,15 +4549,17 @@ impl Db {
 
     /// The warehouse a base-supply crate delivering to `to` draws its contents
     /// from: its origin base, synced from DCS so the debit lands on live
-    /// stock. Refuses, with the reason for the player, a delivery back to the
-    /// origin itself, or from an origin that has since fallen or has no
-    /// warehouse to draw on.
+    /// stock (`None`: an origin with no DCS airbase, a naval base say, whose
+    /// stock is the model's alone). Refuses, with the reason for the player, a
+    /// delivery back to the origin itself, or from an origin that has since
+    /// fallen or whose airbase is gone.
     fn supply_crate_source(
         &mut self,
         lua: MizLua,
         crate_data: &C130Cargo,
         to: ObjectiveId,
-    ) -> std::result::Result<dcso3::warehouse::Warehouse, std::string::String> {
+    ) -> std::result::Result<Option<dcso3::warehouse::Warehouse>, std::string::String>
+    {
         let origin = crate_data.origin;
         let Some(src) = self.persisted.objectives.get(&origin) else {
             return Err("the base these supplies came from no longer exists".into());
@@ -4573,9 +4575,167 @@ impl Db {
                 "{src_name}, where these supplies were loaded, has fallen -- there is nothing left to deliver"
             ));
         }
-        self.sync_warehouse_to_objective(lua, origin).map(|(_, w)| w).map_err(|e| {
+        self.sync_warehouse_if_any(lua, origin).map_err(|e| {
             format!("{src_name} has no warehouse to draw these supplies from ({e})")
         })
+    }
+
+    /// Deliver a base-supply crate -- fuel, or weapons and materiel -- to the
+    /// friendly objective nearest where it sits, drawn from the base it was
+    /// loaded at, like the F10 transfer (`transfer_supplies`).
+    fn deliver_supply_crate(
+        &mut self,
+        lua: MizLua,
+        crate_name: &str,
+        crate_data: &C130Cargo,
+        fuel: bool,
+    ) -> Result<String> {
+        use super::logistics::is_airframe_item;
+        let (what, tag) = if fuel {
+            ("Fuel", "[FUEL_TRANSFER]")
+        } else {
+            ("Weapons", "[WEAPONS_TRANSFER]")
+        };
+        let at = crate_data.last_pos;
+        let Some(oid) = self
+            .persisted
+            .objectives
+            .into_iter()
+            .filter(|(_, obj)| obj.owner == crate_data.side)
+            .min_by(|(_, a), (_, b)| {
+                na::distance(&a.zone.pos().into(), &at.into())
+                    .total_cmp(&na::distance(&b.zone.pos().into(), &at.into()))
+            })
+            .map(|(oid, _)| *oid)
+        else {
+            bail!("No friendly objectives found for {what} transfer")
+        };
+        let (pct, exempt) = {
+            let whcfg = self
+                .ephemeral
+                .cfg
+                .warehouse
+                .as_ref()
+                .ok_or_else(|| anyhow!("Warehouse not configured"))?;
+            (whcfg.supply_transfer_size, whcfg.exempt_airframes.clone())
+        };
+
+        // The stock comes out of the base the crate was loaded at. It used to
+        // be conjured at the destination -- including when the destination
+        // WAS the origin -- so a crate shuttled around its own base minted it.
+        let src_wh = match self.supply_crate_source(lua, crate_data, oid) {
+            Ok(w) => w,
+            Err(why) => return Ok(self.c130_crate_blocked(crate_name, crate_data, why)),
+        };
+        let dst_wh = match self.sync_warehouse_if_any(lua, oid) {
+            Ok(w) => w,
+            Err(e) => {
+                // Retrying every tick changes nothing (Oct 3: 4000 errors from
+                // four crates); back off like any other crate that can't be
+                // used where it is.
+                warn!(
+                    "[C130_CARGO] {what} crate '{crate_name}': destination depot unavailable: {e:?}"
+                );
+                let name =
+                    objective!(self, oid).map(|o| o.name.to_string()).unwrap_or_default();
+                let why = format!(
+                    "{name} can't take deliveries right now (its depot is out of action)"
+                );
+                return Ok(self.c130_crate_blocked(crate_name, crate_data, why));
+            }
+        };
+
+        let source = objective!(self, crate_data.origin)?.warehouse.clone();
+        let dst = objective_mut!(self, oid)?;
+        let mut added = 0usize;
+        let mut taken_liquids: SmallVec<[(dcso3::warehouse::LiquidType, u32); 4]> =
+            smallvec![];
+        let mut taken_equipment: Vec<(String, u32)> = vec![];
+        // Walk what the source holds, not what the destination already
+        // lists: a base that had never stocked an item (a naval base has
+        // little more than materiel) could not be sent any of it.
+        if fuel {
+            for (liq, src_inv) in &source.liquids {
+                let Some((cap, n)) =
+                    supply_crate_load(src_inv, dst.warehouse.liquids.get(liq), pct)
+                else {
+                    continue;
+                };
+                let inv = dst.warehouse.liquids.get_or_default_cow(*liq);
+                inv.capacity = cap;
+                let n = inv.credit(n);
+                if n > 0 {
+                    info!("{tag} Added {liq:?} x{n} to {oid:?}");
+                    taken_liquids.push((*liq, n));
+                    added += 1;
+                }
+            }
+        } else {
+            for (name, src_inv) in &source.equipment {
+                // Never airframes, but materiel yes: the prefix test this used
+                // to repeat counted materiel as an airframe, and materiel is
+                // what a naval base pays for carrier repairs with.
+                if is_airframe_item(name.as_str()) || exempt.contains(name.as_str()) {
+                    continue;
+                }
+                let Some((cap, n)) =
+                    supply_crate_load(src_inv, dst.warehouse.equipment.get(name), pct)
+                else {
+                    continue;
+                };
+                let inv = dst.warehouse.equipment.get_or_default_cow(name.clone());
+                inv.capacity = cap;
+                let n = inv.credit(n);
+                if n > 0 {
+                    info!("{tag} Added {name} x{n} to {oid:?}");
+                    taken_equipment.push((name.clone(), n));
+                    added += 1;
+                }
+            }
+        }
+        let src = objective_mut!(self, crate_data.origin)?;
+        for (liq, n) in &taken_liquids {
+            if let Some(inv) = src.warehouse.liquids.get_mut_cow(liq) {
+                inv.debit(*n);
+            }
+        }
+        for (name, n) in &taken_equipment {
+            if let Some(inv) = src.warehouse.equipment.get_mut_cow(name) {
+                inv.debit(*n);
+            }
+        }
+        // A raw push carries every unsynced model change with it, and
+        // `push_warehouse_if_any` marks it pushed so the next reconcile
+        // doesn't apply them twice.
+        self.push_warehouse_if_any(oid, dst_wh.as_ref())?;
+        self.push_warehouse_if_any(crate_data.origin, src_wh.as_ref())?;
+        if let Err(e) = self.update_supply_status() {
+            error!("{tag} updating supply status: {e:?}");
+        }
+        self.ephemeral.stat(Stat::SupplyTransfer {
+            from: crate_data.origin,
+            to: oid,
+            by: crate_data.player,
+        });
+        self.ephemeral.dirty();
+        if let Some(id) =
+            self.ephemeral.c130_crates.remove(crate_name).and_then(|c| c.missing_marker)
+        {
+            self.ephemeral.msgs().delete_mark(id);
+        }
+        self.delete_group(&crate_data.group_id)?;
+
+        let obj_name = objective!(self, oid)?.name.clone();
+        let msg = if added == 0 {
+            String::from(format!(
+                "{what} transfer crate delivered to {obj_name} ({}, or its source had none to spare)",
+                if fuel { "tanks full" } else { "warehouse full" }
+            ))
+        } else {
+            String::from(format!("{what} transfer crate delivered to {obj_name}"))
+        };
+        info!("{tag} {msg}");
+        Ok(msg)
     }
 
     /// Where a Fat Cow set up from crates at `crates` is anchored: the
@@ -5150,368 +5310,10 @@ impl Db {
                 }
             }
             C130CargoType::SupplyTransferFuel => {
-                // Handle fuel-only transfer
-                let objectives: Vec<(ObjectiveId, Vector2)> = self
-                    .persisted
-                    .objectives
-                    .into_iter()
-                    .filter_map(|(oid, obj)| {
-                        if obj.owner == crate_data.side {
-                            Some((*oid, obj.zone.pos()))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                let nearest_oid = objectives
-                    .iter()
-                    .min_by_key(|(_, pos)| {
-                        let dist =
-                            na::distance(&(*pos).into(), &crate_data.last_pos.into());
-                        (dist * 1000.0) as i64
-                    })
-                    .map(|(oid, _)| *oid);
-
-                if let Some(oid) = nearest_oid {
-                    let transfer_amount = self
-                        .ephemeral
-                        .cfg
-                        .warehouse
-                        .as_ref()
-                        .ok_or_else(|| anyhow!("Warehouse not configured"))?
-                        .supply_transfer_size;
-
-                    // The fuel comes out of the base the crate was loaded at,
-                    // like the F10 transfer (`transfer_supplies`). It used to
-                    // be conjured at the destination -- including when the
-                    // destination WAS the origin -- so a crate shuttled
-                    // around its own base minted fuel.
-                    let src_wh = match self.supply_crate_source(lua, crate_data, oid) {
-                        Ok(w) => w,
-                        Err(why) => {
-                            return Ok(
-                                self.c130_crate_blocked(crate_name, crate_data, why)
-                            );
-                        }
-                    };
-                    let source_warehouse =
-                        objective!(self, crate_data.origin)?.warehouse.clone();
-
-                    let (obj_mut, wh) = match self.sync_warehouse_to_objective(lua, oid) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            // Retrying every tick changes nothing (Oct 3: 4000
-                            // errors from four crates); back off like any other
-                            // crate that can't be used where it is.
-                            log::warn!(
-                                "[C130_CARGO] fuel crate '{crate_name}': destination depot unavailable: {e:?}"
-                            );
-                            let name = objective!(self, oid)
-                                .map(|o| o.name.to_string())
-                                .unwrap_or_default();
-                            let why = format!(
-                                "{name} can't take deliveries right now (its depot is out of action)"
-                            );
-                            return Ok(
-                                self.c130_crate_blocked(crate_name, crate_data, why)
-                            );
-                        }
-                    };
-
-                    let mut added_items = Vec::new();
-                    let mut taken: SmallVec<[(dcso3::warehouse::LiquidType, u32); 4]> =
-                        smallvec![];
-
-                    // ONLY add liquids (fuel), never more than the source holds
-                    for (liq_type, inv) in obj_mut.warehouse.liquids.iter_mut_cow() {
-                        let src_stored = source_warehouse
-                            .liquids
-                            .get(liq_type)
-                            .map(|s| s.stored)
-                            .unwrap_or(0);
-                        if inv.capacity == 0 {
-                            if let Some(source_inv) =
-                                source_warehouse.liquids.get(liq_type)
-                                && source_inv.capacity > 0
-                            {
-                                let amount = ((source_inv.capacity as f32
-                                    * (transfer_amount as f32 / 100.0))
-                                    as u32)
-                                    .max(1)
-                                    .min(src_stored);
-                                if amount > 0 {
-                                    inv.capacity = source_inv.capacity;
-                                    inv.stored = amount;
-                                    taken.push((*liq_type, amount));
-                                    added_items
-                                        .push(format!("{:?}: +{}", liq_type, amount));
-                                    info!(
-                                        "[FUEL_TRANSFER] Initialized {:?} with capacity {}, added {}",
-                                        liq_type, inv.capacity, amount
-                                    );
-                                }
-                            }
-                        } else if inv.capacity > inv.stored {
-                            let available_space = inv.capacity - inv.stored;
-                            let amount = ((inv.capacity as f32
-                                * (transfer_amount as f32 / 100.0))
-                                as u32)
-                                .max(1);
-                            let to_add = amount.min(available_space).min(src_stored);
-
-                            if to_add > 0 {
-                                inv.stored += to_add;
-                                taken.push((*liq_type, to_add));
-                                added_items.push(format!("{:?}: +{}", liq_type, to_add));
-                                info!(
-                                    "[FUEL_TRANSFER] Added {:?} x{} to {:?}",
-                                    liq_type, to_add, oid
-                                );
-                            }
-                        }
-                    }
-
-                    use crate::db::logistics::{mark_pushed, sync_obj_to_warehouse};
-                    // A raw push carries every unsynced model change with it;
-                    // mark_pushed stops the next reconcile applying them twice.
-                    sync_obj_to_warehouse(obj_mut, &wh)?;
-                    mark_pushed(obj_mut);
-                    let src = objective_mut!(self, crate_data.origin)?;
-                    for (liq_type, n) in &taken {
-                        if let Some(inv) = src.warehouse.liquids.get_mut_cow(liq_type) {
-                            inv.stored = inv.stored.saturating_sub(*n);
-                        }
-                    }
-                    sync_obj_to_warehouse(src, &src_wh)?;
-                    mark_pushed(src);
-                    if let Err(e) = self.update_supply_status() {
-                        error!("[FUEL_TRANSFER] updating supply status: {e:?}");
-                    }
-                    self.ephemeral.stat(Stat::SupplyTransfer {
-                        from: crate_data.origin,
-                        to: oid,
-                        by: crate_data.player,
-                    });
-                    self.ephemeral.dirty();
-                    if let Some(id) = self
-                        .ephemeral
-                        .c130_crates
-                        .remove(crate_name)
-                        .and_then(|c| c.missing_marker)
-                    {
-                        self.ephemeral.msgs().delete_mark(id);
-                    }
-                    self.delete_group(&crate_data.group_id)?;
-
-                    let obj_name = self
-                        .persisted
-                        .objectives
-                        .get(&oid)
-                        .map(|o| o.name.clone())
-                        .unwrap_or_else(|| String::from("Unknown"));
-
-                    let msg = if added_items.is_empty() {
-                        String::from(format!(
-                            "Fuel transfer crate delivered to {} (tanks full, or its source had none to spare)",
-                            obj_name
-                        ))
-                    } else {
-                        String::from(format!(
-                            "Fuel transfer crate delivered to {}",
-                            obj_name
-                        ))
-                    };
-
-                    info!("[FUEL_TRANSFER] {}", msg);
-                    Ok(msg)
-                } else {
-                    bail!("No friendly objectives found for fuel transfer")
-                }
+                self.deliver_supply_crate(lua, crate_name, crate_data, true)
             }
             C130CargoType::SupplyTransferWeapons => {
-                // Handle weapons/equipment-only transfer
-                let objectives: Vec<(ObjectiveId, Vector2)> = self
-                    .persisted
-                    .objectives
-                    .into_iter()
-                    .filter_map(|(oid, obj)| {
-                        if obj.owner == crate_data.side {
-                            Some((*oid, obj.zone.pos()))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                let nearest_oid = objectives
-                    .iter()
-                    .min_by_key(|(_, pos)| {
-                        let dist =
-                            na::distance(&(*pos).into(), &crate_data.last_pos.into());
-                        (dist * 1000.0) as i64
-                    })
-                    .map(|(oid, _)| *oid);
-
-                if let Some(oid) = nearest_oid {
-                    let (transfer_amount, exempt_airframes) = {
-                        let whcfg = self
-                            .ephemeral
-                            .cfg
-                            .warehouse
-                            .as_ref()
-                            .ok_or_else(|| anyhow!("Warehouse not configured"))?;
-                        (whcfg.supply_transfer_size, whcfg.exempt_airframes.clone())
-                    };
-
-                    // Drawn from the origin base, same as the fuel crate above.
-                    let src_wh = match self.supply_crate_source(lua, crate_data, oid) {
-                        Ok(w) => w,
-                        Err(why) => {
-                            return Ok(
-                                self.c130_crate_blocked(crate_name, crate_data, why)
-                            );
-                        }
-                    };
-                    let source_warehouse =
-                        objective!(self, crate_data.origin)?.warehouse.clone();
-
-                    let (obj_mut, wh) = match self.sync_warehouse_to_objective(lua, oid) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            // Retrying every tick changes nothing (Oct 3: 4000
-                            // errors from four crates); back off like any other
-                            // crate that can't be used where it is.
-                            log::warn!(
-                                "[C130_CARGO] weapons crate '{crate_name}': destination depot unavailable: {e:?}"
-                            );
-                            let name = objective!(self, oid)
-                                .map(|o| o.name.to_string())
-                                .unwrap_or_default();
-                            let why = format!(
-                                "{name} can't take deliveries right now (its depot is out of action)"
-                            );
-                            return Ok(
-                                self.c130_crate_blocked(crate_name, crate_data, why)
-                            );
-                        }
-                    };
-
-                    let mut added_items = Vec::new();
-                    let mut taken: Vec<(String, u32)> = Vec::new();
-
-                    // ONLY add equipment (non-exempt items, no airframes),
-                    // never more than the source holds
-                    for (name, inv) in obj_mut.warehouse.equipment.iter_mut_cow() {
-                        let is_airframe = !name.starts_with("weapons.")
-                            && !name.starts_with("vehicles.")
-                            && !name.starts_with("Fortifications.");
-
-                        if is_airframe || exempt_airframes.contains(name.as_str()) {
-                            continue;
-                        }
-
-                        let src_stored = source_warehouse
-                            .equipment
-                            .get(name)
-                            .map(|s| s.stored)
-                            .unwrap_or(0);
-                        if inv.capacity == 0 {
-                            if let Some(source_inv) = source_warehouse.equipment.get(name)
-                                && source_inv.capacity > 0
-                            {
-                                let amount = ((source_inv.capacity as f32
-                                    * (transfer_amount as f32 / 100.0))
-                                    as u32)
-                                    .max(1)
-                                    .min(src_stored);
-                                if amount > 0 {
-                                    inv.capacity = source_inv.capacity;
-                                    inv.stored = amount;
-                                    taken.push((name.clone(), amount));
-                                    added_items.push(format!("{}: +{}", name, amount));
-                                    info!(
-                                        "[WEAPONS_TRANSFER] Initialized {} with capacity {}, added {}",
-                                        name, inv.capacity, amount
-                                    );
-                                }
-                            }
-                        } else if inv.capacity > inv.stored {
-                            let available_space = inv.capacity - inv.stored;
-                            let amount = ((inv.capacity as f32
-                                * (transfer_amount as f32 / 100.0))
-                                as u32)
-                                .max(1);
-                            let to_add = amount.min(available_space).min(src_stored);
-
-                            if to_add > 0 {
-                                inv.stored += to_add;
-                                taken.push((name.clone(), to_add));
-                                added_items.push(format!("{}: +{}", name, to_add));
-                                info!(
-                                    "[WEAPONS_TRANSFER] Added {} x{} to {:?}",
-                                    name, to_add, oid
-                                );
-                            }
-                        }
-                    }
-
-                    use crate::db::logistics::{mark_pushed, sync_obj_to_warehouse};
-                    // A raw push carries every unsynced model change with it;
-                    // mark_pushed stops the next reconcile applying them twice.
-                    sync_obj_to_warehouse(obj_mut, &wh)?;
-                    mark_pushed(obj_mut);
-                    let src = objective_mut!(self, crate_data.origin)?;
-                    for (name, n) in &taken {
-                        if let Some(inv) = src.warehouse.equipment.get_mut_cow(name) {
-                            inv.stored = inv.stored.saturating_sub(*n);
-                        }
-                    }
-                    sync_obj_to_warehouse(src, &src_wh)?;
-                    mark_pushed(src);
-                    if let Err(e) = self.update_supply_status() {
-                        error!("[WEAPONS_TRANSFER] updating supply status: {e:?}");
-                    }
-                    self.ephemeral.stat(Stat::SupplyTransfer {
-                        from: crate_data.origin,
-                        to: oid,
-                        by: crate_data.player,
-                    });
-                    self.ephemeral.dirty();
-                    if let Some(id) = self
-                        .ephemeral
-                        .c130_crates
-                        .remove(crate_name)
-                        .and_then(|c| c.missing_marker)
-                    {
-                        self.ephemeral.msgs().delete_mark(id);
-                    }
-                    self.delete_group(&crate_data.group_id)?;
-
-                    let obj_name = self
-                        .persisted
-                        .objectives
-                        .get(&oid)
-                        .map(|o| o.name.clone())
-                        .unwrap_or_else(|| String::from("Unknown"));
-
-                    let msg = if added_items.is_empty() {
-                        String::from(format!(
-                            "Weapons transfer crate delivered to {} (warehouse full, or its source had none to spare)",
-                            obj_name
-                        ))
-                    } else {
-                        String::from(format!(
-                            "Weapons transfer crate delivered to {}",
-                            obj_name
-                        ))
-                    };
-
-                    info!("[WEAPONS_TRANSFER] {}", msg);
-                    Ok(msg)
-                } else {
-                    bail!("No friendly objectives found for weapons transfer")
-                }
+                self.deliver_supply_crate(lua, crate_name, crate_data, false)
             }
             C130CargoType::CarrierRepair => {
                 use bfprotocols::db::objective::ObjectiveKind;
@@ -5958,10 +5760,73 @@ impl Db {
     }
 }
 
+/// What one base-supply crate carries of an item: `pct` percent of the
+/// destination's capacity for it (of the source's, for an item the
+/// destination has never stocked), never more than the source holds or the
+/// destination has room for. Returns the destination's capacity for the item
+/// and the amount, or `None` if none of it moves.
+fn supply_crate_load(
+    src: &super::logistics::Inventory,
+    dst: Option<&super::logistics::Inventory>,
+    pct: u8,
+) -> Option<(u32, u32)> {
+    let share = |cap: u32| ((cap as f32 * (pct as f32 / 100.)) as u32).max(1);
+    let (capacity, want) = match dst {
+        Some(d) if d.capacity > 0 => {
+            (d.capacity, share(d.capacity).min(d.capacity.saturating_sub(d.stored)))
+        }
+        _ if src.capacity > 0 => (src.capacity, share(src.capacity)),
+        _ => return None,
+    };
+    let amount = want.min(src.stored);
+    (amount > 0).then_some((capacity, amount))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use bfprotocols::cfg::Cfg;
+
+    fn inv(stored: u32, capacity: u32) -> super::super::logistics::Inventory {
+        super::super::logistics::Inventory { stored, capacity, ..Default::default() }
+    }
+
+    #[test]
+    fn supply_crate_reaches_a_base_that_never_stocked_the_item() {
+        // A naval base with no entry for the item: sized from the source.
+        assert_eq!(supply_crate_load(&inv(500, 1000), None, 10), Some((1000, 100)));
+        // An entry with no capacity is the same as none.
+        assert_eq!(
+            supply_crate_load(&inv(500, 1000), Some(&inv(0, 0)), 10),
+            Some((1000, 100))
+        );
+    }
+
+    #[test]
+    fn supply_crate_is_bounded_by_room_and_source_stock() {
+        // Destination has room for 30 of the 50 a crate would carry.
+        assert_eq!(
+            supply_crate_load(&inv(500, 1000), Some(&inv(470, 500)), 10),
+            Some((500, 30))
+        );
+        // Source only has 7 left.
+        assert_eq!(
+            supply_crate_load(&inv(7, 1000), Some(&inv(0, 500)), 10),
+            Some((500, 7))
+        );
+        // Full destination, empty source, or a source with nothing to size by.
+        assert_eq!(supply_crate_load(&inv(500, 1000), Some(&inv(500, 500)), 10), None);
+        assert_eq!(supply_crate_load(&inv(0, 1000), Some(&inv(0, 500)), 10), None);
+        assert_eq!(supply_crate_load(&inv(5, 0), None, 10), None);
+    }
+
+    #[test]
+    fn supply_crates_carry_materiel_but_not_airframes() {
+        use super::super::logistics::is_airframe_item;
+        assert!(!is_airframe_item(MATERIEL_ITEM));
+        assert!(is_airframe_item("FA-18C_hornet"));
+        assert!(!is_airframe_item("weapons.missiles.AIM_120C"));
+    }
 
     fn example_troop() -> Troop {
         Cfg::default()

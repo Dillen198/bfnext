@@ -1090,6 +1090,17 @@ impl Db {
             objective_mut!(self, cg_id)?.spawned = true;
         }
 
+        // A fleet objective is created at health 0 and skips the first status
+        // pass in `init` (its task force is only linked here), and nothing
+        // else recomputed it until one of its ships was hit. Health 0 with no
+        // infantry is exactly what `captureable()` calls undefended, so every
+        // fleet showed "land troops inside the ring" from the start of a
+        // round. Its live ships are linked and marked alive now: score it.
+        let now = self.ephemeral.now();
+        for cg_id in &carrier_ids {
+            self.update_objective_status(cg_id, now)?;
+        }
+
         // Link carrier groups to their nearest naval base
         for cg_id in &self.persisted.carrier_groups.clone() {
             let cg_obj = objective!(self, &cg_id)?;

@@ -459,6 +459,19 @@ fn brief_reply(ctx: &mut Context, lua: MizLua, id: PlayerId) {
     }
 }
 
+/// The objective a `-transfer` target names, if it names one: `objective:HL06`
+/// (a space after the colon is fine), or a bare name that is exactly an
+/// objective's and no player's, as in `-transfer 500 HL06`.
+fn objective_target<'a>(ctx: &Context, target: &'a str) -> Option<&'a str> {
+    let target = target.trim();
+    if let Some(name) = target.strip_prefix("objective:") {
+        return Some(name.trim());
+    }
+    let is_objective =
+        ctx.db.objectives().any(|(_, o)| o.name.as_str().eq_ignore_ascii_case(target));
+    (is_objective && admin::find_player_by_name(ctx, target).is_err()).then_some(target)
+}
+
 fn transfer_command(ctx: &mut Context, id: PlayerId, s: &str) {
     macro_rules! reply {
         ($msg:tt) => {
@@ -474,7 +487,7 @@ fn transfer_command(ctx: &mut Context, id: PlayerId, s: &str) {
             None => reply!("transfer expected amount and target"),
             Some((amount, target)) => match amount.parse::<u32>() {
                 Err(e) => reply!("transfer expected a number {e:?}"),
-                Ok(amount) => match target.trim().strip_prefix("objective:") {
+                Ok(amount) => match objective_target(ctx, target) {
                     Some(objective_name) => {
                         match admin::get_airbase(&ctx.db, objective_name) {
                             Err(e) => {

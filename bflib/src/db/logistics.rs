@@ -8060,6 +8060,39 @@ impl Db {
         Ok((obj, warehouse))
     }
 
+    /// `oid`'s DCS warehouse, synced into the model, or `None` for an
+    /// objective that has no DCS airbase at all -- a naval base, most hubs, a
+    /// factory -- whose stock lives in the model alone. The logistics tick
+    /// already leaves those out of its warehouse sync (`warehouse_objectives`),
+    /// but supply crates and the F10 transfer insisted on a live airbase, so
+    /// nothing a player brought to or from a naval base ever arrived.
+    pub(super) fn sync_warehouse_if_any(
+        &mut self,
+        lua: MizLua,
+        oid: ObjectiveId,
+    ) -> Result<Option<warehouse::Warehouse>> {
+        objective!(self, oid)?;
+        if !self.ephemeral.airbase_by_oid.contains_key(&oid) {
+            return Ok(None);
+        }
+        self.sync_warehouse_to_objective(lua, oid).map(|(_, w)| Some(w))
+    }
+
+    /// Push `oid`'s model to the warehouse `sync_warehouse_if_any` returned
+    /// for it, if it has one.
+    pub(super) fn push_warehouse_if_any(
+        &mut self,
+        oid: ObjectiveId,
+        wh: Option<&warehouse::Warehouse>,
+    ) -> Result<()> {
+        if let Some(wh) = wh {
+            let obj = objective_mut!(self, oid)?;
+            sync_obj_to_warehouse(obj, wh)?;
+            mark_pushed(obj);
+        }
+        Ok(())
+    }
+
     pub fn sync_objective_to_warehouse(
         &mut self,
         lua: MizLua,
@@ -8096,11 +8129,10 @@ impl Db {
             bail!("can't transfer supply from an enemy objective")
         }
         let mut transfers: SmallVec<[Transfer; 128]> = smallvec![];
-        let (_, from_wh) = self
-            .sync_warehouse_to_objective(lua, from)
-            .context("syncing from objective")?;
-        let (_, to_wh) =
-            self.sync_warehouse_to_objective(lua, to).context("syncing to objective")?;
+        let from_wh =
+            self.sync_warehouse_if_any(lua, from).context("syncing from objective")?;
+        let to_wh =
+            self.sync_warehouse_if_any(lua, to).context("syncing to objective")?;
         let from_obj = objective!(self, from)?;
         let to_obj = objective!(self, to)?;
 
@@ -8225,10 +8257,8 @@ impl Db {
         for tr in transfers {
             self.execute_transfer(&tr)?;
         }
-        sync_obj_to_warehouse(objective!(self, from)?, &from_wh)?;
-        mark_pushed(objective_mut!(self, from)?);
-        sync_obj_to_warehouse(objective!(self, to)?, &to_wh)?;
-        mark_pushed(objective_mut!(self, to)?);
+        self.push_warehouse_if_any(from, from_wh.as_ref())?;
+        self.push_warehouse_if_any(to, to_wh.as_ref())?;
         self.update_supply_status().context("updating supply status")?;
         self.ephemeral.dirty();
         Ok(())
