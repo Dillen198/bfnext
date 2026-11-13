@@ -589,7 +589,6 @@ mod tests {
             "kutaisi_in_danger",
             "front_commander_lost",
             "fuel_crisis",
-            "moscow_asks_for_terms",
         ] {
             assert!(c.event(id).is_some(), "{id}");
         }
@@ -626,9 +625,11 @@ mod tests {
         for n in c.objective_names() {
             assert!(MAP.contains(&n), "{n} is not on the Southern Flank map");
         }
-        // the two endings exclude each other, and every event changes the war
-        let terms = c.event("moscow_asks_for_terms").unwrap();
-        assert!(terms.excludes.contains(&"nato_withdraws".to_string()));
+        // war will never ends the round, so no event does either, and every
+        // event changes the war
+        assert!(c.events.iter().all(|e| {
+            !e.effects.iter().any(|f| matches!(f, StoryEffect::EndRound { .. }))
+        }));
         assert!(c.events.iter().all(|e| !e.effects.is_empty()));
         // and the whole sample is a valid part of a config
         let mut cfg = crate::cfg::Cfg::default();
