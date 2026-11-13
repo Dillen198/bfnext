@@ -71,6 +71,10 @@ use std::collections::VecDeque;
 /// objective label and ring on the map, so redrawing it every second for every
 /// vehicle under way is what actually froze the F10 picture.
 const GROUP_MARK_MIN_MOVE: f64 = 500.;
+/// How long a destroyed protected static stays down before it is put back
+/// (`Db::respawn_protected_static`): long enough for the explosion that
+/// killed it to be over.
+const PROTECTED_RESPAWN_DELAY_SECS: i64 = 10;
 
 /// A friendly field a flight takes off from, and the spot on it where the
 /// flight starts (see `Db::launch_spot`).
@@ -2223,23 +2227,71 @@ impl Db {
     }
 
     /// If `id` is a tracked "immortal" decoration static (see `init_protected_statics`),
-    /// respawn it from its original template so it looks like it was never destroyed.
-    /// Safe to call for any dead static id; no-ops if it isn't a protected one.
+    /// queue it to be put back from its original template so it looks like it
+    /// was never destroyed. Safe to call for any dead static id; no-ops if it
+    /// isn't a protected one.
+    ///
+    /// Never spawned here: this runs inside DCS's hit and dead events, which
+    /// DCS raises from `lLandObject::TakeDamage` before it sets the object's
+    /// life. Spawning a static of the same name there deletes the object DCS
+    /// is still damaging, and the next `SetLife` on it is an access
+    /// violation that takes the server down (the Red Storm crashes of 10-13
+    /// November 2026: an Abrams round, a Mk-82 or a Shilka burst killing a
+    /// compound static). `respawn_due_protected_statics` puts it back from
+    /// the timed events, `PROTECTED_RESPAWN_DELAY` later.
     pub fn respawn_protected_static(
+        &mut self,
+        id: &DcsOid<ClassStatic>,
+        now: DateTime<Utc>,
+    ) {
+        if let Some(protected) = self.ephemeral.protected_statics.remove(id) {
+            self.ephemeral.protected_respawns.push((
+                now + chrono::Duration::seconds(PROTECTED_RESPAWN_DELAY_SECS),
+                protected,
+            ));
+        }
+    }
+
+    /// Put back the protected statics whose delay is up (see
+    /// `respawn_protected_static`). From the timed events only.
+    pub fn respawn_due_protected_statics(
         &mut self,
         lua: MizLua,
         idx: &MizIndex,
-        id: &DcsOid<ClassStatic>,
+        now: DateTime<Utc>,
     ) -> Result<()> {
-        if let Some(protected) = self.ephemeral.protected_statics.remove(id) {
-            let spctx = SpawnCtx::new(lua)?;
-            let template = spctx.get_template(
+        if self.ephemeral.protected_respawns.is_empty() {
+            return Ok(());
+        }
+        let (due, wait): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut self.ephemeral.protected_respawns)
+                .into_iter()
+                .partition(|(at, _)| *at <= now);
+        self.ephemeral.protected_respawns = wait;
+        if due.is_empty() {
+            return Ok(());
+        }
+        let spctx = SpawnCtx::new(lua)?;
+        for (_, protected) in due {
+            let template = match spctx.get_template(
                 idx,
                 GroupKind::Static,
                 protected.side,
                 protected.template_name.as_str(),
-            )?;
-            spctx.spawn(template)?;
+            ) {
+                Ok(t) => t,
+                Err(e) => {
+                    warn!(
+                        "protected static '{}': no template {e:?}",
+                        protected.template_name
+                    );
+                    continue;
+                }
+            };
+            if let Err(e) = spctx.spawn(template) {
+                warn!("respawning protected static '{}': {e:?}", protected.template_name);
+                continue;
+            }
             match StaticObject::get_by_name(lua, protected.template_name.as_str()) {
                 Ok(Static::Static(obj)) => {
                     let new_id = obj.object_id()?;

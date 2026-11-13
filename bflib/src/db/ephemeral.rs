@@ -340,6 +340,9 @@ pub struct Ephemeral {
     /// Neutral decoration statics inside objective zones that get respawned in place
     /// whenever they're destroyed, so they behave as if immortal.
     pub(super) protected_statics: FxHashMap<DcsOid<ClassStatic>, ProtectedStatic>,
+    /// Protected statics that died, and when to put each back
+    /// (`Db::respawn_protected_static`, `Db::respawn_due_protected_statics`).
+    pub(super) protected_respawns: Vec<(DateTime<Utc>, ProtectedStatic)>,
     /// Real map-terrain buildings registered as logistics-relevant, still standing.
     pub(super) tracked_scenery: FxHashMap<DcsOid<ClassObject>, TrackedScenery>,
     /// Round-robin queue for batched `is_exist()` polling of `tracked_scenery`
@@ -668,6 +671,7 @@ impl Default for Ephemeral {
             gid_by_object_id: FxHashMap::default(),
             uid_by_static: FxHashMap::default(),
             protected_statics: FxHashMap::default(),
+            protected_respawns: Vec::new(),
             tracked_scenery: FxHashMap::default(),
             scenery_check_queue: VecDeque::default(),
             scenery_destroyed_by_objective: FxHashMap::default(),

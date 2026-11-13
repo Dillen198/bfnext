@@ -1580,9 +1580,8 @@ fn on_hit(
                 .and_then(|u| u.object_id().ok())
                 .and_then(|oid| crate::shots::who_for(&ctx.db, oid));
             ctx.db.story_static_hit(&id, shooter);
-            if let Err(e) = ctx.db.respawn_protected_static(lua, &ctx.idx, &id) {
-                error!("respawn protected static failed {e:?}")
-            }
+            // queued, not spawned: we are inside DCS's damage processing
+            ctx.db.respawn_protected_static(&id, start_ts);
             if let Err(e) = ctx.db.static_dead(&id, start_ts) {
                 error!("static dead failed {e:?}")
             }
@@ -1648,9 +1647,7 @@ fn handle_death(
             spawn_dismount(lua, ctx, dismount);
         }
         DeathObj::Static(id) => {
-            if let Err(e) = ctx.db.respawn_protected_static(lua, &ctx.idx, &id) {
-                error!("respawn protected static failed {e:?}")
-            }
+            ctx.db.respawn_protected_static(&id, start_ts);
             if let Err(e) = ctx.db.static_dead(&id, start_ts) {
                 error!("static killed failed {e:?}")
             }
@@ -6312,6 +6309,13 @@ fn run_timed_events(ctx: &mut Context, lua: MizLua, path: &Path) -> Result<Admin
         Some(Err(e)) => error!("error running slow timed events {:?}", e),
     }
     step(lua, ctx, "menu init", |ctx| menu::process_init_queue(ctx, lua));
+    // Destroyed decoration statics come back here, never from the event
+    // that killed them (see `Db::respawn_protected_static`).
+    step(lua, ctx, "protected statics", |ctx| {
+        if let Err(e) = ctx.db.respawn_due_protected_statics(lua, &ctx.idx, ts) {
+            error!("respawning protected statics failed {e:?}")
+        }
+    });
     // Contested bases flash on the F10 map (once a second, see the pass).
     step(lua, ctx, "flash contested bases", |ctx| ctx.db.flash_contested_objectives(ts));
     // F10 wingman requests, answered within a second of the click.
