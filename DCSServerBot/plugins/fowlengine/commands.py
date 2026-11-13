@@ -34,6 +34,7 @@ from .cog_player import PlayerCommandsMixin
 from .cog_ops import OpsMixin
 from .cog_range import RangeMixin
 from .cog_news import NewsMixin
+from .cog_report import ReportMixin
 
 # The cog is one class, FowlEngine, assembled from mixins -- one module per
 # area, each moved out of this file unchanged:
@@ -43,6 +44,7 @@ from .cog_news import NewsMixin
 #   cog_ops.py         OpsMixin
 #   cog_range.py       RangeMixin
 #   cog_news.py        NewsMixin
+#   cog_report.py      ReportMixin
 #   common.py          constants and bfdb helpers
 #   views.py           the Discord views (Commander Terminal, staged apply)
 # DCSServerBot loads this module (plugins.fowlengine.commands) and its setup();
@@ -52,7 +54,7 @@ from .cog_news import NewsMixin
 
 
 class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
-                 OpsMixin, RangeMixin, NewsMixin, Plugin):
+                 OpsMixin, RangeMixin, NewsMixin, ReportMixin, Plugin):
     """
     Fowl Engine plugin for DCSServerBot.
     Provides live status and objective events.
@@ -87,6 +89,9 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
         # War diary feed: server name -> {"posted": [ids], "seen": {id: ts}}.
         # Persisted, so a restart never posts a dispatch twice.
         self.news_feed_state = {}
+        # Weekly report schedule: server name -> the slot (ISO time) last
+        # posted. Persisted, so a restart never posts a week twice.
+        self.weekly_report_state = {}
         self.rotation_index = {}        # server name -> index into its rotation.theatres
         self.round_result_state = {}    # server name -> id of the last round announced as won
         # Staged DLL / bftools.exe an admin asked to "apply when empty":
@@ -129,6 +134,7 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
                     self.range_status_msg_ids = state.get('range_status_msg_ids') or {}
                     self.range_feed_cursors = state.get('range_feed_cursors') or {}
                     self.news_feed_state = state.get('news_feed_state') or {}
+                    self.weekly_report_state = state.get('weekly_report_state') or {}
                     self.rotation_index = state.get('rotation_index') or {}
                     self.round_result_state = state.get('round_result_state') or {}
                     self.stage_apply_when_empty = state.get('stage_apply_when_empty') or {}
@@ -365,6 +371,7 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
         utils.safe_start(self.update_range_status)
         utils.safe_start(self.poll_range_results)
         utils.safe_start(self.post_news)
+        utils.safe_start(self.weekly_report_loop)
         utils.safe_start(self.autoupdate_loop)
         utils.safe_start(self.status_watch)
         utils.safe_start(self.stage_apply_watch)
@@ -467,6 +474,7 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
         await utils.safe_cancel(self.update_range_status)
         await utils.safe_cancel(self.poll_range_results)
         await utils.safe_cancel(self.post_news)
+        await utils.safe_cancel(self.weekly_report_loop)
         await utils.safe_cancel(self.autoupdate_loop)
         await utils.safe_cancel(self.status_watch)
         await utils.safe_cancel(self.stage_apply_watch)
@@ -850,6 +858,7 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
                     'range_status_msg_ids': self.range_status_msg_ids,
                     'range_feed_cursors': self.range_feed_cursors,
                     'news_feed_state': self.news_feed_state,
+                    'weekly_report_state': self.weekly_report_state,
                     'rotation_index': self.rotation_index,
                     'round_result_state': self.round_result_state,
                     'stage_apply_when_empty': self.stage_apply_when_empty,

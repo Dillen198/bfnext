@@ -33,7 +33,7 @@ from typing import Iterable, Optional
 from urllib.parse import quote
 
 __all__ = [
-    "find_browser", "snapshot_url", "map_signature", "capture",
+    "find_browser", "snapshot_url", "map_signature", "capture", "capture_page",
     "DEFAULT_SIZE", "parse_size",
 ]
 
@@ -364,3 +364,81 @@ async def _close_browser(port: int) -> None:
                     pass
     except Exception:
         pass  # already gone, or unreachable; the process kill below still runs
+
+
+async def capture_page(browser: str, url: str, profile: str, *, path: str, selector: str,
+                       extract: Optional[str] = None, size=(1700, 1300), timeout: float = 60.0,
+                       log=None) -> tuple[Optional[bytes], Optional[str]]:
+    """PNG of the element `selector` on a dashboard page that raises
+    `data-snapshot-ready`, and the string the JS expression `extract`
+    evaluates to there (or None). (None, None) when the page never got ready
+    or ended up somewhere other than `path` (an older dashboard without the
+    route falls through to its home page -- that is not posted). The window
+    is `size`; the element is clipped out at its own size, so it may be
+    smaller but not larger. Raises on browser/protocol failures.
+
+    The weekly report poster (bfweb `/report/print`). Unlike `capture` there
+    is no one-shot fallback: `--screenshot` could not hand back the text."""
+    import aiohttp
+
+    base = profile
+    profile = _fresh_profile(base)
+    stderr_path = os.path.join(profile, "browser-stderr.log")
+    w, h = size
+    want = _free_port()
+    proc, err = _launch(browser, [*_COMMON, f"--remote-debugging-port={want}", "--remote-allow-origins=*",
+                                  f"--user-data-dir={profile}", f"--window-size={w},{h}", "about:blank"],
+                        stderr_path)
+    started = time.monotonic()
+    port = None
+    try:
+        try:
+            port = await _wait_devtools(want, profile, 20.0)
+        except TimeoutError as ex:
+            raise RuntimeError(f"{ex} (exit={proc.poll()}, stderr: {_tail(stderr_path)})") from None
+        async with aiohttp.ClientSession() as http:
+            async with http.get(f"http://127.0.0.1:{port}/json/list") as resp:
+                targets = await resp.json(content_type=None)
+            page = next((t for t in targets if t.get("type") == "page"), None)
+            if not page:
+                raise RuntimeError("browser has no page target")
+            async with http.ws_connect(page["webSocketDebuggerUrl"], max_msg_size=0) as ws:
+                cdp = _Cdp(ws)
+                await cdp.call("Emulation.setDeviceMetricsOverride",
+                               {"width": w, "height": h, "deviceScaleFactor": 1, "mobile": False})
+                await cdp.call("Page.enable")
+                await cdp.call("Page.navigate", {"url": url})
+                probe = ("JSON.stringify({p: location.pathname,"
+                         " r: document.documentElement.getAttribute('data-snapshot-ready'),"
+                         f" b: (() => {{ const e = document.querySelector({json.dumps(selector)});"
+                         "  if (!e) return null; const r = e.getBoundingClientRect();"
+                         "  return [r.left + scrollX, r.top + scrollY, r.width, r.height] })(),"
+                         f" t: {extract or 'null'}}})")
+                state = {}
+                while time.monotonic() - started < timeout:
+                    await asyncio.sleep(0.5)
+                    try:
+                        res = await cdp.call("Runtime.evaluate", {"expression": probe, "returnByValue": True})
+                        state = json.loads(res.get("result", {}).get("value") or "{}")
+                    except (RuntimeError, ValueError):
+                        continue  # mid-navigation
+                    if state.get("r") == "1":
+                        break
+                if state.get("p") != path or state.get("r") != "1" or not state.get("b"):
+                    if log:
+                        log.warning(f"FowlEngine: {url} never became ready (at {state.get('p')!r}, "
+                                    f"ready={state.get('r')!r}) -- not posting it")
+                    return None, None
+                await asyncio.sleep(0.4)  # the last paint
+                x, y, cw, ch = (float(v) for v in state["b"])
+                shot = await cdp.call("Page.captureScreenshot", {
+                    "format": "png", "captureBeyondViewport": True,
+                    "clip": {"x": x, "y": y, "width": cw, "height": ch, "scale": 1},
+                }, timeout=30.0)
+                text = state.get("t")
+                return base64.b64decode(shot["data"]), text if isinstance(text, str) else None
+    finally:
+        if port is not None:
+            await _close_browser(port)
+        await _stop(proc, err)
+        shutil.rmtree(profile, ignore_errors=True)

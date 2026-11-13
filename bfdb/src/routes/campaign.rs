@@ -1689,3 +1689,88 @@ pub(crate) fn last_round(db: &StatsDb, cfg: &InstanceCfg) -> Option<serde_json::
         }),
     }))
 }
+
+/// GET /api/report/weekly?days=7&round=<id>&until=<RFC 3339> -- the weekly
+/// campaign report (`db::weekly`): the forces board, the window's captures,
+/// story events and the Last Stand, the best pilots and squadrons. `days` is
+/// 1 to 31 (7 by default); `round` is this instance's live round (else its
+/// latest) unless given; `until` is now unless given. Public, like the
+/// figures it is made of: the poster is captured by a browser with no login.
+pub(crate) async fn api_weekly_report(
+    db: StatsDb,
+    q: std::collections::HashMap<std::string::String, std::string::String>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let days: i64 = q.get("days").and_then(|s| s.parse().ok()).unwrap_or(7).clamp(1, 31);
+    let round_id: Option<u64> = q.get("round").and_then(|s| s.parse().ok());
+    let until = match q.get("until") {
+        Some(u) => Some(
+            chrono::DateTime::parse_from_rfc3339(u)
+                .map_err(|_| websec::bad_request("until: not an RFC 3339 time"))?
+                .with_timezone(&chrono::Utc),
+        ),
+        None => None,
+    };
+    let key = format!(
+        "weekly_report:{}:{days}:{round_id:?}:{:?}",
+        inst.id,
+        until.map(|u| u.timestamp())
+    );
+    let data = cached_json(key, move || -> Result<String> {
+        Ok(serde_json::to_string(&weekly_report_json(
+            &db, &inst, days, round_id, until,
+        )?)?)
+    })
+    .await?;
+    Ok(json_response(data))
+}
+
+/// The body of `/api/report/weekly`.
+pub(crate) fn weekly_report_json(
+    db: &StatsDb,
+    inst: &Inst,
+    days: i64,
+    round_id: Option<u64>,
+    until: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<serde_json::Value> {
+    let cfg = &inst.cfg;
+    let rounds = db.latest_rounds_for(&inst.id)?;
+    let rid = match round_id {
+        Some(id) if db.round_instance_of(db::RoundId(id)) != inst.id => None,
+        Some(id) => Some(db::RoundId(id)),
+        None => rounds
+            .iter()
+            .find(|(_, _, r)| r.end.is_none())
+            .or(rounds.first())
+            .map(|(_, rid, _)| *rid),
+    };
+    let until = until.unwrap_or_else(chrono::Utc::now);
+    let since = until - chrono::Duration::days(days);
+    let label = |v: &Option<std::string::String>| {
+        v.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
+    };
+    let mut out = serde_json::json!({
+        "instance": inst.id.to_string(),
+        "label": cfg.label(),
+        "theme": cfg.theme().map(str::to_ascii_lowercase),
+        "brand_name": cfg.brand_name(),
+        "dcs_server_name": cfg.dcs_server_name,
+        "blue_label": label(&cfg.blue_faction),
+        "red_label": label(&cfg.red_faction),
+        "days": days,
+        "since": since,
+        "until": until,
+        "report": null,
+    });
+    if let Some(rid) = rid {
+        let all = db.all_rounds()?;
+        let found = all.iter().find(|(_, id, _)| *id == rid);
+        out["round_number"] = serde_json::json!(db.round_number(rid));
+        out["round_name"] = serde_json::json!(db.round_names()?.get(&rid));
+        out["scenario"] = serde_json::json!(found.map(|(s, _, _)| s.to_string()));
+        out["round_active"] =
+            serde_json::json!(found.is_some_and(|(_, _, r)| r.end.is_none()));
+        out["report"] = serde_json::to_value(db.weekly_report(rid, since, until)?)?;
+    }
+    Ok(out)
+}

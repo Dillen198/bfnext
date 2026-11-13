@@ -37,6 +37,7 @@ use bfprotocols::{
         objective::ObjectiveId,
     },
     perf::PerfInner,
+    stats::{Stat, StoryEventStat},
 };
 use chrono::{Duration, prelude::*};
 use compact_str::{CompactString, format_compact};
@@ -462,15 +463,17 @@ impl Db {
         if cfg.will_on_intercept != 0. {
             self.will_story(side, cfg.will_on_intercept, "nuclear strike shot down", now);
         }
+        // the enemy pilots in the air when it went down: credited, and named
+        // in the record
+        let up: SmallVec<[_; 16]> = self
+            .instanced_players()
+            .filter(|(_, p, i)| p.side == enemy && i.in_air)
+            .map(|(u, p, _)| (*u, p.name.clone()))
+            .collect();
         if cfg.intercept_points != 0 {
-            let up: SmallVec<[_; 16]> = self
-                .instanced_players()
-                .filter(|(_, p, i)| p.side == enemy && i.in_air)
-                .map(|(u, _, _)| *u)
-                .collect();
-            for u in up {
+            for (u, _) in &up {
                 self.adjust_points(
-                    &u,
+                    u,
                     cfg.intercept_points,
                     "for stopping the nuclear strike",
                 );
@@ -488,6 +491,13 @@ impl Db {
             true,
             format_compact!("The nuclear strike on {target_name} has been stopped: the aircraft is down."),
         );
+        self.ephemeral.stat(last_stand_stat(
+            "intercepted",
+            now,
+            side,
+            format!("The Last Stand: the {side:?} strike on {target_name} is shot down"),
+            up.into_iter().map(|(_, n)| n).collect(),
+        ));
         Ok(())
     }
 
@@ -611,8 +621,37 @@ impl Db {
                 "NUCLEAR DETONATION over {target_name}: {n} units destroyed in the blast."
             ),
         );
+        self.ephemeral.stat(last_stand_stat(
+            "detonated",
+            now,
+            side,
+            format!("The Last Stand: {side:?} nuclear detonation over {target_name}, {n} units destroyed"),
+            vec![],
+        ));
         Ok(())
     }
+}
+
+/// The Last Stand's outcome as a `Stat::StoryEvent`, so bfdb has it for the
+/// news and the weekly report: id `last_stand_intercepted` or
+/// `last_stand_detonated`. Sent once, when the outcome is decided (the
+/// order itself is the story event that called it).
+fn last_stand_stat(
+    outcome: &str,
+    now: DateTime<Utc>,
+    side: Side,
+    title: String,
+    caused_by: Vec<dcso3::String>,
+) -> Stat {
+    Stat::StoryEvent(StoryEventStat {
+        id: format!("last_stand_{outcome}").into(),
+        time: now,
+        title: title.into(),
+        text: "".into(),
+        caused_by,
+        side: Some(side),
+        effects: vec![],
+    })
 }
 
 #[cfg(test)]
@@ -683,5 +722,25 @@ mod tests {
         assert!(a.iter().all(|r| (0. ..1.).contains(r)));
         let under = a.iter().filter(|r| **r < 0.5).count();
         assert!((60..140).contains(&under), "{under} of 200 under 0.5");
+    }
+
+    #[test]
+    fn last_stand_outcome_is_a_story_event() {
+        let t = DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let Stat::StoryEvent(ev) = last_stand_stat(
+            "intercepted",
+            t,
+            Side::Red,
+            "shot down".into(),
+            vec![dcso3::String::from("Viper")],
+        ) else {
+            panic!("not a story event")
+        };
+        assert_eq!(&*ev.id, "last_stand_intercepted");
+        assert_eq!(ev.side, Some(Side::Red));
+        assert_eq!(ev.caused_by, vec![dcso3::String::from("Viper")]);
+        assert_eq!(ev.time, t);
     }
 }

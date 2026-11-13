@@ -88,6 +88,7 @@ EXPECTED_LOOPS = {
     "status_watch", "supervise_bfdb", "supervise_campaign_events", "supervise_engine_logs",
     "supervise_gci_transcript", "sync_coalition_roles", "sync_ranks", "update_briefings",
     "update_perf_status", "update_range_status", "update_server_info", "update_status",
+    "weekly_report_loop",
 }
 EXPECTED_LISTENERS = {"on_member_join", "on_message"}
 

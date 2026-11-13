@@ -3,6 +3,8 @@ import {
   wsUrl as sharedWsUrl, type AuthUser,
 } from '@shared/web/api'
 import type { Plan, StoredPlan } from './planner/types'
+import type { WeeklyReportResponse } from '@shared/web/report/weekly'
+import type { ReportPostBody, ReportScheduleStatus } from '@shared/web/report/ReportStudio'
 import { createSnapshotSource, fetchWithSnapshot } from '@shared/web/snapshot'
 
 // ── API/WS base URLs ────────────────────────────────────────────────
@@ -2602,6 +2604,9 @@ export const api = {
   warehouse: (objective: string) =>
     get<Warehouse>('/warehouse?objective=' + encodeURIComponent(objective)),
   /** Capture timeline for a round (default: the active one), newest first. */
+  /** The weekly report poster's data (shared/web/report): the forces board,
+   *  the last `days` days' captures, story events and best pilots. Public. */
+  weeklyReport: (days = 7) => get<WeeklyReportResponse>(`/report/weekly?days=${days}`),
   captureEvents: (round?: number, limit = 200) =>
     get<CaptureEvent[]>(
       '/capture-events?limit=' + limit + (round != null ? '&round=' + round : ''),
@@ -2667,6 +2672,10 @@ export const api = {
   /** The OPS page: server box, processes, engine updates, bot config. bfdb
    *  forwards these to the DCSServerBot plugin, which owns all of it. */
   ops: {
+    /** The weekly report poster to the server's report_channel, through the
+     *  bot (DCSServerBot/plugins/fowlengine/cog_report.py). OPS role. */
+    postReport:   (body: ReportPostBody) => post<OpsResult & { url?: string | null; channel?: string | null }>('/admin/ops/report/post', body),
+    reportStatus: () => get<ReportScheduleStatus>('/admin/ops/report/status'),
     status:      () => get<OpsStatus>('/admin/ops/status'),
     bfdbRestart: () => post<OpsResult>('/admin/ops/bfdb/restart', {}),
     botRestart:  () => post<OpsResult>('/admin/ops/bot/restart', {}),

@@ -687,6 +687,8 @@ class OpsApi:
         r.add_api_route("/issues/report", self.issues_report, methods=["GET"])
         r.add_api_route("/archive", self.archive_index, methods=["GET"])
         r.add_api_route("/archive/read", self.archive_read, methods=["GET"])
+        r.add_api_route("/report/post", self.report_post, methods=["POST"])
+        r.add_api_route("/report/status", self.report_status, methods=["GET"])
         self.console.add_routes(r)
         self.app = app
         self.router = r
@@ -706,6 +708,38 @@ class OpsApi:
                                       if not str(getattr(rt, "path", "")).startswith(self.prefix + "/")]
         self.app = None
         self.router = None
+
+    # ---- the weekly report poster (weeklyreport.py, cog_report.py) -----------
+
+    async def report_post(self, request: Request):
+        """POST {instance, server?, text, image (base64 PNG/JPEG), filename?}:
+        the poster an admin made on the dashboard's REPORT page, posted to the
+        server's report_channel (else news_channel)."""
+        from . import weeklyreport
+        doc = await self._body(request)
+        try:
+            img, text, filename = weeklyreport.check_upload(doc)
+        except ValueError as ex:
+            return self._err(400, str(ex))
+        post = getattr(self.cog, "post_weekly_report", None)
+        if post is None:
+            return self._err(501, "this bot's FowlEngine plugin cannot post reports (restart the bot after updating)")
+        from urllib.parse import unquote
+        who = unquote(request.headers.get("X-Fowl-Actor") or "") or None
+        res = await post(instance=doc.get("instance") or None, server_name=doc.get("server") or None,
+                         png=img, text=text, filename=filename, who=who)
+        if not res.get("ok"):
+            return self._err(409, res.get("error") or "not posted")
+        where = f" to #{res['channel']}" if res.get("channel") else ""
+        return self._ok(f"Weekly report posted{where}.", url=res.get("url"), channel=res.get("channel"))
+
+    async def report_status(self, request: Request):
+        """GET ?instance=&server=: the server's report channel and schedule."""
+        fn = getattr(self.cog, "weekly_report_status", None)
+        if fn is None:
+            return self._err(501, "this bot's FowlEngine plugin has no weekly report (restart the bot after updating)")
+        q = request.query_params
+        return {"ok": True, **fn(q.get("instance") or None, q.get("server") or None)}
 
     # ---- helpers -------------------------------------------------------------
 
