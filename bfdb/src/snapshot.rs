@@ -1289,6 +1289,7 @@ mod tests {
         assert_eq!(m["default_instance"], "vs1");
         assert_eq!(m["instances"], serde_json::json!(["vs1"]));
         assert_eq!(m["files"].as_object().unwrap().len(), keys.len() - 1);
+        drop(db);
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1320,6 +1321,7 @@ mod tests {
         let mut restarted = Publisher::new(Sink::Memory(mem.clone()));
         let r = restarted.publish(&src).await.unwrap();
         assert_eq!(r.uploaded, 0, "a restart re-uses the manifest's hashes");
+        drop((src, db));
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1424,6 +1426,7 @@ mod tests {
             .lock()
             .unwrap()
             .contains_key("/snap/prod/g/wiki/pages/start.json"));
+        drop(db);
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1441,6 +1444,7 @@ mod tests {
         .unwrap();
         assert_eq!(page["slug"], "a/b");
         assert!(out.join("manifest.json").exists());
+        drop(db);
         let _ = std::fs::remove_dir_all(dir);
     }
 
