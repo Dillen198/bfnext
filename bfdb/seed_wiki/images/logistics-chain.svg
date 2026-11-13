@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 660" width="800" height="660" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6aab1f"/>
+    </marker>
+    <marker id="ahm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7d8a6a"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="800" height="660" fill="#0d1009"/>
+
+  <text x="20" y="32" font-size="18" font-weight="bold" fill="#cdd4be">How supply reaches the front</text>
+
+  <!-- Lane 1: automatic -->
+  <text x="20" y="62" font-size="13" font-weight="bold" fill="#8ec83f" letter-spacing="1">AUTOMATIC  (no player needed)</text>
+
+  <rect x="20" y="80" width="150" height="80" rx="6" fill="#141910" stroke="#262e1d"/>
+  <text x="95" y="106" font-size="15" font-weight="bold" fill="#cdd4be" text-anchor="middle">Outside supply</text>
+  <text x="95" y="126" font-size="13" fill="#7d8a6a" text-anchor="middle">fresh production,</text>
+  <text x="95" y="143" font-size="13" fill="#7d8a6a" text-anchor="middle">every few ticks</text>
+
+  <line x1="170" y1="120" x2="206" y2="120" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+
+  <rect x="210" y="80" width="150" height="80" rx="6" fill="#141910" stroke="#6aab1f"/>
+  <text x="285" y="106" font-size="15" font-weight="bold" fill="#cdd4be" text-anchor="middle">Logistics hub</text>
+  <text x="285" y="126" font-size="13" fill="#7d8a6a" text-anchor="middle">ships to short bases,</text>
+  <text x="285" y="143" font-size="13" fill="#7d8a6a" text-anchor="middle">keeps a reserve</text>
+
+  <line x1="360" y1="108" x2="396" y2="97" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+  <line x1="360" y1="120" x2="396" y2="147" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+  <line x1="360" y1="132" x2="396" y2="197" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+
+  <rect x="400" y="75" width="190" height="44" rx="6" fill="#141910" stroke="#262e1d"/>
+  <text x="412" y="94" font-size="14" font-weight="bold" fill="#cdd4be">Convoy</text>
+  <text x="412" y="111" font-size="13" fill="#7d8a6a">roads only; front cuts it</text>
+  <rect x="400" y="125" width="190" height="44" rx="6" fill="#141910" stroke="#262e1d"/>
+  <text x="412" y="144" font-size="14" font-weight="bold" fill="#cdd4be">Airlift</text>
+  <text x="412" y="161" font-size="13" fill="#7d8a6a">crosses the line</text>
+  <rect x="400" y="175" width="190" height="44" rx="6" fill="#141910" stroke="#262e1d"/>
+  <text x="412" y="194" font-size="14" font-weight="bold" fill="#cdd4be">Ship</text>
+  <text x="412" y="211" font-size="13" fill="#7d8a6a">where the server runs it</text>
+
+  <line x1="590" y1="97" x2="626" y2="120" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+  <line x1="590" y1="147" x2="626" y2="147" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+  <line x1="590" y1="197" x2="626" y2="175" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+
+  <rect x="630" y="80" width="150" height="150" rx="6" fill="#141910" stroke="#6aab1f"/>
+  <text x="705" y="104" font-size="15" font-weight="bold" fill="#cdd4be" text-anchor="middle">Base warehouse</text>
+  <text x="646" y="130" font-size="13" fill="#cdd4be">S  supply</text>
+  <text x="646" y="152" font-size="13" fill="#cdd4be">F  fuel</text>
+  <text x="646" y="174" font-size="13" fill="#cdd4be">A  airframes</text>
+  <text x="646" y="196" font-size="13" fill="#cdd4be">materiel</text>
+  <text x="646" y="218" font-size="12" fill="#7d8a6a">(hubs too)</text>
+
+  <text x="400" y="240" font-size="13" fill="#c9a227">Every one of these carriers can be shot up on the way.</text>
+
+  <!-- connector: stock issued from base -->
+  <path d="M705,230 L705,262 L105,262 L105,302" fill="none" stroke="#7d8a6a" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ahm)"/>
+  <rect x="250" y="252" width="300" height="20" fill="#0d1009"/>
+  <text x="400" y="267" font-size="13" fill="#7d8a6a" text-anchor="middle">crates and troops come out of a base's stock</text>
+
+  <!-- Lane 2: player flown -->
+  <text x="20" y="292" font-size="13" font-weight="bold" fill="#8ec83f" letter-spacing="1">PLAYER-FLOWN</text>
+
+  <rect x="20" y="306" width="170" height="124" rx="6" fill="#141910" stroke="#6aab1f"/>
+  <text x="105" y="330" font-size="15" font-weight="bold" fill="#cdd4be" text-anchor="middle">Spawn at a</text>
+  <text x="105" y="348" font-size="15" font-weight="bold" fill="#cdd4be" text-anchor="middle">friendly base</text>
+  <text x="105" y="372" font-size="13" fill="#7d8a6a" text-anchor="middle">inside its zone,</text>
+  <text x="105" y="389" font-size="13" fill="#7d8a6a" text-anchor="middle">logistics above 0%,</text>
+  <text x="105" y="406" font-size="13" fill="#7d8a6a" text-anchor="middle">not capturable</text>
+
+  <line x1="190" y1="340" x2="226" y2="333" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+  <line x1="190" y1="395" x2="226" y2="403" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+
+  <rect x="230" y="306" width="170" height="56" rx="6" fill="#141910" stroke="#262e1d"/>
+  <text x="242" y="327" font-size="14" font-weight="bold" fill="#cdd4be">Helicopter</text>
+  <text x="242" y="346" font-size="13" fill="#7d8a6a">F10 menu or F8 crew</text>
+  <rect x="230" y="374" width="170" height="56" rx="6" fill="#141910" stroke="#262e1d"/>
+  <text x="242" y="395" font-size="14" font-weight="bold" fill="#cdd4be">C-130</text>
+  <text x="242" y="414" font-size="13" fill="#7d8a6a">airdrop or land</text>
+
+  <line x1="400" y1="334" x2="420" y2="334" stroke="#6aab1f" stroke-width="2"/>
+  <line x1="400" y1="402" x2="420" y2="402" stroke="#6aab1f" stroke-width="2"/>
+  <line x1="420" y1="306" x2="420" y2="478" stroke="#6aab1f" stroke-width="2"/>
+  <line x1="420" y1="306" x2="436" y2="306" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+  <line x1="420" y1="349" x2="436" y2="349" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+  <line x1="420" y1="392" x2="436" y2="392" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+  <line x1="420" y1="435" x2="436" y2="435" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+  <line x1="420" y1="478" x2="436" y2="478" stroke="#6aab1f" stroke-width="2" marker-end="url(#ah)"/>
+
+  <rect x="440" y="290" width="340" height="34" rx="5" fill="#141910" stroke="#262e1d"/>
+  <text x="452" y="312" font-size="13" fill="#cdd4be"><tspan font-weight="bold">Deployable</tspan> built in the field, away from bases</text>
+  <rect x="440" y="333" width="340" height="34" rx="5" fill="#141910" stroke="#262e1d"/>
+  <text x="452" y="355" font-size="13" fill="#cdd4be"><tspan font-weight="bold">Supply transfer</tspan> stock moved to another base</text>
+  <rect x="440" y="376" width="340" height="34" rx="5" fill="#141910" stroke="#262e1d"/>
+  <text x="452" y="398" font-size="13" fill="#cdd4be"><tspan font-weight="bold">Logistics repair</tspan> base logistics up one step</text>
+  <rect x="440" y="419" width="340" height="34" rx="5" fill="#141910" stroke="#262e1d"/>
+  <text x="452" y="441" font-size="13" fill="#cdd4be"><tspan font-weight="bold">Emergency repair</tspan> one destroyed group rebuilt</text>
+  <rect x="440" y="462" width="340" height="34" rx="5" fill="#141910" stroke="#262e1d"/>
+  <text x="452" y="484" font-size="13" fill="#cdd4be"><tspan font-weight="bold">Troops</tspan> capture a base, or hold a fresh capture</text>
+
+  <!-- Lane 3: what stock pays for -->
+  <text x="20" y="530" font-size="13" font-weight="bold" fill="#8ec83f" letter-spacing="1">WHAT A BASE'S STOCK PAYS FOR</text>
+
+  <rect x="20" y="542" width="180" height="56" rx="6" fill="#141910" stroke="#262e1d"/>
+  <text x="110" y="565" font-size="14" font-weight="bold" fill="#cdd4be" text-anchor="middle">Automatic repairs</text>
+  <text x="110" y="584" font-size="13" fill="#7d8a6a" text-anchor="middle">one group per pulse</text>
+  <rect x="213" y="542" width="180" height="56" rx="6" fill="#141910" stroke="#262e1d"/>
+  <text x="303" y="565" font-size="14" font-weight="bold" fill="#cdd4be" text-anchor="middle">Aircraft</text>
+  <text x="303" y="584" font-size="13" fill="#7d8a6a" text-anchor="middle">airframes on the ramp</text>
+  <rect x="406" y="542" width="180" height="56" rx="6" fill="#141910" stroke="#262e1d"/>
+  <text x="496" y="565" font-size="14" font-weight="bold" fill="#cdd4be" text-anchor="middle">Weapons and fuel</text>
+  <text x="496" y="584" font-size="13" fill="#7d8a6a" text-anchor="middle">what you can load</text>
+  <rect x="600" y="542" width="180" height="56" rx="6" fill="#141910" stroke="#262e1d"/>
+  <text x="690" y="565" font-size="14" font-weight="bold" fill="#cdd4be" text-anchor="middle">Crates and troops</text>
+  <text x="690" y="584" font-size="13" fill="#7d8a6a" text-anchor="middle">issued to players</text>
+
+  <text x="20" y="630" font-size="14" fill="#c9a227">A base that runs dry stops repairing. That is the moment to attack it, or to resupply your own.</text>
+</svg>

@@ -1,0 +1,40 @@
+[package]
+name = "dcso3-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["Eric Stokes <eestokes@pm.me>"]
+license = "MIT"
+description = "The Lua-free part of dcso3: DCS ids, sides, countries, slots and perf histograms, usable without linking Lua"
+homepage = "https://github.com/estokes/bfnext"
+repository = "https://github.com/estokes/bfnext"
+keywords = ["DCS", "gamedev"]
+categories = ["game-development"]
+
+# Programs that never load into DCS (bfdb, bfprotocols' users) take these
+# types from here and so need neither mlua nor DCS's lua.dll / lua.lib.
+# dcso3 depends on this crate with `lua` on and re-exports every type at its
+# old path (dcso3::net::Ucid, dcso3::coalition::Side, ...), so code using
+# dcso3 sees no difference.
+[features]
+default = []
+# FromLua / IntoLua for the types here and for the ones the macros define.
+lua = ["dep:mlua"]
+
+[dependencies]
+anyhow = { workspace = true }
+base64 = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+compact_str = { workspace = true }
+fixedstr = { workspace = true }
+hdrhistogram = { workspace = true }
+log = { workspace = true }
+mlua = { workspace = true, optional = true }
+nalgebra = { workspace = true }
+paste = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_derive = { workspace = true }
+
+[lints]
+workspace = true

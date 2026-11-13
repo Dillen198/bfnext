@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["GroupKind","Skill","TriggerZoneTyp"],"struct":["Coalition","CoalitionIndex","Country","GroundControl","Group","GroupId","GroupInfo","Miz","MizIndex","NavPoint","Property","Role","Roles","Route","Task","TriggerZone","TriggerZoneId","Unit","UnitId","UnitInfo","Weather"]};

@@ -15,78 +15,34 @@ use super::{
     airbase::Airbase,
     as_tbl,
     country::Country,
-    cvt_err, env,
+    env,
     group::{Group, GroupCategory},
     static_object::StaticObject,
     unit::Unit,
 };
-use crate::{record_perf, simple_enum, wrapped_table, LuaEnv, MizLua, Sequence};
-use anyhow::{anyhow, bail, Result};
+use crate::simple_enum_unknown;
+use crate::{record_perf, wrapped_table, LuaEnv, MizLua, Sequence};
+use anyhow::{anyhow, Result};
 use mlua::{prelude::*, Value};
-use serde_derive::{Deserialize, Serialize};
-use std::{fmt, ops::Deref, str::FromStr};
+use serde_derive::Serialize;
+use std::ops::Deref;
 
-simple_enum!(Side, u8, [Neutral => 0, Red => 1, Blue => 2]);
-
-impl Default for Side {
-    fn default() -> Self {
-        Side::Red
-    }
-}
-
-impl fmt::Display for Side {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_str())
-    }
-}
-
-impl FromStr for Side {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "blue" => Side::Blue,
-            "red" => Side::Red,
-            "neutrals" => Side::Neutral,
-            s => bail!("unknown side {s}"),
-        })
-    }
-}
-
-impl Side {
-    pub const ALL: [Side; 3] = [Side::Red, Side::Blue, Side::Neutral];
-
-    pub fn to_str(&self) -> &'static str {
-        match self {
-            Side::Blue => "blue",
-            Side::Red => "red",
-            Side::Neutral => "neutrals",
-        }
-    }
-
-    pub fn opposite(&self) -> Side {
-        match self {
-            Self::Blue => Self::Red,
-            Self::Red => Self::Blue,
-            Self::Neutral => Self::Neutral,
-        }
-    }
-}
+pub use dcso3_core::coalition::Side;
 
 #[derive(Debug, Clone)]
-pub enum Static<'lua> {
-    Airbase(Airbase<'lua>),
-    Static(StaticObject<'lua>),
+pub enum Static {
+    Airbase(Airbase),
+    Static(StaticObject),
 }
 
-simple_enum!(Service, u8, [Atc => 0, Awacs => 1, Fac => 3, Tanker => 2]);
+simple_enum_unknown!(Service, u8, [Atc => 0, Awacs => 1, Fac => 3, Tanker => 2]);
 wrapped_table!(Coalition, None);
 
-impl<'lua> Coalition<'lua> {
-    pub fn singleton(lua: MizLua<'lua>) -> Result<Self> {
+impl Coalition {
+    pub fn singleton(lua: MizLua) -> Result<Self> {
         Ok(Self {
             t: lua.inner().globals().raw_get("coalition")?,
-            lua: lua.inner(),
+            lua: lua.inner().clone(),
         })
     }
 
@@ -94,53 +50,46 @@ impl<'lua> Coalition<'lua> {
         &self,
         country: Country,
         category: GroupCategory,
-        data: env::miz::Group<'lua>,
-    ) -> Result<Group<'lua>> {
+        data: env::miz::Group,
+    ) -> Result<Group> {
         Ok(record_perf!(
             add_group,
-            self.t
-                .call_function("addGroup", (country, category, data))?
+            self.t.call_function("addGroup", (country, category, data))?
         ))
     }
 
     pub fn add_static_object(
         &self,
         country: Country,
-        data: env::miz::Unit<'lua>,
-    ) -> Result<Static<'lua>> {
+        data: env::miz::Unit,
+    ) -> Result<Static> {
         let tbl: LuaTable = record_perf!(
             add_static_object,
             self.t.call_function("addStaticObject", (country, data))?
         );
         let mt = tbl
-            .get_metatable()
+            .metatable()
             .ok_or_else(|| anyhow!("returned static object has no meta table"))?;
-        if mt.raw_get::<_, String>("className_")?.as_str() == "Airbase" {
-            Ok(Static::Airbase(Airbase::from_lua(
-                Value::Table(tbl),
-                self.lua,
-            )?))
+        if mt.raw_get::<String>("className_")?.as_str() == "Airbase" {
+            Ok(Static::Airbase(Airbase::from_lua(Value::Table(tbl), &self.lua)?))
         } else {
-            Ok(Static::Static(StaticObject::from_lua(
-                Value::Table(tbl),
-                self.lua,
-            )?))
+            Ok(Static::Static(StaticObject::from_lua(Value::Table(tbl), &self.lua)?))
         }
     }
 
-    pub fn get_groups(&self, side: Side) -> Result<Sequence<'lua, Group<'lua>>> {
+    pub fn get_groups(&self, side: Side) -> Result<Sequence<Group>> {
         Ok(self.t.call_function("getGroups", side)?)
     }
 
-    pub fn get_static_objects(&self, side: Side) -> Result<Sequence<'lua, StaticObject<'lua>>> {
+    pub fn get_static_objects(&self, side: Side) -> Result<Sequence<StaticObject>> {
         Ok(self.t.call_function("getStaticObjects", side)?)
     }
 
-    pub fn get_airbases(&self, side: Side) -> Result<Sequence<'lua, Airbase<'lua>>> {
+    pub fn get_airbases(&self, side: Side) -> Result<Sequence<Airbase>> {
         Ok(self.t.call_function("getAirbases", side)?)
     }
 
-    pub fn get_players(&self, side: Side) -> Result<Sequence<'lua, Unit<'lua>>> {
+    pub fn get_players(&self, side: Side) -> Result<Sequence<Unit>> {
         Ok(self.t.call_function("getPlayers", side)?)
     }
 
@@ -148,13 +97,37 @@ impl<'lua> Coalition<'lua> {
         &self,
         side: Side,
         service: Service,
-    ) -> Result<Sequence<'lua, Unit<'lua>>> {
-        Ok(self
-            .t
-            .call_function("getServiceProviders", (side, service))?)
+    ) -> Result<Sequence<Unit>> {
+        Ok(self.t.call_function("getServiceProviders", (side, service))?)
     }
 
     pub fn get_country_coalition(&self, country: Country) -> Result<Side> {
-        Ok(self.t.call_function("getCountrySide", country)?)
+        Ok(self.t.call_function("getCountryCoalition", country)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn service_ids_round_trip_and_tolerate_new_ones() {
+        let lua = Lua::new();
+        for (id, s) in [
+            (0, Service::Atc),
+            (1, Service::Awacs),
+            (2, Service::Tanker),
+            (3, Service::Fac),
+        ] {
+            assert_eq!(Service::from_lua(Value::Integer(id), &lua).unwrap(), s);
+            assert!(matches!(s.into_lua(&lua).unwrap(), Value::Integer(i) if i == id));
+        }
+        let new = Service::from_lua(Value::Integer(9), &lua).unwrap();
+        assert_eq!(new, Service::Unknown(9));
+        assert!(matches!(new.into_lua(&lua).unwrap(), Value::Integer(9)));
+        // ordering follows the DCS id, as the old #[repr] derive did
+        assert!(Service::Tanker < Service::Fac);
+        // Side is still strict
+        assert!(Side::from_lua(Value::Integer(7), &lua).is_err());
     }
 }

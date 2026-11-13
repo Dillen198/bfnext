@@ -1,0 +1,455 @@
+{
+  "name": "Sinai",
+  "center": [
+    30.599848054701443,
+    33.24301309559464
+  ],
+  "airports": [
+    {
+      "name": "Difarsuwar Airfield",
+      "position": [
+        30.4257422763297,
+        32.33538373108041
+      ],
+      "heli": false
+    },
+    {
+      "name": "Abu Suwayr",
+      "position": [
+        30.5753855364908,
+        32.09627048269147
+      ],
+      "heli": false
+    },
+    {
+      "name": "As Salihiyah",
+      "position": [
+        30.795110976449358,
+        32.04254612904293
+      ],
+      "heli": false
+    },
+    {
+      "name": "Al Ismailiyah",
+      "position": [
+        30.598815164187613,
+        32.23458226899419
+      ],
+      "heli": false
+    },
+    {
+      "name": "Melez",
+      "position": [
+        30.409932196130306,
+        33.14974179543318
+      ],
+      "heli": false
+    },
+    {
+      "name": "Fayed",
+      "position": [
+        30.32907124808883,
+        32.267487828387395
+      ],
+      "heli": false
+    },
+    {
+      "name": "Hatzerim",
+      "position": [
+        31.238603664757132,
+        34.658504194759196
+      ],
+      "heli": false
+    },
+    {
+      "name": "Nevatim",
+      "position": [
+        31.20834267480413,
+        35.012075056142
+      ],
+      "heli": false
+    },
+    {
+      "name": "Ramon Airbase",
+      "position": [
+        30.77757406311466,
+        34.666145829733864
+      ],
+      "heli": false
+    },
+    {
+      "name": "Ovda",
+      "position": [
+        29.940817061162754,
+        34.93412791824116
+      ],
+      "heli": false
+    },
+    {
+      "name": "Kibrit Air Base",
+      "position": [
+        30.243533971933502,
+        32.49117859709286
+      ],
+      "heli": false
+    },
+    {
+      "name": "Kedem",
+      "position": [
+        31.260615391006002,
+        34.63994522302072
+      ],
+      "heli": false
+    },
+    {
+      "name": "Wadi al Jandali",
+      "position": [
+        30.072551201852164,
+        31.833299927783248
+      ],
+      "heli": false
+    },
+    {
+      "name": "Al Mansurah",
+      "position": [
+        30.965201389483653,
+        31.43150916813657
+      ],
+      "heli": false
+    },
+    {
+      "name": "AzZaqaziq",
+      "position": [
+        30.594822856244786,
+        31.664576792549003
+      ],
+      "heli": false
+    },
+    {
+      "name": "Bilbeis Air Base",
+      "position": [
+        30.398674889513128,
+        31.607280168854178
+      ],
+      "heli": false
+    },
+    {
+      "name": "Cairo International Airport",
+      "position": [
+        30.10898821141714,
+        31.434819911920858
+      ],
+      "heli": false
+    },
+    {
+      "name": "Cairo West",
+      "position": [
+        30.108373279464427,
+        30.89565663249415
+      ],
+      "heli": false
+    },
+    {
+      "name": "Inshas Airbase",
+      "position": [
+        30.334248931362215,
+        31.446578871064975
+      ],
+      "heli": false
+    },
+    {
+      "name": "Hatzor",
+      "position": [
+        31.760478866239737,
+        34.72533107165004
+      ],
+      "heli": false
+    },
+    {
+      "name": "Palmachim",
+      "position": [
+        31.90178776462717,
+        34.69288649487258
+      ],
+      "heli": false
+    },
+    {
+      "name": "Sde Dov",
+      "position": [
+        32.11467242570497,
+        34.78227946102634
+      ],
+      "heli": false
+    },
+    {
+      "name": "Tel Nof",
+      "position": [
+        31.836020739677608,
+        34.81782758845187
+      ],
+      "heli": false
+    },
+    {
+      "name": "Ben-Gurion",
+      "position": [
+        32.007029149498145,
+        34.893100220032096
+      ],
+      "heli": false
+    },
+    {
+      "name": "St Catherine",
+      "position": [
+        28.68516508892668,
+        34.06262839349903
+      ],
+      "heli": false
+    },
+    {
+      "name": "Abu Rudeis",
+      "position": [
+        28.89953573539213,
+        33.202336818408746
+      ],
+      "heli": false
+    },
+    {
+      "name": "Baluza",
+      "position": [
+        30.99977013038458,
+        32.55222105865158
+      ],
+      "heli": false
+    },
+    {
+      "name": "Bir Hasanah",
+      "position": [
+        30.194637476168673,
+        33.412829368381374
+      ],
+      "heli": false
+    },
+    {
+      "name": "El Arish",
+      "position": [
+        31.037877745950524,
+        33.81909112485601
+      ],
+      "heli": false
+    },
+    {
+      "name": "El Gora",
+      "position": [
+        31.073010747285654,
+        34.14836022697311
+      ],
+      "heli": false
+    },
+    {
+      "name": "Al Khatatbah",
+      "position": [
+        30.312374999321506,
+        30.874447118314357
+      ],
+      "heli": false
+    },
+    {
+      "name": "Al Rahmaniyah Air Base",
+      "position": [
+        31.043422204761438,
+        30.66437616379849
+      ],
+      "heli": false
+    },
+    {
+      "name": "Beni Suef",
+      "position": [
+        29.197907257252286,
+        31.019000871104776
+      ],
+      "heli": false
+    },
+    {
+      "name": "Birma Air Base",
+      "position": [
+        30.837037745762572,
+        30.936019194294946
+      ],
+      "heli": false
+    },
+    {
+      "name": "Borg El Arab International Airport",
+      "position": [
+        30.91690173704665,
+        29.693893274246562
+      ],
+      "heli": false
+    },
+    {
+      "name": "El Minya",
+      "position": [
+        28.10104683534683,
+        30.729652642472914
+      ],
+      "heli": false
+    },
+    {
+      "name": "Gebel El Basur Air Base",
+      "position": [
+        30.53823246369861,
+        30.552675382286218
+      ],
+      "heli": false
+    },
+    {
+      "name": "Hurghada International Airport",
+      "position": [
+        27.17646515402891,
+        33.7916909325078
+      ],
+      "heli": false
+    },
+    {
+      "name": "Jiyanklis Air Base",
+      "position": [
+        30.822325348638334,
+        30.19239923254364
+      ],
+      "heli": false
+    },
+    {
+      "name": "Kom Awshim",
+      "position": [
+        29.553643769339605,
+        30.893502726352967
+      ],
+      "heli": false
+    },
+    {
+      "name": "Ramon International Airport",
+      "position": [
+        29.727039433583847,
+        35.01402358113398
+      ],
+      "heli": false
+    },
+    {
+      "name": "Sharm El Sheikh International Airport",
+      "position": [
+        27.978734872289632,
+        34.393276597715
+      ],
+      "heli": false
+    },
+    {
+      "name": "Wadi Abu Rish",
+      "position": [
+        28.97101745787508,
+        31.69866692401189
+      ],
+      "heli": false
+    },
+    {
+      "name": "Al Bahr al Ahmar",
+      "position": [
+        26.556377635640242,
+        33.12103079431157
+      ],
+      "heli": false
+    },
+    {
+      "name": "Quwaysina",
+      "position": [
+        30.579002733754333,
+        31.129037127782194
+      ],
+      "heli": false
+    },
+    {
+      "name": "Rafic Hariri Intl",
+      "position": [
+        33.82447381491308,
+        35.48323230879577
+      ],
+      "heli": false
+    },
+    {
+      "name": "Tabuk",
+      "position": [
+        28.3710218402765,
+        36.606148458951175
+      ],
+      "heli": false
+    },
+    {
+      "name": "Damascus Intl",
+      "position": [
+        33.395471438532034,
+        36.51020243875564
+      ],
+      "heli": false
+    },
+    {
+      "name": "Mezzeh Air Base",
+      "position": [
+        33.47764874517561,
+        36.22362844746444
+      ],
+      "heli": false
+    },
+    {
+      "name": "Ramat David",
+      "position": [
+        32.66646845217572,
+        35.184092116743244
+      ],
+      "heli": false
+    },
+    {
+      "name": "Megiddo",
+      "position": [
+        32.59714288030039,
+        35.230212305246326
+      ],
+      "heli": false
+    },
+    {
+      "name": "Ein Shamer",
+      "position": [
+        32.44084907946044,
+        35.007510908577444
+      ],
+      "heli": false
+    },
+    {
+      "name": "Taba International Airport",
+      "position": [
+        29.58802374165195,
+        34.77828537323097
+      ],
+      "heli": false
+    },
+    {
+      "name": "King Feisal Air Base",
+      "position": [
+        30.343685591346556,
+        36.14740879671607
+      ],
+      "heli": false
+    },
+    {
+      "name": "Khalkhalah Air Base",
+      "position": [
+        33.07893692275935,
+        36.540704186121516
+      ],
+      "heli": false
+    }
+  ],
+  "projection": {
+    "centralMeridian": 33,
+    "falseEasting": 169221.9999999585,
+    "falseNorthing": -3325312.9999999693,
+    "scaleFactor": 0.9996
+  }
+}

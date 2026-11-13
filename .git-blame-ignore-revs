@@ -1,0 +1,6 @@
+# Bulk formatting commits; skip them in git blame:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# (GitHub's blame view reads this file on its own.)
+
+# cargo fmt --all (wave 3 lint pass)
+210f636b3fb3a1ef196ec0c10da3e9bc0d5f5269

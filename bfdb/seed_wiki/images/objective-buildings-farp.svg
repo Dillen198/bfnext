@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" width="800" height="500" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect x="0" y="0" width="800" height="500" fill="#0d1009"/>
+  <text x="30" y="34" font-size="18" font-weight="700" fill="#cdd4be">A crate-built FARP</text>
+  <text x="30" y="54" font-size="13" fill="#7d8a6a">Illustration, not an in-game screenshot.</text>
+  <defs><pattern id="net" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(30)"><rect width="7" height="7" fill="#4e5a35"/><path d="M0,0 L7,7 M7,0 L0,7" stroke="#2f3720" stroke-width="1.2"/></pattern><linearGradient id="fuel" x1="0" x2="1"><stop offset="0" stop-color="#7b8452"/><stop offset="1" stop-color="#454b2c"/></linearGradient></defs>
+  <polygon points="370.0,150.0 664.4,320.0 404.6,470.0 110.2,300.0" fill="#2f2c20" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="370.0,180.0 422.0,210.0 370.0,240.0 318.0,210.0" fill="none" stroke="#7d8a6a" stroke-width="1.5" stroke-linejoin="round" stroke-dasharray="6 5"/>
+  <polygon points="439.3,220.0 491.2,250.0 439.3,280.0 387.3,250.0" fill="none" stroke="#7d8a6a" stroke-width="1.5" stroke-linejoin="round" stroke-dasharray="6 5"/>
+  <polygon points="460.9,302.5 530.2,342.5 530.2,328.5 460.9,288.5" fill="#515b35" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="582.2,312.5 530.2,342.5 530.2,328.5 582.2,298.5" fill="#3d4428" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="512.9,258.5 582.2,298.5 556.2,287.5 486.9,247.5" fill="#728147" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="460.9,288.5 530.2,328.5 556.2,287.5 486.9,247.5" fill="#5c6839" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="582.2,298.5 530.2,328.5 556.2,287.5" fill="#373e24" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="564.9,322.5 547.5,332.5 547.5,318.5 564.9,308.5" fill="#2b2f1c" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="203.7,286.0 281.7,331.0 281.7,293.0 228.0,262.0" fill="url(#net)" stroke="#2f3720" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="339.7,297.5 281.7,331.0 281.7,293.0 315.4,273.5" fill="url(#net)" stroke="#2f3720" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="339.7,297.5 281.7,331.0 281.7,293.0 315.4,273.5" fill="#000000" stroke="none" stroke-width="0" stroke-linejoin="round" fill-opacity="0.3"/>
+  <polygon points="261.7,242.5 315.4,273.5 281.7,293.0 228.0,262.0" fill="url(#net)" stroke="#2f3720" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="205.5,303.0 219.3,311.0 219.3,303.0 205.5,295.0" fill="#575438" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="229.7,305.0 219.3,311.0 219.3,303.0 229.7,297.0" fill="#423f2a" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="215.8,289.0 229.7,297.0 219.3,303.0 205.5,295.0" fill="#726e49" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="222.8,315.0 236.6,323.0 236.6,313.0 222.8,305.0" fill="#575438" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="247.0,317.0 236.6,323.0 236.6,313.0 247.0,307.0" fill="#423f2a" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="233.2,299.0 247.0,307.0 236.6,313.0 222.8,305.0" fill="#726e49" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <path d="M360.4,340.0 L360.4,360.0 A26.9,15.6 0 0 0 414.3,360.0 L414.3,340.0 Z" fill="url(#fuel)" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="387.3" cy="340.0" rx="26.9" ry="15.6" fill="#76804e" stroke="#0d1009" stroke-width="1"/>
+  <path d="M420.2,361.5 L420.2,372.5 A6.1,3.5 0 0 0 432.4,372.5 L432.4,361.5 Z" fill="#3b4b2e" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="426.3" cy="361.5" rx="6.1" ry="3.5" fill="#516740" stroke="#0d1009" stroke-width="1"/>
+  <path d="M416.7,371.5 L416.7,382.5 A6.1,3.5 0 0 0 429.0,382.5 L429.0,371.5 Z" fill="#3b4b2e" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="422.8" cy="371.5" rx="6.1" ry="3.5" fill="#516740" stroke="#0d1009" stroke-width="1"/>
+  <path d="M399.4,373.5 L399.4,384.5 A6.1,3.5 0 0 0 411.6,384.5 L411.6,373.5 Z" fill="#3b4b2e" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="405.5" cy="373.5" rx="6.1" ry="3.5" fill="#516740" stroke="#0d1009" stroke-width="1"/>
+  <path d="M413.2,381.5 L413.2,392.5 A6.1,3.5 0 0 0 425.5,392.5 L425.5,381.5 Z" fill="#3b4b2e" stroke="#0d1009" stroke-width="1"/>
+  <ellipse cx="419.4" cy="381.5" rx="6.1" ry="3.5" fill="#516740" stroke="#0d1009" stroke-width="1"/>
+  <polygon points="510.3,369.0 536.3,384.0 536.3,374.0 510.3,359.0" fill="#414a2b" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="551.9,375.0 536.3,384.0 536.3,374.0 551.9,365.0" fill="#313821" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="525.9,350.0 551.9,365.0 536.3,374.0 510.3,359.0" fill="#556139" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="520.7,361.0 532.8,368.0 532.8,361.0 520.7,354.0" fill="#4b5434" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="541.5,363.0 532.8,368.0 532.8,361.0 541.5,356.0" fill="#394028" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="529.3,349.0 541.5,356.0 532.8,361.0 520.7,354.0" fill="#636f45" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <line x1="537.1" y1="361.5" x2="556.2" y2="370.5" stroke="#2c3320" stroke-width="2.5"/>
+  <polygon points="259.1,364.0 285.1,379.0 285.1,369.0 259.1,354.0" fill="#414a2b" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="300.7,370.0 285.1,379.0 285.1,369.0 300.7,360.0" fill="#313821" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="274.7,345.0 300.7,360.0 285.1,369.0 259.1,354.0" fill="#556139" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="269.5,356.0 281.7,363.0 281.7,356.0 269.5,349.0" fill="#4b5434" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="290.3,358.0 281.7,363.0 281.7,356.0 290.3,351.0" fill="#394028" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <polygon points="278.2,344.0 290.3,351.0 281.7,356.0 269.5,349.0" fill="#636f45" stroke="#0d1009" stroke-width="1" stroke-linejoin="round"/>
+  <line x1="286.0" y1="356.5" x2="305.0" y2="365.5" stroke="#2c3320" stroke-width="2.5"/>
+  <line x1="521.6" y1="269.5" x2="584.0" y2="115.0" stroke="#7d8a6a" stroke-width="1"/>
+  <circle cx="521.6" cy="269.5" r="3.5" fill="#8ec83f" stroke="#0d1009" stroke-width="1.5"/>
+  <text x="590.0" y="120.0" font-size="14" fill="#cdd4be" font-weight="600">Tent</text>
+  <text x="590.0" y="141.0" font-size="12.5" fill="#7d8a6a">FARP Tent: an army tent.</text>
+  <line x1="269.5" y1="266.0" x2="186.0" y2="345.0" stroke="#7d8a6a" stroke-width="1"/>
+  <circle cx="269.5" cy="266.0" r="3.5" fill="#8ec83f" stroke="#0d1009" stroke-width="1.5"/>
+  <text x="180.0" y="350.0" font-size="14" fill="#cdd4be" text-anchor="end" font-weight="600">Ammo dump</text>
+  <text x="180.0" y="371.0" font-size="12.5" fill="#7d8a6a" text-anchor="end">FARP Ammo Dump Coating:</text>
+  <text x="180.0" y="388.0" font-size="12.5" fill="#7d8a6a" text-anchor="end">ammunition under netting.</text>
+  <line x1="387.3" y1="340.0" x2="584.0" y2="325.0" stroke="#7d8a6a" stroke-width="1"/>
+  <circle cx="387.3" cy="340.0" r="3.5" fill="#8ec83f" stroke="#0d1009" stroke-width="1.5"/>
+  <text x="590.0" y="330.0" font-size="14" fill="#cdd4be" font-weight="600">Fuel depot</text>
+  <text x="590.0" y="351.0" font-size="12.5" fill="#7d8a6a">FARP Fuel Depot: a small</text>
+  <text x="590.0" y="368.0" font-size="12.5" fill="#7d8a6a">fuel store and drums.</text>
+  <line x1="370.0" y1="210.0" x2="241.0" y2="115.0" stroke="#7d8a6a" stroke-width="1"/>
+  <circle cx="370.0" cy="210.0" r="3.5" fill="#8ec83f" stroke="#0d1009" stroke-width="1.5"/>
+  <text x="235.0" y="120.0" font-size="14" fill="#cdd4be" text-anchor="end" font-weight="600">Landing pads</text>
+  <text x="235.0" y="141.0" font-size="12.5" fill="#7d8a6a" text-anchor="end">Invisible FARP: nothing to</text>
+  <text x="235.0" y="158.0" font-size="12.5" fill="#7d8a6a" text-anchor="end">see, and can't be destroyed.</text>
+  <line x1="531.1" y1="360.0" x2="584.0" y2="205.0" stroke="#7d8a6a" stroke-width="1"/>
+  <circle cx="531.1" cy="360.0" r="3.5" fill="#8ec83f" stroke="#0d1009" stroke-width="1.5"/>
+  <text x="590.0" y="210.0" font-size="14" fill="#cdd4be" font-weight="600">Defence vehicles</text>
+  <text x="590.0" y="231.0" font-size="12.5" fill="#7d8a6a">With the pieces, what you shoot.</text>
+  <text x="30.0" y="482.0" font-size="13" fill="#7d8a6a">Logi 0: the FARP is removed from the map. Health 0: it goes Neutral.</text>
+</svg>

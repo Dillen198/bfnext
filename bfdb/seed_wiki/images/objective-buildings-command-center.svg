@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 470" width="800" height="470" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect x="0" y="0" width="800" height="470" fill="#0d1009"/>
+  <text x="30" y="34" font-size="18" font-weight="700" fill="#cdd4be">A Command Center</text>
+  <text x="30" y="54" font-size="13" fill="#7d8a6a">Illustration, not an in-game screenshot. There is no special building: it is a zone with a garrison.</text>
+  <rect x="20" y="70" width="360" height="300" fill="#1b2015" stroke="#3a4a2e" stroke-width="1"/>
+  <clipPath id="clip20"><rect x="20" y="70" width="360" height="300"/></clipPath>
+  <g clip-path="url(#clip20)" fill="none" stroke="#2a3220" stroke-width="1.2">
+  <ellipse cx="74" cy="130" rx="60" ry="30"/>
+  <ellipse cx="135" cy="208" rx="75" ry="39"/>
+  <ellipse cx="196" cy="286" rx="90" ry="48"/>
+  <ellipse cx="258" cy="169" rx="105" ry="57"/>
+  <ellipse cx="319" cy="247" rx="120" ry="66"/>
+  <ellipse cx="380" cy="130" rx="135" ry="75"/>
+  </g>
+  <path d="M20,300 C120,280 200,230 380,210" fill="none" stroke="#5a5540" stroke-width="2.5" clip-path="url(#clip20)"/>
+  <circle cx="190" cy="215" r="105" fill="none" stroke="#a46be0" stroke-width="3" stroke-dasharray="12 8"/>
+  <polygon points="190.0,191.0 195.9,206.9 212.8,207.6 199.5,218.1 204.1,234.4 190.0,225.0 175.9,234.4 180.5,218.1 167.2,207.6 184.1,206.9" fill="none" stroke="#a46be0" stroke-width="3" stroke-linejoin="round"/>
+  <polygon points="136.0,275.0 146.4,281.0 146.4,293.0 136.0,299.0 125.6,293.0 125.6,281.0" fill="#33d94f" stroke="#000000" stroke-width="1.5" stroke-linejoin="round" fill-opacity="0.55" stroke-opacity="0.8"/>
+  <polygon points="172.0,275.0 182.4,281.0 182.4,293.0 172.0,299.0 161.6,293.0 161.6,281.0" fill="#33d94f" stroke="#000000" stroke-width="1.5" stroke-linejoin="round" fill-opacity="0.55" stroke-opacity="0.8"/>
+  <polygon points="208.0,275.0 218.4,281.0 218.4,293.0 208.0,299.0 197.6,293.0 197.6,281.0" fill="#33d94f" stroke="#000000" stroke-width="1.5" stroke-linejoin="round" fill-opacity="0.55" stroke-opacity="0.8"/>
+  <polygon points="244.0,275.0 254.4,281.0 254.4,293.0 244.0,299.0 233.6,293.0 233.6,281.0" fill="#ffb300" stroke="#000000" stroke-width="1.5" stroke-linejoin="round" fill-opacity="0.55" stroke-opacity="0.8"/>
+  <rect x="230" y="103" width="180" height="24" fill="#000000" fill-opacity="0.55"/>
+  <text x="236.0" y="120.0" font-size="13" fill="#a46be0">SyADF 159th Regiment</text>
+  <text x="20.0" y="394.0" font-size="14" fill="#cdd4be" font-weight="600">On the F10 map</text>
+  <text x="20.0" y="412.0" font-size="12.5" fill="#7d8a6a">A five-point star in the owner's colour.</text>
+  <rect x="410" y="70" width="370" height="300" fill="#12160d" stroke="#3a4a2e" stroke-width="1"/>
+  <line x1="595" y1="205" x2="480" y2="120" stroke="#a46be0" stroke-width="1.5" stroke-dasharray="6 5" stroke-opacity="0.8"/>
+  <line x1="595" y1="205" x2="720" y2="130" stroke="#a46be0" stroke-width="1.5" stroke-dasharray="6 5" stroke-opacity="0.8"/>
+  <line x1="595" y1="205" x2="470" y2="300" stroke="#a46be0" stroke-width="1.5" stroke-dasharray="6 5" stroke-opacity="0.8"/>
+  <line x1="595" y1="205" x2="715" y2="305" stroke="#a46be0" stroke-width="1.5" stroke-dasharray="6 5" stroke-opacity="0.8"/>
+  <circle cx="595" cy="205" r="30" fill="#12160d" stroke="#a46be0" stroke-width="1.5" stroke-opacity="0.5"/>
+  <polygon points="595.0,183.0 600.3,197.7 615.9,198.2 603.6,207.8 607.9,222.8 595.0,214.0 582.1,222.8 586.4,207.8 574.1,198.2 589.7,197.7" fill="#a46be0" stroke="#a46be0" stroke-width="1" stroke-linejoin="round" fill-opacity="0.35"/>
+  <rect x="465" y="105" width="30" height="30" fill="#12160d" stroke="#a46be0" stroke-width="2"/>
+  <path d="M480,110 l4,7 v11 h-8 v-11 z" fill="#a46be0"/>
+  <rect x="705" y="115" width="30" height="30" fill="#12160d" stroke="#a46be0" stroke-width="2"/>
+  <path d="M720,120 l4,7 v11 h-8 v-11 z" fill="#a46be0"/>
+  <rect x="455" y="285" width="30" height="30" fill="#12160d" stroke="#a46be0" stroke-width="2"/>
+  <path d="M470,290 l4,7 v11 h-8 v-11 z" fill="#a46be0"/>
+  <rect x="700" y="290" width="30" height="30" fill="#12160d" stroke="#a46be0" stroke-width="2"/>
+  <path d="M715,295 l4,7 v11 h-8 v-11 z" fill="#a46be0"/>
+  <text x="595.0" y="258.0" font-size="12.5" fill="#cdd4be" text-anchor="middle">Command Center</text>
+  <text x="480.0" y="156.0" font-size="12" fill="#7d8a6a" text-anchor="middle">SAM site</text>
+  <text x="720.0" y="166.0" font-size="12" fill="#7d8a6a" text-anchor="middle">SAM site</text>
+  <text x="595.0" y="350.0" font-size="12.5" fill="#7d8a6a" text-anchor="middle">Every SAM site links to its nearest friendly CC</text>
+  <text x="410.0" y="394.0" font-size="14" fill="#cdd4be" font-weight="600">While it stands, its SAM sites are networked</text>
+  <text x="410.0" y="412.0" font-size="12.5" fill="#7d8a6a">One shared radar picture, radars dark until a real threat,</text>
+  <text x="410.0" y="428.0" font-size="12.5" fill="#7d8a6a">shut down when an anti-radiation missile is inbound.</text>
+  <text x="410.0" y="452.0" font-size="12.5" fill="#8ec83f">Destroyed or captured: every linked site falls back to plain DCS AI.</text>
+</svg>

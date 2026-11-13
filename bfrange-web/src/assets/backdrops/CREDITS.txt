@@ -1,0 +1,17 @@
+The page backdrops are line drawings traced (scripts/wireframes.mjs) from
+the site's 3D models in bfweb/public/models; full credits in CREDITS.txt there.
+
+hornet.svg (F-18.glb), tomcat.svg (F-14.glb)
+  Based on "FREE - Fighter Jet Collection - Low Poly"
+  (https://sketchfab.com/3d-models/free-fighter-jet-collection-low-poly-cb5966c988d9403895be89b364c2252f)
+  by bohmerang (https://sketchfab.com/bohmerang), licensed under CC-BY-4.0
+  (http://creativecommons.org/licenses/by/4.0/).
+
+carrier.svg (CVN.glb)
+  Based on "USS Enterprise CVN-65 Aircraft Carrier"
+  (https://sketchfab.com/3d-models/uss-enterprise-cvn-65-aircraft-carrier-f1b46fa2de8f409cbbe693f7f10dc3b8)
+  by Muhamad Mirza Arrafi (https://sketchfab.com/nazidefenseforceofficial),
+  licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
+
+Changes: feature and silhouette edges projected from one fixed view each,
+hidden lines removed, written as a single SVG path.

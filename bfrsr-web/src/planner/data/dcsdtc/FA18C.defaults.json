@@ -1,0 +1,539 @@
+{
+  "Aircraft": "FA18C",
+  "Upload": {
+    "Waypoints": false,
+    "Sequences": false,
+    "CMS": false,
+    "Radios": false,
+    "PrePlanned": false,
+    "HMD": false,
+    "FCR": false,
+    "Misc": false,
+    "Kneeboard": false
+  },
+  "WaypointsCapture": {
+    "NavPointsMode": 0,
+    "TgtPointsMode": 0,
+    "NavPointsRangeFrom": 1,
+    "TgtPointsRangeFrom": 1
+  },
+  "Waypoints": {
+    "Waypoints": []
+  },
+  "Sequences": {
+    "Seq1": {
+      "Mode": 0,
+      "Waypoints": null
+    },
+    "Seq2": {
+      "Mode": 0,
+      "Waypoints": null
+    },
+    "Seq3": {
+      "Mode": 0,
+      "Waypoints": null
+    },
+    "EnableUpload1": false,
+    "EnableUpload2": false,
+    "EnableUpload3": false
+  },
+  "CMS": {
+    "Programs": [
+      {
+        "Number": 1,
+        "FlareQty": 1,
+        "ChaffQty": 1,
+        "Interval": 1.0,
+        "Repeat": 10,
+        "ToBeUpdated": false
+      },
+      {
+        "Number": 2,
+        "FlareQty": 1,
+        "ChaffQty": 1,
+        "Interval": 0.5,
+        "Repeat": 10,
+        "ToBeUpdated": false
+      },
+      {
+        "Number": 3,
+        "FlareQty": 2,
+        "ChaffQty": 2,
+        "Interval": 1.0,
+        "Repeat": 5,
+        "ToBeUpdated": false
+      },
+      {
+        "Number": 4,
+        "FlareQty": 2,
+        "ChaffQty": 2,
+        "Interval": 0.5,
+        "Repeat": 10,
+        "ToBeUpdated": false
+      },
+      {
+        "Number": 5,
+        "FlareQty": 1,
+        "ChaffQty": 1,
+        "Interval": 1.0,
+        "Repeat": 2,
+        "ToBeUpdated": false
+      }
+    ],
+    "Mode": null,
+    "SelectedProgram": 0,
+    "EnableHUD": false
+  },
+  "Radios": {
+    "Radio1": {
+      "Presets": null,
+      "SelectedFrequency": null,
+      "SelectedPreset": null,
+      "EnableGuard": false,
+      "Mode": 0
+    },
+    "Radio2": {
+      "Presets": null,
+      "SelectedFrequency": null,
+      "SelectedPreset": null,
+      "EnableGuard": false,
+      "Mode": 0
+    }
+  },
+  "FCR": {
+    "AMRAAMSettings": {
+      "Range": 40,
+      "Bars": 2,
+      "Azimuth": 140,
+      "PRF": 3,
+      "Aging": 4
+    },
+    "AIM9Settings": {
+      "Range": 40,
+      "Bars": 4,
+      "Azimuth": 80,
+      "PRF": 3,
+      "Aging": 8
+    },
+    "AIM7Settings": {
+      "Range": 40,
+      "Bars": 4,
+      "Azimuth": 140,
+      "PRF": 3,
+      "Aging": 8
+    },
+    "DeclutterMode": 3,
+    "EnableRWR": false,
+    "EnableBRA": false
+  },
+  "PrePlanned": {
+    "Stations": {
+      "2": {
+        "PP": {
+          "1": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          "2": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          "3": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          "4": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          "5": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          "6": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          }
+        },
+        "Steerpoints": [
+          {
+            "UseCoordinate": false,
+            "WaypointNumber": 0,
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          {
+            "UseCoordinate": false,
+            "WaypointNumber": 0,
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          {
+            "UseCoordinate": false,
+            "WaypointNumber": 0,
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          {
+            "UseCoordinate": false,
+            "WaypointNumber": 0,
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          {
+            "UseCoordinate": false,
+            "WaypointNumber": 0,
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          }
+        ],
+        "Type": 0,
+        "Number": 2
+      },
+      "3": {
+        "PP": {
+          "1": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          "2": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          "3": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          "4": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          "5": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          "6": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          }
+        },
+        "Steerpoints": [
+          {
+            "UseCoordinate": false,
+            "WaypointNumber": 0,
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          {
+            "UseCoordinate": false,
+            "WaypointNumber": 0,
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          {
+            "UseCoordinate": false,
+            "WaypointNumber": 0,
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          {
+            "UseCoordinate": false,
+            "WaypointNumber": 0,
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          {
+            "UseCoordinate": false,
+            "WaypointNumber": 0,
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          }
+        ],
+        "Type": 0,
+        "Number": 3
+      },
+      "7": {
+        "PP": {
+          "1": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          "2": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          "3": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          "4": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          "5": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          "6": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          }
+        },
+        "Steerpoints": [
+          {
+            "UseCoordinate": false,
+            "WaypointNumber": 0,
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          {
+            "UseCoordinate": false,
+            "WaypointNumber": 0,
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          {
+            "UseCoordinate": false,
+            "WaypointNumber": 0,
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          {
+            "UseCoordinate": false,
+            "WaypointNumber": 0,
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          {
+            "UseCoordinate": false,
+            "WaypointNumber": 0,
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          }
+        ],
+        "Type": 0,
+        "Number": 7
+      },
+      "8": {
+        "PP": {
+          "1": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          "2": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          "3": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          "4": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          "5": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          "6": {
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          }
+        },
+        "Steerpoints": [
+          {
+            "UseCoordinate": false,
+            "WaypointNumber": 0,
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          {
+            "UseCoordinate": false,
+            "WaypointNumber": 0,
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          {
+            "UseCoordinate": false,
+            "WaypointNumber": 0,
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          {
+            "UseCoordinate": false,
+            "WaypointNumber": 0,
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          },
+          {
+            "UseCoordinate": false,
+            "WaypointNumber": 0,
+            "Lat": null,
+            "Lon": null,
+            "Elev": 0,
+            "Enabled": false,
+            "Notes": null
+          }
+        ],
+        "Type": 0,
+        "Number": 8
+      }
+    }
+  },
+  "HMD": {
+    "RejectSettings": {},
+    "RejectMode": 0
+  },
+  "Misc": {
+    "Bingo": 2000,
+    "BingoToBeUpdated": false,
+    "BullseyeToBeUpdated": false,
+    "BullseyeWP": 59,
+    "BaroWarn": 5000,
+    "BaroToBeUpdated": false,
+    "RadarWarn": 200,
+    "RadarToBeUpdated": false,
+    "BlimTac": false,
+    "TACANChannel": 1,
+    "TACANBand": 0,
+    "TACANToBeUpdated": false,
+    "ILSToBeUpdated": false,
+    "ILSChannel": 0,
+    "HideMapOnHSI": false,
+    "LaserSettingsToBeUpdated": false,
+    "TGPCode": 1688,
+    "LSTCode": 1688
+  },
+  "Version": 2,
+  "KneeboardNotes": null
+}

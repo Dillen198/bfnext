@@ -1,0 +1,29 @@
+[package]
+name = "bfcockpit-net"
+version = "1.1.0"
+edition = "2021"
+publish = false
+description = "HTTPS for the BFNext cockpit plugin, loaded into DCS's GUI Lua state"
+
+# Loaded by bfcockpit/Scripts/Hooks/bfcockpit.lua with require('bfcockpit_net').
+# DCS's own Lua has LuaSocket but no TLS, and a blocking request on the GUI
+# thread would stall the sim; this does real HTTPS on background threads and
+# hands results back when the script polls.
+#
+# Like bflib it links dynamically against DCS's lua.dll (source
+# setup-build.ps1 first) and only links correctly in release mode.
+[lib]
+name = "bfcockpit_net"
+crate-type = ["cdylib"]
+
+[dependencies]
+mlua = { workspace = true, features = ["module"] }
+ureq = { workspace = true }
+# An update's installer is run only if it verifies against the release key
+# compiled in from updater.pub -- the same minisign check (and the same key
+# format, `tauri signer`) as Fowl Engine Manager's updater.
+minisign-verify = "0.2"
+base64 = { workspace = true }
+
+[lints]
+workspace = true

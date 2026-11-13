@@ -1,0 +1,71 @@
+{
+  "//": "bfdb --instances <this file>. One entry per DCS server instance on this machine.",
+  "//default": "Which instance answers a request that carries no ?instance=. Defaults to the first entry.",
+  "default": "vs1",
+  "instances": [
+    {
+      "//": "Stable, URL-safe key. Rounds in the Sled DB are tagged with it -- never change it once a campaign has run.",
+      "id": "vs1",
+      "label": "Vector Strike #1",
+
+      "//base": "netidx_base from THIS instance's engine CFG. Two instances must never share one.",
+      "base": "/local/fowl/vs1",
+      "//sortie": "Leave null. bfdb asks the netidx resolver which sortie the engine is publishing under; a value here is only the hint used until it answers, and a WRONG one is logged and ignored.",
+      "sortie": null,
+
+      "stats_jsonl": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\Logs\\stats.jsonl",
+      "stats_dir": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\Logs\\stats",
+      "engine_config": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\ODFv2_CFG",
+
+      "//export_port": "UDP port this instance's Scripts/Export.lua sends to. Must be unique per instance.",
+      "export_port": 42001,
+
+      "//srs_url": "This instance's SRS: an http(s) URL to proxy, or the local CLIENT_EXPORT_FILE_PATH json.",
+      "srs_url": "http://127.0.0.1:5002",
+      "//tacview_dir": "This instance's Tacview recordings folder (Tacview's export path). The dashboard's flight replay is built from it; omit to disable.",
+      "tacview_dir": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\Tacview",
+      "//gci_config": "This instance's live-GCI config (its own SRS port, freqs and callsigns).",
+      "gci_config": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\gci.json",
+
+      "//dcs_server_name": "The DCSServerBot server name. Lets a caller address this instance as ?server=<name>.",
+      "dcs_server_name": "[VS] Vector Strike - Vector Strike | Dynamic Campaign PVP Modern"
+    },
+    {
+      "id": "vs2",
+      "label": "Vector Strike #2",
+      "base": "/local/fowl/vs2",
+      "sortie": null,
+      "stats_jsonl": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_2\\Logs\\stats.jsonl",
+      "stats_dir": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_2\\Logs\\stats",
+      "engine_config": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_2\\ODFv2_CFG",
+      "export_port": 42002,
+      "srs_url": "http://127.0.0.1:5003",
+      "gci_config": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_2\\gci.json",
+      "//public": "false = a test/staging server: hidden from the selector for non-admins, and its rounds are excluded from the all-time leaderboard and pilot profiles. Defaults to true.",
+      "public": false,
+      "dcs_server_name": "[VS] Vector Strike #2 | Training"
+    },
+    {
+      "//": "A campaign with its own look and news voice: Red Storm Rising, 1985, NATO against the Soviet Union on the Caucasus map.",
+      "id": "rsr",
+      "label": "Southern Flank 1985",
+      "base": "/local/fowl/rsr",
+      "sortie": null,
+      "stats_jsonl": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.redstorm\\Logs\\stats.jsonl",
+      "stats_dir": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.redstorm\\Logs\\stats",
+      "engine_config": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.redstorm\\RSR_CFG",
+      "export_port": 42003,
+      "srs_url": "http://127.0.0.1:5004",
+      "dcs_server_name": "[VS] Southern Flank 1985",
+      "//theme": "The dashboard look, the war diary's voices and its picture era. \"redstorm\" is the only theme so far: a 1985 palette, a Western wire dispatch plus a Soviet front communique on the same facts, and 1985 equipment in the pictures. Omit for the Vector Strike look.",
+      "theme": "redstorm",
+      "//brand_name": "What the dashboard masthead and the Discord posts call this campaign. Omit to use the bfdb-wide campaign name.",
+      "brand_name": "Southern Flank 1985",
+      "//blue_faction": "The sides as the war diary names them; both voices use these. *_adjective is the form before a noun ('Soviet forces').",
+      "blue_faction": "NATO",
+      "red_faction": "the Soviet Union",
+      "blue_adjective": "NATO",
+      "red_adjective": "Soviet"
+    }
+  ]
+}

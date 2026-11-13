@@ -1,0 +1,37 @@
+[package]
+name = "bfrange"
+version = "0.1.0"
+edition = "2024"
+authors = ["Dillen Weerasinghe <dillen.weerasinghe98@gmail.com>"]
+license-file = "LICENSE"
+publish = false
+description = "Vector Strike training range engine: a DCS World mission script DLL that scores bombing, strafing, carrier passes, air-to-air refuelling, missile defence, anti-ship, helicopter and combined-arms drills."
+
+[lib]
+name = "bfrange"
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = { workspace = true }
+arcstr = { workspace = true }
+bfprotocols = { version = "0.1", path = "../bfprotocols" }
+bytes = { workspace = true }
+chrono = { workspace = true }
+crossbeam = { workspace = true }
+dcso3 = { version = "0.1", path = "../dcso3" }
+fowlbg = { version = "0.1", path = "../fowlbg" }
+futures = { workspace = true }
+fxhash = { workspace = true }
+log = { workspace = true }
+mlua = { workspace = true, features = ["module", "serialize"] }
+livewx = { version = "0.1", path = "../livewx" }
+nalgebra = { workspace = true }
+netidx = { workspace = true }
+netidx-protocols = { workspace = true }
+parking_lot = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

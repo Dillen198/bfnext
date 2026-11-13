@@ -1,0 +1,97 @@
+/* Motion for the campaign's look. Cheap by rule:
+   - only opacity and transform, which the compositor animates without
+     layout or paint, so nothing here makes the page re-flow;
+   - almost all of it runs once, as a thing first appears (a page, a card,
+     a bar, a new kill), then stops, so an idle dashboard costs nothing;
+   - what loops (the live dots, the front marker, the light on the front-line
+     bars) is a few pixels big;
+   - all of it is off for anyone who asks for reduced motion.
+   The fills' and numbers' own easing is lib/countUp (front lines, readouts). */
+
+@media (prefers-reduced-motion: no-preference) {
+
+  /* a page arrives: the shell's content fades up as the route changes */
+  .lv-look.dash-themed .vs-main > :not([role]) { animation: lv-page 0.32s ease-out backwards; }
+
+  /* cards rise into place, a beat apart */
+  .lv-look .lv-card,
+  .lv-look .lv-readout,
+  .lv-look .lv-score,
+  .lv-look .lv-tug,
+  .lv-look.dash-themed .vs-card {
+    animation: lv-rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+  }
+  .lv-look :nth-child(2) > .lv-card, .lv-look .lv-card:nth-child(2), .lv-look .lv-readout:nth-child(2), .lv-look .lv-board > :nth-child(2), .lv-look.dash-themed .vs-card:nth-child(2) { animation-delay: 0.06s; }
+  .lv-look :nth-child(3) > .lv-card, .lv-look .lv-card:nth-child(3), .lv-look .lv-readout:nth-child(3), .lv-look .lv-board > :nth-child(3), .lv-look.dash-themed .vs-card:nth-child(3) { animation-delay: 0.12s; }
+  .lv-look .lv-card:nth-child(4), .lv-look .lv-readout:nth-child(4), .lv-look.dash-themed .vs-card:nth-child(4) { animation-delay: 0.18s; }
+  .lv-look .lv-card:nth-child(n+5), .lv-look .lv-readout:nth-child(n+5), .lv-look.dash-themed .vs-card:nth-child(n+5) { animation-delay: 0.24s; }
+
+  /* the name on a card is slapped on like tape, just after the card lands */
+  .lv-look .lv-card > .ds-tape,
+  .lv-look .lv-pagehead .ds-tape,
+  .lv-look .lv-top-title .ds-tape,
+  .lv-look .lv-hero .ds-tape {
+    animation: lv-tape 0.42s cubic-bezier(0.3, 1.4, 0.5, 1) 0.18s backwards;
+  }
+
+  /* the big titles slide in from the left */
+  .lv-look .lv-pagehead-title,
+  .lv-look .lv-top .lv-title,
+  .lv-look .lv-hero .lv-title { animation: lv-title 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) 0.05s backwards; }
+
+  /* bars and meters fill from their start, once */
+  .lv-look .lv-meter i,
+  .lv-look .lv-shooters .bar i,
+  .lv-look .ob-hb-track i,
+  .lv-look .ob-hold-bar i,
+  .lv-look .ob-dr-cond .bar i,
+  .lv-look .ob-sbar-track i,
+  .lv-look .kf-ex-bar i,
+  .lv-look .kf-rank .bar i,
+  .lv-look .pl-bar i,
+  .lv-look .pl-af td.bar i,
+  .lv-look .pl-cmp-grid .bar i,
+  .lv-look .pl-sd-wpn .bar i,
+  .lv-look .lb-xp-bar i,
+  .lv-look .lb-cs-bar i,
+  .lv-look .lb-pe-bar i,
+  .lv-look .sq-bar i,
+  .lv-look .rd-cont .bar i {
+    transform-origin: left center;
+    animation: lv-fill 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) 0.2s backwards;
+  }
+  /* the blue half of the kill feed's butterfly grows leftward, from the middle */
+  .lv-look .kf-ex-bar.b i { transform-origin: right center; }
+
+  /* a new kill drops into the top of the engagement log */
+  .lv-look .lv-eng li { animation: lv-drop 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+
+  /* something at risk: the readout's edge breathes red (a pseudo-element's
+     opacity, so the card itself never repaints) */
+  .lv-look .lv-readout.alarm { position: relative; }
+  .lv-look .lv-readout.alarm::before {
+    content: ''; position: absolute; left: -3px; top: 0; bottom: 0; width: 3px; pointer-events: none;
+    background: var(--red); box-shadow: 0 0 12px 2px rgba(var(--red-rgb),0.7);
+    animation: lv-alarm 2.2s ease-in-out infinite;
+  }
+
+  /* hover: a card lifts a little, by transform alone */
+  @media (hover: hover) {
+    .lv-look .lv-card, .lv-look .lv-readout, .lv-look .lb-pod, .lv-look .ds-ev, .lv-look .lv-diff {
+      transition: transform 0.18s ease-out, border-color 0.18s ease-out;
+    }
+    .lv-look .lv-readout:hover, .lv-look .lb-pod:hover, .lv-look .ds-ev:hover, .lv-look .lv-diff:hover { transform: translateY(-2px); }
+    .lv-look .lv-att-row, .lv-look .lv-shooters li, .lv-look .lv-air-col li, .lv-look .lv-eng li { transition: background-color 0.15s; }
+  }
+}
+
+/* Only the starting frame is given: each runs to the element's own style
+   (a tape keeps its own tilt), and with a "backwards" fill nothing is held
+   once it ends, so hover transforms still apply. */
+@keyframes lv-page { from { opacity: 0; } }
+@keyframes lv-rise { from { opacity: 0; transform: translateY(12px); } }
+@keyframes lv-tape { from { opacity: 0; transform: rotate(-6deg) scale(1.25); } }
+@keyframes lv-title { from { opacity: 0; transform: translateX(-18px); } }
+@keyframes lv-fill { from { transform: scaleX(0); } }
+@keyframes lv-drop { from { opacity: 0; transform: translateY(-8px); } }
+@keyframes lv-alarm { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }

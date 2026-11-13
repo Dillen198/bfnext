@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["FlareColor","LineType","Modulation","SideFilter","SmokeColor","SmokePreset"],"struct":["Action","ArrowSpec","CircleSpec","LineSpec","MarkId","MarkIdVisitor","QuadSpec","RectSpec","TextSpec","Trigger","Zone"]};

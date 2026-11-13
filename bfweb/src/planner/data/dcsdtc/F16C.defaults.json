@@ -1,0 +1,328 @@
+{
+  "Aircraft": "F16C",
+  "Upload": {
+    "Waypoints": false,
+    "CMS": false,
+    "Radios": false,
+    "MFDs": false,
+    "HARMHTS": false,
+    "Datalink": false,
+    "Misc": false,
+    "Kneeboard": false
+  },
+  "WaypointsCapture": {
+    "NavPointsMode": 0,
+    "TgtPointsMode": 0,
+    "NavPointsRangeFrom": 1,
+    "TgtPointsRangeFrom": 1
+  },
+  "Waypoints": {
+    "Waypoints": []
+  },
+  "CMS": {
+    "Programs": [
+      {
+        "Number": 1,
+        "FlareBurstQty": 1,
+        "FlareBurstInterval": 0.02,
+        "FlareSalvoQty": 10,
+        "FlareSalvoInterval": 1.0,
+        "ChaffBurstQty": 1,
+        "ChaffBurstInterval": 0.02,
+        "ChaffSalvoQty": 10,
+        "ChaffSalvoInterval": 1.0,
+        "ToBeUpdated": false
+      },
+      {
+        "Number": 2,
+        "FlareBurstQty": 1,
+        "FlareBurstInterval": 0.02,
+        "FlareSalvoQty": 10,
+        "FlareSalvoInterval": 0.5,
+        "ChaffBurstQty": 1,
+        "ChaffBurstInterval": 0.02,
+        "ChaffSalvoQty": 10,
+        "ChaffSalvoInterval": 0.5,
+        "ToBeUpdated": false
+      },
+      {
+        "Number": 3,
+        "FlareBurstQty": 2,
+        "FlareBurstInterval": 0.1,
+        "FlareSalvoQty": 5,
+        "FlareSalvoInterval": 1.0,
+        "ChaffBurstQty": 2,
+        "ChaffBurstInterval": 0.1,
+        "ChaffSalvoQty": 5,
+        "ChaffSalvoInterval": 1.0,
+        "ToBeUpdated": false
+      },
+      {
+        "Number": 4,
+        "FlareBurstQty": 2,
+        "FlareBurstInterval": 0.1,
+        "FlareSalvoQty": 5,
+        "FlareSalvoInterval": 0.5,
+        "ChaffBurstQty": 2,
+        "ChaffBurstInterval": 0.1,
+        "ChaffSalvoQty": 5,
+        "ChaffSalvoInterval": 0.5,
+        "ToBeUpdated": false
+      },
+      {
+        "Number": 5,
+        "FlareBurstQty": 2,
+        "FlareBurstInterval": 0.05,
+        "FlareSalvoQty": 20,
+        "FlareSalvoInterval": 0.75,
+        "ChaffBurstQty": 2,
+        "ChaffBurstInterval": 0.05,
+        "ChaffSalvoQty": 20,
+        "ChaffSalvoInterval": 0.75,
+        "ToBeUpdated": false
+      },
+      {
+        "Number": 6,
+        "FlareBurstQty": 1,
+        "FlareBurstInterval": 0.02,
+        "FlareSalvoQty": 1,
+        "FlareSalvoInterval": 0.5,
+        "ChaffBurstQty": 1,
+        "ChaffBurstInterval": 0.02,
+        "ChaffSalvoQty": 1,
+        "ChaffSalvoInterval": 0.5,
+        "ToBeUpdated": false
+      }
+    ],
+    "ChaffBingo": 10,
+    "FlareBingo": 10
+  },
+  "Radios": {
+    "Radio1": {
+      "Presets": null,
+      "SelectedFrequency": null,
+      "SelectedPreset": null,
+      "EnableGuard": false,
+      "Mode": 0
+    },
+    "Radio2": {
+      "Presets": null,
+      "SelectedFrequency": null,
+      "SelectedPreset": null,
+      "EnableGuard": false,
+      "Mode": 0
+    }
+  },
+  "MFD": {
+    "Configurations": [
+      {
+        "Mode": 1,
+        "LeftMFD": {
+          "SelectedPage": 1,
+          "Page1": 2,
+          "Page2": 1,
+          "Page3": 1,
+          "FCRMode": 1,
+          "FCRAzimuth": 6,
+          "FCRBars": 4,
+          "FCRRange": 40
+        },
+        "RightMFD": {
+          "SelectedPage": 2,
+          "Page1": 4,
+          "Page2": 3,
+          "Page3": 1,
+          "FCRMode": null,
+          "FCRAzimuth": null,
+          "FCRBars": null,
+          "FCRRange": null
+        },
+        "ToBeUpdated": false
+      },
+      {
+        "Mode": 2,
+        "LeftMFD": {
+          "SelectedPage": 1,
+          "Page1": 2,
+          "Page2": 1,
+          "Page3": 1,
+          "FCRMode": 1,
+          "FCRAzimuth": 6,
+          "FCRBars": 4,
+          "FCRRange": 40
+        },
+        "RightMFD": {
+          "SelectedPage": 2,
+          "Page1": 4,
+          "Page2": 3,
+          "Page3": 1,
+          "FCRMode": null,
+          "FCRAzimuth": null,
+          "FCRBars": null,
+          "FCRRange": null
+        },
+        "ToBeUpdated": false
+      },
+      {
+        "Mode": 3,
+        "LeftMFD": {
+          "SelectedPage": 1,
+          "Page1": 5,
+          "Page2": 6,
+          "Page3": 1,
+          "FCRMode": null,
+          "FCRAzimuth": null,
+          "FCRBars": null,
+          "FCRRange": null
+        },
+        "RightMFD": {
+          "SelectedPage": 2,
+          "Page1": 4,
+          "Page2": 3,
+          "Page3": 1,
+          "FCRMode": null,
+          "FCRAzimuth": null,
+          "FCRBars": null,
+          "FCRRange": null
+        },
+        "ToBeUpdated": false
+      },
+      {
+        "Mode": 4,
+        "LeftMFD": {
+          "SelectedPage": 1,
+          "Page1": 2,
+          "Page2": 1,
+          "Page3": 1,
+          "FCRMode": null,
+          "FCRAzimuth": null,
+          "FCRBars": null,
+          "FCRRange": null
+        },
+        "RightMFD": {
+          "SelectedPage": 2,
+          "Page1": 4,
+          "Page2": 3,
+          "Page3": 1,
+          "FCRMode": null,
+          "FCRAzimuth": null,
+          "FCRBars": null,
+          "FCRRange": null
+        },
+        "ToBeUpdated": false
+      },
+      {
+        "Mode": 5,
+        "LeftMFD": {
+          "SelectedPage": 1,
+          "Page1": 2,
+          "Page2": 1,
+          "Page3": 1,
+          "FCRMode": 1,
+          "FCRAzimuth": 6,
+          "FCRBars": 4,
+          "FCRRange": 40
+        },
+        "RightMFD": {
+          "SelectedPage": 2,
+          "Page1": 4,
+          "Page2": 3,
+          "Page3": 1,
+          "FCRMode": null,
+          "FCRAzimuth": null,
+          "FCRBars": null,
+          "FCRRange": null
+        },
+        "ToBeUpdated": false
+      }
+    ]
+  },
+  "HARM": {
+    "Tables": [
+      {
+        "TableNumber": 1,
+        "ToBeUpdated": false,
+        "Emitters": [
+          110,
+          104,
+          103,
+          115,
+          107
+        ]
+      },
+      {
+        "TableNumber": 2,
+        "ToBeUpdated": false,
+        "Emitters": [
+          120,
+          119,
+          117,
+          121,
+          109
+        ]
+      },
+      {
+        "TableNumber": 3,
+        "ToBeUpdated": false,
+        "Emitters": [
+          123,
+          122,
+          108,
+          126,
+          118
+        ]
+      }
+    ]
+  },
+  "HTS": {
+    "ManualEmitters": [],
+    "ManualEmittersToBeUpdated": false,
+    "EnabledClasses": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "ManualTableEnabledToBeUpdated": false,
+    "ManualTableEnabled": false
+  },
+  "Datalink": {
+    "EnableOwnCallsign": null,
+    "OwnCallsign": null,
+    "FlightLead": null,
+    "EnableMembers": null,
+    "OwnshipIndex": null,
+    "Members": null,
+    "TDOAMembers": null,
+    "DatalinkMode": null
+  },
+  "Misc": {
+    "Bingo": 2000,
+    "BingoToBeUpdated": false,
+    "BullseyeToBeUpdated": false,
+    "BullseyeWP": 25,
+    "CARAALOW": 500,
+    "CARAALOWToBeUpdated": false,
+    "MSLFloor": 5000,
+    "MSLFloorToBeUpdated": false,
+    "LaserSettingsToBeUpdated": false,
+    "TGPCode": 1688,
+    "LSTCode": 1688,
+    "LaserStartTime": 8,
+    "TACANChannel": 1,
+    "TACANBand": 0,
+    "TACANToBeUpdated": false,
+    "ILSFrequency": 108.10,
+    "ILSCourse": 0,
+    "ILSToBeUpdated": false
+  },
+  "Version": 2,
+  "KneeboardNotes": null
+}

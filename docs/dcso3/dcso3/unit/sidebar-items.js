@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["UnitCategory"],"struct":["Ammo","ClassUnit","Unit"]};

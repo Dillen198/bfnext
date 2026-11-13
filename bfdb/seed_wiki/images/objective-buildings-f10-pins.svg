@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 540" width="800" height="540" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect x="0" y="0" width="800" height="540" fill="#0d1009"/>
+  <text x="30" y="34" font-size="18" font-weight="700" fill="#cdd4be">The logi: pins on the F10 map</text>
+  <text x="30" y="54" font-size="13" fill="#7d8a6a">Illustration, not an in-game screenshot. Aleppo, held by Red, zoomed in.</text>
+  <rect x="20" y="70" width="540" height="450" fill="#1b2015" stroke="#3a4a2e" stroke-width="1"/>
+  <clipPath id="clip20"><rect x="20" y="70" width="540" height="450"/></clipPath>
+  <g clip-path="url(#clip20)" fill="none" stroke="#2a3220" stroke-width="1.2">
+  <ellipse cx="101" cy="160" rx="60" ry="30"/>
+  <ellipse cx="193" cy="277" rx="75" ry="39"/>
+  <ellipse cx="285" cy="394" rx="90" ry="48"/>
+  <ellipse cx="376" cy="218" rx="105" ry="57"/>
+  <ellipse cx="468" cy="336" rx="120" ry="66"/>
+  <ellipse cx="560" cy="160" rx="135" ry="75"/>
+  </g>
+  <path d="M20,190 C140,200 200,250 300,262 S470,300 560,340" fill="none" stroke="#5a5540" stroke-width="2.5" clip-path="url(#clip20)"/>
+  <path d="M210,520 C230,430 250,380 262,330" fill="none" stroke="#5a5540" stroke-width="2.5" clip-path="url(#clip20)"/>
+  <g transform="rotate(-28 290 270)">
+  <rect x="90" y="261" width="400" height="18" fill="#55574d"/>
+  <line x1="100" y1="270" x2="480" y2="270" stroke="#d8d6c8" stroke-width="1.5" stroke-dasharray="10 9"/>
+  <rect x="120" y="296" width="340" height="7" fill="#4a4c43"/>
+  <rect x="250" y="303" width="110" height="40" fill="#4a4c43"/>
+  </g>
+  <g transform="rotate(62 290 270)"><rect x="150" y="263" width="280" height="14" fill="#55574d"/></g>
+  <circle cx="290" cy="270" r="175" fill="none" stroke="#a46be0" stroke-width="3" stroke-dasharray="12 8"/>
+  <rect x="380" y="230" width="18" height="12" fill="#4d5242" stroke="#0d1009"/>
+  <rect x="150" y="330" width="18" height="12" fill="#4d5242" stroke="#0d1009"/>
+  <rect x="395" y="360" width="18" height="12" fill="#4d5242" stroke="#0d1009"/>
+  <rect x="176" y="190" width="18" height="12" fill="#4d5242" stroke="#0d1009"/>
+  <rect x="163" y="280" width="22" height="14" fill="#7d8a6a" stroke="#0d1009"/>
+  <rect x="266" y="366" width="22" height="14" fill="#7d8a6a" stroke="#0d1009"/>
+  <rect x="319" y="338" width="22" height="14" fill="#7d8a6a" stroke="#0d1009"/>
+  <rect x="372" y="310" width="22" height="14" fill="#7d8a6a" stroke="#0d1009"/>
+  <path transform="translate(174.0,280.0) scale(1.3)" d="M0,0 l-5,-12 a5,5 0 1 1 10,0 z" fill="#ffd24a" stroke="#000000" stroke-opacity="0.6" stroke-width="0.8"/>
+  <path transform="translate(277.0,366.0) scale(1.3)" d="M0,0 l-5,-12 a5,5 0 1 1 10,0 z" fill="#ffd24a" stroke="#000000" stroke-opacity="0.6" stroke-width="0.8"/>
+  <path transform="translate(330.0,338.0) scale(1.3)" d="M0,0 l-5,-12 a5,5 0 1 1 10,0 z" fill="#ffd24a" stroke="#000000" stroke-opacity="0.6" stroke-width="0.8"/>
+  <path transform="translate(383.0,310.0) scale(1.3)" d="M0,0 l-5,-12 a5,5 0 1 1 10,0 z" fill="#ffd24a" stroke="#000000" stroke-opacity="0.6" stroke-width="0.8"/>
+  <line x1="174" y1="265" x2="194" y2="221" stroke="#ffd24a" stroke-width="1"/>
+  <rect x="114" y="191" width="360" height="30" rx="3" fill="#0b0d08" fill-opacity="0.92" stroke="#ffd24a" stroke-width="1"/>
+  <text x="124.0" y="211.0" font-size="13" fill="#f2f0e4" font-family="Consolas, DejaVu Sans Mono, monospace">Aleppo logi: 12345678 (AIRBASE_WAREHOUSE_01)</text>
+  <polygon points="215.0,393.0 229.7,401.5 229.7,418.5 215.0,427.0 200.3,418.5 200.3,401.5" fill="#33d94f" stroke="#000000" stroke-width="1.5" stroke-linejoin="round" fill-opacity="0.55" stroke-opacity="0.8"/>
+  <polygon points="265.0,393.0 279.7,401.5 279.7,418.5 265.0,427.0 250.3,418.5 250.3,401.5" fill="#33d94f" stroke="#000000" stroke-width="1.5" stroke-linejoin="round" fill-opacity="0.55" stroke-opacity="0.8"/>
+  <polygon points="315.0,393.0 329.7,401.5 329.7,418.5 315.0,427.0 300.3,418.5 300.3,401.5" fill="#ffb300" stroke="#000000" stroke-width="1.5" stroke-linejoin="round" fill-opacity="0.55" stroke-opacity="0.8"/>
+  <polygon points="365.0,393.0 379.7,401.5 379.7,418.5 365.0,427.0 350.3,418.5 350.3,401.5" fill="#33d94f" stroke="#000000" stroke-width="1.5" stroke-linejoin="round" fill-opacity="0.55" stroke-opacity="0.8"/>
+  <rect x="360" y="105" width="150" height="40" fill="#000000" fill-opacity="0.55"/>
+  <text x="367.0" y="121.0" font-size="13" fill="#a46be0">Aleppo</text>
+  <text x="367.0" y="138.0" font-size="12" fill="#a46be0">Airbase</text>
+  <path transform="translate(592.0,112.0) scale(1.3)" d="M0,0 l-5,-12 a5,5 0 1 1 10,0 z" fill="#ffd24a" stroke="#000000" stroke-opacity="0.6" stroke-width="0.8"/>
+  <text x="608.0" y="104.0" font-size="14" fill="#cdd4be" font-weight="600">logi: pin</text>
+  <text x="582.0" y="124.0" font-size="12.5" fill="#7d8a6a">One per counted logistics</text>
+  <text x="582.0" y="141.0" font-size="12.5" fill="#7d8a6a">building, up to four. Both</text>
+  <text x="582.0" y="158.0" font-size="12.5" fill="#7d8a6a">sides see them.</text>
+  <text x="582.0" y="200.0" font-size="14" fill="#cdd4be" font-weight="600">Click one to read it</text>
+  <text x="582.0" y="222.0" font-size="12.5" fill="#ffd24a" font-family="Consolas, DejaVu Sans Mono, monospace">Aleppo</text>
+  <text x="582.0" y="238.0" font-size="12.5" fill="#7d8a6a">the base</text>
+  <text x="582.0" y="258.0" font-size="12.5" fill="#ffd24a" font-family="Consolas, DejaVu Sans Mono, monospace">12345678</text>
+  <text x="582.0" y="274.0" font-size="12.5" fill="#7d8a6a">the building's map name</text>
+  <text x="582.0" y="294.0" font-size="12.5" fill="#ffd24a" font-family="Consolas, DejaVu Sans Mono, monospace">AIRBASE_WAREHOUSE_01</text>
+  <text x="582.0" y="310.0" font-size="12.5" fill="#7d8a6a">its DCS type</text>
+  <text x="582.0" y="350.0" font-size="14" fill="#cdd4be" font-weight="600">Gone means destroyed</text>
+  <text x="582.0" y="370.0" font-size="12.5" fill="#7d8a6a">A pin disappears with its</text>
+  <text x="582.0" y="387.0" font-size="12.5" fill="#7d8a6a">building. Fewer pins than</text>
+  <text x="582.0" y="404.0" font-size="12.5" fill="#7d8a6a">before = buildings lost.</text>
+  <text x="582.0" y="446.0" font-size="14" fill="#cdd4be" font-weight="600">Status hexes, south</text>
+  <text x="582.0" y="466.0" font-size="12.5" fill="#7d8a6a">Health, Logi, Supply, Fuel.</text>
+  <text x="582.0" y="483.0" font-size="12.5" fill="#7d8a6a">Logi falls as pins go.</text>
+</svg>

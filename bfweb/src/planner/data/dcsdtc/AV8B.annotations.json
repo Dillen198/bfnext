@@ -1,0 +1,184 @@
+{
+  "code": "AV8B",
+  "label": "AV-8B Night Attack Harrier",
+  "sections": [
+    {
+      "path": "Upload",
+      "label": "Upload Settings",
+      "help": "Which systems DCS-DTC types into the cockpit when uploading. Only waypoints exist on the AV-8B. The page re-creates a null system."
+    },
+    {
+      "path": "Waypoints",
+      "label": "Waypoints",
+      "managed": "route",
+      "help": "Waypoints 1..60. Filled from the dashboard route. The page re-creates a null system, but a null Waypoints.Waypoints list crashes it."
+    },
+    {
+      "path": "WaypointsCapture",
+      "label": "Capture Settings",
+      "help": "Where points captured on the DCS F10 map (Ctrl+Shift+D dialog) are inserted into the waypoint list. App-side only, never uploaded. The page re-creates a null system."
+    }
+  ],
+  "fields": [
+    {
+      "path": "Aircraft",
+      "label": "Aircraft code",
+      "kind": "string",
+      "readonly": true,
+      "help": "Always \"AV8B\". The loader picks the C# configuration type from this value; it must match the preset folder / Load page."
+    },
+    {
+      "path": "Version",
+      "label": "Format version",
+      "kind": "int",
+      "readonly": true,
+      "help": "Always 2. A missing Version (or 1) together with a missing Upload sends the file to the V1 converter, which throws for this aircraft."
+    },
+    {
+      "path": "KneeboardNotes",
+      "label": "Kneeboard notes",
+      "kind": "string",
+      "nullable": true,
+      "multiline": true,
+      "help": "Free text shown (and editable) in the in-game DCS-DTC kneeboard dialog (Ctrl+Shift+K). Not a system: Load/Save never copies it, only a whole preset file carries it."
+    },
+    {
+      "path": "Upload.Waypoints",
+      "label": "Waypoints",
+      "kind": "bool",
+      "help": "Type the waypoints via UFC/ODU (DMS whole seconds)."
+    },
+    {
+      "path": "Waypoints.Waypoints",
+      "label": "Waypoints",
+      "kind": "list",
+      "managed": "route",
+      "maxItems": 60,
+      "nullCrashesEditor": true,
+      "item": {
+        "Sequence": 1,
+        "Name": "STPT 1",
+        "Latitude": null,
+        "Longitude": null,
+        "Elevation": 0,
+        "TimeOverSteerpoint": null,
+        "Target": false
+      },
+      "help": "Filled from the planned route: route point i -> Sequence i (1..N). The uploader ignores Sequence and numbers jet waypoints by LIST POSITION starting at 1, so keep the list contiguous 1..N in route order. Max 60."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Sequence",
+      "label": "Sequence",
+      "kind": "int",
+      "min": 1,
+      "max": 60,
+      "managed": "route",
+      "help": "Waypoint number 1..60, unique. Ignored by the uploader (list position is used); keep equal to the position."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Name",
+      "label": "Name",
+      "kind": "string",
+      "managed": "route",
+      "help": "Required (non-empty) by the editor; not uploaded. Use the route point name."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Latitude",
+      "label": "Latitude",
+      "kind": "coord-lat",
+      "pattern": "^[NS] \\d{2}°\\d{2}\\.\\d{3}’$",
+      "managed": "route",
+      "help": "DDM thousandths, e.g. \"N 42°10.583’\" (2-digit zero-padded degrees, U+00B0 degree sign, U+2019 minute mark). The uploader parses it and re-formats as DMS with whole seconds; an unparseable value aborts the upload."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Longitude",
+      "label": "Longitude",
+      "kind": "coord-lon",
+      "pattern": "^[EW] \\d{3}°\\d{2}\\.\\d{3}’$",
+      "managed": "route",
+      "help": "DDM thousandths, e.g. \"E 042°28.950’\" (3-digit zero-padded degrees). The uploader parses it and re-formats as DMS with whole seconds; an unparseable value aborts the upload."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Elevation",
+      "label": "Elevation",
+      "kind": "int",
+      "min": 0,
+      "max": 35000,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Ground elevation of the point, integer feet MSL (editor range 0..35000). Always uploaded (0 included)."
+    },
+    {
+      "path": "Waypoints.Waypoints[].TimeOverSteerpoint",
+      "label": "Time over steerpoint",
+      "kind": "time",
+      "nullable": true,
+      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d$",
+      "managed": "route",
+      "help": "HH:MM:SS or null; route TOT/ETA if the dashboard has one. Shown in the app and kneeboard only, never uploaded on this aircraft."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Target",
+      "label": "Target",
+      "kind": "bool",
+      "managed": "route",
+      "help": "True for route target points (shows \"TGT\" in the list and kneeboard). Not uploaded on this aircraft."
+    },
+    {
+      "path": "WaypointsCapture.NavPointsMode",
+      "label": "Navigation points",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Add to end of the list"
+        },
+        {
+          "value": 1,
+          "label": "Add to end of the first gap"
+        },
+        {
+          "value": 2,
+          "label": "Add to specific range"
+        }
+      ],
+      "managed": "route",
+      "help": "SteerpointCaptureMode for captured non-target points. When the waypoint list comes from the dashboard route, leave 0 (append after the route) so captures in the cockpit do not overwrite route points."
+    },
+    {
+      "path": "WaypointsCapture.TgtPointsMode",
+      "label": "Target points",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Add to the end of the list"
+        },
+        {
+          "value": 2,
+          "label": "Add to specific range"
+        }
+      ],
+      "managed": "route",
+      "help": "SteerpointCaptureMode for captured target points. The UI offers only end-of-list (0) and range (2); 1 is accepted on load but has no radio button. This aircraft has no \"Add TGT\" capture button, so this rarely matters."
+    },
+    {
+      "path": "WaypointsCapture.NavPointsRangeFrom",
+      "label": "Navigation range start",
+      "kind": "int",
+      "min": 1,
+      "max": 99,
+      "managed": "route",
+      "help": "First sequence used when Navigation points = Add to specific range. A dashboard can set it to (last route sequence + 1) to keep captures clear of the route."
+    },
+    {
+      "path": "WaypointsCapture.TgtPointsRangeFrom",
+      "label": "Target range start",
+      "kind": "int",
+      "min": 1,
+      "max": 99,
+      "managed": "route",
+      "help": "First sequence used when Target points = Add to specific range."
+    }
+  ]
+}

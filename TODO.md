@@ -1,30 +1,31 @@
-# JTAC Stuff
-
-- add a default laser code for red and blue
-- save the jtac settings when loading/unloading troops
-
 # Carriers
 
-- investigate issues with spawning aircraft on carriers
-
-# Ground Forces
-
-- Troop carriers
-
-# Logistics
-
-- C130 internal crates should not block spawning more crates
+- Confirm spawning aircraft on carriers works. ROADMAP's Done section notes it as verified in game in Oct 2026; no automated test covers it.
 
 # Interface
 
-- Client side plugin for richer ui
-- Don't show the points message when the change is 0
+- Vector Strike cockpit plugin (`bfcockpit/`, 3.3.0): deploy the bflib and bfdb it needs and do a final in-game pass. The F10 menu is not replaced yet. (ROADMAP: Client-Side Plugin/UI)
 
-# Lua APU
+# Lua API
 
-- lua api for use by e.g. special k bot
-- server functions, replicate netidx rpc interface
-- spawning deployables
-- ai orders/missions
-- actions
-- info extraction, stats, etc
+- AI orders/missions beyond `move_group`
+- Actions (tanker, AWACS, CAP, ...) callable from the API
+- Replicate the rest of the netidx RPC interface (queries, spawn_deployable/spawn_troop, move_group and add_points already exist in `bflib/src/api.rs`)
+
+(ROADMAP: Public Lua API for External Tools)
+
+# Gameplay
+
+- Ground pathfinding that avoids known threats (ROADMAP: Enhanced Ground AI)
+- Amphibious ops, shore bombardment, anti-ship tracking (ROADMAP: Naval Warfare System)
+- Fuel pipelines, player emergency resupply, ammunition types (ROADMAP: Advanced Logistics)
+- Read the config-only `WeatherEffectsCfg` fields; seasonal progression (ROADMAP: Weather & Time Effects)
+- VIP extraction and civilian evacuation events, high-value targets (ROADMAP: Dynamic Campaign Events)
+- Player strike packages, TOT and waypoint sharing (ROADMAP: Mission Planning Tools)
+
+# Performance and code health
+
+- Frontline: spatial index and incremental updates (ROADMAP: Frontline Calculation)
+- Replace the remaining non-test `unwrap()` calls, starting with `bflib/src/db/formation.rs` (ROADMAP: Technical Debt)
+
+See ROADMAP.md for the full status of each item, its "Audit Sept 2026" section for new ideas, and its "Done" section for what has shipped.

@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 350" width="800" height="350" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect x="0" y="0" width="800" height="350" fill="#0d1009"/>
+  <text x="400" y="34" fill="#cdd4be" font-size="16" font-weight="bold" text-anchor="middle">Offensive and regroup cycle (engine defaults)</text>
+  <text x="400" y="56" fill="#7d8a6a" font-size="13" text-anchor="middle">6 h offensive + 10 h regroup = 16 h cycle. Red runs half a cycle (8 h) behind Blue.</text>
+
+  <!-- Blue row -->
+  <text x="88" y="120" fill="#4a8fd4" font-size="15" font-weight="bold" text-anchor="end">BLUE</text>
+  <rect x="100" y="92" width="123.75" height="46" fill="#4a8fd4"/>
+  <rect x="223.75" y="92" width="206.25" height="46" fill="#141910" stroke="#4a8fd4" stroke-width="1.5"/>
+  <rect x="430" y="92" width="123.75" height="46" fill="#4a8fd4"/>
+  <rect x="553.75" y="92" width="206.25" height="46" fill="#141910" stroke="#4a8fd4" stroke-width="1.5"/>
+  <text x="161.9" y="120" fill="#0d1009" font-size="14" font-weight="bold" text-anchor="middle">OFFENSIVE</text>
+  <text x="326.9" y="120" fill="#cdd4be" font-size="14" text-anchor="middle">regroup</text>
+  <text x="491.9" y="120" fill="#0d1009" font-size="14" font-weight="bold" text-anchor="middle">OFFENSIVE</text>
+  <text x="656.9" y="120" fill="#cdd4be" font-size="14" text-anchor="middle">regroup</text>
+
+  <!-- Red row -->
+  <text x="88" y="200" fill="#cc4444" font-size="15" font-weight="bold" text-anchor="end">RED</text>
+  <rect x="100" y="172" width="165" height="46" fill="#141910" stroke="#cc4444" stroke-width="1.5"/>
+  <rect x="265" y="172" width="123.75" height="46" fill="#cc4444"/>
+  <rect x="388.75" y="172" width="206.25" height="46" fill="#141910" stroke="#cc4444" stroke-width="1.5"/>
+  <rect x="595" y="172" width="123.75" height="46" fill="#cc4444"/>
+  <rect x="718.75" y="172" width="41.25" height="46" fill="#141910" stroke="#cc4444" stroke-width="1.5"/>
+  <text x="182.5" y="200" fill="#cdd4be" font-size="14" text-anchor="middle">regroup</text>
+  <text x="326.9" y="200" fill="#0d1009" font-size="14" font-weight="bold" text-anchor="middle">OFFENSIVE</text>
+  <text x="491.9" y="200" fill="#cdd4be" font-size="14" text-anchor="middle">regroup</text>
+  <text x="656.9" y="200" fill="#0d1009" font-size="14" font-weight="bold" text-anchor="middle">OFFENSIVE</text>
+
+  <!-- Time axis -->
+  <line x1="100" y1="236" x2="760" y2="236" stroke="#262e1d" stroke-width="2"/>
+  <g fill="#7d8a6a" font-size="13" text-anchor="middle">
+    <line x1="100" y1="232" x2="100" y2="242" stroke="#7d8a6a"/><text x="100" y="258">0 h</text>
+    <line x1="223.75" y1="232" x2="223.75" y2="242" stroke="#7d8a6a"/><text x="223.75" y="258">6</text>
+    <line x1="265" y1="232" x2="265" y2="242" stroke="#7d8a6a"/><text x="265" y="258">8</text>
+    <line x1="388.75" y1="232" x2="388.75" y2="242" stroke="#7d8a6a"/><text x="388.75" y="258">14</text>
+    <line x1="430" y1="232" x2="430" y2="242" stroke="#7d8a6a"/><text x="430" y="258">16</text>
+    <line x1="553.75" y1="232" x2="553.75" y2="242" stroke="#7d8a6a"/><text x="553.75" y="258">22</text>
+    <line x1="595" y1="232" x2="595" y2="242" stroke="#7d8a6a"/><text x="595" y="258">24</text>
+    <line x1="718.75" y1="232" x2="718.75" y2="242" stroke="#7d8a6a"/><text x="718.75" y="258">30</text>
+    <line x1="760" y1="232" x2="760" y2="242" stroke="#7d8a6a"/><text x="760" y="258">32 h</text>
+  </g>
+  <text x="430" y="280" fill="#7d8a6a" font-size="13" text-anchor="middle">Real-world time (the phase follows the server's clock, not the mission clock, so it survives restarts)</text>
+
+  <!-- Legend -->
+  <rect x="130" y="297" width="18" height="14" fill="#6aab1f"/>
+  <text x="156" y="309" fill="#cdd4be" font-size="13">Offensive: raids, sea drones and AI packages come twice as often, aimed at one axis</text>
+  <rect x="130" y="321" width="18" height="14" fill="#141910" stroke="#6aab1f"/>
+  <text x="156" y="333" fill="#cdd4be" font-size="13">Regroup: raids, sea drones and packages come less often (intervals x1.5)</text>
+</svg>
