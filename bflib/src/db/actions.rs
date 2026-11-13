@@ -668,6 +668,16 @@ fn group_airborne(lua: MizLua, name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// AI combat flights may break off and go home when a threat engages them
+/// (13 November 2026): with only "evade fire" they pressed on into SAM
+/// coverage like kamikazes and, at Excellent skill, dodged most of what was
+/// fired. SEAD flights keep "evade fire": the SAMs are their job.
+fn threat_abort() -> Task {
+    Task::WrappedOption(AiOption::Air(dcso3::controller::AirOption::ReactionOnThreat(
+        dcso3::controller::AirReactionToThreat::AllowAbortMission,
+    )))
+}
+
 impl Db {
     /// Launch one of `side`'s configured Fighters / Attackers / SEAD actions
     /// on the engine's own account, for air_life's AI packages. It flies the
@@ -1535,20 +1545,25 @@ impl Db {
             },
             _ => (None, None, None),
         };
+        // Aircraft only (13 November 2026): DCS AI sees a helicopter even
+        // sitting landed in a valley, so fighters hunting helicopters put an
+        // AMRAAM into a Ka-50 that had not taken off. Helicopters are left to
+        // SAMs, guns, attack helicopters and players.
         let main_task = Task::EngageTargets {
             target_types: vec![
                 Attribute::Fighters,
                 Attribute::MultiroleFighters,
                 Attribute::BattleAirplanes,
                 Attribute::Battleplanes,
-                Attribute::Helicopters,
-                Attribute::AttackHelicopters,
             ],
             max_dist: Some(30_000.),
             priority: None,
         };
         let init_task = Task::ComboTask({
-            let mut tasks = vec![Task::WrappedCommand(Command::SetUnlimitedFuel(true))];
+            let mut tasks = vec![
+                Task::WrappedCommand(Command::SetUnlimitedFuel(true)),
+                threat_abort(),
+            ];
             if let Some(f) = freq {
                 tasks.push(Task::WrappedCommand(Command::SetFrequency {
                     frequency: f,
@@ -1664,7 +1679,10 @@ impl Db {
             priority: None,
         };
         let init_task = Task::ComboTask({
-            let mut tasks = vec![Task::WrappedCommand(Command::SetUnlimitedFuel(true))];
+            let mut tasks = vec![
+                Task::WrappedCommand(Command::SetUnlimitedFuel(true)),
+                threat_abort(),
+            ];
             if let Some(f) = freq {
                 tasks.push(Task::WrappedCommand(Command::SetFrequency {
                     frequency: f,
@@ -3332,9 +3350,7 @@ impl Db {
         aims: Vec<StrikeAim>,
     ) -> Result<Vec<MissionPoint>> {
         use bfprotocols::cfg::StrikeMission as M;
-        use dcso3::controller::{
-            AirOption, AirReactionToThreat, AirRoe, AttackParams, WeaponExpend,
-        };
+        use dcso3::controller::{AirOption, AirRoe, AttackParams, WeaponExpend};
         let group = group!(self, gid)?;
         let home = match &group.origin {
             DeployKind::Action { rtb: Some(h), .. } => *h,
@@ -3423,9 +3439,7 @@ impl Db {
         };
         let quiet = Task::ComboTask(vec![
             Task::WrappedOption(AiOption::Air(AirOption::Roe(AirRoe::WeaponHold))),
-            Task::WrappedOption(AiOption::Air(AirOption::ReactionOnThreat(
-                AirReactionToThreat::EvadeFire,
-            ))),
+            threat_abort(),
         ]);
         Ok(vec![
             wpt("takeoff", launch, quiet),

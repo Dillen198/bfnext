@@ -193,8 +193,11 @@ pub struct PurchasedFormationCfg {
     pub cost_factor: f64,
     /// Deployables that can be bought this way, by menu path joined with
     /// " / " (as the command map names them). Empty = every group
-    /// deployable that isn't a radar or a GCI station; templates whose
-    /// vehicles can't drive are refused when ordered.
+    /// deployable of a single vehicle that isn't a radar or a GCI station,
+    /// so the shop's count is a count of vehicles; list a platoon or a
+    /// battery here to sell it whole (its label then says how many
+    /// vehicles one copy is). Templates whose vehicles can't drive are
+    /// refused when ordered.
     #[serde(default)]
     pub deployables: Vec<String>,
 }

@@ -70,6 +70,32 @@ pub use story::{
 };
 pub use war_will::WarWillCfg;
 
+/// A DCS AI skill level (`Cfg::ai_air_skill`).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub enum AiSkill {
+    Average,
+    Good,
+    High,
+    Excellent,
+    /// DCS picks one of the four for each unit.
+    Random,
+}
+
+impl AiSkill {
+    /// The unit table's `skill` value.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AiSkill::Average => "Average",
+            AiSkill::Good => "Good",
+            AiSkill::High => "High",
+            AiSkill::Excellent => "Excellent",
+            AiSkill::Random => "Random",
+        }
+    }
+}
+
 // The rest of the config, split out of this file by subsystem. Every item
 // is re-exported here, so its path (`bfprotocols::cfg::X`) is unchanged.
 mod actions;
@@ -380,6 +406,14 @@ pub struct Cfg {
     /// Absent = off.
     #[serde(default)]
     pub war_will: Option<WarWillCfg>,
+    /// The DCS skill every AI aircraft and helicopter is spawned with,
+    /// whatever its template says. Absent = the template's own. "Random"
+    /// gives each aircraft one of Average, Good, High or Excellent, so some
+    /// are aces and some are not (13 November 2026: every template was
+    /// Excellent, and players met AI that saw everything and dodged most
+    /// SAMs).
+    #[serde(default)]
+    pub ai_air_skill: Option<AiSkill>,
     /// Story events (Red Storm Rising, ENGINE.md 3.4): campaign-written
     /// events, each set off by something players or the AI do (an objective
     /// destroyed, captured or held, kills, supply routes cut, fuel or will

@@ -149,6 +149,12 @@ out along your route. That base can't be under threat, still consolidating
 after a capture, a carrier, a naval base or a SAM site. Radar and GCI units
 can't be bought this way, and nor can anything that can't drive.
 
+The shop sells single vehicles, so the number you set is the number of
+vehicles you get. Platoons, sections and SAM batteries are deployed one at a
+time instead. A server can list some of them for the shop as well: their
+name then says how many vehicles one copy is, for example "T-80UD / BMP-2
+Platoon (7 vehicles each)", and six of those are 42 vehicles.
+
 It is named like any other, by its unit type and base, for example "6th
 T-72B3 Coy (Kutaisi)". Each copy costs the deployable's own price times
 {{cfg:ground_war.purchase.cost_factor|1}}. The nearest base is the one used:

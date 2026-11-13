@@ -8,6 +8,20 @@ a linked page says otherwise, the later one is right.
 
 ## v3.4 — November 10, 2026
 
+**AI pilots are no longer all aces**
+- AI aircraft on Levant and the Southern Flank fly at a random skill instead
+  of every one at Excellent, so some spot and dodge less than others.
+- AI fighters and CAP go after aircraft only. They no longer hunt
+  helicopters, which DCS lets them see even sitting landed.
+- AI CAP, CAS and strike flights can break off and go home when a SAM or
+  fighter engages them, instead of pressing on into the threat. SEAD flights
+  still press on: the SAMs are their job.
+
+**Buying a formation gets you what you counted**
+- The formation shop sells single vehicles only, so six is six vehicles. On
+  Levant it also sold the 7-vehicle platoons, and six of one came out as 42
+  vehicles for the price of six tanks.
+
 **War will no longer ends the round**
 - On Levant and the Southern Flank a side no longer asks for terms when its
   will to fight collapses, and the story's ceasefire events are gone. Will

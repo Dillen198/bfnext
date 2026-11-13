@@ -2544,6 +2544,7 @@ impl Default for Cfg {
             population_scaling: None,
             ai_fill: None,
             war_will: None,
+            ai_air_skill: None,
             story: None,
             ai_air_stock: None,
             economy: EconomyCfg::default(),

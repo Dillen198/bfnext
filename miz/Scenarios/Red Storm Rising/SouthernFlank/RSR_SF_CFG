@@ -41489,5 +41489,6 @@
         "speed_kph": 25
       }
     ]
-  }
+  },
+  "ai_air_skill": "Random"
 }

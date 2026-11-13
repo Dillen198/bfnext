@@ -540,6 +540,21 @@ impl MizIndex {
             GroupId(max(mgid.0, cidx.max_gid.0))
         })
     }
+
+    /// How many units each of `side`'s vehicle groups has, by group name.
+    pub fn vehicle_group_sizes(&self, side: Side) -> FxHashMap<String, usize> {
+        let Some(cidx) = self.by_side.get(&side) else {
+            return FxHashMap::default();
+        };
+        let mut by_gid: FxHashMap<GroupId, usize> = FxHashMap::default();
+        for gid in cidx.groups_by_unit.values() {
+            *by_gid.entry(*gid).or_default() += 1;
+        }
+        cidx.vehicles
+            .iter()
+            .map(|(name, gid)| (name.clone(), by_gid.get(gid).copied().unwrap_or(0)))
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

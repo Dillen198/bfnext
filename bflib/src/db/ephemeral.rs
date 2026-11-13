@@ -3272,7 +3272,7 @@ impl Ephemeral {
                         let opts = vec![
                             dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::Roe(dcso3::controller::AirRoe::WeaponFree))),
                             dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::RadarUsing(dcso3::controller::AirRadarUsing::ForContinuousSearch))),
-                            dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::ReactionOnThreat(dcso3::controller::AirReactionToThreat::EvadeFire))),
+                            dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::ReactionOnThreat(dcso3::controller::AirReactionToThreat::AllowAbortMission))),
                             dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::Silence(false))),
                             *first.task.clone()
                         ];
@@ -3372,6 +3372,13 @@ impl Ephemeral {
                                 && matches!(skill.as_str(), "Client" | "Player")
                             {
                                 unit.raw_set("skill", "Excellent")?;
+                            }
+                            if matches!(
+                                template.category,
+                                GroupKind::Plane | GroupKind::Helicopter
+                            ) && let Some(skill) = self.cfg.ai_air_skill
+                            {
+                                unit.raw_set("skill", skill.as_str())?;
                             }
                             if matches!(
                                 template.category,

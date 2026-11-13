@@ -4320,7 +4320,8 @@ fn air_station_task(
             cfg.cap_speed_ms,
             cfg.cap_altitude_m,
             cfg.cap_engage_radius_m,
-            vec![Attribute::Air],
+            // aircraft only: DCS AI finds a helicopter even sitting landed
+            vec![Attribute::Planes],
         )
     };
     // ComboTask keeps them on station (break to engage, then return) instead of

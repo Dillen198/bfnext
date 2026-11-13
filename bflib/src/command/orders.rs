@@ -63,6 +63,7 @@ use dcso3::{
     net::Ucid,
 };
 use enumflags2::BitFlags;
+use fxhash::FxHashMap;
 use log::{info, warn};
 use mlua::{FromLua, Value};
 use smallvec::SmallVec;
@@ -238,8 +239,20 @@ pub(super) fn catalog(ctx: &Context, side: Side) -> Vec<OrderOption> {
     {
         let p = &gw.purchase;
         let in_field = ctx.db.formations().filter(|f| f.side == side).count();
-        for d in deps.iter().filter(|d| purchasable(p, d)) {
+        let sizes = ctx.idx.vehicle_group_sizes(side);
+        for d in deps.iter() {
+            let size = copy_size(&sizes, d);
+            if !purchasable(p, d, size) {
+                continue;
+            }
             let name = d.path.join(" / ");
+            let short =
+                d.path.last().map(|s| s.to_string()).unwrap_or_else(|| name.clone());
+            // a listed platoon or battery says what one copy is
+            let label = match size {
+                Some(n) if n > 1 => format!("{short} ({n} vehicles each)"),
+                _ => short,
+            };
             let cost = copy_cost(ctx, p, d);
             let mut why = why_not_cost(ctx, side, cost * p.min_count.max(1) as i64);
             if in_field >= gw.max_formations_per_side as usize && why.is_empty() {
@@ -255,7 +268,7 @@ pub(super) fn catalog(ctx: &Context, side: Side) -> Vec<OrderOption> {
             }
             out.push(OrderOption {
                 key: format!("formation:{name}"),
-                label: d.path.last().map(|s| s.to_string()).unwrap_or_else(|| name.clone()),
+                label,
                 category: "Formations".into(),
                 target: OrderTarget::Land,
                 cost,
@@ -334,14 +347,32 @@ fn purchase_cfg(ctx: &Context) -> Option<&GroundWarCfg> {
 
 /// Can `d` be bought as a formation? A radar or a GCI station is no
 /// manoeuvre force; drivability is checked against the template when ordered.
-fn purchasable(p: &PurchasedFormationCfg, d: &Deployable) -> bool {
+/// `size` is how many vehicles one copy of its template is (None: the
+/// mission has no such vehicle group). With no list in the config only
+/// single-vehicle deployables are sold, so "6" in the shop is six vehicles:
+/// six copies of a seven-vehicle platoon came out as 42 (Levant, 12 November
+/// 2026), and of a Hawk battery as 72. A campaign that wants whole platoons
+/// or batteries in a formation lists them in `purchase.deployables`.
+fn purchasable(p: &PurchasedFormationCfg, d: &Deployable, size: Option<usize>) -> bool {
     d.kind.is_group()
         && d.ewr.is_none()
         && d.gci.is_none()
-        && (p.deployables.is_empty() || {
+        && size.is_some_and(|n| n > 0)
+        && if p.deployables.is_empty() {
+            size == Some(1)
+        } else {
             let name = d.path.join(" / ");
             p.deployables.iter().any(|n| n.as_str() == name)
-        })
+        }
+}
+
+/// Vehicles in one copy of `d`'s template, from `sizes`
+/// (`MizIndex::vehicle_group_sizes` for `d`'s side).
+fn copy_size(sizes: &FxHashMap<dcso3::String, usize>, d: &Deployable) -> Option<usize> {
+    match &d.kind {
+        DeployableKind::Group { template } => sizes.get(template).copied(),
+        _ => None,
+    }
 }
 
 /// The treasury price of one copy of `d` in a purchased formation.
@@ -882,7 +913,7 @@ pub(super) fn buy_formation(
         .deployables
         .get(&side)
         .and_then(|d| d.iter().find(|d| d.path.join(" / ") == name))
-        .filter(|d| purchasable(&p, d))
+        .filter(|d| purchasable(&p, d, copy_size(&ctx.idx.vehicle_group_sizes(side), d)))
         .cloned()
         .ok_or_else(|| format_compact!("{side:?} can't buy {name} as a formation"))?;
     let DeployableKind::Group { template } = &spec.kind else {
@@ -1250,7 +1281,47 @@ pub(super) fn hunter_assets(
 
 #[cfg(test)]
 mod tests {
-    use super::why_not_room;
+    use super::{copy_size, purchasable, why_not_room};
+    use bfprotocols::cfg::{Deployable, PurchasedFormationCfg};
+    use fxhash::FxHashMap;
+
+    fn dep(path: &[&str], template: &str) -> Deployable {
+        serde_json::from_value(serde_json::json!({
+            "path": path,
+            "kind": {"Group": {"template": template}},
+            "persist": "Forever", "limit": 3, "limit_enforce": "DeleteOldest",
+            "crates": [], "repair_crate": null, "ewr": null, "jtac": null
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn only_single_vehicles_by_default() {
+        let sizes: FxHashMap<dcso3::String, usize> = [
+            (dcso3::String::from("DEPT90"), 1),
+            (dcso3::String::from("DEPRARMOR"), 7),
+            (dcso3::String::from("DEPHAWK"), 12),
+        ]
+        .into_iter()
+        .collect();
+        let tank = dep(&["MBT", "T-90M"], "DEPT90");
+        let platoon = dep(&["MBT", "T-80UD / BMP-2 Platoon"], "DEPRARMOR");
+        let hawk = dep(&["SAM - Medium Range", "Hawk System"], "DEPHAWK");
+        let missing = dep(&["MBT", "Ghost"], "DEPNONE");
+        let p = PurchasedFormationCfg::default();
+        assert!(purchasable(&p, &tank, copy_size(&sizes, &tank)));
+        // six of these were 42 vehicles
+        assert!(!purchasable(&p, &platoon, copy_size(&sizes, &platoon)));
+        assert!(!purchasable(&p, &hawk, copy_size(&sizes, &hawk)));
+        assert!(!purchasable(&p, &missing, copy_size(&sizes, &missing)));
+        // a campaign can still sell whole platoons by naming them
+        let listed = PurchasedFormationCfg {
+            deployables: vec!["MBT / T-80UD / BMP-2 Platoon".into()],
+            ..Default::default()
+        };
+        assert!(purchasable(&listed, &platoon, copy_size(&sizes, &platoon)));
+        assert!(!purchasable(&listed, &tank, copy_size(&sizes, &tank)));
+    }
 
     #[test]
     fn ordered_group_cap() {
