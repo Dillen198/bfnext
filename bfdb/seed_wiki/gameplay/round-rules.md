@@ -88,11 +88,13 @@ Red is down to 1 primary objective(s) — Last Stand! Blue wins in 3600s if not 
   ({{cfg:war_will.airbase_lost|4}}), aircraft, ships and ground formations,
   and fuel stocks running under {{cfg:war_will.fuel_low_pct|30}}% of
   capacity. Every enemy loss raises yours by half as much, and captures raise
-  the captor's. It recovers slowly while nothing goes wrong. A side whose
-  will stays under {{cfg:war_will.threshold|20}} for
-  {{cfg:war_will.hold_hours|6}} hours **asks for terms**, and the other side
-  wins. The side is warned when it drops under the line, and on a countdown
-  after that:
+  the captor's. It recovers slowly while nothing goes wrong. On the Levant
+  and Southern Flank campaigns will **does not end the round**: it feeds the
+  [story events](#story-events) and, on the Southern Flank, the Last Stand.
+  A server can also give it a line (`war_will.threshold`, 0 on ours): a side
+  whose will stays under it for {{cfg:war_will.hold_hours|6}} hours **asks
+  for terms**, and the other side wins. The side is warned when it drops under
+  the line, and on a countdown after that:
 
 ```dcsmessage
 WILL TO FIGHT 18/100, below 20: we ask for terms in 5h 00m unless it recovers.
@@ -100,10 +102,6 @@ WILL TO FIGHT 18/100, below 20: we ask for terms in 5h 00m unless it recovers.
 
   The dashboard shows both sides' will, its trend and the biggest recent
   causes.
-- **A story ending.** Where the campaign writes [story events](#story-events),
-  one of them can end the war: on the Southern Flank, Moscow asks for terms
-  once Soviet fuel has run short and its will has collapsed. Like every story
-  event, it only happens because of what was done in the round.
 - **Round length.** A server can cap a round at
   {{cfg:max_round_days|0}} real-world days (0 = no cap). If nobody has won by
   then, the round ends in a **draw**. This lets a theatre rotation move on from

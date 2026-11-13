@@ -8,6 +8,13 @@ a linked page says otherwise, the later one is right.
 
 ## v3.4 — November 10, 2026
 
+**War will no longer ends the round**
+- On Levant and the Southern Flank a side no longer asks for terms when its
+  will to fight collapses, and the story's ceasefire events are gone. Will
+  still moves with losses and captures, and still drives the story events
+  and the Last Stand. Levant round 3 ended this way after two and a half
+  days; that will not happen again.
+
 **Troops can be unloaded anywhere**
 - Unload Troops no longer refuses inside your own base while it is
   threatened (`you can't deploy troops here while enemies are near`). Front

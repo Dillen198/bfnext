@@ -144,28 +144,6 @@
           { "Stock": { "side": "Red", "item": "fuel", "pct": 20 } },
           { "Points": { "points": 150 } }
         ]
-      },
-      {
-        "id": "rsii_asks_terms",
-        "title": "The coalition asks for terms",
-        "side": "Red",
-        "requires": ["shield_blind"],
-        "text": "With its shield broken and its will to fight gone, the RSII asks for a ceasefire in the Levant.",
-        "trigger": { "WillBelow": { "side": "Red", "value": 12 } },
-        "effects": [
-          { "EndRound": { "winner": "Blue" } }
-        ]
-      },
-      {
-        "id": "nato_stands_down",
-        "title": "NATO stands down",
-        "side": "Blue",
-        "requires": ["incirlik_hit"],
-        "text": "With Incirlik hit and the Alliance's will to fight gone, NATO agrees a ceasefire in the Levant.",
-        "trigger": { "WillBelow": { "side": "Blue", "value": 12 } },
-        "effects": [
-          { "EndRound": { "winner": "Red" } }
-        ]
       }
     ]
   }

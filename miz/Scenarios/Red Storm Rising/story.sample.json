@@ -582,56 +582,6 @@
             }
           }
         ]
-      },
-      {
-        "id": "moscow_asks_for_terms",
-        "title": "Moscow asks for terms",
-        "side": "Red",
-        "requires": [
-          "fuel_crisis"
-        ],
-        "excludes": [
-          "nato_withdraws"
-        ],
-        "text": "Out of fuel and with its will to fight gone, Moscow asks for a ceasefire on the southern flank.",
-        "trigger": {
-          "WillBelow": {
-            "side": "Red",
-            "value": 12
-          }
-        },
-        "effects": [
-          {
-            "EndRound": {
-              "winner": "Blue"
-            }
-          }
-        ]
-      },
-      {
-        "id": "nato_withdraws",
-        "title": "NATO withdraws from the beachhead",
-        "side": "Blue",
-        "requires": [
-          "carrier_hit"
-        ],
-        "excludes": [
-          "moscow_asks_for_terms"
-        ],
-        "text": "With the carrier damaged and the beachhead failing, the Alliance agrees a ceasefire.",
-        "trigger": {
-          "WillBelow": {
-            "side": "Blue",
-            "value": 12
-          }
-        },
-        "effects": [
-          {
-            "EndRound": {
-              "winner": "Red"
-            }
-          }
-        ]
       }
     ]
   }
