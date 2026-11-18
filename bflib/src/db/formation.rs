@@ -284,6 +284,11 @@ pub struct Formation {
     /// stand, where a bought one is removed (`Db::form_from_deployed`).
     #[serde(default)]
     pub formed: bool,
+    /// The regiment it serves in, numbered per side from 1; 0 until the
+    /// ground war's tick assigns one (`groundwar::oob`). The formation is
+    /// the battalion; its groups are the companies.
+    #[serde(default)]
+    pub regiment: u32,
 }
 
 fn full() -> f64 {
@@ -1337,6 +1342,7 @@ impl Db {
             pace: Pace::Normal,
             purchased: false,
             formed: false,
+            regiment: 0,
         };
         self.persisted.formations.insert_cow(id, f);
         if let Err(e) = self.update_objective_status(&oid, now) {
@@ -1506,6 +1512,7 @@ impl Db {
             pace: Pace::Normal,
             purchased: true,
             formed: false,
+            regiment: 0,
         };
         self.persisted.formations.insert_cow(id, f);
         let what = match self.move_formation_to(rt, lua, id, to, via, by, now) {
@@ -1675,6 +1682,7 @@ impl Db {
             pace: Pace::Normal,
             purchased: true,
             formed: true,
+            regiment: 0,
         };
         self.persisted.formations.insert_cow(id, f);
         self.ephemeral.dirty();

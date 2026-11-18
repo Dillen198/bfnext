@@ -30,6 +30,7 @@ for more details.
 //! a Lua handle and nothing else holds the context.
 
 mod ai;
+pub(crate) mod oob;
 mod picture;
 
 pub(crate) use picture::picture;
@@ -403,6 +404,8 @@ pub(crate) fn tick(
             ai::think(lua, ctx, &cfg, ai_cfg, now);
         }
     }
+    // battalions raised since the last tick join a regiment
+    oob::assign_regiments(&mut ctx.db);
     let vis = visibility(lua, ctx, &cfg);
     ctx.groundwar.rt.set_visibility(vis);
     ctx.db.tick_formations(&mut ctx.groundwar.rt, lua, &ctx.idx, perf, now);

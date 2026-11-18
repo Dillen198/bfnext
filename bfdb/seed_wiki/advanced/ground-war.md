@@ -521,6 +521,28 @@ driving: a column on a road, a line deployed across a field.
 ]
 ```
 
+#### Order of battle (O)
+
+Press **O**, or the **ORBAT** button, for your side's order of battle. Every
+formation is a **battalion**, and each of its DCS groups is a **company**
+(A Coy, B Coy...). Up to three battalions make a **regiment**: when a
+formation is raised it joins a regiment already on its task (the same
+objective), else the nearest one within 40 km, else a new one. It keeps its
+regiment for life, so "2nd Regiment / 1st Bn" is the same unit all round.
+Regiment numbers are per side and come free when a regiment's last battalion
+is gone.
+
+For each regiment the panel shows the task most of its battalions are on
+("attacking HJ01"), **MAIN EFFORT** when that is the HQ's main effort, its
+strength, and how many battalions are in contact. Under it, each battalion's
+order, distance and time to go, morale, supply, kills and losses, and who
+commands it if it isn't the AI; **+** opens its companies, each with its
+vehicles left and what they are. The last few things that happened to the
+regiment are underneath; click one to fly there. Click a regiment to select
+all its battalions, or a battalion to select it, and give orders as usual.
+The order of battle only groups and names what is already in the field: it
+puts nothing more in DCS.
+
 #### The enemy
 
 ```mapsymbols

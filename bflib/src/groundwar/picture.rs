@@ -38,8 +38,8 @@ use bfprotocols::{
     cfg::UnitTag,
     db::objective::ObjectiveKind,
     groundwar::{
-        BattleInfo, EnemyContact, FormationInfo, GroundEvent, GroundObjective,
-        GroundPicture, GroundUnit, LatLon, LivePlayer,
+        BattleInfo, CompanyInfo, EnemyContact, FormationInfo, GroundEvent,
+        GroundObjective, GroundPicture, GroundUnit, LatLon, LivePlayer,
     },
 };
 use dcso3::{
@@ -149,6 +149,39 @@ fn units_of(
     (units, make_up)
 }
 
+/// A formation's companies, one per DCS group, lettered in order.
+fn companies_of(ctx: &Context, f: &Formation) -> Vec<CompanyInfo> {
+    let db = &ctx.db;
+    f.groups
+        .iter()
+        .enumerate()
+        .filter_map(|(i, gid)| {
+            let g = db.persisted.groups.get(gid)?;
+            let mut roles: BTreeMap<&'static str, u32> = BTreeMap::new();
+            let (mut alive, mut total, mut typ) = (0, 0, String::new());
+            for uid in &g.units {
+                let Some(u) = db.persisted.units.get(uid) else { continue };
+                total += 1;
+                if u.dead {
+                    continue;
+                }
+                alive += 1;
+                if typ.is_empty() {
+                    typ = u.typ.to_string();
+                }
+                *roles.entry(db.unit_role(&u.typ, g.class).name()).or_default() += 1;
+            }
+            let role = roles
+                .iter()
+                .max_by_key(|(_, n)| **n)
+                .map(|(r, _)| r.to_string())
+                .unwrap_or_default();
+            let letter = (b'A' + (i % 26) as u8) as char;
+            Some(CompanyInfo { name: format!("{letter} Coy"), alive, total, role, typ })
+        })
+        .collect()
+}
+
 fn players(ctx: &Context, lua: MizLua, geo: &Geo, side: Side) -> Vec<LivePlayer> {
     let db = &ctx.db;
     db.instanced_players()
@@ -206,12 +239,13 @@ pub(crate) fn picture(ctx: &Context, lua: MizLua, side: Side) -> GroundPicture {
             time: now.timestamp(),
             spot_m: 0.,
             engage_m: 0.,
+            regiments: vec![],
         };
     };
     let db = &ctx.db;
     let rt = &ctx.groundwar.rt;
     let obj_name = |o| db.persisted.objectives.get(&o).map(|o| o.name.to_string());
-    let formations: Vec<FormationInfo> = db
+    let mut formations: Vec<FormationInfo> = db
         .formations()
         .filter(|f| f.side == side)
         .map(|f| {
@@ -301,9 +335,16 @@ pub(crate) fn picture(ctx: &Context, lua: MizLua, side: Side) -> GroundPicture {
                 losses: f.losses,
                 kills: f.kills,
                 purchased: f.purchased,
+                regiment: f.regiment,
+                // filled in by `oob::regiments` below
+                battalion: String::new(),
+                companies: companies_of(ctx, f),
             }
         })
         .collect();
+    let main_effort =
+        ctx.hq.ground_steer(side).and_then(|(_, me, _)| me).map(|o| o.inner() as u64);
+    let regiments = super::oob::regiments(&mut formations, main_effort);
     // Enemy formations only as this side has seen them: where and when.
     let enemy: Vec<EnemyContact> = rt
         .sightings(side)
@@ -439,6 +480,7 @@ pub(crate) fn picture(ctx: &Context, lua: MizLua, side: Side) -> GroundPicture {
         time: now.timestamp(),
         spot_m: cfg.combat.spot_m * rt.visibility(),
         engage_m: cfg.combat.engage_m,
+        regiments,
     }
 }
 

@@ -465,7 +465,42 @@ export interface GroundFormation {
   kills: number
   /** Bought from the treasury: a disband removes it rather than sending it home. */
   purchased?: boolean
+  /** Its regiment (GroundRegiment.id); 0 or absent = not assigned yet. */
+  regiment?: number
+  /** Its place in that regiment: "1st Bn". */
+  battalion?: string
+  /** One per DCS group. */
+  companies?: GroundCompany[]
 }
+
+/** One of a battalion's companies: one of the formation's DCS groups. */
+export interface GroundCompany {
+  name: string
+  alive: number
+  total: number
+  role: string
+  typ: string
+}
+
+/** Up to three formations (battalions) the engine groups as a regiment. */
+export interface GroundRegiment {
+  id: number
+  name: string
+  /** "attacking HJ01", "defending Damascus", "holding"... */
+  task: string
+  order: 'attack' | 'defend' | 'withdraw' | 'hold' | string
+  objective: number | null
+  objective_name: string | null
+  /** Its task is the HQ's main effort. */
+  main_effort?: boolean
+  /** Formation ids, first raised first. */
+  battalions: number[]
+  alive: number
+  total: number
+  pos: LatLon
+  engaged?: number
+}
+
 
 export interface GroundEnemyContact {
   id: number
@@ -555,6 +590,8 @@ export interface GroundPicture {
   time: number
   spot_m: number
   engage_m: number
+  /** The side's formations grouped into regiments (engines from Nov 2026). */
+  regiments?: GroundRegiment[]
   /** Added by bfdb: this viewer may give orders. */
   can_command: boolean
   /** Added by bfdb: an admin looking in at a side with ?side=. */

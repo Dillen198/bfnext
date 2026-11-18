@@ -1,10 +1,20 @@
 # Changelog
 
-What changed for players, newest first. Current version: **v3.5**. Each update
+What changed for players, newest first. Current version: **v3.6**. Each update
 gets the next number. Below v2.0 is the list of what this engine does
 differently from stock Fowl Engine. Where an entry gives a campaign number, it
 is read from the server selected at the top of the page; where a later entry or
 a linked page says otherwise, the later one is right.
+
+## v3.6 — November 18, 2026
+
+**Order of battle: regiments, battalions and companies**
+- The command map has an order-of-battle panel (**O**). Each formation is a
+  battalion and its groups are companies, and up to three battalions on the
+  same task or the same stretch of front make a regiment, which keeps its
+  number for life. Each regiment shows its task (marked when it is the HQ's
+  main effort), strength and contact; each battalion where it is going and
+  how it is doing. Click to select and fly there.
 
 ## v3.5 — November 15, 2026
 

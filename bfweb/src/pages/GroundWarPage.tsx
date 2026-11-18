@@ -17,7 +17,7 @@ import type { MapRef, ViewStateChangeEvent } from 'react-map-gl/maplibre'
 import Map from '../components/GLMap'
 import type { MapLibreEvent, Map as MlMap } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import { Aircraft, ChevronsLeft, Defend, Info, Pin, Plus, Shield, Strike, X } from '@icons'
+import { Aircraft, Armor, ChevronsLeft, Defend, Info, Pin, Plus, Shield, Strike, X } from '@icons'
 
 import { api, type CommandMe, type CommandOrder, type Frontlines, type GroundBattle, type GroundCommand, type GroundEvent, type GroundObjective, type GroundPicture, type LatLon, type OrderOption, type CombatLogLine } from '../api'
 import { useAuth } from '../context/AuthContext'
@@ -40,6 +40,7 @@ import { AssetLines, AssetMarker, AssetPanel, BaseOrders, EnemyAirMarker, Launch
 import { formationBase, isFormationKey } from './groundwar/buyFormation'
 import { ALL_LAYERS, MODE_TEXT, TARGET_TEXT, enemyAirOf, shown, useCommandFeed, useTacPicture, type AssetMode, type Layers } from './groundwar/commandFeed'
 import { Coverage, RoutePreview, SupplyNetwork, Territory, Threats } from './groundwar/overlays'
+import { OrbatPanel } from './groundwar/orbat'
 import { rankFor } from '../ranks'
 import type { PressEvent } from '@shared/web/a11y'
 import './groundwar/groundwar.css'
@@ -197,7 +198,19 @@ export default function GroundWarPage(): ReactElement {
   const [selEnemyId, setSelEnemyId] = useState<number | null>(null)
   const [selAssetId, setSelAssetId] = useState<number | null>(null)
   const [assetMode, setAssetMode] = useState<AssetMode>('none')
-  const [showLaunch, setShowLaunch] = useState(false)
+  const [showLaunch, setShowLaunchRaw] = useState(false)
+  const [showOrbat, setShowOrbatRaw] = useState(false)
+  // the command panel and the order of battle share the left side
+  const setShowLaunch = (v: boolean | ((s: boolean) => boolean)) => setShowLaunchRaw((s) => {
+    const n = typeof v === 'function' ? v(s) : v
+    if (n) setShowOrbatRaw(false)
+    return n
+  })
+  const setShowOrbat = (v: boolean | ((s: boolean) => boolean)) => setShowOrbatRaw((s) => {
+    const n = typeof v === 'function' ? v(s) : v
+    if (n) setShowLaunchRaw(false)
+    return n
+  })
   /** A catalogue order waiting for its target (and, for a transfer, the base it is from;
    *  for a formation bought from the treasury, how many -- its route goes in `wps`). */
   const [pending, setPending] = useState<{ opt: OrderOption; from?: number; count?: number } | null>(null)
@@ -782,6 +795,7 @@ export default function GroundWarPage(): ReactElement {
         case 'b': if (!L.assetKey('rtb')) L.toast('Select an AI flight to send home.', false); break
         case 'v': L.armAsset('barrage'); break
         case 'l': setShowLaunch((s) => !s); break
+        case 'o': setShowOrbat((s) => !s); break
         case 'a': L.enterMode('attack'); break
         case 'd': L.enterMode('defend'); break
         case 'h': if (L.selIds.length) L.hold(); else L.toast('Select formations to hold.', false); break
@@ -856,6 +870,7 @@ export default function GroundWarPage(): ReactElement {
     { key: '␣', label: 'CENTRE', icon: Pin, disabled: selIds.length ? null : 'Nothing selected', run: () => centre(selIds) },
     { key: 'F', label: follow ? 'FOLLOWING' : 'FOLLOW ME', icon: Aircraft, active: follow, disabled: selfPlayer ? null : 'Your aircraft is not live in DCS', run: toggleFollow },
     { key: 'L', label: 'COMMAND', icon: Strike, active: showLaunch, disabled: cp ? null : cmdQ.isError ? (engineBusy ? "The game server isn't answering right now -- retrying" : "This server's engine predates the command map") : 'The command picture has not arrived', run: () => setShowLaunch((s) => !s) },
+    { key: 'O', label: 'ORBAT', icon: Armor, active: showOrbat, disabled: null, run: () => setShowOrbat((s) => !s) },
     { key: '?', label: 'CONTROLS', icon: Info, disabled: null, run: () => setHelp(true) },
   ]
 
@@ -990,6 +1005,10 @@ export default function GroundWarPage(): ReactElement {
           armed={pending?.opt.key ?? null} onArm={armOrder} onArmFormation={armFormation}
           onOrder={(o, c) => void order(o, c)} onFocus={(p) => flyTo(p, 11)} onBarrage={() => armAsset('barrage')}
           onClose={() => setShowLaunch(false)} />
+      )}
+      {showOrbat && (
+        <OrbatPanel pic={pic} onEvent={onEvent} onClose={() => setShowOrbat(false)}
+          onPick={(ids, pos) => { selectOnly(ids.filter((id) => pic.formations.some((f) => f.id === id))); flyTo(pos) }} />
       )}
       <LayerToggles layers={layers} set={setLayers} note={assetNote} />
       <Toasts toasts={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />

@@ -12,12 +12,14 @@ import type {
   GroundBattle,
   GroundCommand,
   GroundCommandReply,
+  GroundCompany,
   GroundEnemyContact,
   GroundEvent,
   GroundFormation,
   GroundKind,
   GroundObjective,
   GroundPicture,
+  GroundRegiment,
   GroundRole,
   GroundUnit,
   LatLon,
@@ -377,6 +379,9 @@ export function createGroundwarMock(mode: string): GroundMock {
       trail: f.trail,
       losses: f.losses,
       kills: f.kills,
+      // two battalions a regiment, as the engine groups them by task
+      regiment: Math.floor((forms.indexOf(f)) / 2) + 1,
+      companies: companiesOf(f),
     }
   }
 
@@ -478,7 +483,48 @@ export function createGroundwarMock(mode: string): GroundMock {
     }
   }
 
+  /** Companies of four vehicles, the way groups split a formation. */
+  function companiesOf(f: SimFormation): GroundCompany[] {
+    const out: GroundCompany[] = []
+    for (let i = 0; i * 4 < Math.max(f.total, f.roles.length); i++) {
+      const live = f.roles.slice(i * 4, i * 4 + 4)
+      const role = live[0] ?? 'ifv'
+      out.push({
+        name: `${String.fromCharCode(65 + i)} Coy`, alive: live.length, total: Math.min(4, f.total - i * 4) || live.length,
+        role, typ: live[0] ? BLUE_TYP[live[0]] : '',
+      })
+    }
+    return out
+  }
+
+  /** The order of battle, worked out as `groundwar::oob::regiments` does. */
+  function regimentsOf(fs: GroundFormation[]): GroundRegiment[] {
+    const by: Record<number, GroundFormation[]> = {}
+    for (const f of fs) if (f.regiment) (by[f.regiment] ??= []).push(f)
+    return Object.entries(by).map(([id, bns]) => {
+      bns.sort((a, b) => a.id - b.id)
+      bns.forEach((f, i) => { f.battalion = `${i + 1}${['st', 'nd', 'rd'][i] ?? 'th'} Bn` })
+      const lead = bns[0]
+      const at = lead.target_name ?? 'its objective'
+      const task = lead.order === 'attack' ? `attacking ${at}` : lead.order === 'defend' ? `defending ${at}`
+        : lead.order === 'withdraw' ? `withdrawing to ${at}` : 'holding'
+      const n = Number(id)
+      return {
+        id: n,
+        name: `${n}${['st', 'nd', 'rd'][n - 1] ?? 'th'} Regiment`,
+        task, order: lead.order, objective: lead.target, objective_name: lead.target_name,
+        main_effort: n === 1 && lead.order === 'attack',
+        battalions: bns.map((f) => f.id),
+        alive: bns.reduce((a, f) => a + f.alive, 0),
+        total: bns.reduce((a, f) => a + f.total, 0),
+        pos: [bns.reduce((a, f) => a + f.pos[0], 0) / bns.length, bns.reduce((a, f) => a + f.pos[1], 0) / bns.length] as LatLon,
+        engaged: bns.filter((f) => f.engaged).length,
+      }
+    })
+  }
+
   function picture(): GroundPicture {
+    const formations = forms.map(formationOut)
     return {
       side: 'Blue',
       enabled: true,
@@ -486,7 +532,8 @@ export function createGroundwarMock(mode: string): GroundMock {
       live: forms.filter((f) => f.live).length,
       max_live: 6,
       player_lock_secs: 3600,
-      formations: forms.map(formationOut),
+      formations,
+      regiments: regimentsOf(formations),
       enemy: enemies.map((e) => ({
         id: e.id, pos: e.pos, kind: e.kind, approx_vehicles: e.approx_vehicles, heading: e.heading,
         last_seen_secs: Math.round(e.last_seen_secs), moving: e.moving, units: enemyUnits(e),

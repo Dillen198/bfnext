@@ -572,6 +572,7 @@ const KEYS: [string, string][] = [
   ['G', 'Fire: the selected battery on a point inside its ring'],
   ['V', 'Barrage: every battery of ours in range on a point'],
   ['L', 'Command panel: treasury, logistics, the HQ operations to launch'],
+  ['O', 'Order of battle: regiments, battalions and companies, and what each is doing'],
   ['Ctrl / Alt + 1-9', 'Make the selection a group'],
   ['1-9', 'Select a group; twice to centre on it'],
   ['Space', 'Centre on the selection'],
@@ -585,6 +586,7 @@ const KEYS: [string, string][] = [
 const VIEW_KEYS: [string, string][] = [
   ['Click', 'A formation, base, asset or contact: what we know about it'],
   ['Click the log', 'Fly to where it happened'],
+  ['O', 'Order of battle: regiments, battalions and companies'],
   ['Space', 'Centre on the selection'],
   ['Tab', 'Next formation (Shift + Tab: previous)'],
   ['F', 'Follow your own aircraft'],

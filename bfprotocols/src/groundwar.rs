@@ -44,6 +44,53 @@ pub struct GroundPicture {
     /// How close two forces have to be to fight, metres.
     #[serde(default)]
     pub engage_m: f64,
+    /// The side's order of battle: its formations (battalions) grouped into
+    /// regiments, each with the task most of its battalions are on.
+    #[serde(default)]
+    pub regiments: Vec<RegimentInfo>,
+}
+
+/// A regiment: up to three of the side's formations (its battalions),
+/// grouped by the engine when they are raised (`groundwar::oob`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegimentInfo {
+    /// Per side, from 1. Stays with the regiment while any battalion lives.
+    pub id: u32,
+    /// "2nd Regiment"
+    pub name: String,
+    /// What most of its battalions are doing: "attacking HJ01",
+    /// "defending Damascus", "withdrawing to H4", "holding".
+    pub task: String,
+    /// "attack" | "defend" | "withdraw" | "hold": the verb of `task`.
+    pub order: String,
+    pub objective: Option<u64>,
+    pub objective_name: Option<String>,
+    /// Its task is the HQ's main effort.
+    #[serde(default)]
+    pub main_effort: bool,
+    /// Its battalions (formation ids), first raised first.
+    pub battalions: Vec<u32>,
+    /// Vehicles alive and at full strength, over all its battalions.
+    pub alive: u32,
+    pub total: u32,
+    /// The centre of its battalions.
+    pub pos: LatLon,
+    /// Battalions with the enemy in contact.
+    #[serde(default)]
+    pub engaged: u32,
+}
+
+/// One of a battalion's companies: one of the formation's DCS groups.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompanyInfo {
+    /// "A Coy", "B Coy", ...
+    pub name: String,
+    pub alive: u32,
+    pub total: u32,
+    /// The role most of its live vehicles have (see `GroundUnit::role`).
+    pub role: String,
+    /// The DCS type of its first live vehicle.
+    pub typ: String,
 }
 
 /// One vehicle (or infantry team) of a formation, where it actually is.
@@ -175,6 +222,15 @@ pub struct FormationInfo {
     /// disband removes it instead of sending it home.
     #[serde(default)]
     pub purchased: bool,
+    /// The regiment it serves in (`RegimentInfo::id`); 0 = not yet assigned.
+    #[serde(default)]
+    pub regiment: u32,
+    /// Its place in that regiment: "1st Bn".
+    #[serde(default)]
+    pub battalion: String,
+    /// Its companies, one per DCS group.
+    #[serde(default)]
+    pub companies: Vec<CompanyInfo>,
 }
 
 /// An enemy formation our forces have spotted, now or recently.
