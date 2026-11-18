@@ -51,13 +51,15 @@ pub struct CommandCfg {
     /// Default 25000.
     #[serde(default = "default_deploy_range_m")]
     pub deploy_range_m: f64,
-    /// Ground groups per side the treasury may have in the field: units
+    /// Ground vehicles per side the treasury may have in the field: units
     /// ordered out by road from the command map, and every copy in a bought
-    /// formation (and what is left of one after it stands down). Every one is
-    /// a real DCS group for as long as it lives, and enough of them stop the
-    /// server. Players' own crates don't count. 0 = no cap. Default 24.
-    #[serde(default = "default_max_ordered_groups")]
-    pub max_ordered_groups: u32,
+    /// formation (and what is left of one after it stands down). Counted by
+    /// vehicle, not by group: a seven-vehicle platoon uses seven. Every one
+    /// is a real DCS unit for as long as it lives, and enough of them stop
+    /// the server. Players' own crates don't count. 0 = no cap. Default 24.
+    /// Older configs' `max_ordered_groups` is read as this.
+    #[serde(default = "default_max_ordered_vehicles", alias = "max_ordered_groups")]
+    pub max_ordered_vehicles: u32,
 }
 
 /// `CommandCfg::hunters`.
@@ -94,7 +96,7 @@ fn default_commander_rank() -> u8 {
 fn default_deploy_range_m() -> f64 {
     25_000.
 }
-fn default_max_ordered_groups() -> u32 {
+fn default_max_ordered_vehicles() -> u32 {
     24
 }
 fn default_hunters_red() -> Vec<String> {
@@ -140,7 +142,7 @@ impl Default for CommandCfg {
             commander_rank: default_commander_rank(),
             hunters: HuntersCfg::default(),
             deploy_range_m: default_deploy_range_m(),
-            max_ordered_groups: default_max_ordered_groups(),
+            max_ordered_vehicles: default_max_ordered_vehicles(),
         }
     }
 }
@@ -169,6 +171,10 @@ mod tests {
         let c: CommandCfg = serde_json::from_str("{}").unwrap();
         assert!(c.require_commander);
         assert_eq!(c.commander_rank, 4);
-        assert_eq!(c.max_ordered_groups, 24);
+        assert_eq!(c.max_ordered_vehicles, 24);
+        // the old name still reads
+        let c: CommandCfg =
+            serde_json::from_str(r#"{"max_ordered_groups": 30}"#).unwrap();
+        assert_eq!(c.max_ordered_vehicles, 30);
     }
 }

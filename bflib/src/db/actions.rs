@@ -4755,6 +4755,11 @@ impl Db {
                                         && !unit.tags.contains(UnitTag::Boat)
                                         && !self.persisted.troops.contains(gid)
                                         && !self.persisted.dismounts.contains(gid)
+                                        && !matches!(
+                                            group.origin,
+                                            DeployKind::Deployed { .. }
+                                                | DeployKind::Troop { .. }
+                                        )
                                     {
                                         self.ephemeral
                                             .units_able_to_move

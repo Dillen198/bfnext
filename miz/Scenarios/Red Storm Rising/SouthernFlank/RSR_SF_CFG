@@ -1203,7 +1203,8 @@
         }
       ]
     },
-    "ai_launch_min_fuel_pct": 25
+    "ai_launch_min_fuel_pct": 25,
+    "capture_airframe_stock_percent": 50
   },
   "helo_insertion": {
     "aircraft_template": {
@@ -17801,7 +17802,7 @@
     "qrf_max": 2,
     "patrol": true,
     "patrol_secs": 480,
-    "sam_relocate": true,
+    "sam_relocate": false,
     "sam_scoot_secs": 90,
     "sam_redeploy_secs": 2700,
     "sam_move_m": 1500

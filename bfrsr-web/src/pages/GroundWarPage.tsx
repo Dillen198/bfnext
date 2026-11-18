@@ -406,9 +406,31 @@ export default function GroundWarPage(): ReactElement {
     else armAsset(verb)
     return true
   }
+  /** Where a marker click landed, for an armed catalogue order: the map
+   *  point under the pointer, or the marker's own position from a key press. */
+  const pressAt = (e: PressEvent, fallback: LatLon | undefined): LatLon | null => {
+    const map = getMap()
+    if (map && 'clientX' in e) {
+      const r = map.getContainer().getBoundingClientRect()
+      const ll = map.unproject([e.clientX - r.left, e.clientY - r.top])
+      return [ll.lat, ll.lng]
+    }
+    return fallback ?? null
+  }
+  /** A click on a marker while a catalogue order is armed aims the order
+   *  (at the base under the pointer) instead of selecting the marker. A
+   *  base's own marker used to just show its info, so two-base orders such
+   *  as the AI supply run could never be aimed. */
+  const aimPending = (e: PressEvent, obj: number | null, fallback: LatLon | undefined): boolean => {
+    if (!pending) return false
+    const at = pressAt(e, fallback)
+    if (at) applyOrder(obj, at)
+    return true
+  }
   const pickAsset = (e: PressEvent, id: number) => {
     if (inputRef.current?.wasDrag()) return
     e.stopPropagation()
+    if (aimPending(e, hoverObj.current, cp?.assets.find((a) => a.id === id)?.pos)) return
     setSelAssetId(id)
     setSel([])
     setSelObjId(null)
@@ -486,6 +508,7 @@ export default function GroundWarPage(): ReactElement {
   const pickFormation = (e: PressEvent, id: number) => {
     if (inputRef.current?.wasDrag()) return
     e.stopPropagation()
+    if (aimPending(e, hoverObj.current, pic?.formations.find((f) => f.id === id)?.pos)) return
     // While an order is armed, a click anywhere aims it at the base under the cursor.
     if (mode !== 'none') return applyMode(hoverObj.current)
     setSelObjId(null)
@@ -507,6 +530,7 @@ export default function GroundWarPage(): ReactElement {
     e.stopPropagation()
     const o = pic?.objectives.find((x) => x.id === id)
     if (!o || !pic) return
+    if (pending) return applyOrder(id, o.pos)
     if (mode !== 'none') return applyMode(id)
     setSelObjId(id)
     setSel([])
@@ -516,6 +540,7 @@ export default function GroundWarPage(): ReactElement {
   const pickEnemy = (e: PressEvent, id: number) => {
     if (inputRef.current?.wasDrag()) return
     e.stopPropagation()
+    if (aimPending(e, hoverObj.current, pic?.enemy.find((x) => x.id === id)?.pos)) return
     if (mode !== 'none') return applyMode(hoverObj.current)
     setSelEnemyId(id)
     setSel([])

@@ -160,25 +160,31 @@ fn why_not_cost(ctx: &Context, side: Side, cost: i64) -> String {
     crate::hq::treasury::shortfall(&ctx.db, side, cost)
 }
 
-/// `side`'s treasury-paid ground groups in the field and the cap on them
-/// (`command.max_ordered_groups`), or None with no cap.
+/// `side`'s treasury-paid ground vehicles in the field and the cap on them
+/// (`command.max_ordered_vehicles`), or None with no cap.
 fn ordered_use(ctx: &Context, side: Side) -> Option<(usize, usize)> {
-    let cap = ctx.db.ephemeral.cfg.command.max_ordered_groups as usize;
-    (cap > 0).then(|| (ctx.db.ordered_groups(side), cap))
+    let cap = ctx.db.ephemeral.cfg.command.max_ordered_vehicles as usize;
+    (cap > 0).then(|| (ctx.db.ordered_vehicles(side), cap))
 }
 
-/// Why `n` more treasury-paid ground groups can't go out, if they can't.
+/// Vehicles one copy of `d` puts on the ground, for the cap: its template's
+/// size, or 1 if the mission doesn't say.
+fn vehicles_per_copy(sizes: &FxHashMap<dcso3::String, usize>, d: &Deployable) -> usize {
+    copy_size(sizes, d).unwrap_or(1).max(1)
+}
+
+/// Why `n` more treasury-paid ground vehicles can't go out, if they can't.
 fn why_not_room(used: Option<(usize, usize)>, n: usize) -> Option<String> {
     let (have, cap) = used?;
     if have + n <= cap {
         None
     } else if have >= cap {
         Some(format!(
-            "{have} of {cap} ordered ground groups are in the field: disband some first"
+            "{have} of {cap} ordered ground vehicles are in the field: disband some first"
         ))
     } else {
         Some(format!(
-            "room for {} more ordered ground group(s): {have} of {cap} are in the field",
+            "that is {n} vehicles, and there is room for {} more: {have} of {cap} ordered ground vehicles are in the field",
             cap - have
         ))
     }
@@ -203,6 +209,7 @@ pub(super) fn catalog(ctx: &Context, side: Side) -> Vec<OrderOption> {
         }
     }
     let used = ordered_use(ctx, side);
+    let sizes = ctx.idx.vehicle_group_sizes(side);
     if let Some(deps) = ctx.db.ephemeral.cfg.deployables.get(&side) {
         for d in deps {
             if !d.kind.is_group() {
@@ -216,7 +223,7 @@ pub(super) fn catalog(ctx: &Context, side: Side) -> Vec<OrderOption> {
                 why = format!("{out_now} of {} already deployed", d.limit);
             }
             if why.is_empty()
-                && let Some(full) = why_not_room(used, 1)
+                && let Some(full) = why_not_room(used, vehicles_per_copy(&sizes, d))
             {
                 why = full;
             }
@@ -239,7 +246,6 @@ pub(super) fn catalog(ctx: &Context, side: Side) -> Vec<OrderOption> {
     {
         let p = &gw.purchase;
         let in_field = ctx.db.formations().filter(|f| f.side == side).count();
-        let sizes = ctx.idx.vehicle_group_sizes(side);
         for d in deps.iter() {
             let size = copy_size(&sizes, d);
             if !purchasable(p, d, size) {
@@ -262,7 +268,10 @@ pub(super) fn catalog(ctx: &Context, side: Side) -> Vec<OrderOption> {
                 );
             }
             if why.is_empty()
-                && let Some(full) = why_not_room(used, p.min_count.max(1) as usize)
+                && let Some(full) = why_not_room(
+                    used,
+                    p.min_count.max(1) as usize * vehicles_per_copy(&sizes, d),
+                )
             {
                 why = full;
             }
@@ -830,7 +839,8 @@ fn deploy(
     if spec.limit > 0 && deployed_count(ctx, side, &spec.path) >= spec.limit as usize {
         return Err(format_compact!("all {} allowed are already deployed", spec.limit));
     }
-    if let Some(full) = why_not_room(ordered_use(ctx, side), 1) {
+    let n = vehicles_per_copy(&ctx.idx.vehicle_group_sizes(side), &spec);
+    if let Some(full) = why_not_room(ordered_use(ctx, side), n) {
         return Err(full.into());
     }
     if wet(lua, pos)? {
@@ -925,7 +935,8 @@ pub(super) fn buy_formation(
     }
     let cost = copy_cost(ctx, &p, &spec) * count as i64;
     afford(ctx, side, cost)?;
-    if let Some(full) = why_not_room(ordered_use(ctx, side), count as usize) {
+    let n = count as usize * vehicles_per_copy(&ctx.idx.vehicle_group_sizes(side), &spec);
+    if let Some(full) = why_not_room(ordered_use(ctx, side), n) {
         return Err(full.into());
     }
     let to = from_ll(lua, to)?;
@@ -1281,7 +1292,7 @@ pub(super) fn hunter_assets(
 
 #[cfg(test)]
 mod tests {
-    use super::{copy_size, purchasable, why_not_room};
+    use super::{copy_size, purchasable, vehicles_per_copy, why_not_room};
     use bfprotocols::cfg::{Deployable, PurchasedFormationCfg};
     use fxhash::FxHashMap;
 
@@ -1321,10 +1332,21 @@ mod tests {
         };
         assert!(purchasable(&listed, &platoon, copy_size(&sizes, &platoon)));
         assert!(!purchasable(&listed, &tank, copy_size(&sizes, &tank)));
+        // the cap counts what each copy puts on the ground
+        assert_eq!(vehicles_per_copy(&sizes, &tank), 1);
+        assert_eq!(vehicles_per_copy(&sizes, &platoon), 7);
+        assert_eq!(vehicles_per_copy(&sizes, &missing), 1);
+        assert!(
+            why_not_room(Some((20, 24)), vehicles_per_copy(&sizes, &platoon)).is_some()
+        );
+        assert_eq!(
+            why_not_room(Some((17, 24)), vehicles_per_copy(&sizes, &platoon)),
+            None
+        );
     }
 
     #[test]
-    fn ordered_group_cap() {
+    fn ordered_vehicle_cap() {
         assert_eq!(why_not_room(None, 50), None);
         assert_eq!(why_not_room(Some((3, 24)), 1), None);
         assert_eq!(why_not_room(Some((20, 24)), 4), None);

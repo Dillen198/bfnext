@@ -640,8 +640,11 @@ pub struct GarrisonCfg {
     /// NASAMS...) relocate inside their base: `sam_scoot_secs` after they
     /// stop firing, and about every `sam_redeploy_secs` while quiet. Where
     /// they end up is saved, so a site is rarely where it was last round.
-    /// Default true.
-    #[serde(default = "default_true")]
+    /// Default false: in DCS a site on the move can't fire, and one whose
+    /// vehicle can't reach the new spot stays packed up for hours. With it
+    /// off, sites a past move left elsewhere go back to where they were
+    /// laid out when the campaign loads.
+    #[serde(default)]
     pub sam_relocate: bool,
     /// Quiet seconds after its last launch before a site moves. Default 90.
     #[serde(default = "default_sam_scoot_secs")]
@@ -669,7 +672,7 @@ impl Default for GarrisonCfg {
             qrf_max: default_qrf_max(),
             patrol: true,
             patrol_secs: default_patrol_secs(),
-            sam_relocate: true,
+            sam_relocate: false,
             sam_scoot_secs: default_sam_scoot_secs(),
             sam_redeploy_secs: default_sam_redeploy_secs(),
             sam_move_m: default_sam_move_m(),

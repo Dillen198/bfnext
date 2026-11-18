@@ -6804,7 +6804,7 @@
     "Red": 500000
   },
   "command": {
-    "max_ordered_groups": 24
+    "max_ordered_vehicles": 24
   },
   "smart_commander": {
     "tick_period_secs": 60,

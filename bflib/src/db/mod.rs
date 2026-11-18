@@ -433,6 +433,9 @@ impl Db {
         db.ephemeral.set_cfg(miz, idx, cfg, to_bg)?;
         // the round's story changes to the action list (Cfg::story)
         db.story_sync_actions();
+        if !db.ephemeral.cfg.garrison.sam_relocate {
+            db.home_garrison_sams();
+        }
         db.load_veterans(path);
         // Restore the capture/last-stand timers that have to outlive a
         // restart (see Persisted::last_stand_state).

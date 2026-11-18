@@ -174,9 +174,24 @@ impl<'lua> SpawnCtx<'lua> {
         pos: Vector2,
     ) -> Result<Spawned> {
         let pad = {
-            let pad = self
-                .get_template(idx, GroupKind::Any, side, pad_template)
+            // A FARP keeps the pad template of the side that built it, so a
+            // captured one's pad is in the other coalition's templates. Look
+            // there too: the airbase is handed to the owner afterwards
+            // (`Airbase::set_coalition`), as when it was built. Looking only
+            // under the owner stopped the mission loading ("no such template
+            // DEPBFARPPAD3") once a FARP had changed hands.
+            let found = [side, Side::Blue, Side::Red, Side::Neutral]
+                .into_iter()
+                .find_map(|s| {
+                    self.miz
+                        .get_group_by_name(idx, GroupKind::Any, s, pad_template)
+                        .transpose()
+                })
+                .transpose()?;
+            let mut pad = found
+                .ok_or_else(|| anyhow!("no such template {pad_template}"))
                 .context("getting the pad")?;
+            pad.group = pad.group.deep_clone(self.lua.inner())?;
             pad.group.set("hidden", false)?;
             pad.group.set("lateActivation", false)?;
             let pad_unit = pad

@@ -169,12 +169,14 @@ commander's deployed units.
 
 ### The cap on ordered ground units
 
-Every unit the panel puts on the ground is a real DCS group for as long as it
-lives, and enough of them slow the whole server down. So a side may have at
-most {{cfg:command.max_ordered_groups|24}} groups the treasury paid for in the
-field at once: deployments by road, each copy in a bought formation, and what
-a bought formation left behind when it stood down. Players' own crates don't
-count. At the cap, deployments and formations show why they can't be ordered;
+Every vehicle the panel puts on the ground is a real DCS unit for as long as
+it lives, and enough of them slow the whole server down. So a side may have at
+most {{cfg:command.max_ordered_vehicles|24}} vehicles the treasury paid for in
+the field at once: deployments by road, each copy in a bought formation, and
+what a bought formation left behind when it stood down. The cap counts
+vehicles, not groups: a seven-vehicle platoon or a six-vehicle SAM battery
+uses seven or six of it, and the order shows how many it needs. Players' own
+crates don't count. At the cap, deployments and formations show why they can't be ordered;
 disband something to make room.
 
 ## The order catalogue

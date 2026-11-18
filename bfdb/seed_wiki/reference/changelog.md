@@ -1,10 +1,52 @@
 # Changelog
 
-What changed for players, newest first. Current version: **v3.4**. Each update
+What changed for players, newest first. Current version: **v3.5**. Each update
 gets the next number. Below v2.0 is the list of what this engine does
 differently from stock Fowl Engine. Where an entry gives a campaign number, it
 is read from the server selected at the top of the page; where a later entry or
 a linked page says otherwise, the later one is right.
+
+## v3.5 — November 15, 2026
+
+**The ordered-unit cap counts vehicles**
+- The cap on what the treasury may have in the field is now in vehicles, not
+  groups. A seven-vehicle platoon used one place of the 24 and now uses seven,
+  so a side can no longer field 30-odd vehicles while showing 24.
+
+**SAM sites stay put**
+- Base SAM sites no longer drive to a new spot inside their base after firing
+  or every 45 minutes or so. A site on the move can't fire, and one whose
+  vehicle couldn't reach the new spot sat packed up for hours. Sites an old
+  move left elsewhere (some on runways) are back where they were laid out.
+
+**Moved vehicles stay where you left them**
+- Every vehicle players or the treasury deployed is now tracked wherever it
+  drives, so after a restart it comes back where it was. Ural ammo trucks,
+  other trucks and SAM vehicles used to come back at their spawn point.
+
+**Captured airfields come with aircraft**
+- A captured base starts with half its airframe capacity of each type the
+  captors fly, plus any of the loser's aircraft salvaged in one piece, instead
+  of waiting hours or days for the supply line.
+
+**Better Red jets on Levant**
+- Red's Fighter Cover is a J-11A with PL-12s instead of a lone MiG-31.
+- Red SEAD is a JF-17 pair with four LD-10s each instead of Su-24Ms firing
+  Kh-58s from too far out.
+
+**AI supply and repair runs can be aimed again**
+- On the command map, clicking a base while a two-base order such as the AI
+  supply run is armed now picks the base for the order instead of opening its
+  info. So do clicks on markers sitting on a base.
+
+**A captured FARP no longer stops the server starting**
+- After a FARP changed hands, the mission failed to load on the next restart
+  ("no such template DEPBFARPPAD3"). It loads, and the FARP stays with its
+  new owner.
+
+**Restarts happen on time**
+- A server with players on no longer waits for everyone to leave once the
+  restart countdown reaches zero.
 
 ## v3.4 — November 10, 2026
 

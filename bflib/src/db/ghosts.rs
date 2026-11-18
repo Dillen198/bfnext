@@ -525,7 +525,8 @@ impl Db {
         self.ephemeral.units_potentially_close_to_enemies.insert(uid);
         if let Some(unit) = self.persisted.units.get(&uid)
             && (unit.tags.contains(UnitTag::Driveable)
-                || unit.tags.contains(UnitTag::Boat))
+                || unit.tags.contains(UnitTag::Boat)
+                || self.is_deployed_group(&unit.group))
         {
             self.ephemeral.units_able_to_move.insert(uid);
         }

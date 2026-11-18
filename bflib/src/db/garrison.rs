@@ -32,6 +32,7 @@ details.
 use super::{
     Db,
     formation::{FormationId, FormationRt, Order, Posture, good_ground, ground_point},
+    group::DeployKind,
     objective::ObjGroupClass,
 };
 use bfprotocols::{
@@ -397,6 +398,46 @@ impl Db {
                 o.name,
                 targets.len()
             );
+        }
+    }
+
+    /// With SAM relocation off (`GarrisonCfg::sam_relocate`), put every base
+    /// SAM site a past move left somewhere else back where it was laid out,
+    /// before anything spawns: moved sites were the ones found stuck,
+    /// packed up, or parked on a runway.
+    pub(super) fn home_garrison_sams(&mut self) {
+        let mut sams: SmallVec<[GroupId; 64]> = SmallVec::new();
+        for (_, o) in &self.persisted.objectives {
+            for (_, gids) in &o.groups {
+                for gid in gids {
+                    if let Some(g) = self.persisted.groups.get(gid)
+                        && g.kind == Some(GroupCategory::Ground)
+                        && g.tags.contains(UnitTag::SAM)
+                        && matches!(g.origin, DeployKind::Objective { .. })
+                    {
+                        sams.push(*gid);
+                    }
+                }
+            }
+        }
+        let mut moved = 0;
+        for gid in sams {
+            let Some(g) = self.persisted.groups.get(&gid) else { continue };
+            for uid in &g.units {
+                if let Some(u) = self.persisted.units.get_mut_cow(uid)
+                    && dist(u.pos, u.spawn_pos) > 1.
+                {
+                    u.pos = u.spawn_pos;
+                    u.position = u.spawn_position;
+                    moved += 1;
+                }
+            }
+        }
+        if moved > 0 {
+            info!(
+                "garrison: SAM relocation is off, {moved} SAM unit(s) back where they were laid out"
+            );
+            self.ephemeral.dirty();
         }
     }
 

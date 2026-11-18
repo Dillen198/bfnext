@@ -4143,9 +4143,16 @@ fn run_admin_command(
             // out. Keep the running countdown unless the time actually
             // moved; the bot's own value jitters by a second or two
             // between pushes, so allow a minute of slack.
+            //
+            // No time from the bot never cancels a countdown: bfdb sends
+            // none once the bot's restart moment has passed, and dropping
+            // ours then left the server running past zero, waiting for the
+            // last player to leave (player report, 15 Nov 2026). The
+            // countdown that is running (the bot's, or `cfg.shutdown`'s)
+            // still ends in a save and a restart.
             let now = Utc::now();
             ctx.shutdown = match (restart_at, ctx.shutdown) {
-                (None, _) => None,
+                (None, cur) => cur,
                 (Some(at), Some(cur)) if (cur.when - at).num_seconds().abs() <= 60 => {
                     Some(cur)
                 }

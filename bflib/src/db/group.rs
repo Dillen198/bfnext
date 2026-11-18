@@ -208,7 +208,7 @@ pub enum DeployKind {
         jtac: Option<bfprotocols::cfg::JtacState>,
         /// Paid for by the treasury: ordered out from the command map, or a
         /// copy in a bought formation. Any commander of the side may disband
-        /// it, and it counts toward `command.max_ordered_groups`.
+        /// it, and it counts toward `command.max_ordered_vehicles`.
         #[serde(default)]
         ordered: bool,
     },
@@ -801,20 +801,30 @@ impl Db {
         Ok(())
     }
 
-    /// `side`'s treasury-paid ground groups with anyone left alive in them,
-    /// in the field or marching with a bought formation: what
-    /// `command.max_ordered_groups` caps.
-    pub fn ordered_groups(&self, side: Side) -> usize {
+    /// `side`'s live vehicles in treasury-paid ground groups, in the field or
+    /// marching with a bought formation: what `command.max_ordered_vehicles`
+    /// caps. A seven-vehicle platoon counts seven while all of it lives.
+    pub fn ordered_vehicles(&self, side: Side) -> usize {
         let Some(gids) = self.persisted.groups_by_side.get(&side) else { return 0 };
         gids.into_iter()
             .filter_map(|gid| self.persisted.groups.get(gid))
             .filter(|g| matches!(g.origin, DeployKind::Deployed { ordered: true, .. }))
-            .filter(|g| {
+            .map(|g| {
                 g.units
                     .into_iter()
-                    .any(|u| self.persisted.units.get(u).is_some_and(|u| !u.dead))
+                    .filter(|u| self.persisted.units.get(u).is_some_and(|u| !u.dead))
+                    .count()
             })
-            .count()
+            .sum()
+    }
+
+    /// Deployed by players or the treasury (crates, the command map, troops):
+    /// such a group can be driven anywhere, so its units' positions are
+    /// always tracked and saved, whatever their tags.
+    pub(super) fn is_deployed_group(&self, gid: &GroupId) -> bool {
+        self.persisted.groups.get(gid).is_some_and(|g| {
+            matches!(g.origin, DeployKind::Deployed { .. } | DeployKind::Troop { .. })
+        })
     }
 
     /// Disband a group `disbandable` allows. Nothing is refunded: nobody
@@ -1825,13 +1835,17 @@ impl Db {
             // them a squad that walked into a zone never counted. AI aircraft
             // too: an enemy base wakes when they come within the cull
             // distance (`cull_or_respawn_objectives`), and untracked they only
-            // ever counted from where they were born.
+            // ever counted from where they were born. And everything players
+            // deployed, whatever its tags: a Ural ammo truck or a SAM launcher
+            // moved by Combined Arms waypoints fires no event, and untracked
+            // it came back at its spawn point after every restart.
             if unit.tags.contains(UnitTag::Driveable)
                 || unit.tags.contains(UnitTag::Boat)
                 || unit.tags.contains(UnitTag::Aircraft)
                 || unit.tags.contains(UnitTag::Helicopter)
                 || self.persisted.troops.contains(&unit.group)
                 || self.persisted.dismounts.contains(&unit.group)
+                || self.is_deployed_group(&unit.group)
             {
                 self.ephemeral.units_able_to_move.insert(uid);
             }
