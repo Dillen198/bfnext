@@ -1452,10 +1452,20 @@ impl Db {
         }
         match buildable(&nearby, &didx) {
             Err(mut build_reasons) => reasons.append(&mut build_reasons),
-            Ok(mut candidates) => {
+            Ok(candidates) => {
+                // Crates for more than one thing can lie in the same pile
+                // (two sets dropped at one spot). Build the set nearest the
+                // pilot, not whichever the hash map returns first: a full
+                // ATACMS set next to a GMLRS one came out as either.
+                let near = |have: &FxHashMap<String, Vec<Cifo>>| {
+                    have.values()
+                        .flat_map(|c| c.iter())
+                        .map(|c| (c.pos - st.point).magnitude_squared())
+                        .fold(f64::INFINITY, f64::min)
+                };
                 let (dep, have) = candidates
-                    .drain()
-                    .next()
+                    .into_iter()
+                    .min_by(|(_, a), (_, b)| near(a).total_cmp(&near(b)))
                     .ok_or_else(|| anyhow!("no deployable candidates found"))?;
                 let spec = maybe!(didx.deployables_by_name, dep, "deployable")?.clone();
                 let centroid =

@@ -44,6 +44,11 @@ a linked page says otherwise, the later one is right.
   ("no such template DEPBFARPPAD3"). It loads, and the FARP stays with its
   new owner.
 
+**Crates build what you brought**
+- With crates for two things lying close together, such as an ATACMS set
+  next to a GMLRS one, unpacking could build either. It now builds the set
+  nearest you.
+
 **Restarts happen on time**
 - A server with players on no longer waits for everyone to leave once the
   restart countdown reaches zero.
