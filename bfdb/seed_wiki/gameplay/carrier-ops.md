@@ -74,6 +74,12 @@ Only your own carrier groups are listed. The group transits at
 and a carrier that needs to be somewhere in 40 minutes needs to be told now.
 After a server restart the task force is put back where it was.
 
+The group steams **straight** at the mark: DCS ships don't steer round land.
+A mark the group can't reach in a straight line over open sea is refused, with
+how far out the course hits land. Go round a headland in legs, one mark at a
+time. Under way, the escorts follow the carrier in line astern rather than
+holding a screen.
+
 Practical use:
 
 - **Move it in before a push**, so the strike package isn't spending half its

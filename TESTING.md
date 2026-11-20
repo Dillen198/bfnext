@@ -881,6 +881,8 @@ With `warehouse.sea_logistics.lanes` and `naval_patrols` set (Levant).
 | 30.5 | Patrols at sea | Start the mission, wait a minute | Four patrols sail their loops in open water (`[NAVAL_PATROL] ... at sea` in `dcs.log`) | |
 | 30.6 | Patrol lost and replaced | Sink a patrol | Its side is told; a new one sails `respawn_minutes` later | |
 | 30.7 | Base captured | Capture Latakia (admin) | Its two patrols are withdrawn and sail again as NATO ships | |
+| 30.8 | Carrier course over land | Carrier Waypoint to a mark across a headland from the task force | Refused, "can't steer round land ... about N km out"; the group doesn't move; `[CARRIER_WAYPOINT] refused` in `bflib.txt` | |
+| 30.9 | Carrier course at sea | Carrier Waypoint to a mark with open sea all the way | The group sails to it | |
 
 ---
 

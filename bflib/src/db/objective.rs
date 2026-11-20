@@ -4923,6 +4923,37 @@ pub(super) fn sea_spot(
     None
 }
 
+/// Where the straight run from `from` to `to` first leaves open water,
+/// checked every 250 m up to and including `to`, or `None` if it is water
+/// all the way. A DCS ship group steams straight at its waypoint and does not
+/// steer round land: a carrier sent across a headland runs into the coast and
+/// stops there. The first kilometre is not checked, so a ship lying close
+/// inshore can still sail.
+pub(super) fn land_on_sea_path(
+    from: Vector2,
+    to: Vector2,
+    is_water: impl Fn(Vector2) -> bool,
+) -> Option<Vector2> {
+    const STEP_M: f64 = 250.;
+    const SKIP_M: f64 = 1_000.;
+    let len = (to - from).norm();
+    if len < 1. {
+        return None;
+    }
+    let dir = (to - from) / len;
+    let mut d = SKIP_M.min(len);
+    loop {
+        let p = from + dir * d;
+        if !is_water(p) {
+            return Some(p);
+        }
+        if d >= len {
+            return None;
+        }
+        d = (d + STEP_M).min(len);
+    }
+}
+
 /// A squad a player bought and carried in, as opposed to an AI assault
 /// squad (the all-zero ucid) or a dismount from a destroyed vehicle. These
 /// outlast a consolidation hold, see `Db::check_capture_hold`.
@@ -5008,6 +5039,25 @@ mod tests {
         assert!(p.x - 1_200. > 2_000., "escort would be ashore at {p:?}");
         // Nothing but land: no departure point.
         assert!(sea_spot(Vector2::new(0., 0.), &formation, |_| false).is_none());
+    }
+
+    #[test]
+    fn a_carrier_course_across_a_headland_is_caught() {
+        // Open sea, with a headland (land for 5 < x < 8 km, y < 3 km).
+        let water = |p: Vector2| !(p.x > 5_000. && p.x < 8_000. && p.y < 3_000.);
+        let v = Vector2::new;
+        // straight across it: aground where it meets the headland
+        let p = land_on_sea_path(v(0., 0.), v(12_000., 0.), water).expect("aground");
+        assert!(p.x > 5_000. && p.x < 5_300., "{p:?}");
+        // round its tip: clear
+        assert_eq!(land_on_sea_path(v(0., 5_000.), v(12_000., 5_000.), water), None);
+        // a destination ashore is caught even when the run there is short
+        assert!(land_on_sea_path(v(4_000., 0.), v(6_000., 0.), water).is_some());
+        // lying close inshore: the first kilometre is not held against it
+        let beach = |p: Vector2| p.x > 500.;
+        assert_eq!(land_on_sea_path(v(0., 0.), v(10_000., 0.), beach), None);
+        // already there
+        assert_eq!(land_on_sea_path(v(0., 0.), v(0., 0.), |_| false), None);
     }
 
     #[test]

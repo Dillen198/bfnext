@@ -319,8 +319,10 @@ the 150km max range"*.
 
 ### Carrier Waypoint
 `CarrierWaypoint`. Sails one of your carrier groups to a mark. The menu lists
-your carrier groups as `5501(<name> Carrier)`. Refusal: *"5501 is not one of
-your carrier groups"*.
+your carrier groups as `5501(<name> Carrier)`. Refusals: *"5501 is not one of
+your carrier groups"*, and *"the carrier group can't steer round land: that
+course leaves open water about N km out"* for a mark it can't reach in a
+straight line over open sea.
 
 ### Carrier Repair / Carrier Respawn
 `CarrierRepair` repairs a damaged task force and refloats its lost escorts;

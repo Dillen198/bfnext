@@ -22,6 +22,12 @@ a linked page says otherwise, the later one is right.
   Driving one now works even when the server missed you getting in, and the
   F10 → Troops menu is built for the vehicle whenever someone takes it over.
 
+**Carrier groups don't run aground**
+- DCS ships steam straight at their waypoint and don't steer round land, so a
+  carrier sent across a headland drove into the coast and sat there. A carrier
+  waypoint whose straight course leaves open water is now refused, saying how
+  far out it hits land. Move it round in legs.
+
 ## v3.5 — November 15, 2026
 
 **The ordered-unit cap counts vehicles**

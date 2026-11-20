@@ -2103,6 +2103,39 @@ impl Db {
         }
 
         if let Some((obj_id, template)) = carrier_info {
+            // DCS ships steam straight at the waypoint and don't steer round
+            // land: a course across a headland ran the task force into the
+            // coast, where it sat for good. Refuse it and say where.
+            let lead = self.persisted.groups.get(&args.group).and_then(|g| {
+                g.units
+                    .into_iter()
+                    .filter_map(|u| self.persisted.units.get(u))
+                    .find(|u| !u.dead)
+                    .map(|u| u.pos)
+            });
+            if let Some(from) = lead {
+                let land = Land::singleton(lua)?;
+                let water = |p: Vector2| {
+                    matches!(
+                        land.get_surface_type(LuaVec2(p)),
+                        std::result::Result::Ok(dcso3::land::SurfaceType::Water)
+                    )
+                };
+                if let Some(p) = super::objective::land_on_sea_path(from, args.pos, water)
+                {
+                    let out_km = (p - from).norm() / 1000.;
+                    warn!(
+                        "[CARRIER_WAYPOINT] refused: the course from ({:.0}, {:.0}) to \
+                         ({:.0}, {:.0}) leaves open water {out_km:.1} km out at ({:.0}, {:.0})",
+                        from.x, from.y, args.pos.x, args.pos.y, p.x, p.y
+                    );
+                    bail!(
+                        "the carrier group can't steer round land: that course leaves open water \
+                         about {out_km:.0} km out. Pick a point with open sea all the way, or \
+                         move it in legs"
+                    )
+                }
+            }
             info!(
                 "[CARRIER_WAYPOINT] Setting waypoint for carrier template: {}",
                 template
