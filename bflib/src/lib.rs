@@ -1814,23 +1814,30 @@ fn handle_event(
                             }
                         }
                     });
-                let ucid = driver.map(|(u, _)| u);
                 ctx.db.player_entered_unit(&id, driver);
                 // Driving an IFV/APC/truck that carries a squad: a Troops
-                // menu on it to put the squad down or take one aboard.
-                if let Some(ucid) = ucid
-                    && let Some(uid) = ctx.db.driven_unit(&ucid)
-                    && ctx.db.persisted.units.get(&uid).is_some_and(|u| {
-                        !u.dead && ctx.db.carrier_troop(&u.typ, u.side).is_some()
-                    })
+                // menu on it to put the squad down or take one aboard. From
+                // the vehicle itself, not the driver record: that also needs
+                // their commander slot, which DCS may not give. The menu
+                // checks who is in the vehicle when it is used.
+                if let Some(uid) = ctx.db.ephemeral.get_uid_by_object_id(&id).copied()
+                    && ctx.db.is_carrier(&uid)
                 {
+                    // says whether the driver was recognised, for when a
+                    // player reports the menu missing or refusing them
+                    info!(
+                        "[CARRIER] {} entered carrier {uid}: troops menu built",
+                        driver
+                            .map(|(u, _)| u.to_string())
+                            .unwrap_or_else(|| "unknown driver".into())
+                    );
                     let built = dcso3::mission_commands::MissionCommands::singleton(lua)
                         .and_then(|mc| {
                             let gid = unit.get_group()?.id()?;
                             menu::add_carrier_menu_for_group(&mc, gid, unit.get_name()?)
                         });
                     if let Err(e) = built {
-                        warn!("could not build the carrier menu for {ucid}: {e:?}");
+                        warn!("could not build the carrier menu for {uid}: {e:?}");
                     }
                 }
             }

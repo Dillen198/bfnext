@@ -605,12 +605,20 @@ pub(crate) fn carrier_order(
     cmd: CarrierCmd,
     gid: Option<GroupId>,
 ) -> String {
-    let mine = ctx.db.carriers_of(ucid);
+    const NONE: &str = "you have no vehicles that carry troops: drive one (Combined Arms), \
+        deploy one, or name a teammate's with -dismount <group>";
+    let mut mine = ctx.db.carriers_of(ucid);
+    // DCS may not have told us they got in: ask it who is in each carrier
+    let driving = ctx.db.live_driven_carrier(lua, ucid);
+    if let Some(uid) = driving
+        && !mine.contains(&uid)
+    {
+        mine.insert(0, uid);
+    }
     if cmd == CarrierCmd::List {
         if mine.is_empty() {
-            return "you have no vehicles that carry troops: drive one (Combined Arms) or deploy one".into();
+            return NONE.into();
         }
-        let driving = ctx.db.driven_unit(ucid);
         let mut lines = vec![std::string::String::from("your troop carriers:")];
         for uid in &mine {
             let Some(u) = ctx.db.persisted.units.get(uid) else { continue };
@@ -639,28 +647,21 @@ pub(crate) fn carrier_order(
         uids.iter().copied().find(|u| fits(u)).or(first).ok_or_else(|| "none".to_string())
     };
     let target = match gid {
-        Some(gid) => {
-            let in_group: Vec<_> = mine
-                .iter()
-                .copied()
-                .filter(|u| ctx.db.persisted.units.get(u).is_some_and(|u| u.group == gid))
-                .collect();
-            match pick(in_group) {
-                Ok(u) => u,
-                Err(_) => {
-                    return format!(
-                        "group {gid} is not a troop carrier you drive or deployed (-carriers lists yours)"
-                    )
-                    .into();
-                }
+        // any carrier group: whether they may order it is checked when the
+        // order is carried out (theirs, their side's, or the one they drive)
+        Some(gid) => match pick(ctx.db.carriers_in_group(&gid)) {
+            Ok(u) => u,
+            Err(_) => {
+                return format!(
+                    "group {gid} is not a troop carrier (-carriers lists yours)"
+                )
+                .into();
             }
-        }
-        None => match ctx.db.driven_unit(ucid).filter(|u| mine.contains(u)) {
+        },
+        None => match driving {
             Some(u) => u,
             None if mine.len() == 1 => mine[0],
-            None if mine.is_empty() => {
-                return "you have no vehicles that carry troops: drive one (Combined Arms) or deploy one".into();
-            }
+            None if mine.is_empty() => return NONE.into(),
             None => {
                 return "you have several troop carriers: name one, e.g. -dismount 1234 (-carriers lists them)".into();
             }
@@ -1429,7 +1430,7 @@ fn help_command(ctx: &mut Context, id: PlayerId) {
         " -brief: auto-generated situational briefing (full report: F10 > Info > Situation)",
         " -transfer <amount> [<player> | objective:<objective>]: transfer points to another player or objective",
         " -delete <groupid>: delete a group you deployed for a partial refund",
-        " -dismount [groupid]: put the squad out of the IFV/APC/truck you drive or deployed",
+        " -dismount [groupid]: put the squad out of the IFV/APC/truck you drive or your side deployed",
         " -embark [groupid]: take a nearby squad aboard it, -carriers: list yours",
         " -action <name> <args>: perform an action, -action help for a list of actions",
         " -bind <uuid>: link your account to the web dashboard (uuid from its login page)",

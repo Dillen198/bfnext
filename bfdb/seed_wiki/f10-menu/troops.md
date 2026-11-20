@@ -118,9 +118,10 @@ put it down:
 - **Driving it yourself** (Combined Arms): the vehicle gets an **F10 → Troops**
   menu with **Dismount squad**, **Embark nearby squad** and **What is aboard**.
   The same works from chat: `-dismount`, `-embark`.
-- **One you deployed** (AI driven): `-dismount <groupid>` and
+- **One you or a teammate deployed** (AI driven): `-dismount <groupid>` and
   `-embark <groupid>` in chat. `-carriers` lists your vehicles that carry a
-  squad and what each has aboard.
+  squad and what each has aboard. AI garrison and ground-war vehicles only
+  take orders from someone driving them.
 
 The vehicle has to be **stopped**. The squad gets out behind it and is yours:
 it counts against the squad limits and captures if its type can.

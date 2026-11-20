@@ -899,7 +899,8 @@ A `cfg.dismount` type (BTR-82A, BMP-2, M-2 Bradley, ...). See `bflib/src/db/carr
 | 31.7 | Destroyed while out | Dismount, destroy the vehicle | No second squad appears at the wreck | |
 | 31.8 | Destroyed loaded | Destroy a vehicle with its squad aboard | Its squad gets out at the wreck, as before | |
 | 31.9 | AI vehicle you deployed | Deploy a Bradley, `-carriers`, `-dismount <group>` | Listed with what is aboard; its squad gets out when it is stopped | |
-| 31.10 | Not yours | `-dismount <someone else's group>` | Refused; nothing spawns | |
+| 31.10 | Teammate's | `-dismount <a teammate's deployed group>`; then the same on an AI garrison BTR and on an enemy's | Teammate's: squad out, owned by you. Garrison and enemy: refused, nothing spawns | |
+| 31.10a | Missed enter event | Drive a teammate's BMP, stop, F10 → Troops → Dismount squad, and `-dismount` | Both work; `bflib.txt` has `[CARRIER] ... entered carrier` saying whether the driver was recognised | |
 | 31.11 | Restart | Dismount, restart the mission | The squad and the vehicle's "out" state both survive | |
 
 ---

@@ -106,8 +106,9 @@ side (or the AI HQ) called it recently. See
 [Costs, limits and refunds](../f10-menu/actions.md#costs-limits-and-refunds).
 
 ### Q: How do I get the troops out of a BTR, BMP, Bradley or truck?
-**A**: Drive it yourself (Combined Arms) or deploy it, stop, then **F10 →
-Troops → Dismount squad** in the vehicle, or `-dismount` in chat. Each vehicle
+**A**: Drive it yourself (Combined Arms), stop, then **F10 → Troops →
+Dismount squad** in the vehicle, or `-dismount` in chat. For one you or a
+teammate deployed, `-dismount <group id>` works without driving it. Each vehicle
 has one squad: embark it again (**Embark nearby squad**, or `-embark`) before
 it can be put down somewhere else. If the squad is killed, that vehicle has no
 more troops. See [Troops](../f10-menu/troops.md#troops-in-ifvs-apcs-and-trucks).

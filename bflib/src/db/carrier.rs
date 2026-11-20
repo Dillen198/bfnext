@@ -18,8 +18,9 @@ for more details.
 //!
 //! Every such vehicle carries one squad, its own, for as long as it lives.
 //! Before this the squad only ever got out when the vehicle was destroyed.
-//! Now the player driving it (Combined Arms) or the player who deployed it
-//! (AI driven) can put the squad down while the vehicle is stopped, and must
+//! Now the player driving it (Combined Arms), or for a player-deployed one
+//! (AI driven) anyone on its side, can put the squad down while the vehicle
+//! is stopped, and must
 //! take that same squad back aboard (embark) before it can be put down
 //! again. Nothing is ever duplicated:
 //!
@@ -125,6 +126,19 @@ fn own_squad_troop(
         })
 }
 
+/// May player `ucid`, on `player_side`, order a carrier on `side` they are
+/// not driving? `deployer` is who deployed it, `None` for AI garrison and
+/// ground-war vehicles, which nobody may. A deployed one: its deployer, or
+/// anyone on its side.
+fn may_order_deployed(
+    deployer: Option<&Ucid>,
+    side: Side,
+    ucid: &Ucid,
+    player_side: Option<Side>,
+) -> bool {
+    deployer.is_some_and(|d| d == ucid || player_side == Some(side))
+}
+
 /// What a carrier has aboard, from its record (`None`: as it started) and
 /// whether the group its squad went out as still has anyone alive.
 fn aboard(
@@ -197,19 +211,74 @@ impl Db {
             .is_some_and(|u| !u.dead && self.carrier_troop(&u.typ, u.side).is_some())
     }
 
-    /// May `ucid` order `uid`'s squad out or in? The player driving it, or
-    /// the player who deployed it.
-    fn may_order_carrier(&self, uid: &UnitId, ucid: &Ucid) -> bool {
+    /// Is `ucid` driving `uid` right now? The Combined Arms driver the
+    /// enter event recorded, else whoever DCS says is in the live unit: the
+    /// event is not always there to record them.
+    fn is_driving(&self, lua: dcso3::MizLua, uid: &UnitId, ucid: &Ucid) -> bool {
         if self.driven_unit(ucid) == Some(*uid) {
             return true;
         }
+        let (Some(u), Some(p)) =
+            (self.persisted.units.get(uid), self.persisted.players.get(ucid))
+        else {
+            return false;
+        };
+        Unit::get_by_name(lua, u.name.as_str())
+            .and_then(|unit| unit.get_player_name())
+            .ok()
+            .flatten()
+            .is_some_and(|name| name.as_str() == p.name.as_str())
+    }
+
+    /// The living carrier `ucid` is in, by asking DCS who is in each of
+    /// their side's carriers: for a Combined Arms driver whose enter event
+    /// never came.
+    pub fn live_driven_carrier(&self, lua: dcso3::MizLua, ucid: &Ucid) -> Option<UnitId> {
+        if let Some(uid) = self.driven_unit(ucid) {
+            return self.is_carrier(&uid).then_some(uid);
+        }
+        let p = self.persisted.players.get(ucid)?;
+        self.persisted.units.into_iter().find_map(|(uid, u)| {
+            if u.side != p.side || u.dead || self.carrier_troop(&u.typ, u.side).is_none()
+            {
+                return None;
+            }
+            let name = Unit::get_by_name(lua, u.name.as_str())
+                .and_then(|unit| unit.get_player_name())
+                .ok()
+                .flatten()?;
+            (name.as_str() == p.name.as_str()).then_some(*uid)
+        })
+    }
+
+    /// The living carriers in group `gid`.
+    pub fn carriers_in_group(&self, gid: &GroupId) -> Vec<UnitId> {
         self.persisted
-            .units
-            .get(uid)
-            .and_then(|u| self.persisted.groups.get(&u.group))
-            .is_some_and(|g| {
-                matches!(&g.origin, DeployKind::Deployed { player, .. } if player == ucid)
+            .groups
+            .get(gid)
+            .map(|g| {
+                g.units.into_iter().copied().filter(|u| self.is_carrier(u)).collect()
             })
+            .unwrap_or_default()
+    }
+
+    /// May `ucid` order `uid`'s squad out or in? The player driving it, or
+    /// anyone on its side if a player deployed it (not just the one who
+    /// did: a teammate's BMP is no use to the side otherwise).
+    fn may_order_carrier(&self, lua: dcso3::MizLua, uid: &UnitId, ucid: &Ucid) -> bool {
+        if self.is_driving(lua, uid, ucid) {
+            return true;
+        }
+        let side = self.persisted.players.get(ucid).map(|p| p.side);
+        self.persisted.units.get(uid).is_some_and(|u| {
+            self.persisted.groups.get(&u.group).is_some_and(|g| {
+                let deployer = match &g.origin {
+                    DeployKind::Deployed { player, .. } => Some(player),
+                    _ => None,
+                };
+                may_order_deployed(deployer, u.side, ucid, side)
+            })
+        })
     }
 
     /// Does group `gid` still have anyone alive?
@@ -271,8 +340,10 @@ impl Db {
         uid: &UnitId,
         ucid: &Ucid,
     ) -> Result<(Troop, GroupId)> {
-        if !self.may_order_carrier(uid, ucid) {
-            bail!("you can only order a vehicle you are driving or one you deployed")
+        if !self.may_order_carrier(lua, uid, ucid) {
+            bail!(
+                "you can only order a vehicle you are driving or one your side deployed"
+            )
         }
         let (side, typ) = {
             let u =
@@ -354,8 +425,10 @@ impl Db {
         uid: &UnitId,
         ucid: &Ucid,
     ) -> Result<(Troop, Option<(u16, u16)>)> {
-        if !self.may_order_carrier(uid, ucid) {
-            bail!("you can only order a vehicle you are driving or one you deployed")
+        if !self.may_order_carrier(lua, uid, ucid) {
+            bail!(
+                "you can only order a vehicle you are driving or one your side deployed"
+            )
         }
         let typ = self
             .persisted
@@ -536,6 +609,21 @@ mod tests {
         let a = aboard(own(), Some(&back), |_| true);
         assert!(a.loaded());
         assert_eq!(a.describe(), "a Standard squad (3 of 8)");
+    }
+
+    #[test]
+    fn teammates_may_order_a_deployed_carrier() {
+        let me: Ucid = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".parse().unwrap();
+        let mate: Ucid = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".parse().unwrap();
+        // the deployer, whatever side they are on now
+        assert!(may_order_deployed(Some(&me), Side::Blue, &me, Some(Side::Red)));
+        // a teammate
+        assert!(may_order_deployed(Some(&mate), Side::Blue, &me, Some(Side::Blue)));
+        // the enemy, or someone not registered
+        assert!(!may_order_deployed(Some(&mate), Side::Blue, &me, Some(Side::Red)));
+        assert!(!may_order_deployed(Some(&mate), Side::Blue, &me, None));
+        // AI garrison / ground war vehicles: only by driving them
+        assert!(!may_order_deployed(None, Side::Blue, &me, Some(Side::Blue)));
     }
 
     #[test]

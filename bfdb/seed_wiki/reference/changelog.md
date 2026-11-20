@@ -16,6 +16,12 @@ a linked page says otherwise, the later one is right.
   main effort), strength and contact; each battalion where it is going and
   how it is doing. Click to select and fly there.
 
+**Dismount from a teammate's vehicle**
+- Anyone on the side can put the squad out of a BMP, BTR, Bradley or truck a
+  player deployed (`-dismount <group id>`), not only whoever deployed it.
+  Driving one now works even when the server missed you getting in, and the
+  F10 → Troops menu is built for the vehicle whenever someone takes it over.
+
 ## v3.5 — November 15, 2026
 
 **The ordered-unit cap counts vehicles**
