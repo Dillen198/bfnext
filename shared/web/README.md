@@ -17,6 +17,7 @@ app keeps its own `package.json`, lockfile and Vercel deploy.
 | `snapshot.ts` | Fallback to bfdb's public snapshot while bfdb is down (`VITE_SNAPSHOT_URL`), the offline state and banner text; see `deploy/snapshot-fallback.md` |
 | `notifications.ts` | Notification bell read state |
 | `urls.ts` | The production `*.vectorstrike.org` addresses |
+| `report/` | The weekly campaign report poster: the model and Discord post (`weekly.ts`), the Red Storm and Levant posters (`WeeklyPoster.tsx`), the admin page body (`ReportStudio.tsx`) and the page the bot captures (`ReportPrint.tsx`); bfweb and bfrsr-web mount them at `/admin/report` and `/report/print` |
 
 ## Importing
 

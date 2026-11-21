@@ -8030,6 +8030,8 @@ where
     Ok(moved)
 }
 
+pub(crate) mod weekly;
+
 #[cfg(test)]
 #[path = "storage/db_tests.rs"]
 mod storage_tests;

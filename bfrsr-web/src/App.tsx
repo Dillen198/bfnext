@@ -31,6 +31,8 @@ const IntelTestPage    = lazy(() => import('./pages/IntelTestPage'))
 const ScopePage        = lazy(() => import('./scope/ScopePage'))
 const TacMapPage       = lazy(() => import('./pages/TacMapPage'))
 const SnapshotPage     = lazy(() => import('./pages/SnapshotPage'))
+const ReportPage       = lazy(() => import('./pages/ReportPage'))
+const ReportPrintPage  = lazy(() => import('./pages/ReportPrintPage'))
 const GroundWarPage    = lazy(() => import('./pages/GroundWarPage'))
 const HqPage           = lazy(() => import('./pages/HqPage'))
 const ReplayListPage   = lazy(() => import('./replay/ReplayListPage'))
@@ -108,6 +110,7 @@ export default function App() {
               <Route path="/cockpit" element={<CockpitPage />} />
               {/* Chromeless public map for the Discord status embed. */}
               <Route path="/snapshot" element={<SnapshotPage />} />
+              <Route path="/report/print" element={<ReportPrintPage />} />
               {/* A development harness, not a product page: dev builds only. */}
               {import.meta.env.DEV && <Route path="/inteltest" element={<IntelTestPage />} />}
               <Route path="/" element={<Layout />}>
@@ -135,6 +138,7 @@ export default function App() {
               <Route path="admin" element={<AdminPage />} />
               <Route path="admin/config" element={<ConfigEditorPage />} />
               <Route path="admin/ops" element={<OpsPage />} />
+              <Route path="admin/report" element={<ReportPage />} />
               <Route path="about" element={<AboutPage />} />
               <Route path="pilot/:ucid" element={<PilotPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
