@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":["Airbase","AirbaseId","ClassAirbase","Parking","Runway","RunwayId"]};

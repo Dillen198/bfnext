@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["luau_codegen_compile","luau_codegen_create","luau_codegen_supported"]};

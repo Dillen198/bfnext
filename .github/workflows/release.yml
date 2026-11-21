@@ -1,0 +1,196 @@
+# Builds the engine binaries on a Windows runner and publishes an `engine-*`
+# GitHub release, which every server with `autoupdate:` enabled picks up.
+# Same script as a release from a dev PC: deploy/publish-release.ps1.
+#
+# Manual only (Actions tab -> Engine release -> Run workflow, or
+# `gh workflow run release.yml --ref vector -f ref=vector -f channel=beta`): a
+# release goes out to live servers, so nothing publishes one on a plain push.
+#
+# Three jobs, so the signing key and the GitHub token are never on a runner
+# that ran a dependency's code:
+#   build    no secrets, read-only token. Runs npm (install scripts off) and
+#            cargo (build.rs files, --locked against the committed Cargo.lock)
+#            and hands the unsigned release over as an artifact.
+#   sign     a fresh runner on the `engine-release` environment, which holds
+#            FOWL_ENGINE_SIGNING_KEY (the contents of fowl-engine.key) and
+#            FOWL_ENGINE_SIGNING_PASSWORD. Runs only the signer, from this
+#            workflow's own commit (not -ref), and hands back manifest.json.sig.
+#   publish  the only job that can write to the repo (contents: write); never
+#            sees the key.
+# Set the environment up with required reviewers and deployment branches
+# limited to vector and main (deploy/auto-update.md, "Signing releases").
+name: Engine release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or engine-* tag to build (vector, main or engine-<...>)
+        default: vector
+      channel:
+        description: stable goes to every server; beta only to servers on the beta channel
+        type: choice
+        options: [beta, stable]
+        default: beta
+      notes:
+        description: "Release notes (default: the commit subject)"
+        default: ""
+      bot_plugin:
+        description: Also ship the DCSServerBot plugin (fowlengine-bot.zip)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - name: Check the ref
+        shell: pwsh
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          # Only the release branches (or an engine tag): what is built here
+          # gets signed and goes to every server.
+          if ($env:REF -notmatch '^(vector|main|engine-[0-9A-Za-z._-]+)$') {
+            throw "ref '$($env:REF)' is not vector, main or an engine-* tag"
+          }
+      # actions pinned to commit SHAs (the tag each one was, in the comment)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 20
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: |
+            . -> ${{ runner.temp }}/fowl-target
+            bftools -> ${{ runner.temp }}/fowl-target-bftools
+
+      - name: Build (no secrets)
+        shell: pwsh
+        env:
+          # through the environment, never pasted into the script text
+          RELEASE_NOTES: ${{ inputs.notes }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_BOT_PLUGIN: ${{ inputs.bot_plugin }}
+        run: |
+          # A hashtable, not an array: an array splat hands '-Channel' and the
+          # rest to the script as positional values, so -WorkingTree became
+          # -Ref, -Channel the tag, and the run failed its tag check.
+          $a = @{
+            WorkingTree = $true
+            DryRun      = $true
+            NoSign      = $true
+            Channel     = $env:RELEASE_CHANNEL
+            Repo        = $env:GITHUB_REPOSITORY
+            TargetDir   = (Join-Path $env:RUNNER_TEMP 'fowl-target')
+            OutDir      = (Join-Path $env:RUNNER_TEMP 'fowl-release-out')
+          }
+          if ($env:RELEASE_NOTES) { $a.Notes = $env:RELEASE_NOTES }
+          if ($env:RELEASE_BOT_PLUGIN -eq 'true') { $a.BotPlugin = $true }
+          ./deploy/publish-release.ps1 @a
+
+      # What the sign job will sign, on the run's page for whoever approves it
+      - name: Summary
+        shell: pwsh
+        run: |
+          $m = Get-Content (Join-Path $env:RUNNER_TEMP 'fowl-release-out/manifest.json') -Raw | ConvertFrom-Json
+          $lines = @("### $($m.tag) ($($m.channel)) from $($m.commit)", "", "| file | sha256 |", "| --- | --- |")
+          foreach ($f in $m.files.PSObject.Properties) { $lines += "| $($f.Name) | ``$($f.Value.sha256)`` |" }
+          $lines -join "`n" | Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: engine-release-unsigned
+          path: ${{ runner.temp }}/fowl-release-out/
+          if-no-files-found: error
+          retention-days: 3
+
+  sign:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 20
+    environment: engine-release
+    permissions:
+      contents: read
+    steps:
+      # This workflow's own commit, not inputs.ref: the signer (bfmanager's
+      # package-lock.json) and the script come from the branch the
+      # environment allows, whatever was built.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 20
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: engine-release-unsigned
+          path: ${{ runner.temp }}/fowl-release-out
+      - name: Install the signer (no install scripts)
+        shell: pwsh
+        run: |
+          npm --prefix bfmanager ci --no-audit --no-fund --ignore-scripts
+          if ($LASTEXITCODE) { throw "npm ci (bfmanager) failed" }
+      - name: Sign
+        shell: pwsh
+        env:
+          FOWL_ENGINE_SIGNING_KEY: ${{ secrets.FOWL_ENGINE_SIGNING_KEY }}
+          FOWL_ENGINE_SIGNING_PASSWORD: ${{ secrets.FOWL_ENGINE_SIGNING_PASSWORD }}
+        run: |
+          if (-not $env:FOWL_ENGINE_SIGNING_KEY) {
+            throw "no FOWL_ENGINE_SIGNING_KEY secret on the engine-release environment (see deploy/auto-update.md, 'Signing releases')"
+          }
+          $key = Join-Path $env:RUNNER_TEMP 'fowl-engine.key'
+          Set-Content -Path $key -Value $env:FOWL_ENGINE_SIGNING_KEY -NoNewline
+          try {
+            ./deploy/publish-release.ps1 -SignOnly -OutDir (Join-Path $env:RUNNER_TEMP 'fowl-release-out') -SigningKey $key
+          } finally {
+            Remove-Item $key -Force -ErrorAction SilentlyContinue
+          }
+      - name: Remove the signing key
+        if: always()
+        shell: pwsh
+        run: Remove-Item (Join-Path $env:RUNNER_TEMP 'fowl-engine.key') -Force -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: engine-release-signature
+          path: ${{ runner.temp }}/fowl-release-out/manifest.json.sig
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    needs: [build, sign]
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: engine-release-unsigned
+          path: ${{ runner.temp }}/fowl-release-out
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: engine-release-signature
+          path: ${{ runner.temp }}/fowl-release-out
+      - name: Publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+        run: ./deploy/publish-release.ps1 -PublishOnly -OutDir (Join-Path $env:RUNNER_TEMP 'fowl-release-out') -Channel $env:RELEASE_CHANNEL -Repo $env:GITHUB_REPOSITORY

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vector Strike Range brand</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Stencil:opsz,wght@10..72,600..800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..700&display=swap" rel="stylesheet">
+<style>
+  :root { --ink: #0b1016; --panel: #111922; --line: #203040; --chalk: #e4ebf2; --haze: #93a3b5; --ball: #ffb23e; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--ink); color: var(--chalk); font: 14px/1.5 Archivo, system-ui, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font: 800 44px/1 'Big Shoulders Stencil', sans-serif; letter-spacing: .04em; text-transform: uppercase; margin: 0 0 6px; }
+  p { color: var(--haze); max-width: 70ch; }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); margin-top: 24px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+  .card .art { height: 200px; display: grid; place-items: center; padding: 20px; }
+  .card .art.light { background: #e9edf1; }
+  .card .art img { width: 160px; height: 160px; object-fit: contain; }
+  .card footer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
+  .card footer b { margin-right: auto; font-weight: 600; }
+  a, button { font: inherit; font-size: 12px; color: var(--chalk); background: transparent; border: 1px solid #2c3e51; border-radius: 3px; padding: 4px 9px; cursor: pointer; text-decoration: none; }
+  a:hover, button:hover { border-color: var(--ball); }
+  .sizes { display: flex; gap: 24px; align-items: center; margin-top: 18px; }
+  code { color: var(--ball); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Vector Strike Range</h1>
+  <p>The training range's mark, from the Vector Strike logo: the same ring broken at the top right and the same strike arrow out through the gap, with the letters swapped for the range itself (a dashed scoring ring, cross ticks and the amber shack). Amber is the site's accent, the meatball colour. Below 24 px use the favicon drawing: thicker ring, no ticks.</p>
+  <div class="sizes"><img src="mark.svg" width="96" alt=""><img src="mark.svg" width="48" alt=""><img src="mark.svg" width="32" alt=""><img src="favicon.svg" width="24" alt=""><img src="favicon.svg" width="16" alt=""></div>
+  <div class="grid">
+    <div class="card"><div class="art"><img src="mark.svg" alt="Mark on dark"></div><footer><b>Mark · dark backgrounds</b><a href="mark.svg" download>SVG</a><button data-png="mark.svg" data-size="512">PNG 512</button><button data-png="mark.svg" data-size="1024">PNG 1024</button></footer></div>
+    <div class="card"><div class="art light"><img src="mark-light.svg" alt="Mark on light"></div><footer><b>Mark · light backgrounds</b><a href="mark-light.svg" download>SVG</a><button data-png="mark-light.svg" data-size="512">PNG 512</button></footer></div>
+    <div class="card"><div class="art"><img src="mark-mono.svg" alt="One colour mark"></div><footer><b>One colour (white)</b><a href="mark-mono.svg" download>SVG</a><button data-png="mark-mono.svg" data-size="512">PNG 512</button></footer></div>
+    <div class="card"><div class="art"><img src="favicon.svg" width="120" alt="App icon"></div><footer><b>App icon / favicon</b><a href="favicon.svg" download>SVG</a><button data-png="favicon.svg" data-size="180">PNG 180</button><button data-png="favicon.svg" data-size="512">PNG 512</button></footer></div>
+    <div class="card"><div class="art"><canvas id="avatar" width="512" height="512" style="width:150px;height:150px;border-radius:50%"></canvas></div><footer><b>Discord / bot avatar</b><button data-canvas="avatar" data-name="range-avatar">PNG 512</button></footer></div>
+    <div class="card"><div class="art"><canvas id="lockup" width="1200" height="360" style="width:100%"></canvas></div><footer><b>Lockup · dark</b><button data-canvas="lockup" data-name="range-lockup">PNG</button></footer></div>
+    <div class="card"><div class="art light"><canvas id="lockupLight" width="1200" height="360" style="width:100%"></canvas></div><footer><b>Lockup · light</b><button data-canvas="lockupLight" data-name="range-lockup-light">PNG</button></footer></div>
+    <div class="card"><div class="art"><canvas id="og" width="1200" height="630" style="width:100%"></canvas></div><footer><b>Social card 1200×630</b><button data-canvas="og" data-name="range-social">PNG</button></footer></div>
+  </div>
+  <p style="margin-top:28px">The lockups are drawn here with the site's fonts (Big Shoulders Stencil 800 and Archivo 600), so download them from this page rather than exporting <code>lockup.svg</code>, which leaves the text to whatever fonts the viewer has.</p>
+</main>
+<script>
+const load = src => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src })
+const save = (url, name) => { const a = document.createElement('a'); a.href = url; a.download = name; a.click() }
+document.querySelectorAll('[data-png]').forEach(b => b.addEventListener('click', async () => {
+  const n = +b.dataset.size, c = document.createElement('canvas'); c.width = c.height = n
+  c.getContext('2d').drawImage(await load(b.dataset.png), 0, 0, n, n)
+  save(c.toDataURL('image/png'), b.dataset.png.replace('.svg', `-${n}.png`))
+}))
+document.querySelectorAll('[data-canvas]').forEach(b => b.addEventListener('click', () => save(document.getElementById(b.dataset.canvas).toDataURL('image/png'), b.dataset.name + '.png')))
+async function draw() {
+  await Promise.all([document.fonts.load('800 176px "Big Shoulders Stencil"'), document.fonts.load('600 44px Archivo')])
+  const dark = await load('mark.svg'), light = await load('mark-light.svg')
+  const av = document.getElementById('avatar').getContext('2d')
+  av.fillStyle = '#0b1016'; av.fillRect(0, 0, 512, 512); av.drawImage(dark, 64, 64, 384, 384)
+  const lockup = (ctx, mark, text, sub, y = 0) => {
+    ctx.drawImage(mark, 60, 60 + y, 240, 240)
+    ctx.fillStyle = sub; ctx.font = '600 44px Archivo'; ctx.letterSpacing = '17px'; ctx.fillText('VECTOR STRIKE', 352, 140 + y)
+    ctx.fillStyle = text; ctx.font = '800 176px "Big Shoulders Stencil"'; ctx.letterSpacing = '8px'; ctx.fillText('RANGE', 346, 296 + y)
+  }
+  lockup(document.getElementById('lockup').getContext('2d'), dark, '#e4ebf2', '#93a3b5')
+  lockup(document.getElementById('lockupLight').getContext('2d'), light, '#0f1822', '#4a5a6b')
+  const og = document.getElementById('og').getContext('2d')
+  og.fillStyle = '#0b1016'; og.fillRect(0, 0, 1200, 630)
+  og.fillStyle = 'rgba(147,163,181,0.08)'; for (let x = 11; x < 1200; x += 22) for (let y = 11; y < 630; y += 22) { og.beginPath(); og.arc(x, y, 1.3, 0, 7); og.fill() }
+  lockup(og, dark, '#e4ebf2', '#93a3b5', 110)
+  og.fillStyle = '#ffb23e'; og.fillRect(60, 520, 80, 4)
+  og.fillStyle = '#93a3b5'; og.font = '500 30px Archivo'; og.letterSpacing = '0px'; og.fillText('Live range control · debriefs · greenie board', 60, 575)
+}
+draw()
+</script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+# Reverse proxy + automatic HTTPS (Let's Encrypt) for bfdb, run on the SAME
+# Windows machine as the DCS server / bfdb.exe. Caddy handles TLS termination
+# so bfdb itself can keep listening on plain HTTP locally — no --cert/--key
+# needed on bfdb's side.
+#
+# Requires: api.example.com's DNS A record pointing at this machine's public
+# IP, and port 443 (and 80, for the ACME challenge) open/forwarded to it.
+#
+# Install Caddy on Windows: https://caddyserver.com/docs/install#windows
+# Run:  caddy run --config deploy/backend/Caddyfile
+# (or install as a Windows service: caddy.exe run --config ... via NSSM /
+#  `caddy windows-service` if using the caddy-windows-service adapter)
+
+api.example.com {
+	reverse_proxy 127.0.0.1:8080
+
+	# WebSocket upgrade (logs, engine logs, live units) is handled
+	# automatically by reverse_proxy — no extra config needed.
+
+	encode gzip
+
+	# Security headers. bfdb sets nosniff / frame / referrer / CSP on its own
+	# responses; HSTS belongs here, where TLS is. (`?` = only if bfdb did not
+	# already set that header.)
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		?X-Content-Type-Options "nosniff"
+		?X-Frame-Options "DENY"
+		?Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# No `log` directive on purpose: an access log here would record the
+	# `?token=` that /api/logs/* and /api/metrics accept. If you add one, add
+	#   format filter { request>uri query { delete token } }
+	# to it.
+}

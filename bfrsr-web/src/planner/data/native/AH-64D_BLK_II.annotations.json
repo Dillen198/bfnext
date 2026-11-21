@@ -1,0 +1,5848 @@
+{
+  "code": "AH-64D_BLK_II",
+  "label": "AH-64D Apache (DCS DTC)",
+  "pathSyntax": "Dot-separated keys of the .dtc \"data\" object. \"[]\" = any array index, \"{}\" = any object key, each as its own segment (e.g. NAV.Mission_1.Points.WPTHZ.POINTS.[].x, Laser.ChannelsCodes.{}.One). An array is user-extensible only when its section has a \"template\"; \"maxItems\"/\"minItems\"/\"fixedLength\" bound it. Sections marked hidden cover a whole derived/internal subtree. \"display\" = {unit, factor}: shown value = stored value * factor.",
+  "source": "DCS 2.9.30.28738 CoreMods/aircraft/AH-64D/DTC; see native-AH-64D.md and EXPORT-NOTES.md",
+  "sections": [
+    {
+      "path": "",
+      "label": "AH-64D Apache cartridge",
+      "help": "Root of data. type/name/terrain are written by the exporter."
+    },
+    {
+      "path": "IDM",
+      "label": "Datalink config (placeholder)",
+      "help": "Always an empty array; the DL CONFIG partition is not implemented. IDM members live in the mission unit's datalinks, not the DTC.",
+      "hidden": true,
+      "readonly": true
+    },
+    {
+      "path": "Radios_HF",
+      "label": "HF config (placeholder)",
+      "help": "Always an empty array; the HF partition is not implemented.",
+      "hidden": true,
+      "readonly": true
+    },
+    {
+      "path": "NAV",
+      "label": "NAV: points, routes, tactical graphics, ADF",
+      "help": "Two mission files (MISSION 1 is loaded by MASTER LOAD; MISSION 2 must be loaded explicitly on the DTU page). Terrain-gated as a whole."
+    },
+    {
+      "path": "NAV.Mission_1",
+      "label": "Mission 1",
+      "help": "NAV mission file 1. Loaded by MASTER LOAD."
+    },
+    {
+      "path": "NAV.Mission_1.Points.WPTHZ",
+      "label": "M1 Waypoints / hazards (W/H 01-50)",
+      "help": "Navigation waypoints (idents 1-6: LZ, CC, PP, RP, SP, WP) and hazards (7-10: towers, wires). Route legs reference these by num 1-50. Filled by the exporter from the planned route. First 25 are the cockpit \"safe set\".",
+      "managed": "route"
+    },
+    {
+      "path": "NAV.Mission_1.Points.WPTHZ.POINTS",
+      "label": "M1 WPTHZ points",
+      "help": "Max 50. num 1-50, unique within the partition. JSON array, no nulls.",
+      "managed": "route",
+      "maxItems": 50,
+      "nullCrashesEditor": true,
+      "itemLabel": "W{num}",
+      "template": {
+        "num": 1,
+        "id": 6,
+        "text": "W01",
+        "note": "",
+        "x": 0,
+        "y": 0,
+        "alt": 0
+      }
+    },
+    {
+      "path": "NAV.Mission_1.Points.CTRLM",
+      "label": "M1 Control measures (C51-C99)",
+      "help": "Friendly/enemy unit symbols and general control measures (BP, AA, FARP, checkpoints...). Route legs may reference them by num 51-99. Avoid C92-C99 (used for datalink present-position reports). User-added."
+    },
+    {
+      "path": "NAV.Mission_1.Points.CTRLM.POINTS",
+      "label": "M1 CTRLM points",
+      "help": "Max 49. num 51-99, unique within the partition. JSON array, no nulls.",
+      "maxItems": 49,
+      "nullCrashesEditor": true,
+      "itemLabel": "C{num}",
+      "template": {
+        "num": 51,
+        "id": 54,
+        "text": "C51",
+        "note": "",
+        "x": 0,
+        "y": 0,
+        "alt": 0
+      }
+    },
+    {
+      "path": "NAV.Mission_1.Points.TGT",
+      "label": "M1 Targets / threats (T01-T50)",
+      "help": "Target points (TG) and air-defence threat symbols, each with a cockpit threat ring. Cannot be part of routes. The exporter writes the plan's target-flagged waypoints here (ident TG).",
+      "managed": "route"
+    },
+    {
+      "path": "NAV.Mission_1.Points.TGT.POINTS",
+      "label": "M1 TGT points",
+      "help": "Max 50. num 1-50, unique within the partition. JSON array, no nulls.",
+      "managed": "route",
+      "maxItems": 50,
+      "nullCrashesEditor": true,
+      "itemLabel": "T{num}",
+      "template": {
+        "num": 1,
+        "id": 1,
+        "text": "T01",
+        "note": "",
+        "x": 0,
+        "y": 0,
+        "alt": 0
+      }
+    },
+    {
+      "path": "NAV.Mission_1.Routes",
+      "label": "M1 routes (10)",
+      "help": "Exactly 10 routes, merged by index. Each leg references a WPTHZ (1-50) or CTRLM (51-99) point number of the same mission. The exporter writes the planned route into route 1.",
+      "managed": "route",
+      "fixedLength": 10,
+      "itemLabel": "Route {index}"
+    },
+    {
+      "path": "NAV.Mission_1.Routes.[].POINTS",
+      "label": "Route legs",
+      "help": "Up to 99 legs in flight order. The same num may not appear twice in a row. A num that is not an existing WPTHZ/CTRLM point crashes the ME routes page.",
+      "managed": "route",
+      "maxItems": 99,
+      "nullCrashesEditor": true,
+      "template": {
+        "num": 1,
+        "alt": 0,
+        "speed": 80,
+        "dist": 0,
+        "eta": 0,
+        "fix": false
+      }
+    },
+    {
+      "path": "NAV.Mission_1.Lines",
+      "label": "M1 tactical lines",
+      "help": "Battlefield lines (boundary, FLOT, phase lines...). Max 15. Entries without type_num/text/vertices or with <2 or >4 vertices are deleted on load.",
+      "maxItems": 15,
+      "nullCrashesEditor": true,
+      "template": {
+        "type_num": 7,
+        "text": "",
+        "note": "",
+        "vertices": [
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          }
+        ]
+      }
+    },
+    {
+      "path": "NAV.Mission_1.Lines.[].vertices",
+      "label": "Line vertices",
+      "help": "2 to 4 points, in order.",
+      "minItems": 2,
+      "maxItems": 4,
+      "template": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "path": "NAV.Mission_1.Areas",
+      "label": "M1 engagement areas (EA1-EA12)",
+      "help": "Engagement areas, labelled EA1..EA12 by index in the cockpit. Max 12.",
+      "maxItems": 12,
+      "nullCrashesEditor": true,
+      "template": {
+        "note": "",
+        "vertices": [
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "caption_pos": [],
+        "center_pos": {
+          "x": 0,
+          "y": 0
+        }
+      }
+    },
+    {
+      "path": "NAV.Mission_1.Areas.[].vertices",
+      "label": "Corners",
+      "help": "Exactly 4 corners forming a non-self-intersecting quadrilateral (the ME draws axis-aligned rectangles >= 250 m). Any other count deletes the entry.",
+      "fixedLength": 4
+    },
+    {
+      "path": "NAV.Mission_1.Areas.[].caption_pos",
+      "label": "Label positions (derived)",
+      "help": "Recomputed by the ME on every draw. Write [] but always write the key: a missing caption_pos throws (table.insert on nil).",
+      "hidden": true,
+      "readonly": true,
+      "nullCrashesEditor": true
+    },
+    {
+      "path": "NAV.Mission_1.Areas.[].center_pos",
+      "label": "Centre (debug)",
+      "help": "Debug only; write {\"x\":0,\"y\":0} like the ME.",
+      "hidden": true,
+      "readonly": true
+    },
+    {
+      "path": "NAV.Mission_1.Zones",
+      "label": "M1 fire zones",
+      "help": "Priority fire zones and no-fire zones; the cockpit can load PF, NF or both."
+    },
+    {
+      "path": "NAV.Mission_1.Zones.PFZ",
+      "label": "M1 priority fire zones (PF1-PF8)",
+      "help": "Priority fire zones, labelled PF1..PF8 by index. Max 8.",
+      "maxItems": 8,
+      "nullCrashesEditor": true,
+      "template": {
+        "note": "",
+        "vertices": [
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "caption_pos": [],
+        "center_pos": {
+          "x": 0,
+          "y": 0
+        }
+      }
+    },
+    {
+      "path": "NAV.Mission_1.Zones.PFZ.[].vertices",
+      "label": "Corners",
+      "help": "Exactly 4 corners forming a non-self-intersecting quadrilateral (the ME draws axis-aligned rectangles >= 250 m). Any other count deletes the entry.",
+      "fixedLength": 4
+    },
+    {
+      "path": "NAV.Mission_1.Zones.PFZ.[].caption_pos",
+      "label": "Label positions (derived)",
+      "help": "Recomputed by the ME on every draw. Write [] but always write the key: a missing caption_pos throws (table.insert on nil).",
+      "hidden": true,
+      "readonly": true,
+      "nullCrashesEditor": true
+    },
+    {
+      "path": "NAV.Mission_1.Zones.PFZ.[].center_pos",
+      "label": "Centre (debug)",
+      "help": "Debug only; write {\"x\":0,\"y\":0} like the ME.",
+      "hidden": true,
+      "readonly": true
+    },
+    {
+      "path": "NAV.Mission_1.Zones.NFZ",
+      "label": "M1 no-fire zones (NF1-NF8)",
+      "help": "No-fire zones, labelled NF1..NF8 by index. Max 8.",
+      "maxItems": 8,
+      "nullCrashesEditor": true,
+      "template": {
+        "note": "",
+        "vertices": [
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "caption_pos": [],
+        "center_pos": {
+          "x": 0,
+          "y": 0
+        }
+      }
+    },
+    {
+      "path": "NAV.Mission_1.Zones.NFZ.[].vertices",
+      "label": "Corners",
+      "help": "Exactly 4 corners forming a non-self-intersecting quadrilateral (the ME draws axis-aligned rectangles >= 250 m). Any other count deletes the entry.",
+      "fixedLength": 4
+    },
+    {
+      "path": "NAV.Mission_1.Zones.NFZ.[].caption_pos",
+      "label": "Label positions (derived)",
+      "help": "Recomputed by the ME on every draw. Write [] but always write the key: a missing caption_pos throws (table.insert on nil).",
+      "hidden": true,
+      "readonly": true,
+      "nullCrashesEditor": true
+    },
+    {
+      "path": "NAV.Mission_1.Zones.NFZ.[].center_pos",
+      "label": "Centre (debug)",
+      "help": "Debug only; write {\"x\":0,\"y\":0} like the ME.",
+      "hidden": true,
+      "readonly": true
+    },
+    {
+      "path": "NAV.Mission_1.ADF",
+      "label": "M1 ADF presets",
+      "help": "Object with isEnabled and Preset_1..Preset_10 (not an array).",
+      "keyOptions": [
+        "Preset_1",
+        "Preset_2",
+        "Preset_3",
+        "Preset_4",
+        "Preset_5",
+        "Preset_6",
+        "Preset_7",
+        "Preset_8",
+        "Preset_9",
+        "Preset_10"
+      ]
+    },
+    {
+      "path": "NAV.Mission_2",
+      "label": "Mission 2",
+      "help": "NAV mission file 2. Loaded only on explicit DATA > MISSION 2."
+    },
+    {
+      "path": "NAV.Mission_2.Points.WPTHZ",
+      "label": "M2 Waypoints / hazards (W/H 01-50)",
+      "help": "Navigation waypoints (idents 1-6: LZ, CC, PP, RP, SP, WP) and hazards (7-10: towers, wires). Route legs reference these by num 1-50. Filled by the exporter from the planned route. First 25 are the cockpit \"safe set\".",
+      "managed": "route"
+    },
+    {
+      "path": "NAV.Mission_2.Points.WPTHZ.POINTS",
+      "label": "M2 WPTHZ points",
+      "help": "Max 50. num 1-50, unique within the partition. JSON array, no nulls.",
+      "managed": "route",
+      "maxItems": 50,
+      "nullCrashesEditor": true,
+      "itemLabel": "W{num}",
+      "template": {
+        "num": 1,
+        "id": 6,
+        "text": "W01",
+        "note": "",
+        "x": 0,
+        "y": 0,
+        "alt": 0
+      }
+    },
+    {
+      "path": "NAV.Mission_2.Points.CTRLM",
+      "label": "M2 Control measures (C51-C99)",
+      "help": "Friendly/enemy unit symbols and general control measures (BP, AA, FARP, checkpoints...). Route legs may reference them by num 51-99. Avoid C92-C99 (used for datalink present-position reports). User-added."
+    },
+    {
+      "path": "NAV.Mission_2.Points.CTRLM.POINTS",
+      "label": "M2 CTRLM points",
+      "help": "Max 49. num 51-99, unique within the partition. JSON array, no nulls.",
+      "maxItems": 49,
+      "nullCrashesEditor": true,
+      "itemLabel": "C{num}",
+      "template": {
+        "num": 51,
+        "id": 54,
+        "text": "C51",
+        "note": "",
+        "x": 0,
+        "y": 0,
+        "alt": 0
+      }
+    },
+    {
+      "path": "NAV.Mission_2.Points.TGT",
+      "label": "M2 Targets / threats (T01-T50)",
+      "help": "Target points (TG) and air-defence threat symbols, each with a cockpit threat ring. Cannot be part of routes. The exporter writes the plan's target-flagged waypoints here (ident TG).",
+      "managed": "route"
+    },
+    {
+      "path": "NAV.Mission_2.Points.TGT.POINTS",
+      "label": "M2 TGT points",
+      "help": "Max 50. num 1-50, unique within the partition. JSON array, no nulls.",
+      "managed": "route",
+      "maxItems": 50,
+      "nullCrashesEditor": true,
+      "itemLabel": "T{num}",
+      "template": {
+        "num": 1,
+        "id": 1,
+        "text": "T01",
+        "note": "",
+        "x": 0,
+        "y": 0,
+        "alt": 0
+      }
+    },
+    {
+      "path": "NAV.Mission_2.Routes",
+      "label": "M2 routes (10)",
+      "help": "Exactly 10 routes, merged by index. Each leg references a WPTHZ (1-50) or CTRLM (51-99) point number of the same mission. The exporter writes the planned route into route 1.",
+      "managed": "route",
+      "fixedLength": 10,
+      "itemLabel": "Route {index}"
+    },
+    {
+      "path": "NAV.Mission_2.Routes.[].POINTS",
+      "label": "Route legs",
+      "help": "Up to 99 legs in flight order. The same num may not appear twice in a row. A num that is not an existing WPTHZ/CTRLM point crashes the ME routes page.",
+      "managed": "route",
+      "maxItems": 99,
+      "nullCrashesEditor": true,
+      "template": {
+        "num": 1,
+        "alt": 0,
+        "speed": 80,
+        "dist": 0,
+        "eta": 0,
+        "fix": false
+      }
+    },
+    {
+      "path": "NAV.Mission_2.Lines",
+      "label": "M2 tactical lines",
+      "help": "Battlefield lines (boundary, FLOT, phase lines...). Max 15. Entries without type_num/text/vertices or with <2 or >4 vertices are deleted on load.",
+      "maxItems": 15,
+      "nullCrashesEditor": true,
+      "template": {
+        "type_num": 7,
+        "text": "",
+        "note": "",
+        "vertices": [
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          }
+        ]
+      }
+    },
+    {
+      "path": "NAV.Mission_2.Lines.[].vertices",
+      "label": "Line vertices",
+      "help": "2 to 4 points, in order.",
+      "minItems": 2,
+      "maxItems": 4,
+      "template": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "path": "NAV.Mission_2.Areas",
+      "label": "M2 engagement areas (EA1-EA12)",
+      "help": "Engagement areas, labelled EA1..EA12 by index in the cockpit. Max 12.",
+      "maxItems": 12,
+      "nullCrashesEditor": true,
+      "template": {
+        "note": "",
+        "vertices": [
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "caption_pos": [],
+        "center_pos": {
+          "x": 0,
+          "y": 0
+        }
+      }
+    },
+    {
+      "path": "NAV.Mission_2.Areas.[].vertices",
+      "label": "Corners",
+      "help": "Exactly 4 corners forming a non-self-intersecting quadrilateral (the ME draws axis-aligned rectangles >= 250 m). Any other count deletes the entry.",
+      "fixedLength": 4
+    },
+    {
+      "path": "NAV.Mission_2.Areas.[].caption_pos",
+      "label": "Label positions (derived)",
+      "help": "Recomputed by the ME on every draw. Write [] but always write the key: a missing caption_pos throws (table.insert on nil).",
+      "hidden": true,
+      "readonly": true,
+      "nullCrashesEditor": true
+    },
+    {
+      "path": "NAV.Mission_2.Areas.[].center_pos",
+      "label": "Centre (debug)",
+      "help": "Debug only; write {\"x\":0,\"y\":0} like the ME.",
+      "hidden": true,
+      "readonly": true
+    },
+    {
+      "path": "NAV.Mission_2.Zones",
+      "label": "M2 fire zones",
+      "help": "Priority fire zones and no-fire zones; the cockpit can load PF, NF or both."
+    },
+    {
+      "path": "NAV.Mission_2.Zones.PFZ",
+      "label": "M2 priority fire zones (PF1-PF8)",
+      "help": "Priority fire zones, labelled PF1..PF8 by index. Max 8.",
+      "maxItems": 8,
+      "nullCrashesEditor": true,
+      "template": {
+        "note": "",
+        "vertices": [
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "caption_pos": [],
+        "center_pos": {
+          "x": 0,
+          "y": 0
+        }
+      }
+    },
+    {
+      "path": "NAV.Mission_2.Zones.PFZ.[].vertices",
+      "label": "Corners",
+      "help": "Exactly 4 corners forming a non-self-intersecting quadrilateral (the ME draws axis-aligned rectangles >= 250 m). Any other count deletes the entry.",
+      "fixedLength": 4
+    },
+    {
+      "path": "NAV.Mission_2.Zones.PFZ.[].caption_pos",
+      "label": "Label positions (derived)",
+      "help": "Recomputed by the ME on every draw. Write [] but always write the key: a missing caption_pos throws (table.insert on nil).",
+      "hidden": true,
+      "readonly": true,
+      "nullCrashesEditor": true
+    },
+    {
+      "path": "NAV.Mission_2.Zones.PFZ.[].center_pos",
+      "label": "Centre (debug)",
+      "help": "Debug only; write {\"x\":0,\"y\":0} like the ME.",
+      "hidden": true,
+      "readonly": true
+    },
+    {
+      "path": "NAV.Mission_2.Zones.NFZ",
+      "label": "M2 no-fire zones (NF1-NF8)",
+      "help": "No-fire zones, labelled NF1..NF8 by index. Max 8.",
+      "maxItems": 8,
+      "nullCrashesEditor": true,
+      "template": {
+        "note": "",
+        "vertices": [
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "caption_pos": [],
+        "center_pos": {
+          "x": 0,
+          "y": 0
+        }
+      }
+    },
+    {
+      "path": "NAV.Mission_2.Zones.NFZ.[].vertices",
+      "label": "Corners",
+      "help": "Exactly 4 corners forming a non-self-intersecting quadrilateral (the ME draws axis-aligned rectangles >= 250 m). Any other count deletes the entry.",
+      "fixedLength": 4
+    },
+    {
+      "path": "NAV.Mission_2.Zones.NFZ.[].caption_pos",
+      "label": "Label positions (derived)",
+      "help": "Recomputed by the ME on every draw. Write [] but always write the key: a missing caption_pos throws (table.insert on nil).",
+      "hidden": true,
+      "readonly": true,
+      "nullCrashesEditor": true
+    },
+    {
+      "path": "NAV.Mission_2.Zones.NFZ.[].center_pos",
+      "label": "Centre (debug)",
+      "help": "Debug only; write {\"x\":0,\"y\":0} like the ME.",
+      "hidden": true,
+      "readonly": true
+    },
+    {
+      "path": "NAV.Mission_2.ADF",
+      "label": "M2 ADF presets",
+      "help": "Object with isEnabled and Preset_1..Preset_10 (not an array).",
+      "keyOptions": [
+        "Preset_1",
+        "Preset_2",
+        "Preset_3",
+        "Preset_4",
+        "Preset_5",
+        "Preset_6",
+        "Preset_7",
+        "Preset_8",
+        "Preset_9",
+        "Preset_10"
+      ]
+    },
+    {
+      "path": "Radios",
+      "label": "Radios: initial settings, FM, IFF",
+      "help": "State of each radio when the cartridge is loaded."
+    },
+    {
+      "path": "Radios.InitialRadioSettings",
+      "label": "Initial radio settings",
+      "help": "Per radio: Preset mode tunes the selected COMM preset (its frequency/modulation/encryption are copied in by the ME), Manual mode uses the frequency here."
+    },
+    {
+      "path": "Radios.IFF",
+      "label": "IFF (APX-123)",
+      "help": "Transponder modes. Not implemented in the aircraft per the manual; written for completeness."
+    },
+    {
+      "path": "Presets",
+      "label": "Presets: COM presets and MPS messages",
+      "help": "COM presets used by the radios, and preset text messages. Not terrain-gated."
+    },
+    {
+      "path": "Presets.COMM",
+      "label": "COM presets 1-10",
+      "help": "Exactly 10 presets, merged by index (a partial entry inherits the defaults of the same index). No net members/subscribers here: those are in the mission unit's IDM datalink settings.",
+      "fixedLength": 10,
+      "itemLabel": "Preset {index}"
+    },
+    {
+      "path": "Presets.MPS",
+      "label": "MPS text messages 1-10",
+      "help": "Preset free-text messages sent over the datalink. Exactly 10, merged by index.",
+      "fixedLength": 10,
+      "itemLabel": "Message {index}"
+    },
+    {
+      "path": "Weapon",
+      "label": "Weapons",
+      "help": "Hellfire channels and per-crew-station weapon defaults."
+    },
+    {
+      "path": "Laser",
+      "label": "Laser codes",
+      "help": "Laser devices and the 16 code letters A-R (no I/O)."
+    },
+    {
+      "path": "Laser.ChannelsCodes",
+      "label": "Laser code letters",
+      "help": "Keys A B C D E F G H J K L M N P Q R; each a 4-digit code stored as separate digits.",
+      "keyOptions": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G",
+        "H",
+        "J",
+        "K",
+        "L",
+        "M",
+        "N",
+        "P",
+        "Q",
+        "R"
+      ]
+    },
+    {
+      "path": "MISC",
+      "label": "MISC: ASE, RLWR, RFI, PERF",
+      "help": "Survivability equipment, threat tables and performance planning. Not terrain-gated."
+    },
+    {
+      "path": "MISC.ASE",
+      "label": "ASE / CMDS",
+      "help": "Countermeasure programs and ASE page options. All values are 1-based list indexes, not physical units."
+    },
+    {
+      "path": "MISC.RLWR",
+      "label": "RLWR threat table (APR-39 / AVR-2)",
+      "help": "Array of exactly 96, merged BY INDEX onto the defaults. Keep the default order and leave PRI alone: reordering makes entry i inherit leftover default emitters of entry i. Only display are safe to change.",
+      "fixedLength": 96,
+      "itemLabel": "{group_name}",
+      "keyField": "group_name"
+    },
+    {
+      "path": "MISC.RLWR.[].threats",
+      "label": "Emitters (derived)",
+      "help": "Static, from threats_base; copy from the defaults at the same index.",
+      "hidden": true,
+      "readonly": true
+    },
+    {
+      "path": "MISC.RFI",
+      "label": "RFI threat table (APR-48)",
+      "help": "Array of exactly 90, merged BY INDEX onto the defaults. Keep the default order and leave PRI alone: reordering makes entry i inherit leftover default emitters of entry i. Only display/hostile/friendly are safe to change. The RFI tab is disabled in this DCS build (it is still saved with its defaults); whether the aircraft reads it is unconfirmed.",
+      "fixedLength": 90,
+      "itemLabel": "{group_name}",
+      "keyField": "group_name"
+    },
+    {
+      "path": "MISC.RFI.[].threats",
+      "label": "Emitters (derived)",
+      "help": "Static, from threats_base; copy from the defaults at the same index.",
+      "hidden": true,
+      "readonly": true
+    },
+    {
+      "path": "MISC.PERF",
+      "label": "Performance planning",
+      "help": "PERF page planning values (pressure altitude, temperature, gross weight)."
+    }
+  ],
+  "fields": [
+    {
+      "path": "type",
+      "label": "Aircraft type",
+      "kind": "string",
+      "readonly": true,
+      "managed": "name",
+      "help": "Must be exactly \"AH-64D_BLK_II\". setData checks data.type; anything else returns immediately and the cartridge becomes pure defaults."
+    },
+    {
+      "path": "name",
+      "label": "Cartridge name (cosmetic)",
+      "kind": "string",
+      "managed": "name",
+      "help": "Informational; the ME sets it to the export name. The envelope name is what the mission references."
+    },
+    {
+      "path": "terrain",
+      "label": "Map (terrain id)",
+      "kind": "string",
+      "managed": "terrain",
+      "readonly": true,
+      "options": [
+        {
+          "value": "Caucasus",
+          "label": "Caucasus"
+        },
+        {
+          "value": "GermanyCW",
+          "label": "GermanyCW"
+        },
+        {
+          "value": "MarianaIslands",
+          "label": "MarianaIslands"
+        },
+        {
+          "value": "PersianGulf",
+          "label": "PersianGulf"
+        },
+        {
+          "value": "Syria",
+          "label": "Syria"
+        }
+      ],
+      "help": "Mission theatre id. NAV (both missions: points, routes, lines, areas, zones, ADF) imports only when this equals the current map; missing = NAV silently dropped. Everything else imports on any map."
+    },
+    {
+      "path": "NAV.MissionFile",
+      "label": "Mission file selected when saved",
+      "kind": "enum",
+      "readonly": true,
+      "options": [
+        {
+          "value": 1,
+          "label": "Mission 1"
+        },
+        {
+          "value": 2,
+          "label": "Mission 2"
+        }
+      ],
+      "help": "Saved by the ME but never read by the descriptor; keep 1."
+    },
+    {
+      "path": "NAV.Mission_1.Points.WPTHZ.isEnabled",
+      "label": "M1 upload WPTHZ points",
+      "kind": "enum",
+      "managed": "route",
+      "options": [
+        {
+          "value": true,
+          "label": "Yes, upload to the aircraft"
+        },
+        {
+          "value": false,
+          "label": "No, keep it in the cartridge only (DCS default)"
+        }
+      ],
+      "help": "\"Do not upload tab data\" checkbox in the DTC editor, stored NON-inverted as isEnabled: true = the WPTHZ partition is loaded into the aircraft, false (the DCS default) = it is not. A fresh cartridge uploads nothing for this tab until this is true. The exporter sets true when it writes points here."
+    },
+    {
+      "path": "NAV.Mission_1.Points.WPTHZ.POINTS.[].num",
+      "label": "Point number",
+      "kind": "int",
+      "managed": "route",
+      "min": 1,
+      "max": 50,
+      "nullCrashesEditor": true,
+      "help": "Point index within the partition (WPTHZ 1-50). Must be unique; gaps allowed. Missing num throws in the ME."
+    },
+    {
+      "path": "NAV.Mission_1.Points.WPTHZ.POINTS.[].id",
+      "label": "Ident (symbol)",
+      "kind": "enum",
+      "managed": "route",
+      "options": [
+        {
+          "value": 1,
+          "label": "LZ (Landing Zone)"
+        },
+        {
+          "value": 2,
+          "label": "CC (Communications Checkpoint)"
+        },
+        {
+          "value": 3,
+          "label": "PP (Passage Point)"
+        },
+        {
+          "value": 4,
+          "label": "RP (Release Point)"
+        },
+        {
+          "value": 5,
+          "label": "SP (Start Point)"
+        },
+        {
+          "value": 6,
+          "label": "WP (Waypoint)"
+        },
+        {
+          "value": 7,
+          "label": "TO (Tower, Over 1000’)"
+        },
+        {
+          "value": 8,
+          "label": "TU (Tower, Under 1000’)"
+        },
+        {
+          "value": 9,
+          "label": "WL (Wires, Power)"
+        },
+        {
+          "value": 10,
+          "label": "WS (Wires, Telephone/Electric)"
+        }
+      ],
+      "help": "Partition-local ident; default 6. Cockpit Point_ID = id."
+    },
+    {
+      "path": "NAV.Mission_1.Points.WPTHZ.POINTS.[].text",
+      "label": "Free text",
+      "kind": "string",
+      "managed": "route",
+      "maxLength": 3,
+      "pattern": "^[A-Z0-9 ]*$",
+      "help": "Up to 3 characters, upper case (the ME upper-cases). Default letter + 2-digit number, e.g. W01 (H for hazard idents 7-10). Empty shows the index in the cockpit."
+    },
+    {
+      "path": "NAV.Mission_1.Points.WPTHZ.POINTS.[].note",
+      "label": "Note (ME only)",
+      "kind": "string",
+      "managed": "route",
+      "help": "Mission Editor comment, not uploaded. Write \"\"."
+    },
+    {
+      "path": "NAV.Mission_1.Points.WPTHZ.POINTS.[].x",
+      "label": "Map X (north)",
+      "kind": "number",
+      "managed": "route",
+      "unit": "m",
+      "nullCrashesEditor": true,
+      "help": "DCS map metres, x = north (unit.x in a .miz)."
+    },
+    {
+      "path": "NAV.Mission_1.Points.WPTHZ.POINTS.[].y",
+      "label": "Map Y (east)",
+      "kind": "number",
+      "managed": "route",
+      "unit": "m",
+      "nullCrashesEditor": true,
+      "help": "DCS map metres, y = east (unit.y in a .miz)."
+    },
+    {
+      "path": "NAV.Mission_1.Points.WPTHZ.POINTS.[].alt",
+      "label": "Elevation",
+      "kind": "number",
+      "managed": "route",
+      "unit": "m",
+      "display": {
+        "unit": "ft",
+        "factor": 3.280839895013123,
+        "decimals": 0
+      },
+      "nullCrashesEditor": true,
+      "help": "Point elevation, metres MSL (the ME shows feet; new points default to terrain height). Missing alt throws in the ME grid."
+    },
+    {
+      "path": "NAV.Mission_1.Points.CTRLM.isEnabled",
+      "label": "M1 upload CTRLM points",
+      "kind": "enum",
+      "options": [
+        {
+          "value": true,
+          "label": "Yes, upload to the aircraft"
+        },
+        {
+          "value": false,
+          "label": "No, keep it in the cartridge only (DCS default)"
+        }
+      ],
+      "help": "\"Do not upload tab data\" checkbox in the DTC editor, stored NON-inverted as isEnabled: true = the CTRLM partition is loaded into the aircraft, false (the DCS default) = it is not. A fresh cartridge uploads nothing for this tab until this is true. The exporter sets true when POINTS is non-empty unless the user forced false."
+    },
+    {
+      "path": "NAV.Mission_1.Points.CTRLM.POINTS.[].num",
+      "label": "Point number",
+      "kind": "int",
+      "min": 51,
+      "max": 99,
+      "nullCrashesEditor": true,
+      "help": "Point index within the partition (CTRLM 51-99). Must be unique; gaps allowed. Missing num throws in the ME."
+    },
+    {
+      "path": "NAV.Mission_1.Points.CTRLM.POINTS.[].id",
+      "label": "Ident (symbol)",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 11,
+          "label": "AB (Friendly Airborne)"
+        },
+        {
+          "value": 12,
+          "label": "AD (Friendly Air Defense)"
+        },
+        {
+          "value": 13,
+          "label": "AH (Friendly Attack Helicopter)"
+        },
+        {
+          "value": 14,
+          "label": "AM (Friendly Armor)"
+        },
+        {
+          "value": 15,
+          "label": "AS (Friendly Air Assault)"
+        },
+        {
+          "value": 16,
+          "label": "AV (Friendly Air Cavalry)"
+        },
+        {
+          "value": 17,
+          "label": "CA (Friendly Armored Cavalry)"
+        },
+        {
+          "value": 18,
+          "label": "CF (Friendly Chemical)"
+        },
+        {
+          "value": 19,
+          "label": "DF (Friendly Decontamination)"
+        },
+        {
+          "value": 20,
+          "label": "EN (Friendly Engineers)"
+        },
+        {
+          "value": 21,
+          "label": "FG (Friendly Helicopter, General)"
+        },
+        {
+          "value": 22,
+          "label": "FI (Friendly Infantry)"
+        },
+        {
+          "value": 23,
+          "label": "FL (Friendly Field Artillery)"
+        },
+        {
+          "value": 24,
+          "label": "FU (Friendly Unit)"
+        },
+        {
+          "value": 25,
+          "label": "FW (Friendly Electronic Warfare)"
+        },
+        {
+          "value": 26,
+          "label": "HO (Friendly Hospital)"
+        },
+        {
+          "value": 27,
+          "label": "MA (Friendly Aviation Maintenance)"
+        },
+        {
+          "value": 28,
+          "label": "MD (Friendly Medical)"
+        },
+        {
+          "value": 29,
+          "label": "MI (Friendly Mechanized Infantry)"
+        },
+        {
+          "value": 30,
+          "label": "TF (Friendly Tactical Operations Center)"
+        },
+        {
+          "value": 31,
+          "label": "WF (Friendly Fixed Wing)"
+        },
+        {
+          "value": 32,
+          "label": "CE (Enemy Chemical)"
+        },
+        {
+          "value": 33,
+          "label": "DE (Enemy Decontamination)"
+        },
+        {
+          "value": 34,
+          "label": "AE (Enemy Armor)"
+        },
+        {
+          "value": 35,
+          "label": "EB (Enemy Airborne)"
+        },
+        {
+          "value": 36,
+          "label": "EC (Enemy Armored Cavalry)"
+        },
+        {
+          "value": 37,
+          "label": "ED (Enemy Air Defense)"
+        },
+        {
+          "value": 38,
+          "label": "EE (Enemy Engineers)"
+        },
+        {
+          "value": 39,
+          "label": "EF (Enemy Field Artillery)"
+        },
+        {
+          "value": 40,
+          "label": "EH (Enemy Hospital)"
+        },
+        {
+          "value": 41,
+          "label": "EI (Enemy Infantry)"
+        },
+        {
+          "value": 42,
+          "label": "EK (Enemy Attack Helicopter)"
+        },
+        {
+          "value": 43,
+          "label": "EM (Enemy Mechanized Infantry)"
+        },
+        {
+          "value": 44,
+          "label": "ES (Enemy Air Assault)"
+        },
+        {
+          "value": 45,
+          "label": "ET (Enemy Tactical Operations Center)"
+        },
+        {
+          "value": 46,
+          "label": "EU (Enemy Unit)"
+        },
+        {
+          "value": 47,
+          "label": "EV (Enemy Air Cavalry)"
+        },
+        {
+          "value": 48,
+          "label": "EX (Enemy Medical)"
+        },
+        {
+          "value": 49,
+          "label": "HG (Enemy Helicopter, General)"
+        },
+        {
+          "value": 50,
+          "label": "ME (Enemy Aviation Maintenance)"
+        },
+        {
+          "value": 51,
+          "label": "WE (Enemy Fixed Wing)"
+        },
+        {
+          "value": 52,
+          "label": "WR (Enemy Electronic Warfare)"
+        },
+        {
+          "value": 53,
+          "label": "BR (Bridge/Gap)"
+        },
+        {
+          "value": 54,
+          "label": "CP (Checkpoint)"
+        },
+        {
+          "value": 55,
+          "label": "BE (NDB Symbol)"
+        },
+        {
+          "value": 56,
+          "label": "RH (Railhead)"
+        },
+        {
+          "value": 57,
+          "label": "AA (Assembly Area)"
+        },
+        {
+          "value": 58,
+          "label": "AP (Air Control Point)"
+        },
+        {
+          "value": 59,
+          "label": "BP (Battle Position)"
+        },
+        {
+          "value": 60,
+          "label": "FA (Forward Assembly Area)"
+        },
+        {
+          "value": 61,
+          "label": "HA (Holding Area)"
+        },
+        {
+          "value": 62,
+          "label": "AG (Airfield, General)"
+        },
+        {
+          "value": 63,
+          "label": "AI (Airfield, Instrumented)"
+        },
+        {
+          "value": 64,
+          "label": "AL (Airport, Lighted)"
+        },
+        {
+          "value": 65,
+          "label": "GL (Ground Light/Small Town)"
+        },
+        {
+          "value": 66,
+          "label": "F1 (Artillery Firing Point 1)"
+        },
+        {
+          "value": 67,
+          "label": "F2 (Artillery Firing Point 2)"
+        },
+        {
+          "value": 68,
+          "label": "FC (FARP, Fuel and Ammo)"
+        },
+        {
+          "value": 69,
+          "label": "FF (FARP, Fuel only)"
+        },
+        {
+          "value": 70,
+          "label": "FM (FARP, Ammo only)"
+        },
+        {
+          "value": 71,
+          "label": "ID (Datalink Subscriber)"
+        },
+        {
+          "value": 72,
+          "label": "BD (Brigade)"
+        },
+        {
+          "value": 73,
+          "label": "BN (Battalion)"
+        },
+        {
+          "value": 74,
+          "label": "CO (Company)"
+        },
+        {
+          "value": 75,
+          "label": "CR (Corps)"
+        },
+        {
+          "value": 76,
+          "label": "DI (Division)"
+        },
+        {
+          "value": 77,
+          "label": "GP (Regiment/Group)"
+        },
+        {
+          "value": 78,
+          "label": "NB (NBC Area)"
+        },
+        {
+          "value": 79,
+          "label": "US (U.S. Army)"
+        }
+      ],
+      "help": "Partition-local ident; default 54. Cockpit Point_ID = id."
+    },
+    {
+      "path": "NAV.Mission_1.Points.CTRLM.POINTS.[].text",
+      "label": "Free text",
+      "kind": "string",
+      "maxLength": 3,
+      "pattern": "^[A-Z0-9 ]*$",
+      "help": "Up to 3 characters, upper case (the ME upper-cases). Default letter + 2-digit number, e.g. C51. Empty shows the index in the cockpit."
+    },
+    {
+      "path": "NAV.Mission_1.Points.CTRLM.POINTS.[].note",
+      "label": "Note (ME only)",
+      "kind": "string",
+      "help": "Mission Editor comment, not uploaded. Write \"\"."
+    },
+    {
+      "path": "NAV.Mission_1.Points.CTRLM.POINTS.[].x",
+      "label": "Map X (north)",
+      "kind": "number",
+      "unit": "m",
+      "nullCrashesEditor": true,
+      "help": "DCS map metres, x = north (unit.x in a .miz)."
+    },
+    {
+      "path": "NAV.Mission_1.Points.CTRLM.POINTS.[].y",
+      "label": "Map Y (east)",
+      "kind": "number",
+      "unit": "m",
+      "nullCrashesEditor": true,
+      "help": "DCS map metres, y = east (unit.y in a .miz)."
+    },
+    {
+      "path": "NAV.Mission_1.Points.CTRLM.POINTS.[].alt",
+      "label": "Elevation",
+      "kind": "number",
+      "unit": "m",
+      "display": {
+        "unit": "ft",
+        "factor": 3.280839895013123,
+        "decimals": 0
+      },
+      "nullCrashesEditor": true,
+      "help": "Point elevation, metres MSL (the ME shows feet; new points default to terrain height). Missing alt throws in the ME grid."
+    },
+    {
+      "path": "NAV.Mission_1.Points.TGT.isEnabled",
+      "label": "M1 upload TGT points",
+      "kind": "enum",
+      "managed": "route",
+      "options": [
+        {
+          "value": true,
+          "label": "Yes, upload to the aircraft"
+        },
+        {
+          "value": false,
+          "label": "No, keep it in the cartridge only (DCS default)"
+        }
+      ],
+      "help": "\"Do not upload tab data\" checkbox in the DTC editor, stored NON-inverted as isEnabled: true = the TGT partition is loaded into the aircraft, false (the DCS default) = it is not. A fresh cartridge uploads nothing for this tab until this is true. The exporter sets true when it writes points here."
+    },
+    {
+      "path": "NAV.Mission_1.Points.TGT.POINTS.[].num",
+      "label": "Point number",
+      "kind": "int",
+      "managed": "route",
+      "min": 1,
+      "max": 50,
+      "nullCrashesEditor": true,
+      "help": "Point index within the partition (TGT 1-50, shown as T01-T50). Must be unique; gaps allowed. Missing num throws in the ME."
+    },
+    {
+      "path": "NAV.Mission_1.Points.TGT.POINTS.[].id",
+      "label": "Ident (symbol)",
+      "kind": "enum",
+      "managed": "route",
+      "options": [
+        {
+          "value": 1,
+          "label": "TG (Target Point) (ring 3.0 km)"
+        },
+        {
+          "value": 2,
+          "label": "GU (Generic Air Defense Unit) (ring 5.0 km)"
+        },
+        {
+          "value": 3,
+          "label": "1 (SA-1 SAM System)"
+        },
+        {
+          "value": 4,
+          "label": "2 (SA-2 SAM System) (ring 43.0 km)"
+        },
+        {
+          "value": 5,
+          "label": "3 (SA-3 SAM System) (ring 18.0 km)"
+        },
+        {
+          "value": 6,
+          "label": "4 (SA-4 SAM System)"
+        },
+        {
+          "value": 7,
+          "label": "5 (SA-5 SAM System) (ring 99.9 km)"
+        },
+        {
+          "value": 8,
+          "label": "6 (SA-6 SAM System) (ring 25.0 km)"
+        },
+        {
+          "value": 9,
+          "label": "7 (SA-7 SAM System)"
+        },
+        {
+          "value": 10,
+          "label": "8 (SA-8 SAM System) (ring 10.3 km)"
+        },
+        {
+          "value": 11,
+          "label": "9 (SA-9 SAM System) (ring 5.0 km)"
+        },
+        {
+          "value": 12,
+          "label": "10 (SA-10 SAM System) (ring 99.9 km)"
+        },
+        {
+          "value": 13,
+          "label": "11 (SA-11 SAM System) (ring 35.0 km)"
+        },
+        {
+          "value": 14,
+          "label": "12 (SA-12 SAM System)"
+        },
+        {
+          "value": 15,
+          "label": "13 (SA-13 SAM System) (ring 5.0 km)"
+        },
+        {
+          "value": 16,
+          "label": "14 (SA-14 SAM System)"
+        },
+        {
+          "value": 17,
+          "label": "15 (SA-15 SAM System) (ring 12.0 km)"
+        },
+        {
+          "value": 18,
+          "label": "16 (SA-16 SAM System) (ring 5.2 km)"
+        },
+        {
+          "value": 19,
+          "label": "17 (SA-17 SAM System)"
+        },
+        {
+          "value": 20,
+          "label": "S6 (2S6/SA-19 Air Defense Unit) (ring 8.0 km)"
+        },
+        {
+          "value": 21,
+          "label": "ZU (ZSU-23-4 Air Defense Gun) (ring 2.5 km)"
+        },
+        {
+          "value": 22,
+          "label": "AS (Aspide SAM System)"
+        },
+        {
+          "value": 23,
+          "label": "83 (M1983 Air Defense Gun)"
+        },
+        {
+          "value": 24,
+          "label": "HK (Hawk SAM System) (ring 45.0 km)"
+        },
+        {
+          "value": 25,
+          "label": "RO (Roland SAM System) (ring 8.0 km)"
+        },
+        {
+          "value": 26,
+          "label": "AA (Air Defense Gun) (ring 6.0 km)"
+        },
+        {
+          "value": 27,
+          "label": "C2 (CSA-2/1/X SAM System)"
+        },
+        {
+          "value": 28,
+          "label": "CT (Crotale SAM System) (ring 15.0 km)"
+        },
+        {
+          "value": 29,
+          "label": "RA (Rapier SAM System) (ring 6.8 km)"
+        },
+        {
+          "value": 30,
+          "label": "GT (Towed Air Defense Gun) (ring 2.5 km)"
+        },
+        {
+          "value": 31,
+          "label": "GS (Self-Propelled Air Defense Gun) (ring 7.0 km)"
+        },
+        {
+          "value": 32,
+          "label": "TR (Target Acquisition Radar)"
+        },
+        {
+          "value": 33,
+          "label": "U (Unknown Air Defense Unit) (ring 2.5 km)"
+        },
+        {
+          "value": 34,
+          "label": "SA (Towed SAM System) (ring 15.0 km)"
+        },
+        {
+          "value": 35,
+          "label": "SP (Self-Propelled SAM System) (ring 40.0 km)"
+        },
+        {
+          "value": 36,
+          "label": "70 (RBS-70 SAM System)"
+        },
+        {
+          "value": 37,
+          "label": "SR (Battlefield Surveillance Radar)"
+        },
+        {
+          "value": 38,
+          "label": "NV (Naval Air Defense System)"
+        },
+        {
+          "value": 39,
+          "label": "G1 (Growth 1) (ring 1.0 km)"
+        },
+        {
+          "value": 40,
+          "label": "G2 (Growth 2) (ring 2.0 km)"
+        },
+        {
+          "value": 41,
+          "label": "G3 (Growth 3) (ring 3.0 km)"
+        },
+        {
+          "value": 42,
+          "label": "G4 (Growth 4) (ring 4.0 km)"
+        },
+        {
+          "value": 43,
+          "label": "PT (Patriot SAM System) (ring 99.9 km)"
+        },
+        {
+          "value": 44,
+          "label": "ST (Stinger SAM System) (ring 4.5 km)"
+        },
+        {
+          "value": 45,
+          "label": "RE (Redeye SAM System)"
+        },
+        {
+          "value": 46,
+          "label": "CH (Chapparal SAM System) (ring 8.5 km)"
+        },
+        {
+          "value": 47,
+          "label": "TC (Tigercat SAM System)"
+        },
+        {
+          "value": 48,
+          "label": "SD (Spada SAM System)"
+        },
+        {
+          "value": 49,
+          "label": "BH (Bloodhound SAM System)"
+        },
+        {
+          "value": 50,
+          "label": "SS (Starstreak SAM System)"
+        },
+        {
+          "value": 51,
+          "label": "JA (Javelin SAM System)"
+        },
+        {
+          "value": 52,
+          "label": "BP (Blowpipe SAM System)"
+        },
+        {
+          "value": 53,
+          "label": "SM (SAMP SAM System)"
+        },
+        {
+          "value": 54,
+          "label": "SC (SATCP SAM System)"
+        },
+        {
+          "value": 55,
+          "label": "SH (Shahine/R440 SAM System)"
+        },
+        {
+          "value": 56,
+          "label": "GP (Gepard Air Defense Gun) (ring 4.0 km)"
+        },
+        {
+          "value": 57,
+          "label": "VU (Vulcan Air Defense Gun) (ring 2.0 km)"
+        },
+        {
+          "value": 58,
+          "label": "MK (Marksman Air Defense Gun)"
+        },
+        {
+          "value": 59,
+          "label": "SB (Sabre Air Defense Gun)"
+        },
+        {
+          "value": 60,
+          "label": "AX (AMX-13 Air Defense Gun)"
+        },
+        {
+          "value": 61,
+          "label": "AD (Friendly Air Defense Unit) (ring 8.0 km)"
+        }
+      ],
+      "help": "Partition-local ident; default 1. Cockpit Point_ID = id + 79; each ident has its own threat ring (finding/killing radius)."
+    },
+    {
+      "path": "NAV.Mission_1.Points.TGT.POINTS.[].text",
+      "label": "Free text",
+      "kind": "string",
+      "managed": "route",
+      "maxLength": 3,
+      "pattern": "^[A-Z0-9 ]*$",
+      "help": "Up to 3 characters, upper case (the ME upper-cases). Default letter + 2-digit number, e.g. T01. Empty shows the index in the cockpit."
+    },
+    {
+      "path": "NAV.Mission_1.Points.TGT.POINTS.[].note",
+      "label": "Note (ME only)",
+      "kind": "string",
+      "managed": "route",
+      "help": "Mission Editor comment, not uploaded. Write \"\"."
+    },
+    {
+      "path": "NAV.Mission_1.Points.TGT.POINTS.[].x",
+      "label": "Map X (north)",
+      "kind": "number",
+      "managed": "route",
+      "unit": "m",
+      "nullCrashesEditor": true,
+      "help": "DCS map metres, x = north (unit.x in a .miz)."
+    },
+    {
+      "path": "NAV.Mission_1.Points.TGT.POINTS.[].y",
+      "label": "Map Y (east)",
+      "kind": "number",
+      "managed": "route",
+      "unit": "m",
+      "nullCrashesEditor": true,
+      "help": "DCS map metres, y = east (unit.y in a .miz)."
+    },
+    {
+      "path": "NAV.Mission_1.Points.TGT.POINTS.[].alt",
+      "label": "Elevation",
+      "kind": "number",
+      "managed": "route",
+      "unit": "m",
+      "display": {
+        "unit": "ft",
+        "factor": 3.280839895013123,
+        "decimals": 0
+      },
+      "nullCrashesEditor": true,
+      "help": "Point elevation, metres MSL (the ME shows feet; new points default to terrain height). Missing alt throws in the ME grid."
+    },
+    {
+      "path": "NAV.Mission_1.Routes.[].isEnabled",
+      "label": "Upload this route",
+      "kind": "enum",
+      "managed": "route",
+      "options": [
+        {
+          "value": true,
+          "label": "Yes, upload to the aircraft"
+        },
+        {
+          "value": false,
+          "label": "No, keep it in the cartridge only (DCS default)"
+        }
+      ],
+      "help": "\"Do not upload tab data\" checkbox in the DTC editor, stored NON-inverted as isEnabled: true = this route is loaded into the aircraft, false (the DCS default) = it is not. A fresh cartridge uploads nothing for this tab until this is true."
+    },
+    {
+      "path": "NAV.Mission_1.Routes.[].Name",
+      "label": "Route name",
+      "kind": "string",
+      "managed": "route",
+      "maxLength": 5,
+      "pattern": "^[A-Z0-9 ]*$",
+      "help": "Up to 5 characters, upper case. Defaults ALPHA BRAVO DELTA \"ECHO \" HOTEL INDIA \"LIMA \" OSCAR ROMEO TANGO."
+    },
+    {
+      "path": "NAV.Mission_1.Routes.[].POINTS.[].num",
+      "label": "Point number",
+      "kind": "int",
+      "managed": "route",
+      "min": 1,
+      "max": 99,
+      "nullCrashesEditor": true,
+      "help": "1-50 = WPTHZ point, 51-99 = CTRLM point (TGT cannot be routed). Must exist in this mission."
+    },
+    {
+      "path": "NAV.Mission_1.Routes.[].POINTS.[].alt",
+      "label": "Planned altitude",
+      "kind": "number",
+      "managed": "route",
+      "unit": "m",
+      "display": {
+        "unit": "ft",
+        "factor": 3.280839895013123,
+        "decimals": 0
+      },
+      "nullCrashesEditor": true,
+      "help": "Planned altitude at this leg, metres MSL (copied from the point when added in the ME)."
+    },
+    {
+      "path": "NAV.Mission_1.Routes.[].POINTS.[].speed",
+      "label": "Planned speed",
+      "kind": "number",
+      "managed": "route",
+      "unit": "kt",
+      "min": 0,
+      "max": 9999,
+      "nullCrashesEditor": true,
+      "help": "Knots (UI \"True Airspeed\"; manual says ground speed). Default 80. Derived from eta when fix is true."
+    },
+    {
+      "path": "NAV.Mission_1.Routes.[].POINTS.[].dist",
+      "label": "Leg distance (derived)",
+      "kind": "number",
+      "managed": "route",
+      "unit": "m",
+      "display": {
+        "unit": "NM",
+        "factor": 0.0005399568034557236,
+        "decimals": 1
+      },
+      "readonly": true,
+      "hidden": true,
+      "nullCrashesEditor": true,
+      "help": "Metres from the previous leg point (0 for the first); see derived[]."
+    },
+    {
+      "path": "NAV.Mission_1.Routes.[].POINTS.[].eta",
+      "label": "Leg time",
+      "kind": "time",
+      "managed": "route",
+      "unit": "s",
+      "nullCrashesEditor": true,
+      "help": "Seconds. Legs 2..n: leg duration dist/(speed*0.514). Leg 1: 0 (what the ME converges to). Input when fix is true, derived otherwise."
+    },
+    {
+      "path": "NAV.Mission_1.Routes.[].POINTS.[].fix",
+      "label": "Fix ETA",
+      "kind": "bool",
+      "managed": "route",
+      "help": "true = the leg is defined by eta and speed is derived; false = eta is derived from speed."
+    },
+    {
+      "path": "NAV.Mission_1.Lines.[].type_num",
+      "label": "Line type",
+      "kind": "enum",
+      "nullCrashesEditor": true,
+      "options": [
+        {
+          "value": 1,
+          "label": "BL (Boundary Line)"
+        },
+        {
+          "value": 2,
+          "label": "FEBA (Forward Edge of the Battle Area)"
+        },
+        {
+          "value": 3,
+          "label": "FLET (Forward Line of Enemy Troops)"
+        },
+        {
+          "value": 4,
+          "label": "FLOT (Forward Line of Own Troops)"
+        },
+        {
+          "value": 5,
+          "label": "FSCL (Fire Support Coordination Line)"
+        },
+        {
+          "value": 6,
+          "label": "LD (Line of Departure)"
+        },
+        {
+          "value": 7,
+          "label": "PL (Phase Line)"
+        }
+      ],
+      "help": "Cockpit label = type name (+ text for PL). Outside 1-7 throws."
+    },
+    {
+      "path": "NAV.Mission_1.Lines.[].text",
+      "label": "Phase line label",
+      "kind": "string",
+      "maxLength": 3,
+      "pattern": "^[A-Z0-9 ]*$",
+      "nullCrashesEditor": true,
+      "help": "Used only for PL (type 7): up to 3 characters, upper case. Write \"\" for other types but always write the key (a missing text deletes the line)."
+    },
+    {
+      "path": "NAV.Mission_1.Lines.[].note",
+      "label": "Note (ME only)",
+      "kind": "string",
+      "maxLength": 40,
+      "help": "ME comment, max 40 chars; not uploaded."
+    },
+    {
+      "path": "NAV.Mission_1.Lines.[].vertices.[].x",
+      "label": "Vertex X (north)",
+      "kind": "number",
+      "unit": "m",
+      "help": "DCS map metres, x = north."
+    },
+    {
+      "path": "NAV.Mission_1.Lines.[].vertices.[].y",
+      "label": "Vertex Y (east)",
+      "kind": "number",
+      "unit": "m",
+      "help": "DCS map metres, y = east."
+    },
+    {
+      "path": "NAV.Mission_1.Areas.[].note",
+      "label": "Note (ME only)",
+      "kind": "string",
+      "maxLength": 44,
+      "nullCrashesEditor": true,
+      "help": "ME comment, max 44 chars, not uploaded, but REQUIRED: an entry without note is deleted on load. Write \"\"."
+    },
+    {
+      "path": "NAV.Mission_1.Areas.[].vertices.[].x",
+      "label": "Corner X (north)",
+      "kind": "number",
+      "unit": "m",
+      "help": "DCS map metres, x = north."
+    },
+    {
+      "path": "NAV.Mission_1.Areas.[].vertices.[].y",
+      "label": "Corner Y (east)",
+      "kind": "number",
+      "unit": "m",
+      "help": "DCS map metres, y = east."
+    },
+    {
+      "path": "NAV.Mission_1.Zones.PFZ.[].note",
+      "label": "Note (ME only)",
+      "kind": "string",
+      "maxLength": 44,
+      "nullCrashesEditor": true,
+      "help": "ME comment, max 44 chars, not uploaded, but REQUIRED: an entry without note is deleted on load. Write \"\"."
+    },
+    {
+      "path": "NAV.Mission_1.Zones.PFZ.[].vertices.[].x",
+      "label": "Corner X (north)",
+      "kind": "number",
+      "unit": "m",
+      "help": "DCS map metres, x = north."
+    },
+    {
+      "path": "NAV.Mission_1.Zones.PFZ.[].vertices.[].y",
+      "label": "Corner Y (east)",
+      "kind": "number",
+      "unit": "m",
+      "help": "DCS map metres, y = east."
+    },
+    {
+      "path": "NAV.Mission_1.Zones.NFZ.[].note",
+      "label": "Note (ME only)",
+      "kind": "string",
+      "maxLength": 44,
+      "nullCrashesEditor": true,
+      "help": "ME comment, max 44 chars, not uploaded, but REQUIRED: an entry without note is deleted on load. Write \"\"."
+    },
+    {
+      "path": "NAV.Mission_1.Zones.NFZ.[].vertices.[].x",
+      "label": "Corner X (north)",
+      "kind": "number",
+      "unit": "m",
+      "help": "DCS map metres, x = north."
+    },
+    {
+      "path": "NAV.Mission_1.Zones.NFZ.[].vertices.[].y",
+      "label": "Corner Y (east)",
+      "kind": "number",
+      "unit": "m",
+      "help": "DCS map metres, y = east."
+    },
+    {
+      "path": "NAV.Mission_1.ADF.isEnabled",
+      "label": "M1 upload ADF presets",
+      "kind": "enum",
+      "options": [
+        {
+          "value": true,
+          "label": "Yes, upload to the aircraft"
+        },
+        {
+          "value": false,
+          "label": "No, keep it in the cartridge only (DCS default)"
+        }
+      ],
+      "help": "\"Do not upload tab data\" checkbox in the DTC editor, stored NON-inverted as isEnabled: true = the ADF preset list is loaded into the aircraft, false (the DCS default) = it is not. A fresh cartridge uploads nothing for this tab until this is true. The exporter sets true when any preset has an ID or a non-default frequency, unless the user forced false."
+    },
+    {
+      "path": "NAV.Mission_1.ADF.{}.ID",
+      "label": "Station ident",
+      "kind": "string",
+      "maxLength": 3,
+      "pattern": "^[A-Z]*$",
+      "nullCrashesEditor": true,
+      "help": "NDB identifier, letters only, max 3, upper case; its Morse is shown on the TSD instrument page. Must be a string (nil throws)."
+    },
+    {
+      "path": "NAV.Mission_1.ADF.{}.Freq",
+      "label": "Frequency",
+      "kind": "number",
+      "unit": "kHz",
+      "min": 100,
+      "max": 2199.5,
+      "step": 0.1,
+      "help": "ADF frequency in kHz, 100.0-2199.5. Default 100."
+    },
+    {
+      "path": "NAV.Mission_2.Points.WPTHZ.isEnabled",
+      "label": "M2 upload WPTHZ points",
+      "kind": "enum",
+      "managed": "route",
+      "options": [
+        {
+          "value": true,
+          "label": "Yes, upload to the aircraft"
+        },
+        {
+          "value": false,
+          "label": "No, keep it in the cartridge only (DCS default)"
+        }
+      ],
+      "help": "\"Do not upload tab data\" checkbox in the DTC editor, stored NON-inverted as isEnabled: true = the WPTHZ partition is loaded into the aircraft, false (the DCS default) = it is not. A fresh cartridge uploads nothing for this tab until this is true. The exporter sets true when it writes points here."
+    },
+    {
+      "path": "NAV.Mission_2.Points.WPTHZ.POINTS.[].num",
+      "label": "Point number",
+      "kind": "int",
+      "managed": "route",
+      "min": 1,
+      "max": 50,
+      "nullCrashesEditor": true,
+      "help": "Point index within the partition (WPTHZ 1-50). Must be unique; gaps allowed. Missing num throws in the ME."
+    },
+    {
+      "path": "NAV.Mission_2.Points.WPTHZ.POINTS.[].id",
+      "label": "Ident (symbol)",
+      "kind": "enum",
+      "managed": "route",
+      "options": [
+        {
+          "value": 1,
+          "label": "LZ (Landing Zone)"
+        },
+        {
+          "value": 2,
+          "label": "CC (Communications Checkpoint)"
+        },
+        {
+          "value": 3,
+          "label": "PP (Passage Point)"
+        },
+        {
+          "value": 4,
+          "label": "RP (Release Point)"
+        },
+        {
+          "value": 5,
+          "label": "SP (Start Point)"
+        },
+        {
+          "value": 6,
+          "label": "WP (Waypoint)"
+        },
+        {
+          "value": 7,
+          "label": "TO (Tower, Over 1000’)"
+        },
+        {
+          "value": 8,
+          "label": "TU (Tower, Under 1000’)"
+        },
+        {
+          "value": 9,
+          "label": "WL (Wires, Power)"
+        },
+        {
+          "value": 10,
+          "label": "WS (Wires, Telephone/Electric)"
+        }
+      ],
+      "help": "Partition-local ident; default 6. Cockpit Point_ID = id."
+    },
+    {
+      "path": "NAV.Mission_2.Points.WPTHZ.POINTS.[].text",
+      "label": "Free text",
+      "kind": "string",
+      "managed": "route",
+      "maxLength": 3,
+      "pattern": "^[A-Z0-9 ]*$",
+      "help": "Up to 3 characters, upper case (the ME upper-cases). Default letter + 2-digit number, e.g. W01 (H for hazard idents 7-10). Empty shows the index in the cockpit."
+    },
+    {
+      "path": "NAV.Mission_2.Points.WPTHZ.POINTS.[].note",
+      "label": "Note (ME only)",
+      "kind": "string",
+      "managed": "route",
+      "help": "Mission Editor comment, not uploaded. Write \"\"."
+    },
+    {
+      "path": "NAV.Mission_2.Points.WPTHZ.POINTS.[].x",
+      "label": "Map X (north)",
+      "kind": "number",
+      "managed": "route",
+      "unit": "m",
+      "nullCrashesEditor": true,
+      "help": "DCS map metres, x = north (unit.x in a .miz)."
+    },
+    {
+      "path": "NAV.Mission_2.Points.WPTHZ.POINTS.[].y",
+      "label": "Map Y (east)",
+      "kind": "number",
+      "managed": "route",
+      "unit": "m",
+      "nullCrashesEditor": true,
+      "help": "DCS map metres, y = east (unit.y in a .miz)."
+    },
+    {
+      "path": "NAV.Mission_2.Points.WPTHZ.POINTS.[].alt",
+      "label": "Elevation",
+      "kind": "number",
+      "managed": "route",
+      "unit": "m",
+      "display": {
+        "unit": "ft",
+        "factor": 3.280839895013123,
+        "decimals": 0
+      },
+      "nullCrashesEditor": true,
+      "help": "Point elevation, metres MSL (the ME shows feet; new points default to terrain height). Missing alt throws in the ME grid."
+    },
+    {
+      "path": "NAV.Mission_2.Points.CTRLM.isEnabled",
+      "label": "M2 upload CTRLM points",
+      "kind": "enum",
+      "options": [
+        {
+          "value": true,
+          "label": "Yes, upload to the aircraft"
+        },
+        {
+          "value": false,
+          "label": "No, keep it in the cartridge only (DCS default)"
+        }
+      ],
+      "help": "\"Do not upload tab data\" checkbox in the DTC editor, stored NON-inverted as isEnabled: true = the CTRLM partition is loaded into the aircraft, false (the DCS default) = it is not. A fresh cartridge uploads nothing for this tab until this is true. The exporter sets true when POINTS is non-empty unless the user forced false."
+    },
+    {
+      "path": "NAV.Mission_2.Points.CTRLM.POINTS.[].num",
+      "label": "Point number",
+      "kind": "int",
+      "min": 51,
+      "max": 99,
+      "nullCrashesEditor": true,
+      "help": "Point index within the partition (CTRLM 51-99). Must be unique; gaps allowed. Missing num throws in the ME."
+    },
+    {
+      "path": "NAV.Mission_2.Points.CTRLM.POINTS.[].id",
+      "label": "Ident (symbol)",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 11,
+          "label": "AB (Friendly Airborne)"
+        },
+        {
+          "value": 12,
+          "label": "AD (Friendly Air Defense)"
+        },
+        {
+          "value": 13,
+          "label": "AH (Friendly Attack Helicopter)"
+        },
+        {
+          "value": 14,
+          "label": "AM (Friendly Armor)"
+        },
+        {
+          "value": 15,
+          "label": "AS (Friendly Air Assault)"
+        },
+        {
+          "value": 16,
+          "label": "AV (Friendly Air Cavalry)"
+        },
+        {
+          "value": 17,
+          "label": "CA (Friendly Armored Cavalry)"
+        },
+        {
+          "value": 18,
+          "label": "CF (Friendly Chemical)"
+        },
+        {
+          "value": 19,
+          "label": "DF (Friendly Decontamination)"
+        },
+        {
+          "value": 20,
+          "label": "EN (Friendly Engineers)"
+        },
+        {
+          "value": 21,
+          "label": "FG (Friendly Helicopter, General)"
+        },
+        {
+          "value": 22,
+          "label": "FI (Friendly Infantry)"
+        },
+        {
+          "value": 23,
+          "label": "FL (Friendly Field Artillery)"
+        },
+        {
+          "value": 24,
+          "label": "FU (Friendly Unit)"
+        },
+        {
+          "value": 25,
+          "label": "FW (Friendly Electronic Warfare)"
+        },
+        {
+          "value": 26,
+          "label": "HO (Friendly Hospital)"
+        },
+        {
+          "value": 27,
+          "label": "MA (Friendly Aviation Maintenance)"
+        },
+        {
+          "value": 28,
+          "label": "MD (Friendly Medical)"
+        },
+        {
+          "value": 29,
+          "label": "MI (Friendly Mechanized Infantry)"
+        },
+        {
+          "value": 30,
+          "label": "TF (Friendly Tactical Operations Center)"
+        },
+        {
+          "value": 31,
+          "label": "WF (Friendly Fixed Wing)"
+        },
+        {
+          "value": 32,
+          "label": "CE (Enemy Chemical)"
+        },
+        {
+          "value": 33,
+          "label": "DE (Enemy Decontamination)"
+        },
+        {
+          "value": 34,
+          "label": "AE (Enemy Armor)"
+        },
+        {
+          "value": 35,
+          "label": "EB (Enemy Airborne)"
+        },
+        {
+          "value": 36,
+          "label": "EC (Enemy Armored Cavalry)"
+        },
+        {
+          "value": 37,
+          "label": "ED (Enemy Air Defense)"
+        },
+        {
+          "value": 38,
+          "label": "EE (Enemy Engineers)"
+        },
+        {
+          "value": 39,
+          "label": "EF (Enemy Field Artillery)"
+        },
+        {
+          "value": 40,
+          "label": "EH (Enemy Hospital)"
+        },
+        {
+          "value": 41,
+          "label": "EI (Enemy Infantry)"
+        },
+        {
+          "value": 42,
+          "label": "EK (Enemy Attack Helicopter)"
+        },
+        {
+          "value": 43,
+          "label": "EM (Enemy Mechanized Infantry)"
+        },
+        {
+          "value": 44,
+          "label": "ES (Enemy Air Assault)"
+        },
+        {
+          "value": 45,
+          "label": "ET (Enemy Tactical Operations Center)"
+        },
+        {
+          "value": 46,
+          "label": "EU (Enemy Unit)"
+        },
+        {
+          "value": 47,
+          "label": "EV (Enemy Air Cavalry)"
+        },
+        {
+          "value": 48,
+          "label": "EX (Enemy Medical)"
+        },
+        {
+          "value": 49,
+          "label": "HG (Enemy Helicopter, General)"
+        },
+        {
+          "value": 50,
+          "label": "ME (Enemy Aviation Maintenance)"
+        },
+        {
+          "value": 51,
+          "label": "WE (Enemy Fixed Wing)"
+        },
+        {
+          "value": 52,
+          "label": "WR (Enemy Electronic Warfare)"
+        },
+        {
+          "value": 53,
+          "label": "BR (Bridge/Gap)"
+        },
+        {
+          "value": 54,
+          "label": "CP (Checkpoint)"
+        },
+        {
+          "value": 55,
+          "label": "BE (NDB Symbol)"
+        },
+        {
+          "value": 56,
+          "label": "RH (Railhead)"
+        },
+        {
+          "value": 57,
+          "label": "AA (Assembly Area)"
+        },
+        {
+          "value": 58,
+          "label": "AP (Air Control Point)"
+        },
+        {
+          "value": 59,
+          "label": "BP (Battle Position)"
+        },
+        {
+          "value": 60,
+          "label": "FA (Forward Assembly Area)"
+        },
+        {
+          "value": 61,
+          "label": "HA (Holding Area)"
+        },
+        {
+          "value": 62,
+          "label": "AG (Airfield, General)"
+        },
+        {
+          "value": 63,
+          "label": "AI (Airfield, Instrumented)"
+        },
+        {
+          "value": 64,
+          "label": "AL (Airport, Lighted)"
+        },
+        {
+          "value": 65,
+          "label": "GL (Ground Light/Small Town)"
+        },
+        {
+          "value": 66,
+          "label": "F1 (Artillery Firing Point 1)"
+        },
+        {
+          "value": 67,
+          "label": "F2 (Artillery Firing Point 2)"
+        },
+        {
+          "value": 68,
+          "label": "FC (FARP, Fuel and Ammo)"
+        },
+        {
+          "value": 69,
+          "label": "FF (FARP, Fuel only)"
+        },
+        {
+          "value": 70,
+          "label": "FM (FARP, Ammo only)"
+        },
+        {
+          "value": 71,
+          "label": "ID (Datalink Subscriber)"
+        },
+        {
+          "value": 72,
+          "label": "BD (Brigade)"
+        },
+        {
+          "value": 73,
+          "label": "BN (Battalion)"
+        },
+        {
+          "value": 74,
+          "label": "CO (Company)"
+        },
+        {
+          "value": 75,
+          "label": "CR (Corps)"
+        },
+        {
+          "value": 76,
+          "label": "DI (Division)"
+        },
+        {
+          "value": 77,
+          "label": "GP (Regiment/Group)"
+        },
+        {
+          "value": 78,
+          "label": "NB (NBC Area)"
+        },
+        {
+          "value": 79,
+          "label": "US (U.S. Army)"
+        }
+      ],
+      "help": "Partition-local ident; default 54. Cockpit Point_ID = id."
+    },
+    {
+      "path": "NAV.Mission_2.Points.CTRLM.POINTS.[].text",
+      "label": "Free text",
+      "kind": "string",
+      "maxLength": 3,
+      "pattern": "^[A-Z0-9 ]*$",
+      "help": "Up to 3 characters, upper case (the ME upper-cases). Default letter + 2-digit number, e.g. C51. Empty shows the index in the cockpit."
+    },
+    {
+      "path": "NAV.Mission_2.Points.CTRLM.POINTS.[].note",
+      "label": "Note (ME only)",
+      "kind": "string",
+      "help": "Mission Editor comment, not uploaded. Write \"\"."
+    },
+    {
+      "path": "NAV.Mission_2.Points.CTRLM.POINTS.[].x",
+      "label": "Map X (north)",
+      "kind": "number",
+      "unit": "m",
+      "nullCrashesEditor": true,
+      "help": "DCS map metres, x = north (unit.x in a .miz)."
+    },
+    {
+      "path": "NAV.Mission_2.Points.CTRLM.POINTS.[].y",
+      "label": "Map Y (east)",
+      "kind": "number",
+      "unit": "m",
+      "nullCrashesEditor": true,
+      "help": "DCS map metres, y = east (unit.y in a .miz)."
+    },
+    {
+      "path": "NAV.Mission_2.Points.CTRLM.POINTS.[].alt",
+      "label": "Elevation",
+      "kind": "number",
+      "unit": "m",
+      "display": {
+        "unit": "ft",
+        "factor": 3.280839895013123,
+        "decimals": 0
+      },
+      "nullCrashesEditor": true,
+      "help": "Point elevation, metres MSL (the ME shows feet; new points default to terrain height). Missing alt throws in the ME grid."
+    },
+    {
+      "path": "NAV.Mission_2.Points.TGT.isEnabled",
+      "label": "M2 upload TGT points",
+      "kind": "enum",
+      "managed": "route",
+      "options": [
+        {
+          "value": true,
+          "label": "Yes, upload to the aircraft"
+        },
+        {
+          "value": false,
+          "label": "No, keep it in the cartridge only (DCS default)"
+        }
+      ],
+      "help": "\"Do not upload tab data\" checkbox in the DTC editor, stored NON-inverted as isEnabled: true = the TGT partition is loaded into the aircraft, false (the DCS default) = it is not. A fresh cartridge uploads nothing for this tab until this is true. The exporter sets true when it writes points here."
+    },
+    {
+      "path": "NAV.Mission_2.Points.TGT.POINTS.[].num",
+      "label": "Point number",
+      "kind": "int",
+      "managed": "route",
+      "min": 1,
+      "max": 50,
+      "nullCrashesEditor": true,
+      "help": "Point index within the partition (TGT 1-50, shown as T01-T50). Must be unique; gaps allowed. Missing num throws in the ME."
+    },
+    {
+      "path": "NAV.Mission_2.Points.TGT.POINTS.[].id",
+      "label": "Ident (symbol)",
+      "kind": "enum",
+      "managed": "route",
+      "options": [
+        {
+          "value": 1,
+          "label": "TG (Target Point) (ring 3.0 km)"
+        },
+        {
+          "value": 2,
+          "label": "GU (Generic Air Defense Unit) (ring 5.0 km)"
+        },
+        {
+          "value": 3,
+          "label": "1 (SA-1 SAM System)"
+        },
+        {
+          "value": 4,
+          "label": "2 (SA-2 SAM System) (ring 43.0 km)"
+        },
+        {
+          "value": 5,
+          "label": "3 (SA-3 SAM System) (ring 18.0 km)"
+        },
+        {
+          "value": 6,
+          "label": "4 (SA-4 SAM System)"
+        },
+        {
+          "value": 7,
+          "label": "5 (SA-5 SAM System) (ring 99.9 km)"
+        },
+        {
+          "value": 8,
+          "label": "6 (SA-6 SAM System) (ring 25.0 km)"
+        },
+        {
+          "value": 9,
+          "label": "7 (SA-7 SAM System)"
+        },
+        {
+          "value": 10,
+          "label": "8 (SA-8 SAM System) (ring 10.3 km)"
+        },
+        {
+          "value": 11,
+          "label": "9 (SA-9 SAM System) (ring 5.0 km)"
+        },
+        {
+          "value": 12,
+          "label": "10 (SA-10 SAM System) (ring 99.9 km)"
+        },
+        {
+          "value": 13,
+          "label": "11 (SA-11 SAM System) (ring 35.0 km)"
+        },
+        {
+          "value": 14,
+          "label": "12 (SA-12 SAM System)"
+        },
+        {
+          "value": 15,
+          "label": "13 (SA-13 SAM System) (ring 5.0 km)"
+        },
+        {
+          "value": 16,
+          "label": "14 (SA-14 SAM System)"
+        },
+        {
+          "value": 17,
+          "label": "15 (SA-15 SAM System) (ring 12.0 km)"
+        },
+        {
+          "value": 18,
+          "label": "16 (SA-16 SAM System) (ring 5.2 km)"
+        },
+        {
+          "value": 19,
+          "label": "17 (SA-17 SAM System)"
+        },
+        {
+          "value": 20,
+          "label": "S6 (2S6/SA-19 Air Defense Unit) (ring 8.0 km)"
+        },
+        {
+          "value": 21,
+          "label": "ZU (ZSU-23-4 Air Defense Gun) (ring 2.5 km)"
+        },
+        {
+          "value": 22,
+          "label": "AS (Aspide SAM System)"
+        },
+        {
+          "value": 23,
+          "label": "83 (M1983 Air Defense Gun)"
+        },
+        {
+          "value": 24,
+          "label": "HK (Hawk SAM System) (ring 45.0 km)"
+        },
+        {
+          "value": 25,
+          "label": "RO (Roland SAM System) (ring 8.0 km)"
+        },
+        {
+          "value": 26,
+          "label": "AA (Air Defense Gun) (ring 6.0 km)"
+        },
+        {
+          "value": 27,
+          "label": "C2 (CSA-2/1/X SAM System)"
+        },
+        {
+          "value": 28,
+          "label": "CT (Crotale SAM System) (ring 15.0 km)"
+        },
+        {
+          "value": 29,
+          "label": "RA (Rapier SAM System) (ring 6.8 km)"
+        },
+        {
+          "value": 30,
+          "label": "GT (Towed Air Defense Gun) (ring 2.5 km)"
+        },
+        {
+          "value": 31,
+          "label": "GS (Self-Propelled Air Defense Gun) (ring 7.0 km)"
+        },
+        {
+          "value": 32,
+          "label": "TR (Target Acquisition Radar)"
+        },
+        {
+          "value": 33,
+          "label": "U (Unknown Air Defense Unit) (ring 2.5 km)"
+        },
+        {
+          "value": 34,
+          "label": "SA (Towed SAM System) (ring 15.0 km)"
+        },
+        {
+          "value": 35,
+          "label": "SP (Self-Propelled SAM System) (ring 40.0 km)"
+        },
+        {
+          "value": 36,
+          "label": "70 (RBS-70 SAM System)"
+        },
+        {
+          "value": 37,
+          "label": "SR (Battlefield Surveillance Radar)"
+        },
+        {
+          "value": 38,
+          "label": "NV (Naval Air Defense System)"
+        },
+        {
+          "value": 39,
+          "label": "G1 (Growth 1) (ring 1.0 km)"
+        },
+        {
+          "value": 40,
+          "label": "G2 (Growth 2) (ring 2.0 km)"
+        },
+        {
+          "value": 41,
+          "label": "G3 (Growth 3) (ring 3.0 km)"
+        },
+        {
+          "value": 42,
+          "label": "G4 (Growth 4) (ring 4.0 km)"
+        },
+        {
+          "value": 43,
+          "label": "PT (Patriot SAM System) (ring 99.9 km)"
+        },
+        {
+          "value": 44,
+          "label": "ST (Stinger SAM System) (ring 4.5 km)"
+        },
+        {
+          "value": 45,
+          "label": "RE (Redeye SAM System)"
+        },
+        {
+          "value": 46,
+          "label": "CH (Chapparal SAM System) (ring 8.5 km)"
+        },
+        {
+          "value": 47,
+          "label": "TC (Tigercat SAM System)"
+        },
+        {
+          "value": 48,
+          "label": "SD (Spada SAM System)"
+        },
+        {
+          "value": 49,
+          "label": "BH (Bloodhound SAM System)"
+        },
+        {
+          "value": 50,
+          "label": "SS (Starstreak SAM System)"
+        },
+        {
+          "value": 51,
+          "label": "JA (Javelin SAM System)"
+        },
+        {
+          "value": 52,
+          "label": "BP (Blowpipe SAM System)"
+        },
+        {
+          "value": 53,
+          "label": "SM (SAMP SAM System)"
+        },
+        {
+          "value": 54,
+          "label": "SC (SATCP SAM System)"
+        },
+        {
+          "value": 55,
+          "label": "SH (Shahine/R440 SAM System)"
+        },
+        {
+          "value": 56,
+          "label": "GP (Gepard Air Defense Gun) (ring 4.0 km)"
+        },
+        {
+          "value": 57,
+          "label": "VU (Vulcan Air Defense Gun) (ring 2.0 km)"
+        },
+        {
+          "value": 58,
+          "label": "MK (Marksman Air Defense Gun)"
+        },
+        {
+          "value": 59,
+          "label": "SB (Sabre Air Defense Gun)"
+        },
+        {
+          "value": 60,
+          "label": "AX (AMX-13 Air Defense Gun)"
+        },
+        {
+          "value": 61,
+          "label": "AD (Friendly Air Defense Unit) (ring 8.0 km)"
+        }
+      ],
+      "help": "Partition-local ident; default 1. Cockpit Point_ID = id + 79; each ident has its own threat ring (finding/killing radius)."
+    },
+    {
+      "path": "NAV.Mission_2.Points.TGT.POINTS.[].text",
+      "label": "Free text",
+      "kind": "string",
+      "managed": "route",
+      "maxLength": 3,
+      "pattern": "^[A-Z0-9 ]*$",
+      "help": "Up to 3 characters, upper case (the ME upper-cases). Default letter + 2-digit number, e.g. T01. Empty shows the index in the cockpit."
+    },
+    {
+      "path": "NAV.Mission_2.Points.TGT.POINTS.[].note",
+      "label": "Note (ME only)",
+      "kind": "string",
+      "managed": "route",
+      "help": "Mission Editor comment, not uploaded. Write \"\"."
+    },
+    {
+      "path": "NAV.Mission_2.Points.TGT.POINTS.[].x",
+      "label": "Map X (north)",
+      "kind": "number",
+      "managed": "route",
+      "unit": "m",
+      "nullCrashesEditor": true,
+      "help": "DCS map metres, x = north (unit.x in a .miz)."
+    },
+    {
+      "path": "NAV.Mission_2.Points.TGT.POINTS.[].y",
+      "label": "Map Y (east)",
+      "kind": "number",
+      "managed": "route",
+      "unit": "m",
+      "nullCrashesEditor": true,
+      "help": "DCS map metres, y = east (unit.y in a .miz)."
+    },
+    {
+      "path": "NAV.Mission_2.Points.TGT.POINTS.[].alt",
+      "label": "Elevation",
+      "kind": "number",
+      "managed": "route",
+      "unit": "m",
+      "display": {
+        "unit": "ft",
+        "factor": 3.280839895013123,
+        "decimals": 0
+      },
+      "nullCrashesEditor": true,
+      "help": "Point elevation, metres MSL (the ME shows feet; new points default to terrain height). Missing alt throws in the ME grid."
+    },
+    {
+      "path": "NAV.Mission_2.Routes.[].isEnabled",
+      "label": "Upload this route",
+      "kind": "enum",
+      "managed": "route",
+      "options": [
+        {
+          "value": true,
+          "label": "Yes, upload to the aircraft"
+        },
+        {
+          "value": false,
+          "label": "No, keep it in the cartridge only (DCS default)"
+        }
+      ],
+      "help": "\"Do not upload tab data\" checkbox in the DTC editor, stored NON-inverted as isEnabled: true = this route is loaded into the aircraft, false (the DCS default) = it is not. A fresh cartridge uploads nothing for this tab until this is true."
+    },
+    {
+      "path": "NAV.Mission_2.Routes.[].Name",
+      "label": "Route name",
+      "kind": "string",
+      "managed": "route",
+      "maxLength": 5,
+      "pattern": "^[A-Z0-9 ]*$",
+      "help": "Up to 5 characters, upper case. Defaults ALPHA BRAVO DELTA \"ECHO \" HOTEL INDIA \"LIMA \" OSCAR ROMEO TANGO."
+    },
+    {
+      "path": "NAV.Mission_2.Routes.[].POINTS.[].num",
+      "label": "Point number",
+      "kind": "int",
+      "managed": "route",
+      "min": 1,
+      "max": 99,
+      "nullCrashesEditor": true,
+      "help": "1-50 = WPTHZ point, 51-99 = CTRLM point (TGT cannot be routed). Must exist in this mission."
+    },
+    {
+      "path": "NAV.Mission_2.Routes.[].POINTS.[].alt",
+      "label": "Planned altitude",
+      "kind": "number",
+      "managed": "route",
+      "unit": "m",
+      "display": {
+        "unit": "ft",
+        "factor": 3.280839895013123,
+        "decimals": 0
+      },
+      "nullCrashesEditor": true,
+      "help": "Planned altitude at this leg, metres MSL (copied from the point when added in the ME)."
+    },
+    {
+      "path": "NAV.Mission_2.Routes.[].POINTS.[].speed",
+      "label": "Planned speed",
+      "kind": "number",
+      "managed": "route",
+      "unit": "kt",
+      "min": 0,
+      "max": 9999,
+      "nullCrashesEditor": true,
+      "help": "Knots (UI \"True Airspeed\"; manual says ground speed). Default 80. Derived from eta when fix is true."
+    },
+    {
+      "path": "NAV.Mission_2.Routes.[].POINTS.[].dist",
+      "label": "Leg distance (derived)",
+      "kind": "number",
+      "managed": "route",
+      "unit": "m",
+      "display": {
+        "unit": "NM",
+        "factor": 0.0005399568034557236,
+        "decimals": 1
+      },
+      "readonly": true,
+      "hidden": true,
+      "nullCrashesEditor": true,
+      "help": "Metres from the previous leg point (0 for the first); see derived[]."
+    },
+    {
+      "path": "NAV.Mission_2.Routes.[].POINTS.[].eta",
+      "label": "Leg time",
+      "kind": "time",
+      "managed": "route",
+      "unit": "s",
+      "nullCrashesEditor": true,
+      "help": "Seconds. Legs 2..n: leg duration dist/(speed*0.514). Leg 1: 0 (what the ME converges to). Input when fix is true, derived otherwise."
+    },
+    {
+      "path": "NAV.Mission_2.Routes.[].POINTS.[].fix",
+      "label": "Fix ETA",
+      "kind": "bool",
+      "managed": "route",
+      "help": "true = the leg is defined by eta and speed is derived; false = eta is derived from speed."
+    },
+    {
+      "path": "NAV.Mission_2.Lines.[].type_num",
+      "label": "Line type",
+      "kind": "enum",
+      "nullCrashesEditor": true,
+      "options": [
+        {
+          "value": 1,
+          "label": "BL (Boundary Line)"
+        },
+        {
+          "value": 2,
+          "label": "FEBA (Forward Edge of the Battle Area)"
+        },
+        {
+          "value": 3,
+          "label": "FLET (Forward Line of Enemy Troops)"
+        },
+        {
+          "value": 4,
+          "label": "FLOT (Forward Line of Own Troops)"
+        },
+        {
+          "value": 5,
+          "label": "FSCL (Fire Support Coordination Line)"
+        },
+        {
+          "value": 6,
+          "label": "LD (Line of Departure)"
+        },
+        {
+          "value": 7,
+          "label": "PL (Phase Line)"
+        }
+      ],
+      "help": "Cockpit label = type name (+ text for PL). Outside 1-7 throws."
+    },
+    {
+      "path": "NAV.Mission_2.Lines.[].text",
+      "label": "Phase line label",
+      "kind": "string",
+      "maxLength": 3,
+      "pattern": "^[A-Z0-9 ]*$",
+      "nullCrashesEditor": true,
+      "help": "Used only for PL (type 7): up to 3 characters, upper case. Write \"\" for other types but always write the key (a missing text deletes the line)."
+    },
+    {
+      "path": "NAV.Mission_2.Lines.[].note",
+      "label": "Note (ME only)",
+      "kind": "string",
+      "maxLength": 40,
+      "help": "ME comment, max 40 chars; not uploaded."
+    },
+    {
+      "path": "NAV.Mission_2.Lines.[].vertices.[].x",
+      "label": "Vertex X (north)",
+      "kind": "number",
+      "unit": "m",
+      "help": "DCS map metres, x = north."
+    },
+    {
+      "path": "NAV.Mission_2.Lines.[].vertices.[].y",
+      "label": "Vertex Y (east)",
+      "kind": "number",
+      "unit": "m",
+      "help": "DCS map metres, y = east."
+    },
+    {
+      "path": "NAV.Mission_2.Areas.[].note",
+      "label": "Note (ME only)",
+      "kind": "string",
+      "maxLength": 44,
+      "nullCrashesEditor": true,
+      "help": "ME comment, max 44 chars, not uploaded, but REQUIRED: an entry without note is deleted on load. Write \"\"."
+    },
+    {
+      "path": "NAV.Mission_2.Areas.[].vertices.[].x",
+      "label": "Corner X (north)",
+      "kind": "number",
+      "unit": "m",
+      "help": "DCS map metres, x = north."
+    },
+    {
+      "path": "NAV.Mission_2.Areas.[].vertices.[].y",
+      "label": "Corner Y (east)",
+      "kind": "number",
+      "unit": "m",
+      "help": "DCS map metres, y = east."
+    },
+    {
+      "path": "NAV.Mission_2.Zones.PFZ.[].note",
+      "label": "Note (ME only)",
+      "kind": "string",
+      "maxLength": 44,
+      "nullCrashesEditor": true,
+      "help": "ME comment, max 44 chars, not uploaded, but REQUIRED: an entry without note is deleted on load. Write \"\"."
+    },
+    {
+      "path": "NAV.Mission_2.Zones.PFZ.[].vertices.[].x",
+      "label": "Corner X (north)",
+      "kind": "number",
+      "unit": "m",
+      "help": "DCS map metres, x = north."
+    },
+    {
+      "path": "NAV.Mission_2.Zones.PFZ.[].vertices.[].y",
+      "label": "Corner Y (east)",
+      "kind": "number",
+      "unit": "m",
+      "help": "DCS map metres, y = east."
+    },
+    {
+      "path": "NAV.Mission_2.Zones.NFZ.[].note",
+      "label": "Note (ME only)",
+      "kind": "string",
+      "maxLength": 44,
+      "nullCrashesEditor": true,
+      "help": "ME comment, max 44 chars, not uploaded, but REQUIRED: an entry without note is deleted on load. Write \"\"."
+    },
+    {
+      "path": "NAV.Mission_2.Zones.NFZ.[].vertices.[].x",
+      "label": "Corner X (north)",
+      "kind": "number",
+      "unit": "m",
+      "help": "DCS map metres, x = north."
+    },
+    {
+      "path": "NAV.Mission_2.Zones.NFZ.[].vertices.[].y",
+      "label": "Corner Y (east)",
+      "kind": "number",
+      "unit": "m",
+      "help": "DCS map metres, y = east."
+    },
+    {
+      "path": "NAV.Mission_2.ADF.isEnabled",
+      "label": "M2 upload ADF presets",
+      "kind": "enum",
+      "options": [
+        {
+          "value": true,
+          "label": "Yes, upload to the aircraft"
+        },
+        {
+          "value": false,
+          "label": "No, keep it in the cartridge only (DCS default)"
+        }
+      ],
+      "help": "\"Do not upload tab data\" checkbox in the DTC editor, stored NON-inverted as isEnabled: true = the ADF preset list is loaded into the aircraft, false (the DCS default) = it is not. A fresh cartridge uploads nothing for this tab until this is true. The exporter sets true when any preset has an ID or a non-default frequency, unless the user forced false."
+    },
+    {
+      "path": "NAV.Mission_2.ADF.{}.ID",
+      "label": "Station ident",
+      "kind": "string",
+      "maxLength": 3,
+      "pattern": "^[A-Z]*$",
+      "nullCrashesEditor": true,
+      "help": "NDB identifier, letters only, max 3, upper case; its Morse is shown on the TSD instrument page. Must be a string (nil throws)."
+    },
+    {
+      "path": "NAV.Mission_2.ADF.{}.Freq",
+      "label": "Frequency",
+      "kind": "number",
+      "unit": "kHz",
+      "min": 100,
+      "max": 2199.5,
+      "step": 0.1,
+      "help": "ADF frequency in kHz, 100.0-2199.5. Default 100."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.VHF.Mode",
+      "label": "VHF (ARC-186) start mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Preset"
+        },
+        {
+          "value": 1,
+          "label": "Manual"
+        }
+      ],
+      "help": "Preset = tune the preset below; Manual = tune Frequency."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.VHF.Preset",
+      "label": "VHF (ARC-186) start preset",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "Preset 1"
+        },
+        {
+          "value": 2,
+          "label": "Preset 2"
+        },
+        {
+          "value": 3,
+          "label": "Preset 3"
+        },
+        {
+          "value": 4,
+          "label": "Preset 4"
+        },
+        {
+          "value": 5,
+          "label": "Preset 5"
+        },
+        {
+          "value": 6,
+          "label": "Preset 6"
+        },
+        {
+          "value": 7,
+          "label": "Preset 7"
+        },
+        {
+          "value": 8,
+          "label": "Preset 8"
+        },
+        {
+          "value": 9,
+          "label": "Preset 9"
+        },
+        {
+          "value": 10,
+          "label": "Preset 10"
+        }
+      ],
+      "nullCrashesEditor": true,
+      "help": "COMM preset 1-10. Must be valid even in Manual mode (the ME indexes Presets.COMM[Preset] unguarded)."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.VHF.Frequency",
+      "label": "VHF (ARC-186) manual frequency",
+      "kind": "freq",
+      "unit": "MHz",
+      "min": 108,
+      "max": 151.975,
+      "step": 0.025,
+      "help": "MHz 108-151.975, 0.025 steps. In Preset mode the ME overwrites it with the preset frequency."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.VHF.Modulation",
+      "label": "VHF (ARC-186) modulation",
+      "kind": "enum",
+      "readonly": true,
+      "options": [
+        {
+          "value": 0,
+          "label": "AM"
+        },
+        {
+          "value": 1,
+          "label": "FM"
+        }
+      ],
+      "help": "Fixed AM (combo disabled in the UI)."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.VHF.Encryption",
+      "label": "VHF (ARC-186) encryption",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "NONE"
+        },
+        {
+          "value": 1,
+          "label": "C1"
+        },
+        {
+          "value": 2,
+          "label": "C2"
+        },
+        {
+          "value": 3,
+          "label": "C3"
+        },
+        {
+          "value": 4,
+          "label": "C4"
+        },
+        {
+          "value": 5,
+          "label": "C5"
+        },
+        {
+          "value": 6,
+          "label": "C6"
+        }
+      ],
+      "readonly": true,
+      "help": "VHF has no encryption; keep 0."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.UHF.Mode",
+      "label": "UHF (ARC-164) start mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Preset"
+        },
+        {
+          "value": 1,
+          "label": "Manual"
+        }
+      ],
+      "help": "Preset = tune the preset below; Manual = tune Frequency."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.UHF.Preset",
+      "label": "UHF (ARC-164) start preset",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "Preset 1"
+        },
+        {
+          "value": 2,
+          "label": "Preset 2"
+        },
+        {
+          "value": 3,
+          "label": "Preset 3"
+        },
+        {
+          "value": 4,
+          "label": "Preset 4"
+        },
+        {
+          "value": 5,
+          "label": "Preset 5"
+        },
+        {
+          "value": 6,
+          "label": "Preset 6"
+        },
+        {
+          "value": 7,
+          "label": "Preset 7"
+        },
+        {
+          "value": 8,
+          "label": "Preset 8"
+        },
+        {
+          "value": 9,
+          "label": "Preset 9"
+        },
+        {
+          "value": 10,
+          "label": "Preset 10"
+        }
+      ],
+      "nullCrashesEditor": true,
+      "help": "COMM preset 1-10. Must be valid even in Manual mode (the ME indexes Presets.COMM[Preset] unguarded)."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.UHF.Frequency",
+      "label": "UHF (ARC-164) manual frequency",
+      "kind": "freq",
+      "unit": "MHz",
+      "min": 225,
+      "max": 399.975,
+      "step": 0.025,
+      "help": "MHz 225-399.975, 0.025 steps. In Preset mode the ME overwrites it with the preset frequency."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.UHF.Modulation",
+      "label": "UHF (ARC-164) modulation",
+      "kind": "enum",
+      "readonly": true,
+      "options": [
+        {
+          "value": 0,
+          "label": "AM"
+        },
+        {
+          "value": 1,
+          "label": "FM"
+        }
+      ],
+      "help": "Fixed AM (combo disabled in the UI)."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.UHF.Encryption",
+      "label": "UHF (ARC-164) encryption",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "NONE"
+        },
+        {
+          "value": 1,
+          "label": "C1"
+        },
+        {
+          "value": 2,
+          "label": "C2"
+        },
+        {
+          "value": 3,
+          "label": "C3"
+        },
+        {
+          "value": 4,
+          "label": "C4"
+        },
+        {
+          "value": 5,
+          "label": "C5"
+        },
+        {
+          "value": 6,
+          "label": "C6"
+        }
+      ],
+      "readonly": false,
+      "help": "Crypto key 0 = none, 1-6 = C1-C6 (not implemented in the aircraft per the manual)."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.FM1.Mode",
+      "label": "FM1 (ARC-201D) start mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Preset"
+        },
+        {
+          "value": 1,
+          "label": "Manual"
+        }
+      ],
+      "help": "Preset = tune the preset below; Manual = tune Frequency."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.FM1.Preset",
+      "label": "FM1 (ARC-201D) start preset",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "Preset 1"
+        },
+        {
+          "value": 2,
+          "label": "Preset 2"
+        },
+        {
+          "value": 3,
+          "label": "Preset 3"
+        },
+        {
+          "value": 4,
+          "label": "Preset 4"
+        },
+        {
+          "value": 5,
+          "label": "Preset 5"
+        },
+        {
+          "value": 6,
+          "label": "Preset 6"
+        },
+        {
+          "value": 7,
+          "label": "Preset 7"
+        },
+        {
+          "value": 8,
+          "label": "Preset 8"
+        },
+        {
+          "value": 9,
+          "label": "Preset 9"
+        },
+        {
+          "value": 10,
+          "label": "Preset 10"
+        }
+      ],
+      "nullCrashesEditor": true,
+      "help": "COMM preset 1-10. Must be valid even in Manual mode (the ME indexes Presets.COMM[Preset] unguarded)."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.FM1.Frequency",
+      "label": "FM1 (ARC-201D) manual frequency",
+      "kind": "freq",
+      "unit": "MHz",
+      "min": 30,
+      "max": 87.975,
+      "step": 0.025,
+      "help": "MHz 30-87.975, 0.025 steps. In Preset mode the ME overwrites it with the preset frequency."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.FM1.Modulation",
+      "label": "FM1 (ARC-201D) modulation",
+      "kind": "enum",
+      "readonly": true,
+      "options": [
+        {
+          "value": 0,
+          "label": "AM"
+        },
+        {
+          "value": 1,
+          "label": "FM"
+        }
+      ],
+      "help": "Fixed FM (combo disabled in the UI)."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.FM1.Encryption",
+      "label": "FM1 (ARC-201D) encryption",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "NONE"
+        },
+        {
+          "value": 1,
+          "label": "C1"
+        },
+        {
+          "value": 2,
+          "label": "C2"
+        },
+        {
+          "value": 3,
+          "label": "C3"
+        },
+        {
+          "value": 4,
+          "label": "C4"
+        },
+        {
+          "value": 5,
+          "label": "C5"
+        },
+        {
+          "value": 6,
+          "label": "C6"
+        }
+      ],
+      "readonly": false,
+      "help": "Crypto key 0 = none, 1-6 = C1-C6 (not implemented in the aircraft per the manual)."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.FM2.Mode",
+      "label": "FM2 (ARC-201D) start mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Preset"
+        },
+        {
+          "value": 1,
+          "label": "Manual"
+        }
+      ],
+      "help": "Preset = tune the preset below; Manual = tune Frequency."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.FM2.Preset",
+      "label": "FM2 (ARC-201D) start preset",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "Preset 1"
+        },
+        {
+          "value": 2,
+          "label": "Preset 2"
+        },
+        {
+          "value": 3,
+          "label": "Preset 3"
+        },
+        {
+          "value": 4,
+          "label": "Preset 4"
+        },
+        {
+          "value": 5,
+          "label": "Preset 5"
+        },
+        {
+          "value": 6,
+          "label": "Preset 6"
+        },
+        {
+          "value": 7,
+          "label": "Preset 7"
+        },
+        {
+          "value": 8,
+          "label": "Preset 8"
+        },
+        {
+          "value": 9,
+          "label": "Preset 9"
+        },
+        {
+          "value": 10,
+          "label": "Preset 10"
+        }
+      ],
+      "nullCrashesEditor": true,
+      "help": "COMM preset 1-10. Must be valid even in Manual mode (the ME indexes Presets.COMM[Preset] unguarded)."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.FM2.Frequency",
+      "label": "FM2 (ARC-201D) manual frequency",
+      "kind": "freq",
+      "unit": "MHz",
+      "min": 30,
+      "max": 87.975,
+      "step": 0.025,
+      "help": "MHz 30-87.975, 0.025 steps. In Preset mode the ME overwrites it with the preset frequency."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.FM2.Modulation",
+      "label": "FM2 (ARC-201D) modulation",
+      "kind": "enum",
+      "readonly": true,
+      "options": [
+        {
+          "value": 0,
+          "label": "AM"
+        },
+        {
+          "value": 1,
+          "label": "FM"
+        }
+      ],
+      "help": "Fixed FM (combo disabled in the UI)."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.FM2.Encryption",
+      "label": "FM2 (ARC-201D) encryption",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "NONE"
+        },
+        {
+          "value": 1,
+          "label": "C1"
+        },
+        {
+          "value": 2,
+          "label": "C2"
+        },
+        {
+          "value": 3,
+          "label": "C3"
+        },
+        {
+          "value": 4,
+          "label": "C4"
+        },
+        {
+          "value": 5,
+          "label": "C5"
+        },
+        {
+          "value": 6,
+          "label": "C6"
+        }
+      ],
+      "readonly": false,
+      "help": "Crypto key 0 = none, 1-6 = C1-C6 (not implemented in the aircraft per the manual)."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.HF.Mode",
+      "label": "HF (ARC-220) start mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Preset"
+        },
+        {
+          "value": 1,
+          "label": "Manual"
+        }
+      ],
+      "help": "Preset or Manual. HF is not implemented in the aircraft."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.HF.Preset",
+      "label": "HF start preset",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "Preset 1"
+        },
+        {
+          "value": 2,
+          "label": "Preset 2"
+        },
+        {
+          "value": 3,
+          "label": "Preset 3"
+        },
+        {
+          "value": 4,
+          "label": "Preset 4"
+        },
+        {
+          "value": 5,
+          "label": "Preset 5"
+        },
+        {
+          "value": 6,
+          "label": "Preset 6"
+        },
+        {
+          "value": 7,
+          "label": "Preset 7"
+        },
+        {
+          "value": 8,
+          "label": "Preset 8"
+        },
+        {
+          "value": 9,
+          "label": "Preset 9"
+        },
+        {
+          "value": 10,
+          "label": "Preset 10"
+        }
+      ],
+      "nullCrashesEditor": true,
+      "help": "COMM preset 1-10; must be valid."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.HF.RxFrequency",
+      "label": "HF receive frequency",
+      "kind": "freq",
+      "unit": "MHz",
+      "min": 2,
+      "max": 29.9999,
+      "step": 0.0001,
+      "help": "MHz 2.0000-29.9999. Overwritten from the preset in Preset mode."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.HF.RxModulation",
+      "label": "HF receive modulation",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "USB"
+        },
+        {
+          "value": 1,
+          "label": "LSB"
+        },
+        {
+          "value": 2,
+          "label": "AME"
+        },
+        {
+          "value": 3,
+          "label": "CW"
+        }
+      ],
+      "help": "USB, LSB, AME (default) or CW."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.HF.RxEncryption",
+      "label": "HF receive encryption",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "NONE"
+        },
+        {
+          "value": 1,
+          "label": "C1"
+        },
+        {
+          "value": 2,
+          "label": "C2"
+        },
+        {
+          "value": 3,
+          "label": "C3"
+        },
+        {
+          "value": 4,
+          "label": "C4"
+        },
+        {
+          "value": 5,
+          "label": "C5"
+        },
+        {
+          "value": 6,
+          "label": "C6"
+        }
+      ],
+      "help": "0 = none, 1-6 = C1-C6 (not implemented)."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.HF.TxFrequency",
+      "label": "HF transmit frequency",
+      "kind": "freq",
+      "unit": "MHz",
+      "min": 2,
+      "max": 29.9999,
+      "step": 0.0001,
+      "help": "MHz 2.0000-29.9999. Overwritten from the preset in Preset mode."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.HF.TxModulation",
+      "label": "HF transmit modulation",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "USB"
+        },
+        {
+          "value": 1,
+          "label": "LSB"
+        },
+        {
+          "value": 2,
+          "label": "AME"
+        },
+        {
+          "value": 3,
+          "label": "CW"
+        }
+      ],
+      "help": "USB, LSB, AME (default) or CW."
+    },
+    {
+      "path": "Radios.InitialRadioSettings.HF.TxEncryption",
+      "label": "HF transmit encryption",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "NONE"
+        },
+        {
+          "value": 1,
+          "label": "C1"
+        },
+        {
+          "value": 2,
+          "label": "C2"
+        },
+        {
+          "value": 3,
+          "label": "C3"
+        },
+        {
+          "value": 4,
+          "label": "C4"
+        },
+        {
+          "value": 5,
+          "label": "C5"
+        },
+        {
+          "value": 6,
+          "label": "C6"
+        }
+      ],
+      "help": "0 = none, 1-6 = C1-C6 (not implemented)."
+    },
+    {
+      "path": "Radios.UHF_GuardReceiver",
+      "label": "UHF guard receiver (243.0)",
+      "kind": "bool",
+      "help": "Monitor UHF guard 243.000 MHz."
+    },
+    {
+      "path": "Radios.FM.FM1_Power",
+      "label": "FM1 transmit power",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "HIGH"
+        },
+        {
+          "value": 1,
+          "label": "NORM"
+        },
+        {
+          "value": 2,
+          "label": "LOW"
+        },
+        {
+          "value": 3,
+          "label": "OFF"
+        }
+      ],
+      "help": "ARC-201D FM1 power setting."
+    },
+    {
+      "path": "Radios.FM.FM1_CUE_Frequency",
+      "label": "FM1 CUE frequency",
+      "kind": "freq",
+      "unit": "MHz",
+      "min": 30,
+      "max": 87.975,
+      "step": 0.025,
+      "help": "SINCGARS CUE frequency, MHz 30-87.975."
+    },
+    {
+      "path": "Radios.FM.FM1_CUE_Modulation",
+      "label": "FM1 CUE modulation",
+      "kind": "enum",
+      "readonly": true,
+      "options": [
+        {
+          "value": 0,
+          "label": "AM"
+        },
+        {
+          "value": 1,
+          "label": "FM"
+        }
+      ],
+      "help": "Fixed 1 (FM)."
+    },
+    {
+      "path": "Radios.FM.FM2_CUE_Frequency",
+      "label": "FM2 CUE frequency",
+      "kind": "freq",
+      "unit": "MHz",
+      "min": 30,
+      "max": 87.975,
+      "step": 0.025,
+      "help": "SINCGARS CUE frequency, MHz 30-87.975."
+    },
+    {
+      "path": "Radios.FM.FM2_CUE_Modulation",
+      "label": "FM2 CUE modulation",
+      "kind": "enum",
+      "readonly": true,
+      "options": [
+        {
+          "value": 0,
+          "label": "AM"
+        },
+        {
+          "value": 1,
+          "label": "FM"
+        }
+      ],
+      "help": "Fixed 1 (FM)."
+    },
+    {
+      "path": "Radios.IFF.Mode1.Enable",
+      "label": "Mode 1 on",
+      "kind": "bool",
+      "help": "Enable Mode 1."
+    },
+    {
+      "path": "Radios.IFF.Mode1.Code",
+      "label": "Mode 1 code",
+      "kind": "string",
+      "pattern": "^[0-7][0-3]$",
+      "maxLength": 2,
+      "help": "String of 2 digits, 00-73 (first digit 0-7, second 0-3)."
+    },
+    {
+      "path": "Radios.IFF.Mode2.Enable",
+      "label": "Mode 2 on",
+      "kind": "bool",
+      "help": "Enable Mode 2."
+    },
+    {
+      "path": "Radios.IFF.Mode2.Code",
+      "label": "Mode 2 code",
+      "kind": "string",
+      "pattern": "^[0-7]{4}$",
+      "maxLength": 4,
+      "help": "String of 4 octal digits."
+    },
+    {
+      "path": "Radios.IFF.Mode3A.Enable",
+      "label": "Mode 3/A on",
+      "kind": "bool",
+      "help": "Enable Mode 3/A."
+    },
+    {
+      "path": "Radios.IFF.Mode3A.Code",
+      "label": "Mode 3/A squawk",
+      "kind": "string",
+      "pattern": "^[0-7]{4}$",
+      "maxLength": 4,
+      "help": "String of 4 octal digits."
+    },
+    {
+      "path": "Radios.IFF.ModeC.Enable",
+      "label": "Mode C (altitude) on",
+      "kind": "bool",
+      "help": "Enable Mode C altitude reporting."
+    },
+    {
+      "path": "Radios.IFF.Mode4.Enable",
+      "label": "Mode 4 on",
+      "kind": "bool",
+      "help": "Enable Mode 4 crypto mode."
+    },
+    {
+      "path": "Radios.IFF.Mode4.Code",
+      "label": "Mode 4 code",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "A"
+        },
+        {
+          "value": 1,
+          "label": "B"
+        }
+      ],
+      "help": "Mode 4 key A or B (number 0/1)."
+    },
+    {
+      "path": "Radios.IFF.ModeS.Enable",
+      "label": "Mode S on",
+      "kind": "bool",
+      "help": "Enable Mode S."
+    },
+    {
+      "path": "Radios.IFF.ModeS.FlightID",
+      "label": "Mode S flight ID",
+      "kind": "string",
+      "maxLength": 8,
+      "pattern": "^[A-Z0-9 ]*$",
+      "help": "Up to 8 characters A-Z, 0-9, space."
+    },
+    {
+      "path": "Radios.IFF.ModeS.Address",
+      "label": "Mode S address",
+      "kind": "string",
+      "pattern": "^[0-7]{8}$",
+      "maxLength": 8,
+      "help": "String of 8 octal digits."
+    },
+    {
+      "path": "Presets.COMM.[].DoNotUploadTabData",
+      "label": "Upload this preset",
+      "kind": "enum",
+      "options": [
+        {
+          "value": false,
+          "label": "Yes, upload (DCS default)"
+        },
+        {
+          "value": true,
+          "label": "No, skip this preset"
+        }
+      ],
+      "help": "Stored INVERTED as DoNotUploadTabData: false = the preset IS uploaded (default), true = skipped. Opposite polarity to the isEnabled flags elsewhere."
+    },
+    {
+      "path": "Presets.COMM.[].InitialMode.UnitID",
+      "label": "Unit ID",
+      "kind": "string",
+      "maxLength": 8,
+      "pattern": "^[A-Za-z0-9 ]*$",
+      "nullCrashesEditor": true,
+      "help": "Up to 8 characters, shown on the COM page and EUFD preset list. Only A-Z a-z 0-9 space: any other character makes DCS replace the WHOLE value with \"PRESET n\" (strip, do not rely on DCS). Must be a string. Note the DCS preset 10 default \"PRESET 10\" is 9 chars and is cut to \"PRESET 1\" when shown."
+    },
+    {
+      "path": "Presets.COMM.[].InitialMode.CallSign",
+      "label": "Call sign",
+      "kind": "string",
+      "maxLength": 5,
+      "pattern": "^[A-Za-z0-9 ]*$",
+      "nullCrashesEditor": true,
+      "help": "Up to 5 characters, EUFD radio status. Same character rule as Unit ID (else reset to \"PRE n\"). The DCS preset 10 default \"PRE 10\" is cut to \"PRE 1\" when shown."
+    },
+    {
+      "path": "Presets.COMM.[].InitialMode.PrimaryFrequency",
+      "label": "Primary frequency",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "None"
+        },
+        {
+          "value": 1,
+          "label": "VHF SC"
+        },
+        {
+          "value": 2,
+          "label": "UHF SC"
+        },
+        {
+          "value": 3,
+          "label": "FM1 SC"
+        },
+        {
+          "value": 4,
+          "label": "FM2 SC"
+        }
+      ],
+      "help": "Which single-channel radio is primary for this preset (informational per the manual). Defaults: presets 1-4 = VHF/UHF/FM1/FM2, 5-10 = None."
+    },
+    {
+      "path": "Presets.COMM.[].InitialMode.DLNet",
+      "label": "Datalink net",
+      "kind": "bool",
+      "help": "Preset carries a datalink net. Only meaningful for presets 1-8 (the UI hides it for 9-10, default false there)."
+    },
+    {
+      "path": "Presets.COMM.[].COMMS.VHF.Frequency",
+      "label": "VHF frequency",
+      "kind": "freq",
+      "unit": "MHz",
+      "min": 108,
+      "max": 151.975,
+      "step": 0.025,
+      "help": "MHz 108-151.975 (0.025 steps)."
+    },
+    {
+      "path": "Presets.COMM.[].COMMS.VHF.Modulation",
+      "label": "VHF modulation",
+      "kind": "enum",
+      "readonly": true,
+      "options": [
+        {
+          "value": 0,
+          "label": "AM"
+        },
+        {
+          "value": 1,
+          "label": "FM"
+        }
+      ],
+      "help": "Fixed (0 AM); combo disabled in the UI."
+    },
+    {
+      "path": "Presets.COMM.[].COMMS.VHF.Encryption",
+      "label": "VHF encryption",
+      "kind": "enum",
+      "readonly": true,
+      "options": [
+        {
+          "value": 0,
+          "label": "NONE"
+        },
+        {
+          "value": 1,
+          "label": "C1"
+        },
+        {
+          "value": 2,
+          "label": "C2"
+        },
+        {
+          "value": 3,
+          "label": "C3"
+        },
+        {
+          "value": 4,
+          "label": "C4"
+        },
+        {
+          "value": 5,
+          "label": "C5"
+        },
+        {
+          "value": 6,
+          "label": "C6"
+        }
+      ],
+      "help": "VHF has no encryption; keep 0."
+    },
+    {
+      "path": "Presets.COMM.[].COMMS.UHF.Frequency",
+      "label": "UHF frequency",
+      "kind": "freq",
+      "unit": "MHz",
+      "min": 225,
+      "max": 399.975,
+      "step": 0.025,
+      "help": "MHz 225-399.975 (0.025 steps)."
+    },
+    {
+      "path": "Presets.COMM.[].COMMS.UHF.Modulation",
+      "label": "UHF modulation",
+      "kind": "enum",
+      "readonly": true,
+      "options": [
+        {
+          "value": 0,
+          "label": "AM"
+        },
+        {
+          "value": 1,
+          "label": "FM"
+        }
+      ],
+      "help": "Fixed (0 AM); combo disabled in the UI."
+    },
+    {
+      "path": "Presets.COMM.[].COMMS.UHF.Encryption",
+      "label": "UHF encryption",
+      "kind": "enum",
+      "readonly": false,
+      "options": [
+        {
+          "value": 0,
+          "label": "NONE"
+        },
+        {
+          "value": 1,
+          "label": "C1"
+        },
+        {
+          "value": 2,
+          "label": "C2"
+        },
+        {
+          "value": 3,
+          "label": "C3"
+        },
+        {
+          "value": 4,
+          "label": "C4"
+        },
+        {
+          "value": 5,
+          "label": "C5"
+        },
+        {
+          "value": 6,
+          "label": "C6"
+        }
+      ],
+      "help": "0 = none, 1-6 = C1-C6 (not implemented in the aircraft)."
+    },
+    {
+      "path": "Presets.COMM.[].COMMS.FM1.Frequency",
+      "label": "FM1 frequency",
+      "kind": "freq",
+      "unit": "MHz",
+      "min": 30,
+      "max": 87.975,
+      "step": 0.025,
+      "help": "MHz 30-87.975 (0.025 steps)."
+    },
+    {
+      "path": "Presets.COMM.[].COMMS.FM1.Modulation",
+      "label": "FM1 modulation",
+      "kind": "enum",
+      "readonly": true,
+      "options": [
+        {
+          "value": 0,
+          "label": "AM"
+        },
+        {
+          "value": 1,
+          "label": "FM"
+        }
+      ],
+      "help": "Fixed (1 FM); combo disabled in the UI."
+    },
+    {
+      "path": "Presets.COMM.[].COMMS.FM1.Encryption",
+      "label": "FM1 encryption",
+      "kind": "enum",
+      "readonly": false,
+      "options": [
+        {
+          "value": 0,
+          "label": "NONE"
+        },
+        {
+          "value": 1,
+          "label": "C1"
+        },
+        {
+          "value": 2,
+          "label": "C2"
+        },
+        {
+          "value": 3,
+          "label": "C3"
+        },
+        {
+          "value": 4,
+          "label": "C4"
+        },
+        {
+          "value": 5,
+          "label": "C5"
+        },
+        {
+          "value": 6,
+          "label": "C6"
+        }
+      ],
+      "help": "0 = none, 1-6 = C1-C6 (not implemented in the aircraft)."
+    },
+    {
+      "path": "Presets.COMM.[].COMMS.FM2.Frequency",
+      "label": "FM2 frequency",
+      "kind": "freq",
+      "unit": "MHz",
+      "min": 30,
+      "max": 87.975,
+      "step": 0.025,
+      "help": "MHz 30-87.975 (0.025 steps)."
+    },
+    {
+      "path": "Presets.COMM.[].COMMS.FM2.Modulation",
+      "label": "FM2 modulation",
+      "kind": "enum",
+      "readonly": true,
+      "options": [
+        {
+          "value": 0,
+          "label": "AM"
+        },
+        {
+          "value": 1,
+          "label": "FM"
+        }
+      ],
+      "help": "Fixed (1 FM); combo disabled in the UI."
+    },
+    {
+      "path": "Presets.COMM.[].COMMS.FM2.Encryption",
+      "label": "FM2 encryption",
+      "kind": "enum",
+      "readonly": false,
+      "options": [
+        {
+          "value": 0,
+          "label": "NONE"
+        },
+        {
+          "value": 1,
+          "label": "C1"
+        },
+        {
+          "value": 2,
+          "label": "C2"
+        },
+        {
+          "value": 3,
+          "label": "C3"
+        },
+        {
+          "value": 4,
+          "label": "C4"
+        },
+        {
+          "value": 5,
+          "label": "C5"
+        },
+        {
+          "value": 6,
+          "label": "C6"
+        }
+      ],
+      "help": "0 = none, 1-6 = C1-C6 (not implemented in the aircraft)."
+    },
+    {
+      "path": "Presets.COMM.[].COMMS.HF_Rx.Frequency",
+      "label": "HF receive frequency",
+      "kind": "freq",
+      "unit": "MHz",
+      "min": 2,
+      "max": 29.9999,
+      "step": 0.0001,
+      "help": "MHz 2-29.9999 (0.0001 steps)."
+    },
+    {
+      "path": "Presets.COMM.[].COMMS.HF_Rx.Modulation",
+      "label": "HF receive modulation",
+      "kind": "enum",
+      "readonly": false,
+      "options": [
+        {
+          "value": 0,
+          "label": "USB"
+        },
+        {
+          "value": 1,
+          "label": "LSB"
+        },
+        {
+          "value": 2,
+          "label": "AME"
+        },
+        {
+          "value": 3,
+          "label": "CW"
+        }
+      ],
+      "help": "USB, LSB, AME (default) or CW."
+    },
+    {
+      "path": "Presets.COMM.[].COMMS.HF_Rx.Encryption",
+      "label": "HF receive encryption",
+      "kind": "enum",
+      "readonly": false,
+      "options": [
+        {
+          "value": 0,
+          "label": "NONE"
+        },
+        {
+          "value": 1,
+          "label": "C1"
+        },
+        {
+          "value": 2,
+          "label": "C2"
+        },
+        {
+          "value": 3,
+          "label": "C3"
+        },
+        {
+          "value": 4,
+          "label": "C4"
+        },
+        {
+          "value": 5,
+          "label": "C5"
+        },
+        {
+          "value": 6,
+          "label": "C6"
+        }
+      ],
+      "help": "0 = none, 1-6 = C1-C6 (not implemented in the aircraft)."
+    },
+    {
+      "path": "Presets.COMM.[].COMMS.HF_Tx.Frequency",
+      "label": "HF transmit frequency",
+      "kind": "freq",
+      "unit": "MHz",
+      "min": 2,
+      "max": 29.9999,
+      "step": 0.0001,
+      "help": "MHz 2-29.9999 (0.0001 steps)."
+    },
+    {
+      "path": "Presets.COMM.[].COMMS.HF_Tx.Modulation",
+      "label": "HF transmit modulation",
+      "kind": "enum",
+      "readonly": false,
+      "options": [
+        {
+          "value": 0,
+          "label": "USB"
+        },
+        {
+          "value": 1,
+          "label": "LSB"
+        },
+        {
+          "value": 2,
+          "label": "AME"
+        },
+        {
+          "value": 3,
+          "label": "CW"
+        }
+      ],
+      "help": "USB, LSB, AME (default) or CW."
+    },
+    {
+      "path": "Presets.COMM.[].COMMS.HF_Tx.Encryption",
+      "label": "HF transmit encryption",
+      "kind": "enum",
+      "readonly": false,
+      "options": [
+        {
+          "value": 0,
+          "label": "NONE"
+        },
+        {
+          "value": 1,
+          "label": "C1"
+        },
+        {
+          "value": 2,
+          "label": "C2"
+        },
+        {
+          "value": 3,
+          "label": "C3"
+        },
+        {
+          "value": 4,
+          "label": "C4"
+        },
+        {
+          "value": 5,
+          "label": "C5"
+        },
+        {
+          "value": 6,
+          "label": "C6"
+        }
+      ],
+      "help": "0 = none, 1-6 = C1-C6 (not implemented in the aircraft)."
+    },
+    {
+      "path": "Presets.COMM.[].COMMS.HF_Pre",
+      "label": "HF preset (N/I)",
+      "kind": "int",
+      "readonly": true,
+      "help": "Not implemented (combo never populated); keep 1."
+    },
+    {
+      "path": "Presets.COMM.[].COMMS.HF_ALE",
+      "label": "HF ALE (N/I)",
+      "kind": "int",
+      "readonly": true,
+      "help": "Not implemented; keep 1."
+    },
+    {
+      "path": "Presets.MPS.[].OptionID",
+      "label": "Message",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Custom"
+        },
+        {
+          "value": 1,
+          "label": "MOVE TO NEXT WP"
+        },
+        {
+          "value": 2,
+          "label": "MOVE TO NEXT BP"
+        },
+        {
+          "value": 3,
+          "label": "PERFORM RECON"
+        },
+        {
+          "value": 4,
+          "label": "EXECUTE ATTACK"
+        },
+        {
+          "value": 5,
+          "label": "REQUEST SITREP"
+        },
+        {
+          "value": 6,
+          "label": "MOVE TO PREVIOUS WP"
+        },
+        {
+          "value": 7,
+          "label": "MOVE TO PREVIOUS BP"
+        },
+        {
+          "value": 8,
+          "label": "RALLY AT FARP"
+        },
+        {
+          "value": 9,
+          "label": "RETURN TO AA"
+        },
+        {
+          "value": 10,
+          "label": "ACKNOWLEDGE ORDERS"
+        }
+      ],
+      "nullCrashesEditor": true,
+      "help": "0 = Custom (free text below), 1-10 = built-in messages whose title/lines are fixed. Outside 0-10 errors in the ME."
+    },
+    {
+      "path": "Presets.MPS.[].Option",
+      "label": "Option label (derived)",
+      "kind": "string",
+      "hidden": true,
+      "readonly": true,
+      "help": "\"Custom\" for 0, otherwise the built-in title."
+    },
+    {
+      "path": "Presets.MPS.[].Title",
+      "label": "Title",
+      "kind": "string",
+      "maxLength": 24,
+      "pattern": "^[A-Za-z0-9 ]*$",
+      "help": "Up to 24 characters. Only editable for Custom (OptionID 0); built-ins are forced to their own text (which may contain - and ,). Custom text: A-Z, 0-9 and space only; the ME rejects any other character as it is typed."
+    },
+    {
+      "path": "Presets.MPS.[].TextLine1",
+      "label": "Text line 1",
+      "kind": "string",
+      "maxLength": 44,
+      "pattern": "^[A-Za-z0-9 ]*$",
+      "help": "Up to 44 characters; only editable for Custom (OptionID 0). Custom text: A-Z, 0-9 and space only (built-in texts may contain - and ,)."
+    },
+    {
+      "path": "Presets.MPS.[].TextLine2",
+      "label": "Text line 2",
+      "kind": "string",
+      "maxLength": 44,
+      "pattern": "^[A-Za-z0-9 ]*$",
+      "help": "Up to 44 characters; only editable for Custom (OptionID 0). Custom text: A-Z, 0-9 and space only (built-in texts may contain - and ,)."
+    },
+    {
+      "path": "Presets.MPS.[].TextLine3",
+      "label": "Text line 3",
+      "kind": "string",
+      "maxLength": 44,
+      "pattern": "^[A-Za-z0-9 ]*$",
+      "help": "Up to 44 characters; only editable for Custom (OptionID 0). Custom text: A-Z, 0-9 and space only (built-in texts may contain - and ,)."
+    },
+    {
+      "path": "Presets.MPS.[].TextLine4",
+      "label": "Text line 4",
+      "kind": "string",
+      "maxLength": 44,
+      "pattern": "^[A-Za-z0-9 ]*$",
+      "help": "Up to 44 characters; only editable for Custom (OptionID 0). Custom text: A-Z, 0-9 and space only (built-in texts may contain - and ,)."
+    },
+    {
+      "path": "Weapon.SelectedChannels.Priority",
+      "label": "Hellfire priority channel",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "1"
+        },
+        {
+          "value": 2,
+          "label": "2"
+        },
+        {
+          "value": 3,
+          "label": "3"
+        },
+        {
+          "value": 4,
+          "label": "4"
+        },
+        {
+          "value": 5,
+          "label": "None"
+        }
+      ],
+      "help": "Missile channel 1-4 used as PRI; 5 = none."
+    },
+    {
+      "path": "Weapon.SelectedChannels.Alternate",
+      "label": "Hellfire alternate channel",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "1"
+        },
+        {
+          "value": 2,
+          "label": "2"
+        },
+        {
+          "value": 3,
+          "label": "3"
+        },
+        {
+          "value": 4,
+          "label": "4"
+        },
+        {
+          "value": 5,
+          "label": "None"
+        }
+      ],
+      "help": "Missile channel used as ALT; must differ from priority (forced to None if equal or if priority is None)."
+    },
+    {
+      "path": "Weapon.MissileChannels.Ch1",
+      "label": "Missile channel 1 laser code",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "A"
+        },
+        {
+          "value": 2,
+          "label": "B"
+        },
+        {
+          "value": 3,
+          "label": "C"
+        },
+        {
+          "value": 4,
+          "label": "D"
+        },
+        {
+          "value": 5,
+          "label": "E"
+        },
+        {
+          "value": 6,
+          "label": "F"
+        },
+        {
+          "value": 7,
+          "label": "G"
+        },
+        {
+          "value": 8,
+          "label": "H"
+        },
+        {
+          "value": 9,
+          "label": "J"
+        },
+        {
+          "value": 10,
+          "label": "K"
+        },
+        {
+          "value": 11,
+          "label": "L"
+        },
+        {
+          "value": 12,
+          "label": "M"
+        },
+        {
+          "value": 13,
+          "label": "N"
+        },
+        {
+          "value": 14,
+          "label": "P"
+        },
+        {
+          "value": 15,
+          "label": "Q"
+        },
+        {
+          "value": 16,
+          "label": "R"
+        }
+      ],
+      "help": "Laser code letter assigned to missile channel 1 (codes defined under Laser)."
+    },
+    {
+      "path": "Weapon.MissileChannels.Ch2",
+      "label": "Missile channel 2 laser code",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "A"
+        },
+        {
+          "value": 2,
+          "label": "B"
+        },
+        {
+          "value": 3,
+          "label": "C"
+        },
+        {
+          "value": 4,
+          "label": "D"
+        },
+        {
+          "value": 5,
+          "label": "E"
+        },
+        {
+          "value": 6,
+          "label": "F"
+        },
+        {
+          "value": 7,
+          "label": "G"
+        },
+        {
+          "value": 8,
+          "label": "H"
+        },
+        {
+          "value": 9,
+          "label": "J"
+        },
+        {
+          "value": 10,
+          "label": "K"
+        },
+        {
+          "value": 11,
+          "label": "L"
+        },
+        {
+          "value": 12,
+          "label": "M"
+        },
+        {
+          "value": 13,
+          "label": "N"
+        },
+        {
+          "value": 14,
+          "label": "P"
+        },
+        {
+          "value": 15,
+          "label": "Q"
+        },
+        {
+          "value": 16,
+          "label": "R"
+        }
+      ],
+      "help": "Laser code letter assigned to missile channel 2 (codes defined under Laser)."
+    },
+    {
+      "path": "Weapon.MissileChannels.Ch3",
+      "label": "Missile channel 3 laser code",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "A"
+        },
+        {
+          "value": 2,
+          "label": "B"
+        },
+        {
+          "value": 3,
+          "label": "C"
+        },
+        {
+          "value": 4,
+          "label": "D"
+        },
+        {
+          "value": 5,
+          "label": "E"
+        },
+        {
+          "value": 6,
+          "label": "F"
+        },
+        {
+          "value": 7,
+          "label": "G"
+        },
+        {
+          "value": 8,
+          "label": "H"
+        },
+        {
+          "value": 9,
+          "label": "J"
+        },
+        {
+          "value": 10,
+          "label": "K"
+        },
+        {
+          "value": 11,
+          "label": "L"
+        },
+        {
+          "value": 12,
+          "label": "M"
+        },
+        {
+          "value": 13,
+          "label": "N"
+        },
+        {
+          "value": 14,
+          "label": "P"
+        },
+        {
+          "value": 15,
+          "label": "Q"
+        },
+        {
+          "value": 16,
+          "label": "R"
+        }
+      ],
+      "help": "Laser code letter assigned to missile channel 3 (codes defined under Laser)."
+    },
+    {
+      "path": "Weapon.MissileChannels.Ch4",
+      "label": "Missile channel 4 laser code",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "A"
+        },
+        {
+          "value": 2,
+          "label": "B"
+        },
+        {
+          "value": 3,
+          "label": "C"
+        },
+        {
+          "value": 4,
+          "label": "D"
+        },
+        {
+          "value": 5,
+          "label": "E"
+        },
+        {
+          "value": 6,
+          "label": "F"
+        },
+        {
+          "value": 7,
+          "label": "G"
+        },
+        {
+          "value": 8,
+          "label": "H"
+        },
+        {
+          "value": 9,
+          "label": "J"
+        },
+        {
+          "value": 10,
+          "label": "K"
+        },
+        {
+          "value": 11,
+          "label": "L"
+        },
+        {
+          "value": 12,
+          "label": "M"
+        },
+        {
+          "value": 13,
+          "label": "N"
+        },
+        {
+          "value": 14,
+          "label": "P"
+        },
+        {
+          "value": 15,
+          "label": "Q"
+        },
+        {
+          "value": 16,
+          "label": "R"
+        }
+      ],
+      "help": "Laser code letter assigned to missile channel 4 (codes defined under Laser)."
+    },
+    {
+      "path": "Weapon.OtherSettings.PLT.GunMode",
+      "label": "Pilot gun mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "Normal"
+        },
+        {
+          "value": 2,
+          "label": "Fixed"
+        }
+      ],
+      "help": "Normal or Fixed (forward)."
+    },
+    {
+      "path": "Weapon.OtherSettings.PLT.GunBurstLimit",
+      "label": "Pilot gun burst limit",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "10"
+        },
+        {
+          "value": 2,
+          "label": "20"
+        },
+        {
+          "value": 3,
+          "label": "50"
+        },
+        {
+          "value": 4,
+          "label": "100"
+        },
+        {
+          "value": 5,
+          "label": "ALL"
+        }
+      ],
+      "help": "Rounds per trigger pull."
+    },
+    {
+      "path": "Weapon.OtherSettings.PLT.RocketSalvoQuantity",
+      "label": "Pilot rocket salvo",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "1"
+        },
+        {
+          "value": 2,
+          "label": "2"
+        },
+        {
+          "value": 3,
+          "label": "4"
+        },
+        {
+          "value": 4,
+          "label": "8"
+        },
+        {
+          "value": 5,
+          "label": "12"
+        },
+        {
+          "value": 6,
+          "label": "24"
+        },
+        {
+          "value": 7,
+          "label": "ALL"
+        }
+      ],
+      "help": "Rockets per trigger pull."
+    },
+    {
+      "path": "Weapon.OtherSettings.PLT.ManualRange",
+      "label": "Pilot manual range",
+      "kind": "number",
+      "unit": "m",
+      "min": 100,
+      "max": 50000,
+      "help": "Manual range in metres, 100-50000 (clamped by the ME)."
+    },
+    {
+      "path": "Weapon.OtherSettings.PLT.ACQ_Selection",
+      "label": "Pilot acquisition source",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "GHS"
+        },
+        {
+          "value": 2,
+          "label": "RFI"
+        },
+        {
+          "value": 3,
+          "label": "FCR"
+        },
+        {
+          "value": 4,
+          "label": "FXD"
+        },
+        {
+          "value": 5,
+          "label": "TADS"
+        }
+      ],
+      "help": "Default ACQ source for this crew station."
+    },
+    {
+      "path": "Weapon.OtherSettings.CPG.GunMode",
+      "label": "CPG gun mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "Normal"
+        },
+        {
+          "value": 2,
+          "label": "Fixed"
+        }
+      ],
+      "help": "Normal or Fixed (forward)."
+    },
+    {
+      "path": "Weapon.OtherSettings.CPG.GunBurstLimit",
+      "label": "CPG gun burst limit",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "10"
+        },
+        {
+          "value": 2,
+          "label": "20"
+        },
+        {
+          "value": 3,
+          "label": "50"
+        },
+        {
+          "value": 4,
+          "label": "100"
+        },
+        {
+          "value": 5,
+          "label": "ALL"
+        }
+      ],
+      "help": "Rounds per trigger pull."
+    },
+    {
+      "path": "Weapon.OtherSettings.CPG.RocketSalvoQuantity",
+      "label": "CPG rocket salvo",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "1"
+        },
+        {
+          "value": 2,
+          "label": "2"
+        },
+        {
+          "value": 3,
+          "label": "4"
+        },
+        {
+          "value": 4,
+          "label": "8"
+        },
+        {
+          "value": 5,
+          "label": "12"
+        },
+        {
+          "value": 6,
+          "label": "24"
+        },
+        {
+          "value": 7,
+          "label": "ALL"
+        }
+      ],
+      "help": "Rockets per trigger pull."
+    },
+    {
+      "path": "Weapon.OtherSettings.CPG.ManualRange",
+      "label": "CPG manual range",
+      "kind": "number",
+      "unit": "m",
+      "min": 100,
+      "max": 50000,
+      "help": "Manual range in metres, 100-50000 (clamped by the ME)."
+    },
+    {
+      "path": "Weapon.OtherSettings.CPG.ACQ_Selection",
+      "label": "CPG acquisition source",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "PHS"
+        },
+        {
+          "value": 2,
+          "label": "RFI"
+        },
+        {
+          "value": 3,
+          "label": "FCR"
+        },
+        {
+          "value": 4,
+          "label": "FXD"
+        },
+        {
+          "value": 5,
+          "label": "TADS"
+        }
+      ],
+      "help": "Default ACQ source for this crew station."
+    },
+    {
+      "path": "Weapon.OtherSettings.PLT.ACQ_Cueing",
+      "label": "Pilot ACQ cueing",
+      "kind": "bool",
+      "help": "Pilot acquisition cueing (pilot station only)."
+    },
+    {
+      "path": "Laser.DevicesSettings.LRFD_Code",
+      "label": "LRFD code",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "A"
+        },
+        {
+          "value": 2,
+          "label": "B"
+        },
+        {
+          "value": 3,
+          "label": "C"
+        },
+        {
+          "value": 4,
+          "label": "D"
+        },
+        {
+          "value": 5,
+          "label": "E"
+        },
+        {
+          "value": 6,
+          "label": "F"
+        },
+        {
+          "value": 7,
+          "label": "G"
+        },
+        {
+          "value": 8,
+          "label": "H"
+        },
+        {
+          "value": 9,
+          "label": "J"
+        },
+        {
+          "value": 10,
+          "label": "K"
+        },
+        {
+          "value": 11,
+          "label": "L"
+        },
+        {
+          "value": 12,
+          "label": "M"
+        },
+        {
+          "value": 13,
+          "label": "N"
+        },
+        {
+          "value": 14,
+          "label": "P"
+        },
+        {
+          "value": 15,
+          "label": "Q"
+        },
+        {
+          "value": 16,
+          "label": "R"
+        }
+      ],
+      "help": "Code letter used by the laser rangefinder/designator."
+    },
+    {
+      "path": "Laser.DevicesSettings.LST_Code",
+      "label": "LST code",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "A"
+        },
+        {
+          "value": 2,
+          "label": "B"
+        },
+        {
+          "value": 3,
+          "label": "C"
+        },
+        {
+          "value": 4,
+          "label": "D"
+        },
+        {
+          "value": 5,
+          "label": "E"
+        },
+        {
+          "value": 6,
+          "label": "F"
+        },
+        {
+          "value": 7,
+          "label": "G"
+        },
+        {
+          "value": 8,
+          "label": "H"
+        },
+        {
+          "value": 9,
+          "label": "J"
+        },
+        {
+          "value": 10,
+          "label": "K"
+        },
+        {
+          "value": 11,
+          "label": "L"
+        },
+        {
+          "value": 12,
+          "label": "M"
+        },
+        {
+          "value": 13,
+          "label": "N"
+        },
+        {
+          "value": 14,
+          "label": "P"
+        },
+        {
+          "value": 15,
+          "label": "Q"
+        },
+        {
+          "value": 16,
+          "label": "R"
+        }
+      ],
+      "help": "Code letter the laser spot tracker searches for."
+    },
+    {
+      "path": "Laser.DevicesSettings.LRFD_Mode",
+      "label": "LRFD first/last",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "First"
+        },
+        {
+          "value": 2,
+          "label": "Last"
+        }
+      ],
+      "help": "Range on first or last return."
+    },
+    {
+      "path": "Laser.ChannelsCodes.{}.Four",
+      "label": "Thousands digit",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "1"
+        },
+        {
+          "value": 2,
+          "label": "2"
+        },
+        {
+          "value": 4,
+          "label": "4"
+        },
+        {
+          "value": 5,
+          "label": "5"
+        }
+      ],
+      "help": "First (thousands) digit: 1, 2, 4 or 5 (the ME rejects 3). Code = Four Three Two One, e.g. A = 1688."
+    },
+    {
+      "path": "Laser.ChannelsCodes.{}.Three",
+      "label": "Hundreds digit",
+      "kind": "int",
+      "min": 1,
+      "max": 7,
+      "help": "Second (hundreds) digit 1-7."
+    },
+    {
+      "path": "Laser.ChannelsCodes.{}.Two",
+      "label": "Tens digit",
+      "kind": "int",
+      "min": 1,
+      "max": 8,
+      "help": "Third (tens) digit 1-8."
+    },
+    {
+      "path": "Laser.ChannelsCodes.{}.One",
+      "label": "Units digit",
+      "kind": "int",
+      "min": 1,
+      "max": 8,
+      "help": "Fourth (units) digit 1-8."
+    },
+    {
+      "path": "MISC.ASE.isEnabled",
+      "label": "Upload ASE / CMDS settings",
+      "kind": "enum",
+      "options": [
+        {
+          "value": true,
+          "label": "Yes, upload to the aircraft"
+        },
+        {
+          "value": false,
+          "label": "No, keep it in the cartridge only (DCS default)"
+        }
+      ],
+      "help": "\"Do not upload tab data\" checkbox in the DTC editor, stored NON-inverted as isEnabled: true = the ASE/CMDS settings is loaded into the aircraft, false (the DCS default) = it is not. A fresh cartridge uploads nothing for this tab until this is true. The exporter sets true when the user changed anything under ASE."
+    },
+    {
+      "path": "MISC.ASE.CMDS_ProgramSettings.Chaff.BurstCount",
+      "label": "Chaff burst count",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "1"
+        },
+        {
+          "value": 2,
+          "label": "2"
+        },
+        {
+          "value": 3,
+          "label": "3"
+        },
+        {
+          "value": 4,
+          "label": "4"
+        },
+        {
+          "value": 5,
+          "label": "6"
+        },
+        {
+          "value": 6,
+          "label": "8"
+        }
+      ],
+      "help": "Expendables per burst."
+    },
+    {
+      "path": "MISC.ASE.CMDS_ProgramSettings.Chaff.BurstInterval",
+      "label": "Chaff burst interval",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "0.1 sec"
+        },
+        {
+          "value": 2,
+          "label": "0.2 sec"
+        },
+        {
+          "value": 3,
+          "label": "0.3 sec"
+        },
+        {
+          "value": 4,
+          "label": "0.4 sec"
+        }
+      ],
+      "help": "Time between expendables within a burst."
+    },
+    {
+      "path": "MISC.ASE.CMDS_ProgramSettings.Chaff.SalvoCount",
+      "label": "Chaff salvo count",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "1"
+        },
+        {
+          "value": 2,
+          "label": "2"
+        },
+        {
+          "value": 3,
+          "label": "4"
+        },
+        {
+          "value": 4,
+          "label": "8"
+        },
+        {
+          "value": 5,
+          "label": "CONTINUOUS"
+        }
+      ],
+      "help": "Bursts per program."
+    },
+    {
+      "path": "MISC.ASE.CMDS_ProgramSettings.Chaff.SalvoInterval",
+      "label": "Chaff salvo interval",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "1 sec"
+        },
+        {
+          "value": 2,
+          "label": "2 sec"
+        },
+        {
+          "value": 3,
+          "label": "3 sec"
+        },
+        {
+          "value": 4,
+          "label": "4 sec"
+        },
+        {
+          "value": 5,
+          "label": "5 sec"
+        },
+        {
+          "value": 6,
+          "label": "8 sec"
+        },
+        {
+          "value": 7,
+          "label": "RANDOM"
+        }
+      ],
+      "help": "Time between bursts."
+    },
+    {
+      "path": "MISC.ASE.CMDS_ProgramSettings.Flares.BurstCount",
+      "label": "Flare burst count",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "1"
+        },
+        {
+          "value": 2,
+          "label": "2"
+        },
+        {
+          "value": 3,
+          "label": "3"
+        },
+        {
+          "value": 4,
+          "label": "4"
+        },
+        {
+          "value": 5,
+          "label": "6"
+        },
+        {
+          "value": 6,
+          "label": "8"
+        }
+      ],
+      "help": "Expendables per burst."
+    },
+    {
+      "path": "MISC.ASE.CMDS_ProgramSettings.Flares.BurstInterval",
+      "label": "Flare burst interval",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "0.1 sec"
+        },
+        {
+          "value": 2,
+          "label": "0.2 sec"
+        },
+        {
+          "value": 3,
+          "label": "0.3 sec"
+        },
+        {
+          "value": 4,
+          "label": "0.4 sec"
+        }
+      ],
+      "help": "Time between expendables within a burst."
+    },
+    {
+      "path": "MISC.ASE.CMDS_ProgramSettings.Flares.SalvoCount",
+      "label": "Flare salvo count",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "1"
+        },
+        {
+          "value": 2,
+          "label": "2"
+        },
+        {
+          "value": 3,
+          "label": "4"
+        },
+        {
+          "value": 4,
+          "label": "8"
+        },
+        {
+          "value": 5,
+          "label": "CONTINUOUS"
+        }
+      ],
+      "help": "Bursts per program."
+    },
+    {
+      "path": "MISC.ASE.CMDS_ProgramSettings.Flares.SalvoInterval",
+      "label": "Flare salvo interval",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "1 sec"
+        },
+        {
+          "value": 2,
+          "label": "2 sec"
+        },
+        {
+          "value": 3,
+          "label": "3 sec"
+        },
+        {
+          "value": 4,
+          "label": "4 sec"
+        },
+        {
+          "value": 5,
+          "label": "5 sec"
+        },
+        {
+          "value": 6,
+          "label": "8 sec"
+        },
+        {
+          "value": 7,
+          "label": "RANDOM"
+        }
+      ],
+      "help": "Time between bursts."
+    },
+    {
+      "path": "MISC.ASE.CMDS_ProgramSettings.Flares.ProgramDelay",
+      "label": "Flare program delay",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "1 sec"
+        },
+        {
+          "value": 2,
+          "label": "2 sec"
+        },
+        {
+          "value": 3,
+          "label": "3 sec"
+        },
+        {
+          "value": 4,
+          "label": "4 sec"
+        }
+      ],
+      "help": "Delay before the flare program repeats."
+    },
+    {
+      "path": "MISC.ASE.ASE_Settings.ChaffMode",
+      "label": "Chaff mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "Program"
+        },
+        {
+          "value": 2,
+          "label": "Manual"
+        }
+      ],
+      "help": "Program or manual chaff dispensing."
+    },
+    {
+      "path": "MISC.ASE.ASE_Settings.RLWRMode",
+      "label": "RLWR voice mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "Normal"
+        },
+        {
+          "value": 2,
+          "label": "Terse"
+        }
+      ],
+      "help": "Normal or terse RLWR voice messages."
+    },
+    {
+      "path": "MISC.ASE.ASE_Settings.PLT_Autopage",
+      "label": "Pilot ASE autopage",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "Off"
+        },
+        {
+          "value": 2,
+          "label": "Search"
+        },
+        {
+          "value": 3,
+          "label": "Acquisition"
+        },
+        {
+          "value": 4,
+          "label": "Track"
+        }
+      ],
+      "help": "Automatically show the ASE page at this threat state. ASE.lua notes the C++ enum may use a different order; verify in the cockpit."
+    },
+    {
+      "path": "MISC.ASE.ASE_Settings.CPG_Autopage",
+      "label": "CPG ASE autopage",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "Off"
+        },
+        {
+          "value": 2,
+          "label": "Search"
+        },
+        {
+          "value": 3,
+          "label": "Acquisition"
+        },
+        {
+          "value": 4,
+          "label": "Track"
+        }
+      ],
+      "help": "Same as pilot, for the CPG."
+    },
+    {
+      "path": "MISC.RLWR.[].group_name",
+      "label": "Threat group",
+      "kind": "string",
+      "readonly": true,
+      "help": "threats_base group name (static)."
+    },
+    {
+      "path": "MISC.RLWR.[].PRI",
+      "label": "Priority",
+      "kind": "int",
+      "readonly": true,
+      "min": 1,
+      "max": 96,
+      "help": "1..96, contiguous, equals array order. Read-only here because reprioritising cannot be done safely through the index merge (and whether the cockpit uses PRI or array order is unverified)."
+    },
+    {
+      "path": "MISC.RLWR.[].display",
+      "label": "Display",
+      "kind": "bool",
+      "help": "false = this emitter is not displayed."
+    },
+    {
+      "path": "MISC.RLWR.[].hint",
+      "label": "Unit types (derived)",
+      "kind": "string",
+      "hidden": true,
+      "readonly": true,
+      "help": "Static, from threats_base."
+    },
+    {
+      "path": "MISC.RFI.[].group_name",
+      "label": "Threat group",
+      "kind": "string",
+      "readonly": true,
+      "help": "threats_base group name (static)."
+    },
+    {
+      "path": "MISC.RFI.[].PRI",
+      "label": "Priority",
+      "kind": "int",
+      "readonly": true,
+      "min": 1,
+      "max": 90,
+      "help": "1..90, contiguous, equals array order. Read-only here because reprioritising cannot be done safely through the index merge (and whether the cockpit uses PRI or array order is unverified)."
+    },
+    {
+      "path": "MISC.RFI.[].display",
+      "label": "Display",
+      "kind": "bool",
+      "help": "false = this emitter is not displayed."
+    },
+    {
+      "path": "MISC.RFI.[].hint",
+      "label": "Unit types (derived)",
+      "kind": "string",
+      "hidden": true,
+      "readonly": true,
+      "help": "Static, from threats_base."
+    },
+    {
+      "path": "MISC.RFI.[].hostile",
+      "label": "Hostile",
+      "kind": "bool",
+      "help": "Treat this emitter as hostile (default true except AH-64)."
+    },
+    {
+      "path": "MISC.RFI.[].friendly",
+      "label": "Friendly",
+      "kind": "bool",
+      "help": "Treat this emitter as friendly (default true only for AH-64)."
+    },
+    {
+      "path": "MISC.PERF.MAX_PA",
+      "label": "MAX pressure altitude",
+      "kind": "int",
+      "unit": "ft",
+      "min": -2300,
+      "max": 20000,
+      "help": "Pressure altitude for the MAX performance column, feet."
+    },
+    {
+      "path": "MISC.PERF.PLAN_PA",
+      "label": "PLAN pressure altitude",
+      "kind": "int",
+      "unit": "ft",
+      "min": -2300,
+      "max": 20000,
+      "help": "Pressure altitude for the PLAN column, feet."
+    },
+    {
+      "path": "MISC.PERF.MAX_FAT",
+      "label": "MAX free air temperature",
+      "kind": "int",
+      "unit": "degC",
+      "min": -60,
+      "max": 60,
+      "help": "Free air temperature for MAX, deg C."
+    },
+    {
+      "path": "MISC.PERF.PLAN_FAT",
+      "label": "PLAN free air temperature",
+      "kind": "int",
+      "unit": "degC",
+      "min": -60,
+      "max": 60,
+      "help": "Free air temperature for PLAN, deg C."
+    },
+    {
+      "path": "MISC.PERF.MAX_GWT",
+      "label": "MAX gross weight",
+      "kind": "int",
+      "unit": "lb",
+      "min": 10000,
+      "max": 25000,
+      "help": "Gross weight for MAX, pounds."
+    },
+    {
+      "path": "MISC.PERF.PLAN_GWT",
+      "label": "PLAN gross weight",
+      "kind": "int",
+      "unit": "lb",
+      "min": 10000,
+      "max": 25000,
+      "help": "Gross weight for PLAN, pounds."
+    },
+    {
+      "path": "MISC.PERF.AICE_AUTO",
+      "label": "Anti-ice",
+      "kind": "enum",
+      "options": [
+        {
+          "value": true,
+          "label": "Automatic"
+        },
+        {
+          "value": false,
+          "label": "Manual"
+        }
+      ],
+      "help": "true = Automatic, false = Manual (default)."
+    }
+  ],
+  "derived": [
+    {
+      "path": "NAV.Mission_1.Routes.[].POINTS.[].dist",
+      "formula": "leg 1: 0 ; leg k: hypot(P_k.x - P_{k-1}.x, P_k.y - P_{k-1}.y) where P = the WPTHZ (num<=50) or CTRLM (num>50) point with that num in the same mission"
+    },
+    {
+      "path": "NAV.Mission_1.Routes.[].POINTS.[].eta",
+      "formula": "leg 1: 0 (with fix false) ; leg k, fix false: dist / (speed * 0.514) seconds ; fix true: speed = dist / (eta * 0.514) knots (leg 1 with fix: speed 0)"
+    },
+    {
+      "path": "NAV.Mission_1.Points.WPTHZ.POINTS.[].text",
+      "formula": "default text = letter + 2-digit num: \"W\" for ids 1-6, \"H\" for 7-10 (W01, H07); CTRLM \"C\" (C51); TGT \"T\" (T03); 3 chars max, upper case",
+      "input": true
+    },
+    {
+      "path": "NAV.Mission_1.Areas.[].caption_pos",
+      "formula": "write [] (recomputed by the ME); center_pos = {\"x\":0,\"y\":0}"
+    },
+    {
+      "path": "NAV.Mission_1.Zones.PFZ.[].caption_pos",
+      "formula": "write []; center_pos = {\"x\":0,\"y\":0}"
+    },
+    {
+      "path": "NAV.Mission_1.Zones.NFZ.[].caption_pos",
+      "formula": "write []; center_pos = {\"x\":0,\"y\":0}"
+    },
+    {
+      "path": "NAV.Mission_2.Routes.[].POINTS.[].dist",
+      "formula": "leg 1: 0 ; leg k: hypot(P_k.x - P_{k-1}.x, P_k.y - P_{k-1}.y) where P = the WPTHZ (num<=50) or CTRLM (num>50) point with that num in the same mission"
+    },
+    {
+      "path": "NAV.Mission_2.Routes.[].POINTS.[].eta",
+      "formula": "leg 1: 0 (with fix false) ; leg k, fix false: dist / (speed * 0.514) seconds ; fix true: speed = dist / (eta * 0.514) knots (leg 1 with fix: speed 0)"
+    },
+    {
+      "path": "NAV.Mission_2.Points.WPTHZ.POINTS.[].text",
+      "formula": "default text = letter + 2-digit num: \"W\" for ids 1-6, \"H\" for 7-10 (W01, H07); CTRLM \"C\" (C51); TGT \"T\" (T03); 3 chars max, upper case",
+      "input": true
+    },
+    {
+      "path": "NAV.Mission_2.Areas.[].caption_pos",
+      "formula": "write [] (recomputed by the ME); center_pos = {\"x\":0,\"y\":0}"
+    },
+    {
+      "path": "NAV.Mission_2.Zones.PFZ.[].caption_pos",
+      "formula": "write []; center_pos = {\"x\":0,\"y\":0}"
+    },
+    {
+      "path": "NAV.Mission_2.Zones.NFZ.[].caption_pos",
+      "formula": "write []; center_pos = {\"x\":0,\"y\":0}"
+    },
+    {
+      "path": "Radios.InitialRadioSettings.VHF.Frequency",
+      "formula": "if Mode == 0 (Preset): Frequency/Modulation/Encryption = Presets.COMM[Preset].COMMS.VHF.* (the ME does this on load)",
+      "recomputedByDcs": true
+    },
+    {
+      "path": "Radios.InitialRadioSettings.UHF.Frequency",
+      "formula": "if Mode == 0 (Preset): Frequency/Modulation/Encryption = Presets.COMM[Preset].COMMS.UHF.* (the ME does this on load)",
+      "recomputedByDcs": true
+    },
+    {
+      "path": "Radios.InitialRadioSettings.FM1.Frequency",
+      "formula": "if Mode == 0 (Preset): Frequency/Modulation/Encryption = Presets.COMM[Preset].COMMS.FM1.* (the ME does this on load)",
+      "recomputedByDcs": true
+    },
+    {
+      "path": "Radios.InitialRadioSettings.FM2.Frequency",
+      "formula": "if Mode == 0 (Preset): Frequency/Modulation/Encryption = Presets.COMM[Preset].COMMS.FM2.* (the ME does this on load)",
+      "recomputedByDcs": true
+    },
+    {
+      "path": "Radios.InitialRadioSettings.HF.RxFrequency",
+      "formula": "if Mode == 0: Rx* = Presets.COMM[Preset].COMMS.HF_Rx.*, Tx* = ...COMMS.HF_Tx.*",
+      "recomputedByDcs": true
+    },
+    {
+      "path": "Presets.MPS.[].Option",
+      "formula": "Option = OptionID == 0 ? \"Custom\" : built-in title ; for OptionID 1-10 Title/TextLine1-4 = built-in texts",
+      "table": "native-AH-64D-enums.json#radio.MPS_DefaultTexts"
+    },
+    {
+      "path": "Presets.MPS.[].Title",
+      "formula": "for OptionID 1-10: [Title, TextLine1..4] = MPS_DefaultTexts[OptionID]",
+      "table": "native-AH-64D-enums.json#radio.MPS_DefaultTexts"
+    },
+    {
+      "path": "Weapon.SelectedChannels.Alternate",
+      "formula": "if Alternate == Priority or Priority == 5: Alternate = 5"
+    },
+    {
+      "path": "MISC.RLWR.[].threats",
+      "formula": "group_name/hint/threats are static per index: copy the default entry at the same index verbatim"
+    },
+    {
+      "path": "MISC.RFI.[].threats",
+      "formula": "group_name/hint/threats are static per index: copy the default entry at the same index verbatim"
+    },
+    {
+      "path": "Presets.COMM.[].InitialMode.UnitID",
+      "formula": "strip characters outside [A-Za-z0-9 ], upper-case, truncate to 8 (CallSign: 5); DCS resets the whole value to the default if any other character is present",
+      "input": true
+    }
+  ]
+}

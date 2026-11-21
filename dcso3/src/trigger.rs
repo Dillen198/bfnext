@@ -18,7 +18,7 @@ use crate::{
     env::miz::{Country, GroupId, UnitId},
     simple_enum, wrapped_table, Color, LuaEnv, LuaVec3, MizLua, String,
 };
-use anyhow::Result;
+use anyhow::{bail, Result};
 use mlua::{prelude::*, Value};
 use serde_derive::{Deserialize, Serialize};
 use std::ops::Deref;
@@ -31,20 +31,19 @@ pub struct Zone {
     pub radius: f64,
 }
 
-impl<'lua> FromLua<'lua> for Zone {
-    fn from_lua(value: Value<'lua>, _lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for Zone {
+    fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
         match value {
-            Value::Table(tbl) => Ok(Self {
-                point: tbl.raw_get("point")?,
-                radius: tbl.raw_get("radius")?,
-            }),
+            Value::Table(tbl) => {
+                Ok(Self { point: tbl.raw_get("point")?, radius: tbl.raw_get("radius")? })
+            }
             _ => Err(cvt_err("trigger::Zone")),
         }
     }
 }
 
-impl<'lua> IntoLua<'lua> for Zone {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for Zone {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         let table = lua.create_table()?;
         table.raw_set("point", self.point)?;
         table.raw_set("radius", self.radius)?;
@@ -97,7 +96,7 @@ impl SideFilter {
             (Self::Neutral, Side::Neutral) => true,
             (Self::Blue, Side::Blue) => true,
             (Self::Red, Side::Red) => true,
-            (_, _) => false
+            (_, _) => false,
         }
     }
 }
@@ -183,14 +182,32 @@ pub struct ArrowSpec {
     pub read_only: bool,
 }
 
+/// A connected polyline / filled polygon drawn as ONE mark via
+/// `trigger.action.markupToAll` with shapeId 7 (freeform).
+///
+/// Points are drawn in order as a single shape; the last point connects back to
+/// the first only if you repeat it. DCS wants at least 3.
+///
+/// This is the cheap way to draw a multi-point symbol. The obvious alternative
+/// -- chaining two-point `lineToAll` calls -- costs one MarkId per segment,
+/// which is how the objective kind icons came to burn 10-40 marks each.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolylineSpec {
+    pub points: Vec<LuaVec3>,
+    pub color: Color,
+    pub fill_color: Color,
+    pub line_type: LineType,
+    pub read_only: bool,
+}
+
+/// `markupToAll` shape ids: 1 line, 2 circle, 3 rect, 4 arrow, 5 text,
+/// 6 quad, 7 freeform. Only freeform needs the varargs form.
+const FREEFORM_SHAPE_ID: i64 = 7;
+
 wrapped_table!(Action, None);
 
-impl<'lua> Action<'lua> {
-    pub fn set_user_flag<K: IntoLua<'lua>, V: IntoLua<'lua>>(
-        &self,
-        key: K,
-        value: V,
-    ) -> Result<()> {
+impl Action {
+    pub fn set_user_flag<K: IntoLua, V: IntoLua>(&self, key: K, value: V) -> Result<()> {
         Ok(self.call_function("setUserFlag", (key, value))?)
     }
 
@@ -224,7 +241,12 @@ impl<'lua> Action<'lua> {
         Ok(self.call_function("illuminationBomb", (position, power))?)
     }
 
-    pub fn signal_flare(&self, position: LuaVec3, color: FlareColor, azimuth: u16) -> Result<()> {
+    pub fn signal_flare(
+        &self,
+        position: LuaVec3,
+        color: FlareColor,
+        azimuth: u16,
+    ) -> Result<()> {
         Ok(self.call_function("signalFlare", (position, color, azimuth))?)
     }
 
@@ -272,7 +294,12 @@ impl<'lua> Action<'lua> {
         Ok(self.call_function("outSoundForUnit", (unit, file))?)
     }
 
-    pub fn out_text(&self, text: String, display_time: i64, clear_view: bool) -> Result<()> {
+    pub fn out_text(
+        &self,
+        text: String,
+        display_time: i64,
+        clear_view: bool,
+    ) -> Result<()> {
         Ok(self.call_function("outText", (text, display_time, clear_view))?)
     }
 
@@ -309,7 +336,8 @@ impl<'lua> Action<'lua> {
         display_time: i64,
         clear_view: bool,
     ) -> Result<()> {
-        Ok(self.call_function("outTextForGroup", (group, text, display_time, clear_view))?)
+        Ok(self
+            .call_function("outTextForGroup", (group, text, display_time, clear_view))?)
     }
 
     pub fn out_text_for_unit(
@@ -460,7 +488,12 @@ impl<'lua> Action<'lua> {
         )?)
     }
 
-    pub fn text_to_all(&self, side: SideFilter, id: MarkId, spec: TextSpec) -> Result<()> {
+    pub fn text_to_all(
+        &self,
+        side: SideFilter,
+        id: MarkId,
+        spec: TextSpec,
+    ) -> Result<()> {
         Ok(self.call_function(
             "textToAll",
             (
@@ -474,6 +507,41 @@ impl<'lua> Action<'lua> {
                 spec.text,
             ),
         )?)
+    }
+
+    /// Draw a connected multi-point shape as a single mark.
+    ///
+    /// `trigger.action.markupToAll` takes its points as VARARGS, not as a
+    /// table, so the argument list has to be built by hand:
+    ///   `(shapeId, coalition, id, p1, p2, ... pN, color, fillColor, lineType,
+    ///     readOnly, message)`
+    ///
+    /// The previous version of this function called `trigger.action.outLineToAll`,
+    /// which does not exist in DCS. Nothing called it, so it never threw.
+    pub fn freeform_to_all(
+        &self,
+        side: SideFilter,
+        id: MarkId,
+        spec: PolylineSpec,
+        message: Option<String>,
+    ) -> Result<()> {
+        use mlua::MultiValue;
+        if spec.points.len() < 3 {
+            bail!("freeform_to_all needs at least 3 points, got {}", spec.points.len())
+        }
+        let mut args: Vec<Value> = Vec::with_capacity(spec.points.len() + 8);
+        args.push(FREEFORM_SHAPE_ID.into_lua(&self.lua)?);
+        args.push(side.into_lua(&self.lua)?);
+        args.push(id.into_lua(&self.lua)?);
+        for p in spec.points {
+            args.push(p.into_lua(&self.lua)?);
+        }
+        args.push(spec.color.into_lua(&self.lua)?);
+        args.push(spec.fill_color.into_lua(&self.lua)?);
+        args.push(spec.line_type.into_lua(&self.lua)?);
+        args.push(spec.read_only.into_lua(&self.lua)?);
+        args.push(message.into_lua(&self.lua)?);
+        Ok(self.call_function("markupToAll", MultiValue::from_vec(args))?)
     }
 
     pub fn arrow_to_all(
@@ -534,12 +602,12 @@ impl<'lua> Action<'lua> {
 
 wrapped_table!(Trigger, None);
 
-impl<'lua> Trigger<'lua> {
-    pub fn singleton(lua: MizLua<'lua>) -> Result<Self> {
+impl Trigger {
+    pub fn singleton(lua: MizLua) -> Result<Self> {
         Ok(lua.inner().globals().raw_get("trigger")?)
     }
 
-    pub fn action(&self) -> Result<Action<'lua>> {
+    pub fn action(&self) -> Result<Action> {
         Ok(self.raw_get("action")?)
     }
 

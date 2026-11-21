@@ -1,0 +1,25 @@
+# What this repo's DCSServerBot plugins and extensions need on top of
+# DCSServerBot's own requirements (its requirements.txt already brings
+# discord.py, aiohttp, fastapi, psutil, ruamel.yaml, matplotlib and Pillow).
+# Install into the bot's venv, then restart the bot:
+#
+#   <bot>\.venv\Scripts\python -m pip install -r requirements-plugins.txt
+#
+# (DCSServerBot's own installer puts its venv at %USERPROFILE%\.dcssb by
+# default.) Every entry is optional at run time -- a plugin that misses one
+# logs a warning and turns the feature off -- so this file is not installed
+# automatically. Bump the pins deliberately and test on a box.
+
+# plugins/radio -- YouTube/stream audio. yt-dlp has to keep up with YouTube,
+# so this is the pin to bump first when playback breaks.
+yt-dlp==2026.10.21
+# discord.py[voice]. discord.py 2.7.1 wants PyNaCl < 1.6.
+PyNaCl==1.5.0
+davey==0.1.7
+
+# plugins/smartmod -- Gemini scam check (keyword-only without it).
+google-genai==2.33.0
+
+# plugins/fowlengine/minisign.py -- faster Ed25519 for signed updates. Without
+# it the pure-Python verifier is used, which gives the same answer.
+cryptography==50.0.2

@@ -1,0 +1,150 @@
+{
+  "_note": "Story events for Levant Ablaze, the modern Syria campaign (sortie ODFv2). Spliced into the campaign config by Missions/Vector/Syria/tools/build_cfg.py. Every event is set off by something players or the AI do, never by a clock, and fires once per round. Objective names are the mission's (Syria/tools/syria_oob.py). The public site and the wiki show the same events (shared/servers/syria.ts); change both together. Placeholders in text: {by} (who caused it). Keys starting with _ are notes and are ignored.",
+  "story": {
+    "enabled": true,
+    "events": [
+      {
+        "id": "shield_blind",
+        "title": "The shield goes blind",
+        "side": "Red",
+        "text": "{by} have knocked out the Air Defence Academy. Batteries from Homs to Aleppo, the coast and the Euphrates lose their cueing and start fighting on their own.",
+        "trigger": { "ObjectiveDestroyed": { "objective": "Air Defence Academy HQ", "owner": "Red" } },
+        "effects": [
+          { "Will": { "side": "Red", "delta": -3 } },
+          { "RevealIntel": { "side": "Blue", "objective": "Air Defence Academy HQ", "radius_m": 60000 } },
+          { "Points": { "points": 200 } }
+        ]
+      },
+      {
+        "id": "regiment_silent",
+        "title": "The 159th falls silent",
+        "side": "Red",
+        "text": "The coalition's second command post is gone after a strike by {by}. What is left of the network fights blind.",
+        "trigger": { "ObjectiveDestroyed": { "objective": "SyADF 159th Regiment", "owner": "Red" } },
+        "effects": [
+          { "Will": { "side": "Red", "delta": -3 } },
+          { "RevealIntel": { "side": "Blue", "objective": "SyADF 159th Regiment", "radius_m": 60000 } },
+          { "Points": { "points": 200 } }
+        ]
+      },
+      {
+        "id": "incirlik_hit",
+        "title": "Incirlik under attack",
+        "side": "Blue",
+        "text": "NATO's headquarters at Incirlik is down after a strike led by {by}. The Alliance's batteries in Turkey lose their picture.",
+        "trigger": { "ObjectiveDestroyed": { "objective": "Incirlik HQ", "owner": "Blue" } },
+        "effects": [
+          { "Will": { "side": "Blue", "delta": -3 } },
+          { "RevealIntel": { "side": "Red", "objective": "Incirlik HQ", "radius_m": 60000 } },
+          { "Points": { "points": 200 } }
+        ]
+      },
+      {
+        "id": "naqoura_broken",
+        "title": "Naqoura line broken",
+        "side": "Red",
+        "text": "{by} have broken the Naqoura line on the coast. The road north into Lebanon is open.",
+        "trigger": { "ObjectiveCaptured": { "objective": "Naqoura", "by": "Blue" } },
+        "effects": [
+          { "Will": { "side": "Red", "delta": -2 } },
+          { "Points": { "points": 100 } }
+        ]
+      },
+      {
+        "id": "galilee_breached",
+        "title": "The Galilee breached",
+        "side": "Blue",
+        "text": "Coalition troops under {by} are in Kiryat Shmona. NATO's southern front falls back on Rosh Pina.",
+        "trigger": { "ObjectiveCaptured": { "objective": "Kiryat Shmona", "by": "Red" } },
+        "effects": [
+          { "Will": { "side": "Blue", "delta": -3 } },
+          { "Points": { "points": 100 } },
+          { "Message": { "side": "Blue", "text": "Kiryat Shmona has fallen. Hold Rosh Pina." } }
+        ]
+      },
+      {
+        "id": "taftanaz_taken",
+        "title": "Taftanaz taken",
+        "side": "Red",
+        "text": "{by} have taken Taftanaz. Aleppo is next.",
+        "trigger": { "ObjectiveCaptured": { "objective": "Taftanaz", "by": "Blue" } },
+        "effects": [
+          { "Will": { "side": "Red", "delta": -2 } },
+          { "Points": { "points": 100 } },
+          { "Message": { "side": "Red", "text": "Taftanaz has fallen. Cover Aleppo." } }
+        ]
+      },
+      {
+        "id": "aleppo_falls",
+        "title": "Aleppo falls",
+        "side": "Red",
+        "text": "Aleppo is in NATO hands, {by} among the crews credited. The factories of the northern belt are behind the line.",
+        "trigger": { "ObjectiveCaptured": { "objective": "Aleppo", "by": "Blue" } },
+        "effects": [
+          { "Will": { "side": "Red", "delta": -5 } },
+          { "Production": { "side": "Red", "equipment_pct": -20 } },
+          { "Points": { "points": 150 } }
+        ]
+      },
+      {
+        "id": "hatay_lost",
+        "title": "Hatay lost",
+        "side": "Blue",
+        "text": "The coalition has pushed into Hatay behind {by}. Gaziantep becomes NATO's front line in the north.",
+        "trigger": { "ObjectiveCaptured": { "objective": "Hatay", "by": "Red" } },
+        "effects": [
+          { "Will": { "side": "Blue", "delta": -3 } },
+          { "Points": { "points": 100 } }
+        ]
+      },
+      {
+        "id": "sharqiyah_hit",
+        "title": "Sharqiyah Mine hit",
+        "side": "Red",
+        "text": "{by} have put the Sharqiyah Mine out of action. The coalition's Euphrates industry is next.",
+        "trigger": { "ObjectiveDestroyed": { "objective": "Sharqiyah Mine", "owner": "Red" } },
+        "effects": [
+          { "Production": { "side": "Red", "equipment_pct": -10 } },
+          { "Points": { "points": 100 } }
+        ]
+      },
+      {
+        "id": "euphrates_burns",
+        "title": "The Euphrates burns",
+        "side": "Red",
+        "requires": ["sharqiyah_hit"],
+        "text": "With Sharqiyah already down, strikes flown by {by} have put Durayhim out of action too. The coalition's Euphrates industry is finished.",
+        "trigger": { "ObjectiveDestroyed": { "objective": "Durayhim Military Base", "owner": "Red" } },
+        "effects": [
+          { "Production": { "side": "Red", "equipment_pct": -15 } },
+          { "Will": { "side": "Red", "delta": -3 } },
+          { "Points": { "points": 150 } }
+        ]
+      },
+      {
+        "id": "latakia_closed",
+        "title": "Latakia closed",
+        "side": "Red",
+        "text": "The coalition's only naval base is out of the war after {by} struck it. The sea belongs to NATO.",
+        "trigger": { "ObjectiveDestroyed": { "objective": "Latakia", "owner": "Red" } },
+        "effects": [
+          { "Will": { "side": "Red", "delta": -3 } },
+          { "Production": { "side": "Red", "fuel_pct": -15 } },
+          { "Points": { "points": 150 } }
+        ]
+      },
+      {
+        "id": "damascus_cut",
+        "title": "Damascus cut off",
+        "side": "Red",
+        "text": "{by} have taken the Damascus hub. Every coalition unit south of it fights with what it carries.",
+        "trigger": { "ObjectiveCaptured": { "objective": "Damascus", "by": "Blue" } },
+        "effects": [
+          { "Will": { "side": "Red", "delta": -5 } },
+          { "Stock": { "side": "Red", "item": "fuel", "pct": 20 } },
+          { "Points": { "points": 150 } }
+        ]
+      }
+    ]
+  }
+}

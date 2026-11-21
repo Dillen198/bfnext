@@ -1,0 +1,488 @@
+Dynamic spawn templates: 1985 weapon blocks and radio presets
+(from E:/Saved Games/DCS/bfairframes.json)
+
+L-39c (red)
+   pylon 1: blocked P-50T - 50kg Practice Bomb LD, Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 2: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 3: blocked P-50T - 50kg Practice Bomb LD, Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   radio 1 (R-832M): presets 1=124.0, 2=228.0, 3=229.0, 4=230.0, 5=125.0, 6=126.0, 7=127.0, 8=134.0, 9=251.0, 10=119.0, 11=252.0, 12=253.0, 13=254.0, 14=255.0, 15=256.0, 16=257.0
+   start frequency 124 MHz
+Su-25 (red)
+   pylon 1: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 10: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   start frequency 124 MHz
+F-14A Late (blue)
+   pylon 1: blocked LAU-7 AN/ASQ-T50 TCTS Pod - ACMI Pod, LAU-7 Captive AIM-9M for ACM, LAU-138 AN/ASQ-T50 TCTS Pod - ACMI Pod, LAU-138 Captive AIM-9M for ACM, Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange
+   pylon 2: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, LAU-7 AN/ASQ-T50 TCTS Pod - ACMI Pod, 3 BDU-33, 2 BDU-45, 2 BDU-45B
+   pylon 4: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, BDU-45, BDU-45B, 3 BDU-33, MAK79 4 BDU-45, MAK79 4 BDU-45B, MAK79 4 BDU-33
+   pylon 5: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, BDU-45, BDU-45B, 3 BDU-33, MAK79 3 BDU-45, MAK79 3 BDU-45B, MAK79 3 BDU-33
+   pylon 6: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, BDU-45, BDU-45B, 3 BDU-33, MAK79 3 BDU-45, MAK79 3 BDU-45B, MAK79 3 BDU-33
+   pylon 7: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, BDU-45, BDU-45B, 3 BDU-33, MAK79 4 BDU-45, MAK79 4 BDU-45B, MAK79 4 BDU-33
+   pylon 9: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, LAU-7 AN/ASQ-T50 TCTS Pod - ACMI Pod, 3 BDU-33, 2 BDU-45, 2 BDU-45B
+   pylon 10: blocked LAU-7 AN/ASQ-T50 TCTS Pod - ACMI Pod, LAU-7 Captive AIM-9M for ACM, LAU-138 AN/ASQ-T50 TCTS Pod - ACMI Pod, LAU-138 Captive AIM-9M for ACM, Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange
+   radio 1 (UHF AN/ARC-159): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   radio 2 (VHF/UHF AN/ARC-182): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 9=124.0, 10=228.0, 11=229.0, 12=230.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   start frequency 251 MHz
+MiG-21 (red)
+   pylon 7: blocked Smoke - white - 21
+   radio 1 (R-832): presets 1=124.0, 2=228.0, 3=229.0, 4=230.0, 5=125.0, 6=126.0, 7=127.0, 8=134.0, 9=251.0, 10=119.0, 11=252.0, 12=253.0, 13=254.0, 14=255.0, 15=256.0, 16=257.0
+   start frequency 124 MHz
+F-4E (blue)
+   pylon 1: blocked 6x BDU-50LD - 500lb Practice Bomb LD (MER), 6x BDU-50HD - 500lb Practice Bomb HD (MER), 6x BDU-33 - 25lb Practice Bomb LD (MER), BDU-45 LG - 500lb Practice Laser Guided Bomb
+   pylon 2: blocked Captive AIM-9M for ACM, Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange, AN/ASQ-T50 TCTS Pod - ACMI Pod
+   pylon 3: blocked BDU-45 LG - 500lb Practice Laser Guided Bomb, (Special Weapons Adapter) BDU-45 LG - 500lb Practice Laser Guided Bomb, 2x BDU-45 LG - 500lb Practice Laser Guided Bomb (TER), (Special Weapons Adapter) 2x BDU-45 LG - 500lb Practice Laser Guided Bomb (TER), 3x BDU-50LD - 500lb Practice Bomb LD (TER), 2x BDU-50LD - 500lb Practice Bomb LD (TER), (Special Weapons Adapter) 2x BDU-50LD - 500lb Practice Bomb LD (TER), 3x BDU-50HD - 500lb Practice Bomb HD (TER), 2x BDU-50HD - 500lb Practice Bomb HD (TER), (Special Weapons Adapter) 2x BDU-50HD - 500lb Practice Bomb HD (TER), 3x BDU-33 - 25lb Practice Bomb LD (TER), 2x BDU-33 - 25lb Practice Bomb LD (TER), (Special Weapons Adapter) 2x BDU-33 - 25lb Practice Bomb LD (TER), (Special Weapons Adapter) 3x BDU-33 - 25lb Practice Bomb LD (TER)
+   pylon 4: blocked Captive AIM-9M for ACM, Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange, AN/ASQ-T50 TCTS Pod - ACMI Pod
+   pylon 7: blocked 6x BDU-50LD - 500lb Practice Bomb LD (MER), 6x BDU-50HD - 500lb Practice Bomb HD (MER), 6x BDU-33 - 25lb Practice Bomb LD (MER)
+   pylon 10: blocked Captive AIM-9M for ACM, Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange, AN/ASQ-T50 TCTS Pod - ACMI Pod
+   pylon 11: blocked BDU-45 LG - 500lb Practice Laser Guided Bomb, (Special Weapons Adapter) BDU-45 LG - 500lb Practice Laser Guided Bomb, 2x BDU-45 LG - 500lb Practice Laser Guided Bomb (TER), (Special Weapons Adapter) 2x BDU-45 LG - 500lb Practice Laser Guided Bomb (TER), 3x BDU-50LD - 500lb Practice Bomb LD (TER), 2x BDU-50LD - 500lb Practice Bomb LD (TER), (Special Weapons Adapter) 2x BDU-50LD - 500lb Practice Bomb LD (TER), 3x BDU-50HD - 500lb Practice Bomb HD (TER), 2x BDU-50HD - 500lb Practice Bomb HD (TER), (Special Weapons Adapter) 2x BDU-50HD - 500lb Practice Bomb HD (TER), 3x BDU-33 - 25lb Practice Bomb LD (TER), 2x BDU-33 - 25lb Practice Bomb LD (TER), (Special Weapons Adapter) 2x BDU-33 - 25lb Practice Bomb LD (TER), (Special Weapons Adapter) 3x BDU-33 - 25lb Practice Bomb LD (TER)
+   pylon 12: blocked Captive AIM-9M for ACM, Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange, AN/ASQ-T50 TCTS Pod - ACMI Pod
+   pylon 13: blocked 6x BDU-50LD - 500lb Practice Bomb LD (MER), 6x BDU-50HD - 500lb Practice Bomb HD (MER), 6x BDU-33 - 25lb Practice Bomb LD (MER), BDU-45 LG - 500lb Practice Laser Guided Bomb
+   radio 1 (UHF AN/ARC-164 COMM channels): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   start frequency 251 MHz
+F-16C (blue)
+   pylon 1: blocked AIM-9X Sidewinder IR AAM, Captive AIM-9M for ACM, AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM, AN/ASQ-T50 TCTS Pod - ACMI Pod
+   pylon 2: blocked AIM-9X Sidewinder IR AAM, Captive AIM-9M for ACM, AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM, AN/ASQ-T50 TCTS Pod - ACMI Pod
+   pylon 3: blocked AIM-9X Sidewinder IR AAM, Captive AIM-9M for ACM, AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM, AN/ASQ-T50 TCTS Pod - ACMI Pod, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, CBU-97 - 10 x SFW Cluster Bomb, CBU-105 - 10 x SFW, CBU with WCMD, BRU-57 with 2 x CBU-105 - 10 x SFW, CBU with WCMD, CBU-103 - 202 x CEM, CBU with WCMD, BRU-57 with 2 x CBU-103 - 202 x CEM, CBU with WCMD, TER-9/A - 3 x BDU-33 - 25lb Practice Bomb LD, TER-9/A - 3 x BDU-50LD - 500lb Inert Practice Bomb LD, TER-9/A - 3 x BDU-50HD - 500lb Inert Practice Bomb HD, LAU-117 - AGM-65H - Maverick H (CCD Imp ASM), LAU-117 - AGM-65K - Maverick K (CCD Imp ASM), LAU-88 - 1 x AGM-65H - Maverick H (CCD Imp ASM), LAU-88 - 3 x AGM-65H - Maverick H (CCD Imp ASM), GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, BRU-57 with 2 x GBU-38 - JDAM, 500lb GPS Guided Bomb, AGM-154A - JSOW CEB (CBU-type), BRU-57 with 2 x AGM-154A - JSOW CEB (CBU-type), TER-9/A - 2 x CBU-97 - 10 x SFW Cluster Bomb, LAU-88 - 2 x AGM-65H - Maverick H (CCD Imp ASM), TER-9/A: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, TER-9/A: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, TER-9/A: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, TER-9/A: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, TER-9/A - 2 x BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD
+   pylon 4: blocked LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, CBU-97 - 10 x SFW Cluster Bomb, TER-9/A - 3 x BDU-33 - 25lb Practice Bomb LD, TER-9/A - 3 x CBU-97 - 10 x SFW Cluster Bomb, TER-9/A - 3 x BDU-50LD - 500lb Inert Practice Bomb LD, TER-9/A - 3 x BDU-50HD - 500lb Inert Practice Bomb HD, TER-9/A - 2 x CBU-97 - 10 x SFW Cluster Bomb
+   pylon 6: blocked LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, CBU-97 - 10 x SFW Cluster Bomb, TER-9/A - 3 x BDU-33 - 25lb Practice Bomb LD, TER-9/A - 3 x CBU-97 - 10 x SFW Cluster Bomb, TER-9/A - 3 x BDU-50LD - 500lb Inert Practice Bomb LD, TER-9/A - 3 x BDU-50HD - 500lb Inert Practice Bomb HD, TER-9/A - 2 x CBU-97 - 10 x SFW Cluster Bomb
+   pylon 7: blocked AIM-9X Sidewinder IR AAM, Captive AIM-9M for ACM, AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM, AN/ASQ-T50 TCTS Pod - ACMI Pod, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, CBU-97 - 10 x SFW Cluster Bomb, CBU-105 - 10 x SFW, CBU with WCMD, BRU-57 with 2 x CBU-105 - 10 x SFW, CBU with WCMD, CBU-103 - 202 x CEM, CBU with WCMD, BRU-57 with 2 x CBU-103 - 202 x CEM, CBU with WCMD, TER-9/A - 3 x BDU-33 - 25lb Practice Bomb LD, TER-9/A - 3 x BDU-50LD - 500lb Inert Practice Bomb LD, TER-9/A - 3 x BDU-50HD - 500lb Inert Practice Bomb HD, LAU-117 - AGM-65H - Maverick H (CCD Imp ASM), LAU-117 - AGM-65K - Maverick K (CCD Imp ASM), LAU-88 - 1 x AGM-65H - Maverick H (CCD Imp ASM), LAU-88 - 3 x AGM-65H - Maverick H (CCD Imp ASM), GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, BRU-57 with 2 x GBU-38 - JDAM, 500lb GPS Guided Bomb, AGM-154A - JSOW CEB (CBU-type), BRU-57 with 2 x AGM-154A - JSOW CEB (CBU-type), TER-9/A - 2 x CBU-97 - 10 x SFW Cluster Bomb, LAU-88 - 2 x AGM-65H - Maverick H (CCD Imp ASM), TER-9/A: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, TER-9/A: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, TER-9/A: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, TER-9/A: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, TER-9/A - 2 x BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD
+   pylon 8: blocked AIM-9X Sidewinder IR AAM, Captive AIM-9M for ACM, AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM, AN/ASQ-T50 TCTS Pod - ACMI Pod
+   pylon 9: blocked AIM-9X Sidewinder IR AAM, Captive AIM-9M for ACM, AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM, AN/ASQ-T50 TCTS Pod - ACMI Pod
+   pylon 11: blocked AN/AAQ-28 LITENING - Targeting Pod, AN/AAQ-33 - Advanced Targeting Pod
+   pylon 12: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   radio 1 (COMM 1 (UHF) AN/ARC-164): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   radio 2 (COMM 2 (VHF) AN/ARC-222): presets 2=119.0, 9=124.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   start frequency 251 MHz
+Su-27 (red)
+   pylon 1: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 2: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 3: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 4: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 5: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 7: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 8: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 9: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 10: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   start frequency 124 MHz
+MiG-29A (red)
+   pylon 1: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 2: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 3: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 4: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 5: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 6: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 7: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   start frequency 124 MHz
+F/A-18C (blue)
+   pylon 1: blocked Captive AIM-9M for ACM, AIM-9X Sidewinder IR AAM, AN/ASQ-T50 TCTS Pod - ACMI Pod
+   pylon 2: blocked LAU-115: 2 x LAU-127 - 2 x Captive AIM-9M for ACM, LAU-115: 2 x LAU-127 - 2 x AIM-9X Sidewinder IR AAM, LAU-115C - AIM-7P Sparrow Semi-Active Radar, LAU-115: 2 x LAU-127 - 2 x AIM-120B AMRAAM - Active Radar AAM, LAU-115: 2 x LAU-127 - 2 x AIM-120C AMRAAM - Active Radar AAM, BDU-45 - 500lb Practice Bomb, BDU-45B - 500lb Practice Bomb, BRU-33 with 2 x BDU-45 - 500lb Practice Bomb, BRU-33 with 2 x BDU-45B - 500lb Practice Bomb, BRU-41A - 6 x BDU-33 - 25lb Practice Bomb LD, AGM-154A - JSOW CEB (CBU-type), AGM-154C - JSOW Unitary BROACH, BRU-55 with 2 x AGM-154A - JSOW CEB (CBU-type), BRU-55 with 2 x AGM-154C - JSOW Unitary BROACH, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-31(V)2/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)4/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-32(V)2/B - JDAM, 1000lb GPS Guided Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, BRU-55 with 2 x GBU-38 - JDAM, 500lb GPS Guided Bomb, BRU-55 with 2 x GBU-32(V)2/B - JDAM, 1000lb GPS Guided Bomb, BDU-45 LG - 500lb Practice Laser Guided Bomb, BRU-33 with 2 x BDU-45 LG 500lb Practice Laser Guided Bomb, AGM-84E Harpoon/SLAM (Stand-Off Land-Attack Missile), AGM-84H SLAM-ER (Expanded Response), LAU-115: 2 x LAU-127 - 1 x AIM-9X Sidewinder IR AAM, LAU-115: 2 x LAU-127 - 1 x Captive AIM-9M for ACM, LAU-115: 2 x LAU-127 - 1 x AIM-120B AMRAAM - Active Radar AAM, LAU-115: 2 x LAU-127 - 1 x AIM-120C AMRAAM - Active Radar AAM
+   pylon 3: blocked LAU-115C - AIM-7P Sparrow Semi-Active Radar, LAU-115: 2 x LAU-127 - 2 x AIM-120B AMRAAM - Active Radar AAM, LAU-115: 2 x LAU-127 - 2 x AIM-120C AMRAAM - Active Radar AAM, BDU-45 - 500lb Practice Bomb, BDU-45B - 500lb Practice Bomb, BRU-33 with 2 x BDU-45 - 500lb Practice Bomb, BRU-33 with 2 x BDU-45B - 500lb Practice Bomb, BRU-41A - 6 x BDU-33 - 25lb Practice Bomb LD, AGM-154A - JSOW CEB (CBU-type), AGM-154C - JSOW Unitary BROACH, BRU-55 with 2 x AGM-154A - JSOW CEB (CBU-type), BRU-55 with 2 x AGM-154C - JSOW Unitary BROACH, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-31(V)2/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)4/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-32(V)2/B - JDAM, 1000lb GPS Guided Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, BRU-55 with 2 x GBU-38 - JDAM, 500lb GPS Guided Bomb, BRU-55 with 2 x GBU-32(V)2/B - JDAM, 1000lb GPS Guided Bomb, BDU-45 LG - 500lb Practice Laser Guided Bomb, BRU-33 with 2 x BDU-45 LG 500lb Practice Laser Guided Bomb, AGM-84E Harpoon/SLAM (Stand-Off Land-Attack Missile), AGM-84H SLAM-ER (Expanded Response), LAU-115: 2 x LAU-127 - 1 x AIM-120B AMRAAM - Active Radar AAM, LAU-115: 2 x LAU-127 - 1 x AIM-120C AMRAAM - Active Radar AAM
+   pylon 4: blocked AIM-7P Sparrow Semi-Active Radar, AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM, AN/AAQ-28 LITENING - Targeting Pod, AN/ASQ-228 ATFLIR - Targeting Pod
+   pylon 5: blocked BDU-45 - 500lb Practice Bomb, BDU-45B - 500lb Practice Bomb, BRU-33 with 2 x BDU-45 - 500lb Practice Bomb, BRU-33 with 2 x BDU-45B - 500lb Practice Bomb, AN/AAQ-28 LITENING - Targeting Pod
+   pylon 6: blocked AIM-7P Sparrow Semi-Active Radar, AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM
+   pylon 7: blocked LAU-115C - AIM-7P Sparrow Semi-Active Radar, LAU-115: 2 x LAU-127 - 2 x AIM-120B AMRAAM - Active Radar AAM, LAU-115: 2 x LAU-127 - 2 x AIM-120C AMRAAM - Active Radar AAM, BDU-45 - 500lb Practice Bomb, BDU-45B - 500lb Practice Bomb, BRU-33 with 2 x BDU-45 - 500lb Practice Bomb, BRU-33 with 2 x BDU-45B - 500lb Practice Bomb, BRU-41A - 6 x BDU-33 - 25lb Practice Bomb LD, AGM-154A - JSOW CEB (CBU-type), AGM-154C - JSOW Unitary BROACH, BRU-55 with 2 x AGM-154A - JSOW CEB (CBU-type), BRU-55 with 2 x AGM-154C - JSOW Unitary BROACH, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-31(V)2/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)4/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-32(V)2/B - JDAM, 1000lb GPS Guided Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, BRU-55 with 2 x GBU-38 - JDAM, 500lb GPS Guided Bomb, BRU-55 with 2 x GBU-32(V)2/B - JDAM, 1000lb GPS Guided Bomb, BDU-45 LG - 500lb Practice Laser Guided Bomb, BRU-33 with 2 x BDU-45 LG 500lb Practice Laser Guided Bomb, AGM-84E Harpoon/SLAM (Stand-Off Land-Attack Missile), AGM-84H SLAM-ER (Expanded Response), LAU-115: 2 x LAU-127 - 1 x AIM-120B AMRAAM - Active Radar AAM, LAU-115: 2 x LAU-127 - 1 x AIM-120C AMRAAM - Active Radar AAM
+   pylon 8: blocked LAU-115: 2 x LAU-127 - 2 x Captive AIM-9M for ACM, LAU-115: 2 x LAU-127 - 2 x AIM-9X Sidewinder IR AAM, LAU-115C - AIM-7P Sparrow Semi-Active Radar, LAU-115: 2 x LAU-127 - 2 x AIM-120B AMRAAM - Active Radar AAM, LAU-115: 2 x LAU-127 - 2 x AIM-120C AMRAAM - Active Radar AAM, BDU-45 - 500lb Practice Bomb, BDU-45B - 500lb Practice Bomb, BRU-33 with 2 x BDU-45 - 500lb Practice Bomb, BRU-33 with 2 x BDU-45B - 500lb Practice Bomb, BRU-41A - 6 x BDU-33 - 25lb Practice Bomb LD, AGM-154A - JSOW CEB (CBU-type), AGM-154C - JSOW Unitary BROACH, BRU-55 with 2 x AGM-154A - JSOW CEB (CBU-type), BRU-55 with 2 x AGM-154C - JSOW Unitary BROACH, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-31(V)2/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)4/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-32(V)2/B - JDAM, 1000lb GPS Guided Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, BRU-55 with 2 x GBU-38 - JDAM, 500lb GPS Guided Bomb, BRU-55 with 2 x GBU-32(V)2/B - JDAM, 1000lb GPS Guided Bomb, BDU-45 LG - 500lb Practice Laser Guided Bomb, BRU-33 with 2 x BDU-45 LG 500lb Practice Laser Guided Bomb, AGM-84E Harpoon/SLAM (Stand-Off Land-Attack Missile), AGM-84H SLAM-ER (Expanded Response), LAU-115: 2 x LAU-127 - 1 x AIM-9X Sidewinder IR AAM, LAU-115: 2 x LAU-127 - 1 x Captive AIM-9M for ACM, LAU-115: 2 x LAU-127 - 1 x AIM-120B AMRAAM - Active Radar AAM, LAU-115: 2 x LAU-127 - 1 x AIM-120C AMRAAM - Active Radar AAM
+   pylon 9: blocked Captive AIM-9M for ACM, AIM-9X Sidewinder IR AAM, AN/ASQ-T50 TCTS Pod - ACMI Pod
+   pylon 10: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   radio 1 (COMM 1: ARC-210): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 9=124.0, 10=228.0, 11=229.0, 12=230.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   radio 2 (COMM 2: ARC-210): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 9=124.0, 10=228.0, 11=229.0, 12=230.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   start frequency 251 MHz
+A-10A (blue)
+   pylon 1: blocked Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange, BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, CBU-97 - 10 x SFW Cluster Bomb, LAU-105 - 1 x AN/ASQ-T50 TCTS Pod - ACMI Pod
+   pylon 2: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, CBU-97 - 10 x SFW Cluster Bomb
+   pylon 3: blocked LAU-117 - AGM-65K - Maverick K (CCD Imp ASM), LAU-117 - AGM-65H - Maverick H (CCD Imp ASM), LAU-88 - 2 x AGM-65H - Maverick H (CCD Imp ASM), LAU-88 - 3 x AGM-65H - Maverick H (CCD Imp ASM), BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, CBU-97 - 10 x SFW Cluster Bomb
+   pylon 4: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, CBU-97 - 10 x SFW Cluster Bomb
+   pylon 5: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, CBU-97 - 10 x SFW Cluster Bomb
+   pylon 6: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, CBU-97 - 10 x SFW Cluster Bomb
+   pylon 7: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, CBU-97 - 10 x SFW Cluster Bomb
+   pylon 8: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, CBU-97 - 10 x SFW Cluster Bomb
+   pylon 9: blocked LAU-117 - AGM-65K - Maverick K (CCD Imp ASM), LAU-117 - AGM-65H - Maverick H (CCD Imp ASM), LAU-88 - 2 x AGM-65H - Maverick H (CCD Imp ASM), LAU-88 - 3 x AGM-65H - Maverick H (CCD Imp ASM), BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, CBU-97 - 10 x SFW Cluster Bomb
+   pylon 10: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, CBU-97 - 10 x SFW Cluster Bomb
+   pylon 11: blocked Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange, BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, CBU-97 - 10 x SFW Cluster Bomb, LAU-105 - 1 x AN/ASQ-T50 TCTS Pod - ACMI Pod
+   start frequency 251 MHz
+Av-8BV (blue)
+   pylon 1: blocked AN/ASQ-T50 TCTS Pod - ACMI Pod, Captive AIM-9M for ACM, BDU-33 - 25lb Practice Bomb LD, Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange
+   pylon 2: blocked GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, GBU-32(V)2/B - JDAM, 1000lb GPS Guided Bomb, GBU-54(V)1/B - LJDAM, 500lb Laser & GPS Guided Bomb LD, 2 GBU-38 *-*, 2 GBU-54(V)1/B *-*, 2 GBU-38 *\*, 2 GBU-54(V)1/B *\*, 2 GBU-38 */*, 2 GBU-54(V)1/B */*, 3 GBU-38, 3 GBU-54(V)1/B, BDU-33 - 25lb Practice Bomb LD, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, LAU-117 - AGM-65E2/L - Maverick E2/L (Laser Guided ASM), LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M151 HE APKWS, LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M282 MPP APKWS, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, AN/AAQ-28 LITENING - Targeting Pod, Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange
+   pylon 3: blocked GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, GBU-32(V)2/B - JDAM, 1000lb GPS Guided Bomb, GBU-54(V)1/B - LJDAM, 500lb Laser & GPS Guided Bomb LD, 2 GBU-38 */*, 2 GBU-54(V)1/B */*, BDU-33 - 25lb Practice Bomb LD, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, LAU-117 - AGM-65E2/L - Maverick E2/L (Laser Guided ASM), LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M151 HE APKWS, LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M282 MPP APKWS, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, AN/AAQ-28 LITENING - Targeting Pod
+   pylon 5: blocked AN/AAQ-28 LITENING - Targeting Pod
+   pylon 6: blocked GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, GBU-32(V)2/B - JDAM, 1000lb GPS Guided Bomb, GBU-54(V)1/B - LJDAM, 500lb Laser & GPS Guided Bomb LD, 2 GBU-38 *\*, 2 GBU-54(V)1/B *\*, BDU-33 - 25lb Practice Bomb LD, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, LAU-117 - AGM-65E2/L - Maverick E2/L (Laser Guided ASM), LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M151 HE APKWS, LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M282 MPP APKWS, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, AN/AAQ-28 LITENING - Targeting Pod
+   pylon 7: blocked GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, GBU-32(V)2/B - JDAM, 1000lb GPS Guided Bomb, GBU-54(V)1/B - LJDAM, 500lb Laser & GPS Guided Bomb LD, 2 GBU-38 *-*, 2 GBU-54(V)1/B *-*, 2 GBU-38 */*, 2 GBU-54(V)1/B */*, 2 GBU-38 *\*, 2 GBU-54(V)1/B *\*, 3 GBU-38, 3 GBU-54(V)1/B, BDU-33 - 25lb Practice Bomb LD, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, LAU-117 - AGM-65E2/L - Maverick E2/L (Laser Guided ASM), LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M151 HE APKWS, LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M282 MPP APKWS, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, AN/AAQ-28 LITENING - Targeting Pod, Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange
+   pylon 8: blocked AN/ASQ-T50 TCTS Pod - ACMI Pod, Captive AIM-9M for ACM, BDU-33 - 25lb Practice Bomb LD, Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange
+   radio 1 (V/UHF Radio 1): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 9=124.0, 10=228.0, 11=229.0, 12=230.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   radio 2 (V/UHF Radio 2): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 9=124.0, 10=228.0, 11=229.0, 12=230.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   radio 3 (V/UHF RCS Presets): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 9=124.0, 10=228.0, 11=229.0, 12=230.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   start frequency 251 MHz
+C-130 (blue)
+   radio 1 (UHF-1/2): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   radio 2 (VHF-1/2): presets 2=119.0, 9=124.0
+   start frequency 251 MHz
+F-15C (blue)
+   pylon 1: blocked AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM, Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange, AN/ASQ-T50 TCTS Pod - ACMI Pod
+   pylon 3: blocked AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM
+   pylon 4: blocked AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM
+   pylon 5: blocked AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM
+   pylon 7: blocked AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM
+   pylon 8: blocked AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM
+   pylon 9: blocked AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM
+   pylon 11: blocked AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM, Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange, AN/ASQ-T50 TCTS Pod - ACMI Pod
+   start frequency 251 MHz
+DST A-10C (blue)
+   pylon 1: blocked LAU-105 - 2 x Captive AIM-9M for ACM, LAU-105 - 1 x Captive AIM-9M for ACM, Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange, BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, CBU-97 - 10 x SFW Cluster Bomb, LAU-105 - 1 x AN/ASQ-T50 TCTS Pod - ACMI Pod
+   pylon 2: blocked AN/AAQ-28 LITENING - Targeting Pod, BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, CBU-97 - 10 x SFW Cluster Bomb, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD
+   pylon 3: blocked LAU-117 - AGM-65K - Maverick K (CCD Imp ASM), BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, LAU-117 - AGM-65H - Maverick H (CCD Imp ASM), LAU-88 - 1 x AGM-65H - Maverick H (CCD Imp ASM), LAU-88 - 2 x AGM-65H - Maverick H (CCD Imp ASM), LAU-88 - 3 x AGM-65H - Maverick H (CCD Imp ASM), LAU-117 - CATM-65K - Captive Trg Round for Mav K (CCD), CBU-97 - 10 x SFW Cluster Bomb, CBU-105 - 10 x SFW, CBU with WCMD, CBU-103 - 202 x CEM, CBU with WCMD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD
+   pylon 4: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, CBU-97 - 10 x SFW Cluster Bomb, CBU-105 - 10 x SFW, CBU with WCMD, CBU-103 - 202 x CEM, CBU with WCMD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD
+   pylon 5: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, CBU-97 - 10 x SFW Cluster Bomb, CBU-105 - 10 x SFW, CBU with WCMD, CBU-103 - 202 x CEM, CBU with WCMD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD
+   pylon 6: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, CBU-97 - 10 x SFW Cluster Bomb, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD
+   pylon 7: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, CBU-97 - 10 x SFW Cluster Bomb, CBU-105 - 10 x SFW, CBU with WCMD, CBU-103 - 202 x CEM, CBU with WCMD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD
+   pylon 8: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, CBU-97 - 10 x SFW Cluster Bomb, CBU-105 - 10 x SFW, CBU with WCMD, CBU-103 - 202 x CEM, CBU with WCMD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD
+   pylon 9: blocked LAU-117 - AGM-65K - Maverick K (CCD Imp ASM), BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, LAU-117 - AGM-65H - Maverick H (CCD Imp ASM), LAU-88 - 1 x AGM-65H - Maverick H (CCD Imp ASM), LAU-88 - 2 x AGM-65H - Maverick H (CCD Imp ASM), LAU-88 - 3 x AGM-65H - Maverick H (CCD Imp ASM), LAU-117 - CATM-65K - Captive Trg Round for Mav K (CCD), CBU-97 - 10 x SFW Cluster Bomb, CBU-105 - 10 x SFW, CBU with WCMD, CBU-103 - 202 x CEM, CBU with WCMD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD
+   pylon 10: blocked AN/AAQ-28 LITENING - Targeting Pod, BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, CBU-97 - 10 x SFW Cluster Bomb, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD
+   pylon 11: blocked Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange, BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, CBU-97 - 10 x SFW Cluster Bomb, LAU-105 - 2 x Captive AIM-9M for ACM, LAU-105 - 1 x Captive AIM-9M for ACM, LAU-105 - 1 x AN/ASQ-T50 TCTS Pod - ACMI Pod
+   radio 1 (VHF AM: ARC-186): presets 2=119.0, 9=124.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   radio 2 (UHF AM: ARC-164): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   start frequency 251 MHz
+DST A-10C_2 (blue)
+   pylon 1: blocked LAU-105 - 2 x Captive AIM-9M for ACM, LAU-105 - 1 x Captive AIM-9M for ACM, Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange, BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, CBU-97 - 10 x SFW Cluster Bomb, LAU-105 - 1 x AN/ASQ-T50 TCTS Pod - ACMI Pod
+   pylon 2: blocked AN/AAQ-28 LITENING - Targeting Pod, BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, CBU-97 - 10 x SFW Cluster Bomb, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M151 HE APKWS, LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M282 MPP APKWS
+   pylon 3: blocked LAU-117 - AGM-65K - Maverick K (CCD Imp ASM), LAU-117 - AGM-65E2/L - Maverick E2/L (Laser Guided ASM), BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, LAU-117 - AGM-65H - Maverick H (CCD Imp ASM), LAU-88 - 1 x AGM-65H - Maverick H (CCD Imp ASM), LAU-88 - 2 x AGM-65H - Maverick H (CCD Imp ASM), LAU-88 - 3 x AGM-65H - Maverick H (CCD Imp ASM), LAU-117 - CATM-65K - Captive Trg Round for Mav K (CCD), CBU-97 - 10 x SFW Cluster Bomb, CBU-105 - 10 x SFW, CBU with WCMD, CBU-103 - 202 x CEM, CBU with WCMD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M151 HE APKWS, LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M282 MPP APKWS, BRU-42: 3 x LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M151 HE APKWS, BRU-42: 2 x LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M151 HE APKWS, BRU-42: 3 x LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M282 MPP APKWS, BRU-42: 2 x LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M282 MPP APKWS, GBU-54(V)1/B - LJDAM, 500lb Laser & GPS Guided Bomb LD
+   pylon 4: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, CBU-97 - 10 x SFW Cluster Bomb, CBU-105 - 10 x SFW, CBU with WCMD, CBU-103 - 202 x CEM, CBU with WCMD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M151 HE APKWS, LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M282 MPP APKWS, BRU-42: 3 x LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M151 HE APKWS, BRU-42: 2 x LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M151 HE APKWS, BRU-42: 3 x LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M282 MPP APKWS, BRU-42: 2 x LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M282 MPP APKWS, GBU-54(V)1/B - LJDAM, 500lb Laser & GPS Guided Bomb LD
+   pylon 5: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, CBU-97 - 10 x SFW Cluster Bomb, CBU-105 - 10 x SFW, CBU with WCMD, CBU-103 - 202 x CEM, CBU with WCMD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, GBU-54(V)1/B - LJDAM, 500lb Laser & GPS Guided Bomb LD
+   pylon 6: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, CBU-97 - 10 x SFW Cluster Bomb, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD
+   pylon 7: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, CBU-97 - 10 x SFW Cluster Bomb, CBU-105 - 10 x SFW, CBU with WCMD, CBU-103 - 202 x CEM, CBU with WCMD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, GBU-54(V)1/B - LJDAM, 500lb Laser & GPS Guided Bomb LD
+   pylon 8: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, CBU-97 - 10 x SFW Cluster Bomb, CBU-105 - 10 x SFW, CBU with WCMD, CBU-103 - 202 x CEM, CBU with WCMD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M151 HE APKWS, LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M282 MPP APKWS, BRU-42: 3 x LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M151 HE APKWS, BRU-42: 2 x LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M151 HE APKWS, BRU-42: 3 x LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M282 MPP APKWS, BRU-42: 2 x LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M282 MPP APKWS, GBU-54(V)1/B - LJDAM, 500lb Laser & GPS Guided Bomb LD
+   pylon 9: blocked LAU-117 - AGM-65K - Maverick K (CCD Imp ASM), LAU-117 - AGM-65E2/L - Maverick E2/L (Laser Guided ASM), BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 3 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 3 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 2 x LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRU-42: 2 x LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, BRU-42 - 3 x BDU-33 - 25lb Practice Bomb LD, LAU-117 - AGM-65H - Maverick H (CCD Imp ASM), LAU-88 - 1 x AGM-65H - Maverick H (CCD Imp ASM), LAU-88 - 2 x AGM-65H - Maverick H (CCD Imp ASM), LAU-88 - 3 x AGM-65H - Maverick H (CCD Imp ASM), LAU-117 - CATM-65K - Captive Trg Round for Mav K (CCD), CBU-97 - 10 x SFW Cluster Bomb, CBU-105 - 10 x SFW, CBU with WCMD, CBU-103 - 202 x CEM, CBU with WCMD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M151 HE APKWS, LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M282 MPP APKWS, BRU-42: 3 x LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M151 HE APKWS, BRU-42: 2 x LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M151 HE APKWS, BRU-42: 3 x LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M282 MPP APKWS, BRU-42: 2 x LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M282 MPP APKWS, GBU-54(V)1/B - LJDAM, 500lb Laser & GPS Guided Bomb LD
+   pylon 10: blocked AN/AAQ-28 LITENING - Targeting Pod, BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-131 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, CBU-97 - 10 x SFW Cluster Bomb, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M151 HE APKWS, LAU-131 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M282 MPP APKWS
+   pylon 11: blocked Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange, BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, CBU-97 - 10 x SFW Cluster Bomb, LAU-105 - 2 x Captive AIM-9M for ACM, LAU-105 - 1 x Captive AIM-9M for ACM, LAU-105 - 1 x AN/ASQ-T50 TCTS Pod - ACMI Pod
+   radio 1 (UHF/VHF: ARC-210): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 9=124.0, 10=228.0, 11=229.0, 12=230.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   radio 2 (UHF AM: ARC-164): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   start frequency 251 MHz
+DST AJS37 (blue)
+   pylon 2: blocked BK-90 MJ1+2 (12x MJ2 HEAT / 36x MJ1 HE-FRAG Bomblets), BK-90 MJ1 (72 x MJ1 HE-FRAG Bomblets), BK-90 MJ2 (24 x MJ2 HEAT Bomblets)
+   pylon 3: blocked BK-90 MJ1+2 (12x MJ2 HEAT / 36x MJ1 HE-FRAG Bomblets), BK-90 MJ1 (72 x MJ1 HE-FRAG Bomblets), BK-90 MJ2 (24 x MJ2 HEAT Bomblets)
+   pylon 5: blocked BK-90 MJ1+2 (12x MJ2 HEAT / 36x MJ1 HE-FRAG Bomblets), BK-90 MJ1 (72 x MJ1 HE-FRAG Bomblets), BK-90 MJ2 (24 x MJ2 HEAT Bomblets)
+   pylon 6: blocked BK-90 MJ1+2 (12x MJ2 HEAT / 36x MJ1 HE-FRAG Bomblets), BK-90 MJ1 (72 x MJ1 HE-FRAG Bomblets), BK-90 MJ2 (24 x MJ2 HEAT Bomblets)
+   radio 1 (Radio frequencies): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 9=124.0, 10=228.0, 11=229.0, 12=230.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   start frequency 251 MHz
+DST C-101CC (blue)
+   pylon 2: blocked LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM
+   pylon 3: blocked LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, 4*BDU-33 - AF/B37K Rack with 4*25lb Practice Bomb LD
+   pylon 5: blocked LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, 4*BDU-33 - AF/B37K Rack with 4*25lb Practice Bomb LD
+   pylon 6: blocked LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM
+   radio 1 (V/TVU-740): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 9=124.0, 10=228.0, 11=229.0, 12=230.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   start frequency 251 MHz
+DST C-101EB (blue)
+   pylon 1: blocked Smoke System (White Smoke)
+   pylon 2: blocked Smoke System red colorant, Smoke System yellow colorant
+   radio 1 (AN/ARC-164): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   start frequency 251 MHz
+DST F-100D (blue)
+   pylon 1: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD
+   pylon 2: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD
+   pylon 3: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, 3x BDU-33 - 25lb Practice Bomb LD (TER), 3x BDU-50LD - 500lb Inert Practice Bomb LD (TER), 3x BDU-50HD - 500lb Inert Practice Bomb HD (TER)
+   pylon 5: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, 3x BDU-33 - 25lb Practice Bomb LD (TER), 3x BDU-50LD - 500lb Inert Practice Bomb LD (TER), 3x BDU-50HD - 500lb Inert Practice Bomb HD (TER)
+   pylon 6: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD
+   pylon 7: blocked BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD
+   pylon 9: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   radio 1 (AN/ARC-34): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   start frequency 251 MHz
+DST F-14A-135-GR-Early (blue)
+   pylon 1: blocked LAU-7 AN/ASQ-T50 TCTS Pod - ACMI Pod, LAU-7 Captive AIM-9M for ACM, LAU-138 AN/ASQ-T50 TCTS Pod - ACMI Pod, LAU-138 Captive AIM-9M for ACM, Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange
+   pylon 2: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, LAU-7 AN/ASQ-T50 TCTS Pod - ACMI Pod, 3 BDU-33, 2 BDU-45, 2 BDU-45B
+   pylon 4: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, BDU-45, BDU-45B, 3 BDU-33, MAK79 4 BDU-45, MAK79 4 BDU-45B, MAK79 4 BDU-33
+   pylon 5: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, BDU-45, BDU-45B, 3 BDU-33, MAK79 3 BDU-45, MAK79 3 BDU-45B, MAK79 3 BDU-33
+   pylon 6: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, BDU-45, BDU-45B, 3 BDU-33, MAK79 3 BDU-45, MAK79 3 BDU-45B, MAK79 3 BDU-33
+   pylon 7: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, BDU-45, BDU-45B, 3 BDU-33, MAK79 4 BDU-45, MAK79 4 BDU-45B, MAK79 4 BDU-33
+   pylon 9: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, LAU-7 AN/ASQ-T50 TCTS Pod - ACMI Pod, 3 BDU-33, 2 BDU-45, 2 BDU-45B
+   pylon 10: blocked LAU-7 AN/ASQ-T50 TCTS Pod - ACMI Pod, LAU-7 Captive AIM-9M for ACM, LAU-138 AN/ASQ-T50 TCTS Pod - ACMI Pod, LAU-138 Captive AIM-9M for ACM, Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange
+   radio 1 (UHF AN/ARC-159): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   radio 2 (VHF/UHF AN/ARC-182): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 9=124.0, 10=228.0, 11=229.0, 12=230.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   start frequency 251 MHz
+DST F-14A-95-GR (blue)
+   pylon 1: blocked Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange
+   pylon 2: blocked 3 BDU-33, 2 BDU-45, 2 BDU-45B
+   pylon 4: blocked BDU-45, BDU-45B, 3 BDU-33, MAK79 4 BDU-45, MAK79 4 BDU-45B, MAK79 4 BDU-33
+   pylon 5: blocked BDU-45, BDU-45B, 3 BDU-33, MAK79 3 BDU-45, MAK79 3 BDU-45B, MAK79 3 BDU-33
+   pylon 6: blocked BDU-45, BDU-45B, 3 BDU-33, MAK79 3 BDU-45, MAK79 3 BDU-45B, MAK79 3 BDU-33
+   pylon 7: blocked BDU-45, BDU-45B, 3 BDU-33, MAK79 4 BDU-45, MAK79 4 BDU-45B, MAK79 4 BDU-33
+   pylon 9: blocked 3 BDU-33, 2 BDU-45, 2 BDU-45B
+   pylon 10: blocked Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange
+   radio 1 (UHF AN/ARC-159): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   radio 2 (VHF/UHF AN/ARC-182): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 9=124.0, 10=228.0, 11=229.0, 12=230.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   start frequency 251 MHz
+DST F-14B (blue)
+   pylon 1: blocked LAU-7 AN/ASQ-T50 TCTS Pod - ACMI Pod, LAU-7 Captive AIM-9M for ACM, LAU-138 AN/ASQ-T50 TCTS Pod - ACMI Pod, LAU-138 Captive AIM-9M for ACM, Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange
+   pylon 2: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, LAU-7 AN/ASQ-T50 TCTS Pod - ACMI Pod, 3 BDU-33, 2 BDU-45, 2 BDU-45B
+   pylon 4: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, BDU-45, BDU-45B, 3 BDU-33, MAK79 4 BDU-45, MAK79 4 BDU-45B, MAK79 4 BDU-33
+   pylon 5: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, BDU-45, BDU-45B, 3 BDU-33, MAK79 3 BDU-45, MAK79 3 BDU-45B, MAK79 3 BDU-33
+   pylon 6: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, BDU-45, BDU-45B, 3 BDU-33, MAK79 3 BDU-45, MAK79 3 BDU-45B, MAK79 3 BDU-33
+   pylon 7: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, BDU-45, BDU-45B, 3 BDU-33, MAK79 4 BDU-45, MAK79 4 BDU-45B, MAK79 4 BDU-33
+   pylon 9: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, LAU-7 AN/ASQ-T50 TCTS Pod - ACMI Pod, 3 BDU-33, 2 BDU-45, 2 BDU-45B
+   pylon 10: blocked LAU-7 AN/ASQ-T50 TCTS Pod - ACMI Pod, LAU-7 Captive AIM-9M for ACM, LAU-138 AN/ASQ-T50 TCTS Pod - ACMI Pod, LAU-138 Captive AIM-9M for ACM, Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange
+   radio 1 (UHF AN/ARC-159): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   radio 2 (VHF/UHF AN/ARC-182): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 9=124.0, 10=228.0, 11=229.0, 12=230.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   start frequency 251 MHz
+DST F-14BU (blue)
+   pylon 1: blocked LAU-7 AN/ASQ-T50 TCTS Pod - ACMI Pod, LAU-7 Captive AIM-9M for ACM, LAU-138 AN/ASQ-T50 TCTS Pod - ACMI Pod, LAU-138 Captive AIM-9M for ACM, Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange
+   pylon 2: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, LAU-7 AN/ASQ-T50 TCTS Pod - ACMI Pod, 3 BDU-33, 2 BDU-45, 2 BDU-45B
+   pylon 4: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, BDU-45, BDU-45B, 3 BDU-33, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, GBU-31(V)2/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)4/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-24E/B Enhanced Paveway III - 2000lb GPS/Laser Guided Bomb, MAK79 4 BDU-45, MAK79 4 BDU-45B, MAK79 4 BDU-33
+   pylon 5: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, BDU-45, BDU-45B, 3 BDU-33, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, GBU-31(V)2/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)4/B - JDAM, 2000lb GPS Guided Penetrator Bomb, MAK79 3 BDU-45, MAK79 3 BDU-45B, MAK79 3 BDU-33
+   pylon 6: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, BDU-45, BDU-45B, 3 BDU-33, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, GBU-31(V)2/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)4/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-24E/B Enhanced Paveway III - 2000lb GPS/Laser Guided Bomb, MAK79 3 BDU-45, MAK79 3 BDU-45B, MAK79 3 BDU-33
+   pylon 7: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, BDU-45, BDU-45B, 3 BDU-33, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, GBU-31(V)2/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)4/B - JDAM, 2000lb GPS Guided Penetrator Bomb, MAK79 4 BDU-45, MAK79 4 BDU-45B, MAK79 4 BDU-33
+   pylon 9: blocked AIM-54C-Mk47, AIM-54C-Mk60, AIM-7P, LAU-7 AN/ASQ-T50 TCTS Pod - ACMI Pod, 3 BDU-33, 2 BDU-45, 2 BDU-45B
+   pylon 10: blocked LAU-7 AN/ASQ-T50 TCTS Pod - ACMI Pod, LAU-7 Captive AIM-9M for ACM, LAU-138 AN/ASQ-T50 TCTS Pod - ACMI Pod, LAU-138 Captive AIM-9M for ACM, Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange
+   radio 1 (UHF AN/ARC-159): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   radio 2 (VHF/UHF AN/ARC-182): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 9=124.0, 10=228.0, 11=229.0, 12=230.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   start frequency 251 MHz
+DST F-15ESE (blue)
+   pylon 1: blocked AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM, Captive AIM-9M for ACM
+   pylon 2: blocked CBU-97 - 10 x SFW Cluster Bomb, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, GBU-54(V)1/B - LJDAM, 500lb Laser & GPS Guided Bomb LD, AGM-154A - JSOW CEB (CBU-type), BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD
+   pylon 3: blocked AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM, Captive AIM-9M for ACM
+   pylon 4: blocked CBU-97 * 3, CBU-97 * 6, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-31(V)1/B * 2, GBU-31(V)3/B * 2, GBU-38 * 3, GBU-54B * 3, AGM-154A - JSOW CEB (CBU-type), BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, BDU-50LD * 2, BDU-50LD * 3, BDU-50LD * 6, BDU-50HD * 2, BDU-50HD * 3, BDU-50HD * 6, BDU-50LGB * 2, BDU-50LGB * 4
+   pylon 5: blocked AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM
+   pylon 6: blocked AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM
+   pylon 8: blocked CBU-97 - 10 x SFW Cluster Bomb, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, GBU-54(V)1/B - LJDAM, 500lb Laser & GPS Guided Bomb LD, AGM-154A - JSOW CEB (CBU-type), BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD
+   pylon 10: blocked AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM
+   pylon 11: blocked AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM
+   pylon 12: blocked CBU-97 * 3, CBU-97 * 6, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-31(V)1/B * 2, GBU-31(V)3/B * 2, GBU-38 * 3, GBU-54B * 3, AGM-154A - JSOW CEB (CBU-type), BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, BDU-50LD * 2, BDU-50LD * 3, BDU-50LD * 6, BDU-50HD * 2, BDU-50HD * 3, BDU-50HD * 6, BDU-50LGB * 2, BDU-50LGB * 4
+   pylon 13: blocked AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM, Captive AIM-9M for ACM
+   pylon 14: blocked CBU-97 - 10 x SFW Cluster Bomb, GBU-31(V)1/B - JDAM, 2000lb GPS Guided Bomb, GBU-31(V)3/B - JDAM, 2000lb GPS Guided Penetrator Bomb, GBU-38(V)1/B - JDAM, 500lb GPS Guided Bomb, GBU-54(V)1/B - LJDAM, 500lb Laser & GPS Guided Bomb LD, AGM-154A - JSOW CEB (CBU-type), BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD
+   pylon 15: blocked AIM-120B AMRAAM - Active Radar AAM, AIM-120C AMRAAM - Active Radar AAM, Captive AIM-9M for ACM
+   radio 1 (UHF Radio 1): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   radio 2 (V/UHF Radio 2): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 9=124.0, 10=228.0, 11=229.0, 12=230.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   start frequency 251 MHz
+DST F-5E-3 (blue)
+   pylon 1: blocked Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange, AN/ASQ-T50 TCTS Pod - ACMI Pod, Captive AIM-9M for ACM
+   pylon 2: blocked LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BDU-33 - 25lb Practice Bomb LD, BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD
+   pylon 3: blocked LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BDU-33 - 25lb Practice Bomb LD, BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD
+   pylon 4: blocked BDU-33 - 25lb Practice Bomb LD, BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD
+   pylon 5: blocked LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BDU-33 - 25lb Practice Bomb LD, BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD
+   pylon 6: blocked LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 Mk 61 TP, BDU-33 - 25lb Practice Bomb LD, BDU-50LD - 500lb Inert Practice Bomb LD, BDU-50LGB - 500lb Laser Guided Inert Practice Bomb LD, BDU-50HD - 500lb Inert Practice Bomb HD
+   pylon 7: blocked Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange, AN/ASQ-T50 TCTS Pod - ACMI Pod, Captive AIM-9M for ACM
+   pylon 8: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   radio 1 (UHF Radio AN/ARC-164): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   start frequency 251 MHz
+DST F-5E-3_FC (blue)
+   pylon 1: blocked Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange
+   pylon 2: blocked LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM
+   pylon 3: blocked LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM
+   pylon 5: blocked LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM
+   pylon 6: blocked LAU-68 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM
+   pylon 7: blocked Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange
+   start frequency 251 MHz
+DST F-86F Sabre (blue)
+   radio 1 (AN/ARC-27): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   start frequency 251 MHz
+DST F-86F_FC (blue)
+   radio 1 (AN/ARC-27): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   start frequency 251 MHz
+DST F4U-1D (blue)
+   pylon 12: blocked Smoke Generator - white, Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - orange, Smoke Generator - yellow
+   radio 1 (ARC-5): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0
+   radio 2 (ARR-2): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0
+   start frequency 251 MHz
+DST F4U-1D_CW (blue)
+   pylon 12: blocked Smoke Generator - white, Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - orange, Smoke Generator - yellow
+   radio 1 (ARC-5): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0
+   radio 2 (ARR-2): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0
+   start frequency 251 MHz
+DST I-16 (red)
+   radio 1 (SCR522): presets 1=124.0
+   start frequency 124 MHz
+DST J-11A (red)
+   pylon 1: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 2: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 3: blocked R-77 (AA-12 Adder) - Active Rdr
+   pylon 4: blocked R-77 (AA-12 Adder) - Active Rdr
+   pylon 5: blocked R-77 (AA-12 Adder) - Active Rdr, Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 6: blocked R-77 (AA-12 Adder) - Active Rdr, Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 7: blocked R-77 (AA-12 Adder) - Active Rdr
+   pylon 8: blocked R-77 (AA-12 Adder) - Active Rdr
+   pylon 9: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 10: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   start frequency 124 MHz
+DST JF-17 (red)
+   pylon 1: blocked PL-5EII, Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 2: blocked PL-5EII, SD-10A AAM, SD-10A AAM x 2, LD-10, LD-10 x 2, LS-6-500, LS-6-250, LS-6-250 Dual, LS-6-100 Dual, HF20 - 16 x BRM-1 90mm Laser-guided Rocket, AVIC WMD7 FLIR/LDT POD, DATA-LINK POD, Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 3: blocked C-802AK, LS-6-500, GB-6, GB-6-SFW, GB-6-HE
+   pylon 4: blocked AVIC WMD7 FLIR/LDT POD, DATA-LINK POD, Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 5: blocked C-802AK, LS-6-500, GB-6, GB-6-SFW, GB-6-HE
+   pylon 6: blocked PL-5EII, SD-10A AAM, SD-10A AAM x 2, LD-10, LD-10 x 2, LS-6-500, LS-6-250, LS-6-250 Dual, LS-6-100 Dual, HF20 - 16 x BRM-1 90mm Laser-guided Rocket, AVIC WMD7 FLIR/LDT POD, DATA-LINK POD, Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 7: blocked PL-5EII, Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   radio 1 (COMM 1/2 Preset): presets 1=124.0, 2=228.0, 3=229.0, 4=230.0, 5=125.0, 6=126.0, 7=127.0, 8=134.0, 9=251.0, 10=119.0, 11=252.0, 12=253.0, 13=254.0, 14=255.0, 15=256.0, 16=257.0
+   start frequency 124 MHz
+DST L-39ZA (red)
+   pylon 1: blocked P-50T - 50kg Practice Bomb LD, Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 2: blocked P-50T - 50kg Practice Bomb LD
+   pylon 3: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 4: blocked P-50T - 50kg Practice Bomb LD
+   pylon 5: blocked P-50T - 50kg Practice Bomb LD, Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   radio 1 (R-832M): presets 1=124.0, 2=228.0, 3=229.0, 4=230.0, 5=125.0, 6=126.0, 7=127.0, 8=134.0, 9=251.0, 10=119.0, 11=252.0, 12=253.0, 13=254.0, 14=255.0, 15=256.0, 16=257.0
+   start frequency 124 MHz
+DST La-7 (red)
+   start frequency 3.7 MHz
+DST M-2000C (blue)
+   pylon 1: blocked Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange
+   pylon 5: blocked Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange
+   pylon 9: blocked Smokewinder - red, Smokewinder - green, Smokewinder - blue, Smokewinder - white, Smokewinder - yellow, Smokewinder - orange
+   radio 1 (UHF Radio): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   radio 2 (V/UHF Radio): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 9=124.0, 10=228.0, 11=229.0, 12=230.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   start frequency 251 MHz
+DST MB-339A (blue)
+   pylon 2: blocked LR-25 - 25 x UnGd Rkts, 50 mm ARF-8/M3 TP-SM, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP
+   pylon 3: blocked LR-25 - 25 x UnGd Rkts, 50 mm ARF-8/M3 TP-SM, BRD-4-250 - 4 x Mk 76 - 25lb Practice Bomb LD, BRD-4-250 - 4 x Mk 106 - 5lb Practice Bomb LD, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP
+   pylon 4: blocked LR-25 - 25 x UnGd Rkts, 50 mm ARF-8/M3 TP-SM, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP
+   pylon 7: blocked LR-25 - 25 x UnGd Rkts, 50 mm ARF-8/M3 TP-SM, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP
+   pylon 8: blocked LR-25 - 25 x UnGd Rkts, 50 mm ARF-8/M3 TP-SM, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP, BRD-4-250 - 4 x Mk 76 - 25lb Practice Bomb LD, BRD-4-250 - 4 x Mk 106 - 5lb Practice Bomb LD
+   pylon 9: blocked LR-25 - 25 x UnGd Rkts, 50 mm ARF-8/M3 TP-SM, LAU-3 - 19 x UnGd Rkts, 70 mm Hydra 70 WTU-1/B TP
+   radio 1 (AN/ARC-150(V)-2): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   radio 2 (SRT-651/N): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 9=124.0, 10=228.0, 11=229.0, 12=230.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   start frequency 251 MHz
+DST MB-339APAN (blue)
+   pylon 5: blocked MB339 Red Smoke, MB339 Green Smoke, MB339 YELLOW Smoke, MB339 ORANGE Smoke, MB339 Black Smoke
+   pylon 6: blocked MB339 White Smoke
+   pylon 7: blocked White Oil Tank
+   radio 1 (AN/ARC-150(V)-2): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   radio 2 (SRT-651/N): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 9=124.0, 10=228.0, 11=229.0, 12=230.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   start frequency 251 MHz
+DST MiG-15bis (red)
+   start frequency 3.75 MHz
+DST MiG-15bis_FC (red)
+   start frequency 3.75 MHz
+DST MiG-19P (red)
+   pylon 1: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 6: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   radio 1 (RSIU-4V Radio): presets 1=124.0, 5=125.0, 6=126.0
+   start frequency 124 MHz
+DST MiG-29 Fulcrum (red)
+   pylon 1: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 2: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 3: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 4: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 5: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 6: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 7: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   radio 1 (VHF/UHF Radio R-862): presets 1=124.0, 2=228.0, 3=229.0, 4=230.0, 5=125.0, 6=126.0, 7=127.0, 8=134.0, 9=251.0, 10=119.0, 11=252.0, 12=253.0, 13=254.0, 14=255.0, 15=256.0, 16=257.0
+   start frequency 124 MHz
+DST MiG-29G (red)
+   pylon 1: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 2: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 3: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 4: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 5: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 6: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 7: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   start frequency 124 MHz
+DST MiG-29S (red)
+   pylon 1: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange, R-77 (AA-12 Adder) - Active Rdr
+   pylon 2: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange, R-77 (AA-12 Adder) - Active Rdr
+   pylon 3: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange, R-77 (AA-12 Adder) - Active Rdr
+   pylon 4: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 5: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange, R-77 (AA-12 Adder) - Active Rdr
+   pylon 6: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange, R-77 (AA-12 Adder) - Active Rdr
+   pylon 7: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange, R-77 (AA-12 Adder) - Active Rdr
+   start frequency 124 MHz
+DST Mirage-F1BE (blue)
+   pylon 2: blocked MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP
+   pylon 3: blocked MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP
+   pylon 5: blocked MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP
+   pylon 6: blocked MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP
+   radio 1 (TRAP-136): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 9=124.0, 10=228.0, 11=229.0, 12=230.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   radio 2 (TRAP-137B): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   start frequency 251 MHz
+DST Mirage-F1CE (blue)
+   pylon 2: blocked MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP
+   pylon 3: blocked MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP
+   pylon 5: blocked MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP
+   pylon 6: blocked MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP
+   radio 1 (TRAP-136): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 9=124.0, 10=228.0, 11=229.0, 12=230.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   radio 2 (TRAP-137B): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   start frequency 251 MHz
+DST Mirage-F1EE (blue)
+   pylon 2: blocked MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP
+   pylon 3: blocked MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP
+   pylon 5: blocked MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP
+   pylon 6: blocked MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F1 - 36 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, MATRA F4 - 18 x UnGd Rkts, 68 mm SNEB Type 252 F1B TP
+   radio 1 (TRAP-136): presets 1=251.0, 2=119.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 9=124.0, 10=228.0, 11=229.0, 12=230.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   radio 2 (TRAP-137B): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   start frequency 251 MHz
+DST Su-25T (red)
+   pylon 1: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 3: blocked Kh-25MPU (Updated AS-12 Kegler) - 320kg, ARM, IN & Pas Rdr
+   pylon 4: blocked Kh-25MPU (Updated AS-12 Kegler) - 320kg, ARM, IN & Pas Rdr, APU-8 - 8 x 9M127 Vikhr - ATGM, LOSBR, Tandem HEAT/Frag
+   pylon 5: blocked Kh-58U (AS-11 Kilter) - 640kg, ARM, IN & Pas Rdr
+   pylon 6: blocked Mercury LLTV Pod, L-081 Fantasmagoria ELINT pod
+   pylon 7: blocked Kh-58U (AS-11 Kilter) - 640kg, ARM, IN & Pas Rdr
+   pylon 8: blocked Kh-25MPU (Updated AS-12 Kegler) - 320kg, ARM, IN & Pas Rdr, APU-8 - 8 x 9M127 Vikhr - ATGM, LOSBR, Tandem HEAT/Frag
+   pylon 9: blocked Kh-25MPU (Updated AS-12 Kegler) - 320kg, ARM, IN & Pas Rdr
+   pylon 11: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   start frequency 124 MHz
+DST Su-33 (red)
+   pylon 1: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 2: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 3: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 4: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 5: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 6: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 8: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 9: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 10: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 11: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 12: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   start frequency 124 MHz
+DST TF-51D (blue)
+   radio 1 (SCR-522): presets 2=119.0
+   start frequency 124 MHz
+DST Yak-52 (red)
+   pylon 1: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   start frequency 124 MHz
+Mi-24P (red)
+   radio 1 (R-863): presets 1=124.0, 2=228.0, 3=229.0, 4=230.0, 5=125.0, 6=126.0, 7=127.0, 8=134.0, 9=251.0, 10=119.0, 11=252.0, 12=253.0, 13=254.0, 14=255.0, 15=256.0, 16=257.0
+   start frequency 124 MHz
+Mi-8 (red)
+   radio 1 (R-863): presets 1=124.0, 2=228.0, 3=229.0, 4=230.0, 5=125.0, 6=126.0, 7=127.0, 8=134.0, 9=251.0, 10=119.0, 11=252.0, 12=253.0, 13=254.0, 14=255.0, 15=256.0, 16=257.0
+   start frequency 124 MHz
+UH-1H (blue)
+   pylon 2: blocked XM158 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM
+   pylon 5: blocked XM158 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM
+   radio 1 (UHF AN/ARC-51): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   start frequency 251 MHz
+DST AH-64D_BLK_II (blue)
+   pylon 1: blocked M261 - 19 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, M299 - 4 x AGM-114K Hellfire, M299 - 4 x AGM-114L Hellfire, M299 - 3 x AGM-114K Hellfire, Port, M299 - 3 x AGM-114L Hellfire, Port, M299 - 2 x AGM-114K Hellfire, M299 - 2 x AGM-114L Hellfire, M299 - 1 x AGM-114K Hellfire, Port, M299 - 1 x AGM-114L Hellfire, Port, M299 - 2 x AGM-114K, 2 x AGM-114L Hellfire, M299 - 1 x AGM-114K, 3 x AGM-114L Hellfire, Port, M299 - 3 x AGM-114K, 1 x AGM-114L Hellfire, Port
+   pylon 2: blocked M261 - 19 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, M299 - 4 x AGM-114K Hellfire, M299 - 4 x AGM-114L Hellfire, M299 - 3 x AGM-114K Hellfire, Port, M299 - 3 x AGM-114L Hellfire, Port, M299 - 2 x AGM-114K Hellfire, M299 - 2 x AGM-114L Hellfire, M299 - 1 x AGM-114K Hellfire, Port, M299 - 1 x AGM-114L Hellfire, Port, M299 - 2 x AGM-114K, 2 x AGM-114L Hellfire, M299 - 1 x AGM-114K, 3 x AGM-114L Hellfire, Port, M299 - 3 x AGM-114K, 1 x AGM-114L Hellfire, Port
+   pylon 3: blocked M261 - 19 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, M299 - 4 x AGM-114K Hellfire, M299 - 4 x AGM-114L Hellfire, M299 - 3 x AGM-114K Hellfire, Starboard, M299 - 3 x AGM-114L Hellfire, Starboard, M299 - 2 x AGM-114K Hellfire, M299 - 2 x AGM-114L Hellfire, M299 - 1 x AGM-114K Hellfire, Starboard, M299 - 1 x AGM-114L Hellfire, Starboard, M299 - 2 x AGM-114K, 2 x AGM-114L Hellfire, M299 - 1 x AGM-114K, 3 x AGM-114L Hellfire, Starboard, M299 - 3 x AGM-114K, 1 x AGM-114L Hellfire, Starboard
+   pylon 4: blocked M261 - 19 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, M299 - 4 x AGM-114K Hellfire, M299 - 4 x AGM-114L Hellfire, M299 - 3 x AGM-114K Hellfire, Starboard, M299 - 3 x AGM-114L Hellfire, Starboard, M299 - 2 x AGM-114K Hellfire, M299 - 2 x AGM-114L Hellfire, M299 - 1 x AGM-114K Hellfire, Starboard, M299 - 1 x AGM-114L Hellfire, Starboard, M299 - 2 x AGM-114K, 2 x AGM-114L Hellfire, M299 - 1 x AGM-114K, 3 x AGM-114L Hellfire, Starboard, M299 - 3 x AGM-114K, 1 x AGM-114L Hellfire, Starboard
+   radio 1 (ARC-186): presets 2=119.0, 9=124.0
+   radio 2 (ARC-164): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0
+   start frequency 251 MHz
+DST CH-47Fbl1 (blue)
+   radio 1 (VHF FM: ARC-186): presets 2=119.0, 9=124.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   radio 2 (UHF AM: ARC-164): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   start frequency 251 MHz
+DST Ka-50 (red)
+   pylon 1: blocked APU-6 - 6 x 9M127 Vikhr - ATGM, LOSBR, Tandem HEAT/Frag
+   pylon 4: blocked APU-6 - 6 x 9M127 Vikhr - ATGM, LOSBR, Tandem HEAT/Frag
+   start frequency 124 MHz
+DST Ka-50_3 (red)
+   pylon 1: blocked APU-6 - 6 x 9M127 Vikhr - ATGM, LOSBR, Tandem HEAT/Frag
+   pylon 4: blocked APU-6 - 6 x 9M127 Vikhr - ATGM, LOSBR, Tandem HEAT/Frag
+   start frequency 124 MHz
+DST OH58D (blue)
+   pylon 1: blocked 1xAGM-114K, 2xAGM-114K, M260 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, M260 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M151 HE APKWS
+   pylon 5: blocked 1xAGM-114K, 2xAGM-114K, M260 - 7 x UnGd Rkts, 70 mm Hydra 70 M274 TP-SM, M260 - 7 x Laser Guided Rkts, 70 mm Hydra 70 M151 HE APKWS
+   radio 1 (UHF AM): presets 1=251.0, 3=252.0, 4=253.0, 5=254.0, 6=255.0, 7=256.0, 8=257.0, 10=228.0, 11=229.0, 12=230.0
+   radio 2 (VHF AM): presets 2=119.0, 9=124.0, 13=125.0, 14=126.0, 15=127.0, 16=134.0
+   start frequency 251 MHz
+DST SA342L (blue)
+   pylon 1: blocked Telson 8 - 8 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, Telson 8 - 8 x UnGd Rkts, 68 mm SNEB Type 252 H1 TP
+   pylon 2: blocked Telson 8 - 8 x UnGd Rkts, 68 mm SNEB Type 250 F1B TP-SM, Telson 8 - 8 x UnGd Rkts, 68 mm SNEB Type 252 H1 TP
+   pylon 6: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 7: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   start frequency 119 MHz
+DST SA342M (blue)
+   pylon 6: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 7: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   start frequency 119 MHz
+DST SA342Minigun (blue)
+   pylon 6: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   pylon 7: blocked Smoke Generator - red, Smoke Generator - green, Smoke Generator - blue, Smoke Generator - white, Smoke Generator - yellow, Smoke Generator - orange
+   start frequency 119 MHz

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="512" height="512">
+  <title>Vector Strike Range</title>
+  <defs>
+    <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
+      <rect width="64" height="64" fill="#fff"/>
+      <path d="M61 3 54.29 18.91 54.85 11.69 13 51 52.31 9.15 45.09 9.71Z" fill="#000" stroke="#000" stroke-width="2.8" stroke-linejoin="round"/>
+    </mask>
+  </defs>
+  <g mask="url(#cut)">
+    <g fill="none" stroke="#e4ebf2" stroke-linecap="round">
+      <path d="M55.84 19.32A27 27 0 1 1 44.68 8.16" stroke-width="3.2"/>
+      <circle cx="32" cy="32" r="15.5" stroke-width="1.9" stroke-dasharray="3.2 2.9" opacity=".7"/>
+      <path d="M32 2.5V10M32 54v7.5M2.5 32H10" stroke-width="2.6"/>
+    </g>
+    <circle cx="32" cy="32" r="5.4" fill="#ffb23e"/>
+  </g>
+  <path d="M61 3 54.29 18.91 54.85 11.69 13 51 52.31 9.15 45.09 9.71Z" fill="#ffb23e"/>
+</svg>

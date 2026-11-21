@@ -1,0 +1,1832 @@
+{
+  "code": "FA18C",
+  "label": "F/A-18C Hornet",
+  "sections": [
+    {
+      "path": "Upload",
+      "label": "Upload Settings",
+      "help": "Which systems an upload types into the jet."
+    },
+    {
+      "path": "WaypointsCapture",
+      "label": "Capture Settings",
+      "help": "Where F10-map captured points are inserted (app-side only, never uploaded)."
+    },
+    {
+      "path": "Waypoints",
+      "label": "Waypoints",
+      "nullCrashesEditor": true,
+      "help": "Hornet waypoints 0-59 (PRECISE DDM). FA18Page does not re-create a null Waypoints; WaypointsPage dereferences it."
+    },
+    {
+      "path": "Sequences",
+      "label": "Sequence",
+      "nullCrashesEditor": true,
+      "help": "SEQ1-3 built from waypoint numbers. FA18Page does not re-create a null Sequences; SequencePage dereferences it."
+    },
+    {
+      "path": "CMS",
+      "label": "CMS",
+      "help": "Countermeasure dispenser (ALE-47) programs 1-5, mode and EW HUD option."
+    },
+    {
+      "path": "Radios",
+      "label": "Radios",
+      "nullCrashesEditor": true,
+      "help": "COMM1 (Radio1) and COMM2 (Radio2): 20 presets each plus guard and active channel. FA18Page does not re-create a null Radios; RadiosPageControl dereferences it."
+    },
+    {
+      "path": "FCR",
+      "label": "FCR",
+      "help": "APG-73 air-to-air settings per weapon (AMRAAM, Sparrow, Sidewinder), declutter, RWR, BRA."
+    },
+    {
+      "path": "PrePlanned",
+      "label": "PrePlanned",
+      "help": "JDAM/JSOW/SLAM pre-planned missions PP1-6 per station 2/3/7/8 (DMS coordinates) and SLAM steerpoints."
+    },
+    {
+      "path": "HMD",
+      "label": "HMD",
+      "help": "JHMCS reject mode and per-symbol reject levels."
+    },
+    {
+      "path": "Misc",
+      "label": "Misc",
+      "help": "Bingo, bullseye, altitude warnings, BLIM, TACAN, ILS, HSI map and laser codes; each group has its own ToBeUpdated flag."
+    }
+  ],
+  "fields": [
+    {
+      "path": "Aircraft",
+      "label": "Aircraft code",
+      "kind": "string",
+      "readonly": true,
+      "help": "Always \"FA18C\"; ConfigLoader picks the C# type from it."
+    },
+    {
+      "path": "Version",
+      "label": "Preset format version",
+      "kind": "int",
+      "readonly": true,
+      "help": "Always 2. Missing/1 together with a missing Upload sends the file to the V1 converter."
+    },
+    {
+      "path": "KneeboardNotes",
+      "label": "Kneeboard notes",
+      "kind": "string",
+      "help": "Free text (CRLF line breaks) shown in the in-game kneeboard dialog; sent when Upload.Kneeboard is ticked. Not a system: Load-from-file never copies it."
+    },
+    {
+      "path": "Upload.Waypoints",
+      "label": "Waypoints",
+      "kind": "bool",
+      "help": "Type every waypoint (lat/long precise, elevation) on HSI > DATA > WYPT."
+    },
+    {
+      "path": "Upload.Sequences",
+      "label": "Sequences",
+      "kind": "bool",
+      "help": "Rebuild SEQ1-3 for the sequences whose EnableUploadN is ticked."
+    },
+    {
+      "path": "Upload.CMS",
+      "label": "Countermeasure Programs",
+      "kind": "bool",
+      "help": "EW HUD option, dispenser mode, programs marked ToBeUpdated and the selected program."
+    },
+    {
+      "path": "Upload.Radios",
+      "label": "Radios",
+      "kind": "bool",
+      "help": "COMM1/COMM2 presets, guard, active channel or manual frequency."
+    },
+    {
+      "path": "Upload.PrePlanned",
+      "label": "Pre Planned Coordinates",
+      "kind": "bool",
+      "help": "JDAM/JSOW/SLAM PP missions (and SLAM steerpoints) for stations with a store type set."
+    },
+    {
+      "path": "Upload.HMD",
+      "label": "HMD",
+      "kind": "bool",
+      "help": "HMD reject mode and per-symbol reject levels (HMD must be on)."
+    },
+    {
+      "path": "Upload.FCR",
+      "label": "FCR",
+      "kind": "bool",
+      "help": "Radar settings for AMRAAM, AIM-7 and AIM-9, declutter, RWR and BRA."
+    },
+    {
+      "path": "Upload.Misc",
+      "label": "Misc",
+      "kind": "bool",
+      "help": "Items whose ToBeUpdated flag is ticked (bingo, bullseye, baro/radar warn, TACAN, ILS, laser codes) plus BLIM TAC and HSI map."
+    },
+    {
+      "path": "Upload.Kneeboard",
+      "label": "Kneeboard",
+      "kind": "bool",
+      "help": "Send the preset name, summary and KneeboardNotes to the in-game kneeboard."
+    },
+    {
+      "path": "WaypointsCapture.NavPointsMode",
+      "label": "Nav points capture mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Add to end of list"
+        },
+        {
+          "value": 1,
+          "label": "Add to end of first gap"
+        },
+        {
+          "value": 2,
+          "label": "Add to range"
+        }
+      ],
+      "managed": "route",
+      "help": "Where F10-map captured points land (SteerpointCaptureMode). App-side only, never uploaded. When exporting a route, leave AddToEndOfList (0) or AddToRange starting after the last route sequence so later captures do not overwrite route points."
+    },
+    {
+      "path": "WaypointsCapture.TgtPointsMode",
+      "label": "Target points capture mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Add to end of list"
+        },
+        {
+          "value": 1,
+          "label": "Add to end of first gap"
+        },
+        {
+          "value": 2,
+          "label": "Add to range"
+        }
+      ],
+      "managed": "route",
+      "help": "Same as NavPointsMode for points captured with \"Add TGT\" (Target=true)."
+    },
+    {
+      "path": "WaypointsCapture.NavPointsRangeFrom",
+      "label": "Nav points range start",
+      "kind": "int",
+      "min": 0,
+      "max": 59,
+      "managed": "route",
+      "help": "First sequence used when NavPointsMode = Add to range. Suggest last route sequence + 1."
+    },
+    {
+      "path": "WaypointsCapture.TgtPointsRangeFrom",
+      "label": "Target points range start",
+      "kind": "int",
+      "min": 0,
+      "max": 59,
+      "managed": "route",
+      "help": "First sequence used when TgtPointsMode = Add to range."
+    },
+    {
+      "path": "Waypoints",
+      "managed": "route",
+      "help": "Filled from the planned route. Hornet waypoints are numbered 0-59 (GetFirstAllowedSequence 0, last 59). WP0 is the jet's initial/alignment position; map route point i (1-based) to Sequence i so WP0 is left alone, max 59 route points (fewer if Misc.BullseyeWP, default 59, is used for the bullseye). Sequence must be unique; keep the list sorted by Sequence."
+    },
+    {
+      "path": "Waypoints.Waypoints",
+      "label": "Waypoints",
+      "kind": "list",
+      "maxItems": 60,
+      "managed": "route",
+      "item": {
+        "Sequence": 1,
+        "Name": "WP 1",
+        "Latitude": null,
+        "Longitude": null,
+        "Elevation": 0,
+        "TimeOverSteerpoint": null,
+        "Target": false
+      },
+      "help": "One entry per route point, in route order. Hornet waypoints are numbered 0-59 (GetFirstAllowedSequence 0, last 59). WP0 is the jet's initial/alignment position; map route point i (1-based) to Sequence i so WP0 is left alone, max 59 route points (fewer if Misc.BullseyeWP, default 59, is used for the bullseye). Sequence must be unique; keep the list sorted by Sequence."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Sequence",
+      "label": "Waypoint number",
+      "kind": "int",
+      "min": 0,
+      "max": 59,
+      "managed": "route",
+      "help": "Hornet waypoints are numbered 0-59 (GetFirstAllowedSequence 0, last 59). WP0 is the jet's initial/alignment position; map route point i (1-based) to Sequence i so WP0 is left alone, max 59 route points (fewer if Misc.BullseyeWP, default 59, is used for the bullseye). Sequence must be unique; keep the list sorted by Sequence."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Name",
+      "label": "Name",
+      "kind": "string",
+      "managed": "route",
+      "help": "Route point name. Not uploaded (the Hornet has no waypoint names); shown in the DTC list and kneeboard only, so any length works; keep it short (<= 20 chars) for the kneeboard. Must be non-empty for the DTC editor."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Latitude",
+      "label": "Latitude",
+      "kind": "coord-lat",
+      "pattern": "^[NS] \\d{2}°\\d{2}\\.\\d{3}’$",
+      "managed": "route",
+      "help": "DDM thousandths, e.g. \"N 42°10.630’\" (U+00B0, U+2019). Uploaded in PRECISE mode."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Longitude",
+      "label": "Longitude",
+      "kind": "coord-lon",
+      "pattern": "^[EW] \\d{3}°\\d{2}\\.\\d{3}’$",
+      "managed": "route",
+      "help": "DDM thousandths with 3-digit degrees, e.g. \"E 042°28.840’\"."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Elevation",
+      "label": "Elevation",
+      "kind": "int",
+      "min": 0,
+      "max": 25000,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Feet MSL (route altitude or ground elevation). Editor range 0-25000; negatives are not typed."
+    },
+    {
+      "path": "Waypoints.Waypoints[].TimeOverSteerpoint",
+      "label": "Time over steerpoint",
+      "kind": "time",
+      "pattern": "^\\d{2}:\\d{2}:\\d{2}$",
+      "managed": "route",
+      "help": "Route TOT/TOS as \"HH:MM:SS\" or null. Stored and shown on the kneeboard only; not uploaded."
+    },
+    {
+      "path": "Waypoints.Waypoints[].Target",
+      "label": "Target",
+      "kind": "bool",
+      "managed": "route",
+      "help": "Set from the route point's target flag. Display only (\"TGT\"), not uploaded; also useful for choosing which points feed PrePlanned PP coordinates (convert to DMS)."
+    },
+    {
+      "path": "Sequences.Seq1",
+      "managed": "route",
+      "help": "Build SEQ1 from the planned route: Mode 2 (Use range) with Waypoints [firstSeq, lastSeq], or Mode 3 with the route sequences in fly order. Mode 1 uses every waypoint in list order."
+    },
+    {
+      "path": "Sequences.Seq1.Mode",
+      "label": "Sequence 1 mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Not set (sequence cleared if enabled)"
+        },
+        {
+          "value": 1,
+          "label": "Use all waypoints"
+        },
+        {
+          "value": 2,
+          "label": "Use range"
+        },
+        {
+          "value": 3,
+          "label": "Specific waypoints"
+        }
+      ],
+      "managed": "route",
+      "help": "Build SEQ1 from the planned route: Mode 2 (Use range) with Waypoints [firstSeq, lastSeq], or Mode 3 with the route sequences in fly order. Mode 1 uses every waypoint in list order."
+    },
+    {
+      "path": "Sequences.Seq1.Waypoints",
+      "label": "Sequence 1 waypoints",
+      "kind": "list",
+      "nullable": true,
+      "item": 1,
+      "managed": "route",
+      "help": "Mode 2: [from] or [from, to] (to defaults to the last waypoint; only existing waypoints are added). Mode 3: unique waypoint numbers in fly order. null for Mode 1. Values are waypoint Sequence numbers 0-59."
+    },
+    {
+      "path": "Sequences.Seq1.Waypoints[]",
+      "label": "Waypoint number",
+      "kind": "int",
+      "min": 0,
+      "max": 59,
+      "managed": "route"
+    },
+    {
+      "path": "Sequences.EnableUpload1",
+      "label": "Upload sequence 1",
+      "kind": "bool",
+      "managed": "route",
+      "help": "Rebuild SEQ1 when Upload.Sequences is ticked. Set true for every sequence built from the route."
+    },
+    {
+      "path": "Sequences.Seq2",
+      "managed": "route",
+      "help": "Optional extra route (e.g. alternate/egress). Leave Mode 0 and EnableUpload2 false unless the dashboard plans more than one route."
+    },
+    {
+      "path": "Sequences.Seq2.Mode",
+      "label": "Sequence 2 mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Not set (sequence cleared if enabled)"
+        },
+        {
+          "value": 1,
+          "label": "Use all waypoints"
+        },
+        {
+          "value": 2,
+          "label": "Use range"
+        },
+        {
+          "value": 3,
+          "label": "Specific waypoints"
+        }
+      ],
+      "managed": "route",
+      "help": "Optional extra route (e.g. alternate/egress). Leave Mode 0 and EnableUpload2 false unless the dashboard plans more than one route."
+    },
+    {
+      "path": "Sequences.Seq2.Waypoints",
+      "label": "Sequence 2 waypoints",
+      "kind": "list",
+      "nullable": true,
+      "item": 1,
+      "managed": "route",
+      "help": "Mode 2: [from] or [from, to] (to defaults to the last waypoint; only existing waypoints are added). Mode 3: unique waypoint numbers in fly order. null for Mode 1. Values are waypoint Sequence numbers 0-59."
+    },
+    {
+      "path": "Sequences.Seq2.Waypoints[]",
+      "label": "Waypoint number",
+      "kind": "int",
+      "min": 0,
+      "max": 59,
+      "managed": "route"
+    },
+    {
+      "path": "Sequences.EnableUpload2",
+      "label": "Upload sequence 2",
+      "kind": "bool",
+      "managed": "route",
+      "help": "Rebuild SEQ2 when Upload.Sequences is ticked. Set true for every sequence built from the route."
+    },
+    {
+      "path": "Sequences.Seq3",
+      "managed": "route",
+      "help": "Optional extra route (e.g. alternate/egress). Leave Mode 0 and EnableUpload3 false unless the dashboard plans more than one route."
+    },
+    {
+      "path": "Sequences.Seq3.Mode",
+      "label": "Sequence 3 mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Not set (sequence cleared if enabled)"
+        },
+        {
+          "value": 1,
+          "label": "Use all waypoints"
+        },
+        {
+          "value": 2,
+          "label": "Use range"
+        },
+        {
+          "value": 3,
+          "label": "Specific waypoints"
+        }
+      ],
+      "managed": "route",
+      "help": "Optional extra route (e.g. alternate/egress). Leave Mode 0 and EnableUpload3 false unless the dashboard plans more than one route."
+    },
+    {
+      "path": "Sequences.Seq3.Waypoints",
+      "label": "Sequence 3 waypoints",
+      "kind": "list",
+      "nullable": true,
+      "item": 1,
+      "managed": "route",
+      "help": "Mode 2: [from] or [from, to] (to defaults to the last waypoint; only existing waypoints are added). Mode 3: unique waypoint numbers in fly order. null for Mode 1. Values are waypoint Sequence numbers 0-59."
+    },
+    {
+      "path": "Sequences.Seq3.Waypoints[]",
+      "label": "Waypoint number",
+      "kind": "int",
+      "min": 0,
+      "max": 59,
+      "managed": "route"
+    },
+    {
+      "path": "Sequences.EnableUpload3",
+      "label": "Upload sequence 3",
+      "kind": "bool",
+      "managed": "route",
+      "help": "Rebuild SEQ3 when Upload.Sequences is ticked. Set true for every sequence built from the route."
+    },
+    {
+      "path": "CMS.Programs",
+      "label": "Programs",
+      "kind": "list",
+      "fixedLength": 5,
+      "help": "Exactly 5 programs (constructor-bound; keep all six members). Only written to the jet when the dispenser is on and in MAN at upload time."
+    },
+    {
+      "path": "CMS.Programs[].Number",
+      "label": "Program",
+      "kind": "int",
+      "min": 1,
+      "max": 5,
+      "readonly": true
+    },
+    {
+      "path": "CMS.Programs[].FlareQty",
+      "label": "Flare qty",
+      "kind": "int",
+      "min": 0,
+      "max": 99,
+      "help": "Flares per salvo, 0-99."
+    },
+    {
+      "path": "CMS.Programs[].ChaffQty",
+      "label": "Chaff qty",
+      "kind": "int",
+      "min": 0,
+      "max": 99,
+      "help": "Chaff per salvo, 0-99."
+    },
+    {
+      "path": "CMS.Programs[].Interval",
+      "label": "Interval",
+      "kind": "number",
+      "min": 0.25,
+      "max": 5,
+      "step": 0.25,
+      "unit": "s",
+      "help": "Seconds between salvos, 0.25-5.00 in 0.25 steps (UI regex ^[0-5][.,][0257][05]$)."
+    },
+    {
+      "path": "CMS.Programs[].Repeat",
+      "label": "Repeat",
+      "kind": "int",
+      "min": 0,
+      "max": 99,
+      "help": "Number of salvos, 0-99."
+    },
+    {
+      "path": "CMS.Programs[].ToBeUpdated",
+      "label": "Program this slot",
+      "kind": "bool",
+      "help": "Only programs with this ticked are typed into the jet."
+    },
+    {
+      "path": "CMS.Mode",
+      "label": "Dispenser mode",
+      "kind": "enum",
+      "nullable": true,
+      "options": [
+        {
+          "value": null,
+          "label": "Unchanged"
+        },
+        {
+          "value": 1,
+          "label": "Unchanged (explicit)"
+        },
+        {
+          "value": 2,
+          "label": "Standby"
+        },
+        {
+          "value": 3,
+          "label": "Manual"
+        },
+        {
+          "value": 4,
+          "label": "SemiAuto"
+        },
+        {
+          "value": 5,
+          "label": "Auto"
+        }
+      ],
+      "help": "CMSMode; the UI stores null for Unchanged. Program settings only apply if the mode is Manual."
+    },
+    {
+      "path": "CMS.SelectedProgram",
+      "label": "Selected program",
+      "kind": "int",
+      "min": 0,
+      "max": 5,
+      "help": "Program left selected after upload, 1-5. Default 0 (no selection in the UI; the uploader would still send program 0) — set 1-5 when uploading CMS."
+    },
+    {
+      "path": "CMS.EnableHUD",
+      "label": "Enable EW on HUD",
+      "kind": "bool",
+      "help": "Boxes the EW HUD option; always applied when Upload.CMS."
+    },
+    {
+      "path": "Radios.Radio1.Presets",
+      "label": "COMM1 presets",
+      "kind": "list",
+      "nullable": true,
+      "maxItems": 20,
+      "item": {
+        "Number": 1,
+        "Name": null,
+        "Frequency": null
+      },
+      "help": "null or a list of presets (Number 1-20, unique). Unset channels are simply absent."
+    },
+    {
+      "path": "Radios.Radio1.Presets[].Number",
+      "label": "Channel",
+      "kind": "int",
+      "min": 1,
+      "max": 20
+    },
+    {
+      "path": "Radios.Radio1.Presets[].Name",
+      "label": "Name",
+      "kind": "string",
+      "nullable": true,
+      "help": "Stored/kneeboard only; not uploaded."
+    },
+    {
+      "path": "Radios.Radio1.Presets[].Frequency",
+      "label": "Frequency",
+      "kind": "freq",
+      "unit": "MHz",
+      "pattern": "^\\d{2,3}\\.\\d{3}$",
+      "help": "MHz as a string with a dot and 3 decimals (\"251.000\", \"42.250\"); bands FM 30.000-87.995, VHF 108.000-173.975, UHF 225.000-399.975, 5 kHz steps. FA18 does not run the 2-to-3-decimal fix-up on load (the uploader pads)."
+    },
+    {
+      "path": "Radios.Radio1.SelectedFrequency",
+      "label": "COMM1 manual frequency",
+      "kind": "freq",
+      "nullable": true,
+      "unit": "MHz",
+      "pattern": "^\\d{2,3}\\.\\d{3}$",
+      "help": "Used when Mode = Frequency. MHz as a string with a dot and 3 decimals (\"251.000\", \"42.250\"); bands FM 30.000-87.995, VHF 108.000-173.975, UHF 225.000-399.975, 5 kHz steps. FA18 does not run the 2-to-3-decimal fix-up on load (the uploader pads)."
+    },
+    {
+      "path": "Radios.Radio1.SelectedPreset",
+      "label": "COMM1 active channel",
+      "kind": "enum",
+      "nullable": true,
+      "options": [
+        {
+          "value": null,
+          "label": "(none)"
+        },
+        {
+          "value": "1",
+          "label": "1"
+        },
+        {
+          "value": "2",
+          "label": "2"
+        },
+        {
+          "value": "3",
+          "label": "3"
+        },
+        {
+          "value": "4",
+          "label": "4"
+        },
+        {
+          "value": "5",
+          "label": "5"
+        },
+        {
+          "value": "6",
+          "label": "6"
+        },
+        {
+          "value": "7",
+          "label": "7"
+        },
+        {
+          "value": "8",
+          "label": "8"
+        },
+        {
+          "value": "9",
+          "label": "9"
+        },
+        {
+          "value": "10",
+          "label": "10"
+        },
+        {
+          "value": "11",
+          "label": "11"
+        },
+        {
+          "value": "12",
+          "label": "12"
+        },
+        {
+          "value": "13",
+          "label": "13"
+        },
+        {
+          "value": "14",
+          "label": "14"
+        },
+        {
+          "value": "15",
+          "label": "15"
+        },
+        {
+          "value": "16",
+          "label": "16"
+        },
+        {
+          "value": "17",
+          "label": "17"
+        },
+        {
+          "value": "18",
+          "label": "18"
+        },
+        {
+          "value": "19",
+          "label": "19"
+        },
+        {
+          "value": "20",
+          "label": "20"
+        },
+        {
+          "value": "G",
+          "label": "G (guard)"
+        }
+      ],
+      "help": "String \"1\"..\"20\" or \"G\"; used when Mode = Preset."
+    },
+    {
+      "path": "Radios.Radio1.EnableGuard",
+      "label": "COMM1 guard",
+      "kind": "bool",
+      "help": "Enable the guard receiver."
+    },
+    {
+      "path": "Radios.Radio1.Mode",
+      "label": "COMM1 mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Not set"
+        },
+        {
+          "value": 1,
+          "label": "Frequency"
+        },
+        {
+          "value": 2,
+          "label": "Preset"
+        }
+      ],
+      "help": "RadioMode. 0 (default) = untouched; a radio with no presets, no guard, no selection and Mode 0 is skipped."
+    },
+    {
+      "path": "Radios.Radio2.Presets",
+      "label": "COMM2 presets",
+      "kind": "list",
+      "nullable": true,
+      "maxItems": 20,
+      "item": {
+        "Number": 1,
+        "Name": null,
+        "Frequency": null
+      },
+      "help": "null or a list of presets (Number 1-20, unique). Unset channels are simply absent."
+    },
+    {
+      "path": "Radios.Radio2.Presets[].Number",
+      "label": "Channel",
+      "kind": "int",
+      "min": 1,
+      "max": 20
+    },
+    {
+      "path": "Radios.Radio2.Presets[].Name",
+      "label": "Name",
+      "kind": "string",
+      "nullable": true,
+      "help": "Stored/kneeboard only; not uploaded."
+    },
+    {
+      "path": "Radios.Radio2.Presets[].Frequency",
+      "label": "Frequency",
+      "kind": "freq",
+      "unit": "MHz",
+      "pattern": "^\\d{2,3}\\.\\d{3}$",
+      "help": "MHz as a string with a dot and 3 decimals (\"251.000\", \"42.250\"); bands FM 30.000-87.995, VHF 108.000-173.975, UHF 225.000-399.975, 5 kHz steps. FA18 does not run the 2-to-3-decimal fix-up on load (the uploader pads)."
+    },
+    {
+      "path": "Radios.Radio2.SelectedFrequency",
+      "label": "COMM2 manual frequency",
+      "kind": "freq",
+      "nullable": true,
+      "unit": "MHz",
+      "pattern": "^\\d{2,3}\\.\\d{3}$",
+      "help": "Used when Mode = Frequency. MHz as a string with a dot and 3 decimals (\"251.000\", \"42.250\"); bands FM 30.000-87.995, VHF 108.000-173.975, UHF 225.000-399.975, 5 kHz steps. FA18 does not run the 2-to-3-decimal fix-up on load (the uploader pads)."
+    },
+    {
+      "path": "Radios.Radio2.SelectedPreset",
+      "label": "COMM2 active channel",
+      "kind": "enum",
+      "nullable": true,
+      "options": [
+        {
+          "value": null,
+          "label": "(none)"
+        },
+        {
+          "value": "1",
+          "label": "1"
+        },
+        {
+          "value": "2",
+          "label": "2"
+        },
+        {
+          "value": "3",
+          "label": "3"
+        },
+        {
+          "value": "4",
+          "label": "4"
+        },
+        {
+          "value": "5",
+          "label": "5"
+        },
+        {
+          "value": "6",
+          "label": "6"
+        },
+        {
+          "value": "7",
+          "label": "7"
+        },
+        {
+          "value": "8",
+          "label": "8"
+        },
+        {
+          "value": "9",
+          "label": "9"
+        },
+        {
+          "value": "10",
+          "label": "10"
+        },
+        {
+          "value": "11",
+          "label": "11"
+        },
+        {
+          "value": "12",
+          "label": "12"
+        },
+        {
+          "value": "13",
+          "label": "13"
+        },
+        {
+          "value": "14",
+          "label": "14"
+        },
+        {
+          "value": "15",
+          "label": "15"
+        },
+        {
+          "value": "16",
+          "label": "16"
+        },
+        {
+          "value": "17",
+          "label": "17"
+        },
+        {
+          "value": "18",
+          "label": "18"
+        },
+        {
+          "value": "19",
+          "label": "19"
+        },
+        {
+          "value": "20",
+          "label": "20"
+        },
+        {
+          "value": "G",
+          "label": "G (guard)"
+        }
+      ],
+      "help": "String \"1\"..\"20\" or \"G\"; used when Mode = Preset."
+    },
+    {
+      "path": "Radios.Radio2.EnableGuard",
+      "label": "COMM2 guard",
+      "kind": "bool",
+      "help": "Enable the guard receiver."
+    },
+    {
+      "path": "Radios.Radio2.Mode",
+      "label": "COMM2 mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Not set"
+        },
+        {
+          "value": 1,
+          "label": "Frequency"
+        },
+        {
+          "value": 2,
+          "label": "Preset"
+        }
+      ],
+      "help": "RadioMode. 0 (default) = untouched; a radio with no presets, no guard, no selection and Mode 0 is skipped."
+    },
+    {
+      "path": "FCR.AMRAAMSettings.Range",
+      "label": "AMRAAM range",
+      "kind": "enum",
+      "unit": "nm",
+      "options": [
+        {
+          "value": 5,
+          "label": "5"
+        },
+        {
+          "value": 10,
+          "label": "10"
+        },
+        {
+          "value": 20,
+          "label": "20"
+        },
+        {
+          "value": 40,
+          "label": "40"
+        },
+        {
+          "value": 80,
+          "label": "80"
+        },
+        {
+          "value": 160,
+          "label": "160"
+        }
+      ]
+    },
+    {
+      "path": "FCR.AMRAAMSettings.Bars",
+      "label": "AMRAAM bars",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "1"
+        },
+        {
+          "value": 2,
+          "label": "2"
+        },
+        {
+          "value": 4,
+          "label": "4"
+        },
+        {
+          "value": 6,
+          "label": "6"
+        }
+      ]
+    },
+    {
+      "path": "FCR.AMRAAMSettings.Azimuth",
+      "label": "AMRAAM azimuth",
+      "kind": "enum",
+      "unit": "°",
+      "options": [
+        {
+          "value": 20,
+          "label": "20"
+        },
+        {
+          "value": 40,
+          "label": "40"
+        },
+        {
+          "value": 60,
+          "label": "60"
+        },
+        {
+          "value": 80,
+          "label": "80"
+        },
+        {
+          "value": 140,
+          "label": "140"
+        }
+      ]
+    },
+    {
+      "path": "FCR.AMRAAMSettings.PRF",
+      "label": "AMRAAM PRF",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "High"
+        },
+        {
+          "value": 2,
+          "label": "Medium"
+        },
+        {
+          "value": 3,
+          "label": "Interleaved"
+        }
+      ]
+    },
+    {
+      "path": "FCR.AMRAAMSettings.Aging",
+      "label": "AMRAAM aging",
+      "kind": "enum",
+      "unit": "s",
+      "options": [
+        {
+          "value": 2,
+          "label": "2"
+        },
+        {
+          "value": 4,
+          "label": "4"
+        },
+        {
+          "value": 8,
+          "label": "8"
+        },
+        {
+          "value": 16,
+          "label": "16"
+        },
+        {
+          "value": 32,
+          "label": "32"
+        }
+      ]
+    },
+    {
+      "path": "FCR.AIM7Settings.Range",
+      "label": "Sparrow range",
+      "kind": "enum",
+      "unit": "nm",
+      "options": [
+        {
+          "value": 5,
+          "label": "5"
+        },
+        {
+          "value": 10,
+          "label": "10"
+        },
+        {
+          "value": 20,
+          "label": "20"
+        },
+        {
+          "value": 40,
+          "label": "40"
+        },
+        {
+          "value": 80,
+          "label": "80"
+        },
+        {
+          "value": 160,
+          "label": "160"
+        }
+      ]
+    },
+    {
+      "path": "FCR.AIM7Settings.Bars",
+      "label": "Sparrow bars",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "1"
+        },
+        {
+          "value": 2,
+          "label": "2"
+        },
+        {
+          "value": 4,
+          "label": "4"
+        },
+        {
+          "value": 6,
+          "label": "6"
+        }
+      ]
+    },
+    {
+      "path": "FCR.AIM7Settings.Azimuth",
+      "label": "Sparrow azimuth",
+      "kind": "enum",
+      "unit": "°",
+      "options": [
+        {
+          "value": 20,
+          "label": "20"
+        },
+        {
+          "value": 40,
+          "label": "40"
+        },
+        {
+          "value": 60,
+          "label": "60"
+        },
+        {
+          "value": 80,
+          "label": "80"
+        },
+        {
+          "value": 140,
+          "label": "140"
+        }
+      ]
+    },
+    {
+      "path": "FCR.AIM7Settings.PRF",
+      "label": "Sparrow PRF",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "High"
+        },
+        {
+          "value": 2,
+          "label": "Medium"
+        },
+        {
+          "value": 3,
+          "label": "Interleaved"
+        }
+      ]
+    },
+    {
+      "path": "FCR.AIM7Settings.Aging",
+      "label": "Sparrow aging",
+      "kind": "enum",
+      "unit": "s",
+      "options": [
+        {
+          "value": 2,
+          "label": "2"
+        },
+        {
+          "value": 4,
+          "label": "4"
+        },
+        {
+          "value": 8,
+          "label": "8"
+        },
+        {
+          "value": 16,
+          "label": "16"
+        },
+        {
+          "value": 32,
+          "label": "32"
+        }
+      ]
+    },
+    {
+      "path": "FCR.AIM9Settings.Range",
+      "label": "Sidewinder range",
+      "kind": "enum",
+      "unit": "nm",
+      "options": [
+        {
+          "value": 5,
+          "label": "5"
+        },
+        {
+          "value": 10,
+          "label": "10"
+        },
+        {
+          "value": 20,
+          "label": "20"
+        },
+        {
+          "value": 40,
+          "label": "40"
+        },
+        {
+          "value": 80,
+          "label": "80"
+        },
+        {
+          "value": 160,
+          "label": "160"
+        }
+      ]
+    },
+    {
+      "path": "FCR.AIM9Settings.Bars",
+      "label": "Sidewinder bars",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "1"
+        },
+        {
+          "value": 2,
+          "label": "2"
+        },
+        {
+          "value": 4,
+          "label": "4"
+        },
+        {
+          "value": 6,
+          "label": "6"
+        }
+      ]
+    },
+    {
+      "path": "FCR.AIM9Settings.Azimuth",
+      "label": "Sidewinder azimuth",
+      "kind": "enum",
+      "unit": "°",
+      "options": [
+        {
+          "value": 20,
+          "label": "20"
+        },
+        {
+          "value": 40,
+          "label": "40"
+        },
+        {
+          "value": 60,
+          "label": "60"
+        },
+        {
+          "value": 80,
+          "label": "80"
+        },
+        {
+          "value": 140,
+          "label": "140"
+        }
+      ]
+    },
+    {
+      "path": "FCR.AIM9Settings.PRF",
+      "label": "Sidewinder PRF",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "High"
+        },
+        {
+          "value": 2,
+          "label": "Medium"
+        },
+        {
+          "value": 3,
+          "label": "Interleaved"
+        }
+      ]
+    },
+    {
+      "path": "FCR.AIM9Settings.Aging",
+      "label": "Sidewinder aging",
+      "kind": "enum",
+      "unit": "s",
+      "options": [
+        {
+          "value": 2,
+          "label": "2"
+        },
+        {
+          "value": 4,
+          "label": "4"
+        },
+        {
+          "value": 8,
+          "label": "8"
+        },
+        {
+          "value": 16,
+          "label": "16"
+        },
+        {
+          "value": 32,
+          "label": "32"
+        }
+      ]
+    },
+    {
+      "path": "FCR.DeclutterMode",
+      "label": "Declutter mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "Normal"
+        },
+        {
+          "value": 2,
+          "label": "Declutter1"
+        },
+        {
+          "value": 3,
+          "label": "Declutter2"
+        }
+      ]
+    },
+    {
+      "path": "FCR.EnableRWR",
+      "label": "Enable RWR",
+      "kind": "bool",
+      "help": "Show RWR on the radar attack format."
+    },
+    {
+      "path": "FCR.EnableBRA",
+      "label": "Enable BRA",
+      "kind": "bool",
+      "help": "Show bearing/range/altitude on the radar attack format."
+    },
+    {
+      "path": "PrePlanned.Stations",
+      "label": "Stations",
+      "kind": "dict",
+      "fixedKeys": [
+        "2",
+        "3",
+        "7",
+        "8"
+      ],
+      "help": "Dictionary keyed by station number (JSON string keys). The constructor creates 2, 3, 7, 8; keep exactly those."
+    },
+    {
+      "path": "PrePlanned.Stations{}.Type",
+      "label": "Store type",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Not set (skipped)"
+        },
+        {
+          "value": 1,
+          "label": "Empty/Other"
+        },
+        {
+          "value": 2,
+          "label": "GBU-38"
+        },
+        {
+          "value": 3,
+          "label": "GBU-32"
+        },
+        {
+          "value": 4,
+          "label": "GBU-31 V1/2"
+        },
+        {
+          "value": 5,
+          "label": "GBU-31 V3/4 Penetrator"
+        },
+        {
+          "value": 6,
+          "label": "JSOW-A"
+        },
+        {
+          "value": 7,
+          "label": "JSOW-C"
+        },
+        {
+          "value": 8,
+          "label": "SLAM"
+        },
+        {
+          "value": 9,
+          "label": "SLAM-ER"
+        }
+      ],
+      "help": "StationType. Stations with Type 0/1 or no enabled PP are skipped. README: store types must match the real loadout on ALL stations."
+    },
+    {
+      "path": "PrePlanned.Stations{}.Number",
+      "label": "Station",
+      "kind": "int",
+      "readonly": true,
+      "help": "Equals the dictionary key."
+    },
+    {
+      "path": "PrePlanned.Stations{}.PP",
+      "label": "PP missions",
+      "kind": "dict",
+      "fixedKeys": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6"
+      ],
+      "help": "PP1-PP6, keyed \"1\"..\"6\"."
+    },
+    {
+      "path": "PrePlanned.Stations{}.PP{}.Lat",
+      "label": "PP latitude",
+      "kind": "coord-lat-dms",
+      "nullable": true,
+      "pattern": "^[NS] \\d{2}°\\d{2}’\\d{2}\\.\\d{2}”$",
+      "help": "DMS with hundredths of seconds (Coordinate.ToHornetPreplannedFormat), e.g. \"N 42°10’37.80”\" (U+2019 minutes, U+201D seconds). Not DDM."
+    },
+    {
+      "path": "PrePlanned.Stations{}.PP{}.Lon",
+      "label": "PP longitude",
+      "kind": "coord-lon-dms",
+      "nullable": true,
+      "pattern": "^[EW] \\d{3}°\\d{2}’\\d{2}\\.\\d{2}”$",
+      "help": "DMS hundredths with 3-digit degrees, e.g. \"E 042°28’50.40”\"."
+    },
+    {
+      "path": "PrePlanned.Stations{}.PP{}.Elev",
+      "label": "PP elevation",
+      "kind": "int",
+      "min": 0,
+      "max": 80000,
+      "unit": "ft",
+      "help": "Target elevation, feet MSL."
+    },
+    {
+      "path": "PrePlanned.Stations{}.PP{}.Enabled",
+      "label": "PP enabled",
+      "kind": "bool",
+      "help": "Only enabled PPs (with Lat/Lon set) are uploaded."
+    },
+    {
+      "path": "PrePlanned.Stations{}.PP{}.Notes",
+      "label": "PP notes",
+      "kind": "string",
+      "nullable": true,
+      "help": "Stored/kneeboard only."
+    },
+    {
+      "path": "PrePlanned.Stations{}.Steerpoints",
+      "label": "SLAM steerpoints",
+      "kind": "list",
+      "fixedLength": 5,
+      "help": "Exactly 5 mission steerpoints, used only for SLAM / SLAM-ER stations that also have an enabled PP."
+    },
+    {
+      "path": "PrePlanned.Stations{}.Steerpoints[].UseCoordinate",
+      "label": "Use coordinate",
+      "kind": "bool",
+      "help": "true: use Lat/Lon/Elev; false: use WaypointNumber (UI \"Lat/Lon/Elev\" vs \"Waypoint\")."
+    },
+    {
+      "path": "PrePlanned.Stations{}.Steerpoints[].WaypointNumber",
+      "label": "Waypoint",
+      "kind": "int",
+      "min": 0,
+      "max": 19,
+      "help": "Existing Hornet waypoint number (UI offers Waypoint 0-19) when UseCoordinate is false."
+    },
+    {
+      "path": "PrePlanned.Stations{}.Steerpoints[].Lat",
+      "label": "Steerpoint latitude",
+      "kind": "coord-lat-dms",
+      "nullable": true,
+      "pattern": "^[NS] \\d{2}°\\d{2}’\\d{2}\\.\\d{2}”$",
+      "help": "DMS with hundredths of seconds (Coordinate.ToHornetPreplannedFormat), e.g. \"N 42°10’37.80”\" (U+2019 minutes, U+201D seconds). Not DDM."
+    },
+    {
+      "path": "PrePlanned.Stations{}.Steerpoints[].Lon",
+      "label": "Steerpoint longitude",
+      "kind": "coord-lon-dms",
+      "nullable": true,
+      "pattern": "^[EW] \\d{3}°\\d{2}’\\d{2}\\.\\d{2}”$",
+      "help": "DMS hundredths with 3-digit degrees, e.g. \"E 042°28’50.40”\"."
+    },
+    {
+      "path": "PrePlanned.Stations{}.Steerpoints[].Elev",
+      "label": "Steerpoint altitude",
+      "kind": "int",
+      "min": 0,
+      "max": 99999,
+      "unit": "ft",
+      "help": "UI mask 00000."
+    },
+    {
+      "path": "PrePlanned.Stations{}.Steerpoints[].Enabled",
+      "label": "Steerpoint enabled",
+      "kind": "bool"
+    },
+    {
+      "path": "PrePlanned.Stations{}.Steerpoints[].Notes",
+      "label": "Steerpoint notes",
+      "kind": "string",
+      "nullable": true,
+      "help": "Not editable in the UI; leave null."
+    },
+    {
+      "path": "HMD.RejectMode",
+      "label": "Reject mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Not set (Normal)"
+        },
+        {
+          "value": 1,
+          "label": "Normal"
+        },
+        {
+          "value": 2,
+          "label": "Reject1"
+        },
+        {
+          "value": 3,
+          "label": "Reject2"
+        }
+      ],
+      "help": "HMDRejectMode selected after upload."
+    },
+    {
+      "path": "HMD.RejectSettings",
+      "label": "Reject settings",
+      "kind": "dict",
+      "item": 1,
+      "keyOptions": [
+        {
+          "value": "ALTITUDE",
+          "label": "ALTITUDE",
+          "default": 1
+        },
+        {
+          "value": "AIRSPEED",
+          "label": "AIRSPEED",
+          "default": 1
+        },
+        {
+          "value": "BARO/RADALT",
+          "label": "BARO/RADALT",
+          "default": 1
+        },
+        {
+          "value": "BARO PRES",
+          "label": "BARO PRES",
+          "default": 1
+        },
+        {
+          "value": "VSI",
+          "label": "VSI",
+          "default": 1
+        },
+        {
+          "value": "ALPHA",
+          "label": "ALPHA",
+          "default": 1
+        },
+        {
+          "value": "NIRD CIRCLE",
+          "label": "NIRD CIRCLE",
+          "default": 1
+        },
+        {
+          "value": "MSL FOR",
+          "label": "MSL FOR",
+          "default": 1
+        },
+        {
+          "value": "SP/AMR FOV",
+          "label": "SP/AMR FOV",
+          "default": 1
+        },
+        {
+          "value": "EW",
+          "label": "EW",
+          "default": 1
+        },
+        {
+          "value": "HMD HEADING",
+          "label": "HMD HEADING",
+          "default": 3
+        },
+        {
+          "value": "HMD ELEV",
+          "label": "HMD ELEV",
+          "default": 3
+        },
+        {
+          "value": "A/C HEADING",
+          "label": "A/C HEADING",
+          "default": 3
+        },
+        {
+          "value": "TIME WINDOW",
+          "label": "TIME WINDOW",
+          "default": 3
+        },
+        {
+          "value": "FLIR FOV",
+          "label": "FLIR FOV",
+          "default": 3
+        },
+        {
+          "value": "MEMBERS",
+          "label": "MEMBERS",
+          "default": 3
+        },
+        {
+          "value": "CLOSEST FRND",
+          "label": "CLOSEST FRND",
+          "default": 2
+        },
+        {
+          "value": "TUCD TRACK",
+          "label": "TUCD TRACK",
+          "default": 2
+        },
+        {
+          "value": "WINDOW      1",
+          "label": "WINDOW 1",
+          "default": 3
+        },
+        {
+          "value": "WINDOW      2",
+          "label": "WINDOW 2",
+          "default": 3
+        },
+        {
+          "value": "WINDOW      3",
+          "label": "WINDOW 3",
+          "default": 3
+        },
+        {
+          "value": "WINDOW      4",
+          "label": "WINDOW 4",
+          "default": 3
+        },
+        {
+          "value": "WINDOW      5",
+          "label": "WINDOW 5",
+          "default": 3
+        },
+        {
+          "value": "WINDOW      6",
+          "label": "WINDOW 6",
+          "default": 3
+        },
+        {
+          "value": "WINDOW      7",
+          "label": "WINDOW 7",
+          "default": 3
+        },
+        {
+          "value": "WINDOW      8",
+          "label": "WINDOW 8",
+          "default": 3
+        },
+        {
+          "value": "WINDOW      9",
+          "label": "WINDOW 9",
+          "default": 3
+        },
+        {
+          "value": "WINDOW     10",
+          "label": "WINDOW 10",
+          "default": 3
+        },
+        {
+          "value": "ALT_ASPD_BOX",
+          "label": "ALT_ASPD_BOX",
+          "default": 2
+        },
+        {
+          "value": "CLIMD_ASPD",
+          "label": "CLIMD_ASPD",
+          "default": 2
+        },
+        {
+          "value": "MACH",
+          "label": "MACH",
+          "default": 2
+        },
+        {
+          "value": "G",
+          "label": "G",
+          "default": 2
+        },
+        {
+          "value": "MAX G",
+          "label": "MAX G",
+          "default": 2
+        },
+        {
+          "value": "DONORS",
+          "label": "DONORS",
+          "default": 3
+        },
+        {
+          "value": "OTHERS",
+          "label": "OTHERS",
+          "default": 3
+        },
+        {
+          "value": "MIDS INFO",
+          "label": "MIDS INFO",
+          "default": 2
+        }
+      ],
+      "help": "Dictionary symbol name -> lowest reject level at which it is still shown (exact key text, WINDOW keys are padded to 13 chars). Missing keys use the built-in default listed in keyOptions. Must not be null (the HMD page throws when a level is clicked); empty {} = all defaults."
+    },
+    {
+      "path": "HMD.RejectSettings{}",
+      "label": "Level",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "Normal"
+        },
+        {
+          "value": 2,
+          "label": "Reject1"
+        },
+        {
+          "value": 3,
+          "label": "Reject2"
+        }
+      ],
+      "help": "Normal = shown in NORM, Reject1 = removed at REJ 1, Reject2 = removed at REJ 2."
+    },
+    {
+      "path": "Misc.Bingo",
+      "label": "Bingo",
+      "kind": "int",
+      "min": 0,
+      "max": 99999,
+      "unit": "lbs"
+    },
+    {
+      "path": "Misc.BingoToBeUpdated",
+      "label": "Set bingo",
+      "kind": "bool"
+    },
+    {
+      "path": "Misc.BullseyeToBeUpdated",
+      "label": "Enable bullseye",
+      "kind": "bool",
+      "help": "Designate BullseyeWP as the bullseye on the HSI."
+    },
+    {
+      "path": "Misc.BullseyeWP",
+      "label": "Bullseye waypoint",
+      "kind": "int",
+      "min": 0,
+      "max": 59,
+      "help": "Waypoint number (0-59) used as bullseye. If the dashboard exports a bullseye, add it as a waypoint (e.g. 59) outside the route range and point this at it."
+    },
+    {
+      "path": "Misc.BaroWarn",
+      "label": "Baro ALT warning",
+      "kind": "int",
+      "min": 0,
+      "max": 99999,
+      "unit": "ft"
+    },
+    {
+      "path": "Misc.BaroToBeUpdated",
+      "label": "Set baro ALT warning",
+      "kind": "bool"
+    },
+    {
+      "path": "Misc.RadarWarn",
+      "label": "Radar ALT warning",
+      "kind": "int",
+      "min": 0,
+      "max": 99999,
+      "unit": "ft",
+      "help": "The radar-altimeter knob only steps up to 5000 ft."
+    },
+    {
+      "path": "Misc.RadarToBeUpdated",
+      "label": "Set radar ALT warning",
+      "kind": "bool"
+    },
+    {
+      "path": "Misc.BlimTac",
+      "label": "Tactical AP bank-limit",
+      "kind": "bool",
+      "help": "Set BLIM to TAC (bank limit off NAV)."
+    },
+    {
+      "path": "Misc.TACANChannel",
+      "label": "TACAN channel",
+      "kind": "int",
+      "min": 1,
+      "max": 126
+    },
+    {
+      "path": "Misc.TACANBand",
+      "label": "TACAN band",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "X"
+        },
+        {
+          "value": 1,
+          "label": "Y"
+        }
+      ]
+    },
+    {
+      "path": "Misc.TACANToBeUpdated",
+      "label": "Set TACAN",
+      "kind": "bool"
+    },
+    {
+      "path": "Misc.ILSToBeUpdated",
+      "label": "Set ILS",
+      "kind": "bool"
+    },
+    {
+      "path": "Misc.ILSChannel",
+      "label": "ILS channel",
+      "kind": "int",
+      "min": 0,
+      "max": 20,
+      "help": "1-20; 0 = not set (skipped even if ILSToBeUpdated)."
+    },
+    {
+      "path": "Misc.HideMapOnHSI",
+      "label": "Hide MAP on HSI",
+      "kind": "bool"
+    },
+    {
+      "path": "Misc.LaserSettingsToBeUpdated",
+      "label": "Set laser codes",
+      "kind": "bool",
+      "help": "Needs the FLIR pod powered."
+    },
+    {
+      "path": "Misc.TGPCode",
+      "label": "TGP laser code",
+      "kind": "int",
+      "min": 1111,
+      "max": 2888,
+      "pattern": "^[12][1-8][1-8][1-8]$",
+      "help": "4 digits: first 1-2, others 1-8."
+    },
+    {
+      "path": "Misc.LSTCode",
+      "label": "LST code",
+      "kind": "int",
+      "min": 1111,
+      "max": 2888,
+      "pattern": "^[12][1-8][1-8][1-8]$",
+      "help": "4 digits: first 1-2, others 1-8."
+    }
+  ]
+}

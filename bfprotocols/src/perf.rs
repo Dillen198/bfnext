@@ -53,6 +53,10 @@ pub struct PerfStat {
     pub logistics_transfer: HistStat,
     pub logistics_sync_from: HistStat,
     pub logistics_sync_to: HistStat,
+    pub logistics_convoy: HistStat,
+    pub logistics_air_routes: HistStat,
+    pub logistics_sea_routes: HistStat,
+    pub frontline: HistStat,
     pub logistics_items: u64,
 }
 
@@ -86,6 +90,10 @@ impl Default for PerfStat {
             logistics_transfer: HistStat::empty("logistics_transfer", false),
             logistics_sync_from: HistStat::empty("logistics_sync_from", false),
             logistics_sync_to: HistStat::empty("logistics_sync_to", false),
+            logistics_convoy: HistStat::empty("logistics_convoy", false),
+            logistics_air_routes: HistStat::empty("logistics_air_routes", false),
+            logistics_sea_routes: HistStat::empty("logistics_sea_routes", false),
+            frontline: HistStat::empty("frontline", false),
             logistics_items: 0,
         }
     }
@@ -121,6 +129,10 @@ impl PerfStat {
             logistics_transfer,
             logistics_sync_from,
             logistics_sync_to,
+            logistics_convoy,
+            logistics_air_routes,
+            logistics_sea_routes,
+            frontline,
             logistics_items,
         } = self;
         let stats = [
@@ -151,10 +163,12 @@ impl PerfStat {
             logistics_transfer,
             logistics_sync_from,
             logistics_sync_to,
+            logistics_convoy,
+            logistics_air_routes,
+            logistics_sea_routes,
+            frontline,
         ];
-        let max_len = stats
-            .iter()
-            .fold(0, |l, st| std::cmp::max(l, st.name.len()));
+        let max_len = stats.iter().fold(0, |l, st| std::cmp::max(l, st.name.len()));
         for st in stats {
             st.log(max_len);
         }
@@ -190,12 +204,16 @@ pub struct PerfInner {
     pub logistics_transfer: HistogramSer,
     pub logistics_sync_from: HistogramSer,
     pub logistics_sync_to: HistogramSer,
+    pub logistics_convoy: HistogramSer,
+    pub logistics_air_routes: HistogramSer,
+    pub logistics_sea_routes: HistogramSer,
+    pub frontline: HistogramSer,
     // CR evilkipper: remove this once the warehouse client/server desync bug is fixed
     pub logistics_items: FxHashSet<(String, ObjectiveId)>,
 }
 
 impl PerfInner {
-    fn stat(&self, frame: &HistogramSer) -> PerfStat {
+    pub fn stat(&self, frame: &HistogramSer) -> PerfStat {
         let Self {
             timed_events,
             slow_timed,
@@ -223,6 +241,10 @@ impl PerfInner {
             logistics_transfer,
             logistics_sync_from,
             logistics_sync_to,
+            logistics_convoy,
+            logistics_air_routes,
+            logistics_sea_routes,
+            frontline,
             logistics_items,
         } = self;
         PerfStat {
@@ -236,7 +258,11 @@ impl PerfInner {
             ewr_tracks: HistStat::new(ewr_tracks, "ewr_tracks", false),
             ewr_reports: HistStat::new(ewr_reports, "ewr_reports", false),
             unit_culling: HistStat::new(unit_culling, "unit_culling", false),
-            remark_objectives: HistStat::new(remark_objectives, "remark_objectives", false),
+            remark_objectives: HistStat::new(
+                remark_objectives,
+                "remark_objectives",
+                false,
+            ),
             update_jtac_contacts: HistStat::new(
                 update_jtac_contacts,
                 "update_jtac_contacts",
@@ -247,7 +273,11 @@ impl PerfInner {
             spawn: HistStat::new(spawn, "spawn", false),
             despawn: HistStat::new(despawn, "despawn", false),
             advise_captured: HistStat::new(advise_captured, "advise_captured", false),
-            advise_capturable: HistStat::new(advise_capturable, "advise_capturable", false),
+            advise_capturable: HistStat::new(
+                advise_capturable,
+                "advise_capturable",
+                false,
+            ),
             jtac_target_positions: HistStat::new(
                 jtac_target_positions,
                 "jtac_target_positions",
@@ -261,10 +291,38 @@ impl PerfInner {
                 "logistics_distribute",
                 false,
             ),
-            logistics_deliver: HistStat::new(logistics_deliver, "logistics_deliver", false),
-            logistics_transfer: HistStat::new(logistics_transfer, "logistics_transfer", false),
-            logistics_sync_from: HistStat::new(logistics_sync_from, "logistics_sync_from", false),
-            logistics_sync_to: HistStat::new(logistics_sync_to, "logistics_sync_to", false),
+            logistics_deliver: HistStat::new(
+                logistics_deliver,
+                "logistics_deliver",
+                false,
+            ),
+            logistics_transfer: HistStat::new(
+                logistics_transfer,
+                "logistics_transfer",
+                false,
+            ),
+            logistics_sync_from: HistStat::new(
+                logistics_sync_from,
+                "logistics_sync_from",
+                false,
+            ),
+            logistics_sync_to: HistStat::new(
+                logistics_sync_to,
+                "logistics_sync_to",
+                false,
+            ),
+            logistics_convoy: HistStat::new(logistics_convoy, "logistics_convoy", false),
+            logistics_air_routes: HistStat::new(
+                logistics_air_routes,
+                "logistics_air_routes",
+                false,
+            ),
+            logistics_sea_routes: HistStat::new(
+                logistics_sea_routes,
+                "logistics_sea_routes",
+                false,
+            ),
+            frontline: HistStat::new(frontline, "frontline", false),
             logistics_items: logistics_items.len() as u64,
         }
     }
@@ -276,34 +334,16 @@ pub struct Perf {
     pub frame: Arc<HistogramSer>,
 }
 
-static mut PERF: Option<Perf> = None;
-
 impl Clone for Perf {
     fn clone(&self) -> Self {
-        Self {
-            inner: Arc::clone(&self.inner),
-            frame: Arc::clone(&self.frame),
-        }
+        Self { inner: Arc::clone(&self.inner), frame: Arc::clone(&self.frame) }
     }
 }
 
 impl Perf {
-    pub unsafe fn get_mut() -> &'static mut Perf {
-        #[allow(static_mut_refs)]
-        let perf = PERF.as_mut();
-        match perf {
-            Some(perf) => perf,
-            None => {
-                PERF = Some(Perf::default());
-                #[allow(static_mut_refs)]
-                PERF.as_mut().unwrap()
-            }
-        }
-    }
-
-    pub unsafe fn reset() {
-        PERF = None;
-    }
+    // The engine's own counters; the DCS API call counters are
+    // dcso3::perf::Perf. Same per-thread singleton as that one.
+    dcso3::thread_singleton!(Perf);
 
     pub fn stat(&self) -> PerfStat {
         self.inner.stat(&self.frame)

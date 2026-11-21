@@ -1,0 +1,54 @@
+{
+  "_copyright": "Copyright (c) 2026 Dillen Weerasinghe. All rights reserved. Proprietary; see the repository NOTICE file.",
+  "//": "bfdb --instances <this file>: the two campaign servers plus a training range. See instances.sample.json for every campaign key and deploy/range.md for the range.",
+  "default": "vs1",
+  "instances": [
+    {
+      "id": "vs1",
+      "label": "Vector Strike #1",
+      "base": "/local/fowl/vs1",
+      "sortie": null,
+      "stats_jsonl": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\Logs\\stats.jsonl",
+      "stats_dir": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\Logs\\stats",
+      "engine_config": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\ODFv2_CFG",
+      "export_port": 42001,
+      "srs_url": "http://127.0.0.1:5002",
+      "gci_config": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\gci.json",
+      "dcs_server_name": "[VS] Vector Strike - Vector Strike | Dynamic Campaign PVP Modern"
+    },
+    {
+      "id": "vs2",
+      "label": "Vector Strike #2",
+      "base": "/local/fowl/vs2",
+      "sortie": null,
+      "stats_jsonl": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_2\\Logs\\stats.jsonl",
+      "stats_dir": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_2\\Logs\\stats",
+      "engine_config": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_2\\RGW2008_CFG",
+      "export_port": 42002,
+      "srs_url": "http://127.0.0.1:5003",
+      "gci_config": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_2\\gci.json",
+      "dcs_server_name": "[VS] Vector Strike #2"
+    },
+    {
+      "//": "The training range. Runs bfrange.dll, not bflib.dll. Never counted toward campaign totals, left out of the campaign dashboard's selector (GET /api/instances), served under /api/range/.",
+      "id": "range",
+      "label": "Vector Strike Training Range",
+      "//kind": "\"range\" for a bfrange server. Defaults to \"campaign\".",
+      "kind": "range",
+      "//base": "netidx_base from the range's _RANGE config. The live map, spawning and the weapon database come over RPCs under <base>/<sortie>/api/.",
+      "base": "/local/fowl/range",
+      "sortie": null,
+      "//stats_jsonl": "Identity stats (connect, slot, takeoff, land), ingested like a campaign's.",
+      "stats_jsonl": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.range\\Logs\\stats.jsonl",
+      "//range_jsonl": "The graded results, one RangeRecord per line. Optional: defaults to range.jsonl next to stats_jsonl.",
+      "range_jsonl": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.range\\Logs\\range.jsonl",
+      "//tacview_dir": "Where Tacview writes this server's .acmi files (= tacviewExportPath). Optional: unset turns off the range site's Tacview downloads.",
+      "tacview_dir": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.range\\Tacview",
+      "export_port": 42004,
+      "srs_url": "http://127.0.0.1:5005",
+      "//gci_config": "No GCI on the range.",
+      "gci_config": null,
+      "dcs_server_name": "[VS] Vector Strike | Training Range"
+    }
+  ]
+}

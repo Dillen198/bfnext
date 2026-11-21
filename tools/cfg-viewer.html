@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Fowl Engine — Config Viewer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161922;
+    --panel-2: #1c2029;
+    --border: #2a2f3a;
+    --text: #e6e8ee;
+    --muted: #8b93a7;
+    --accent: #4fd1c5;
+    --accent-dim: #2f6b66;
+    --warn: #f2b134;
+    --bad: #ef4444;
+    --bad-dim: #4a2323;
+    --good: #34d399;
+    --blue: #6aa8ff;
+    --red: #ff7a7a;
+    font-size: 15px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header.toolbar {
+    display: flex; align-items: center; gap: .6rem; padding: .6rem .9rem;
+    border-bottom: 1px solid var(--border); background: var(--panel); flex-wrap: wrap;
+  }
+  header.toolbar h1 { font-size: 1rem; font-weight: 600; margin: 0 .6rem 0 0; white-space: nowrap; }
+  header.toolbar h1 .sub { color: var(--muted); font-weight: 400; }
+  header.toolbar a.crosslink { color: var(--muted); font-size: .78rem; text-decoration: none; border: 1px solid var(--border); border-radius: 6px; padding: .35rem .6rem; }
+  header.toolbar a.crosslink:hover { color: var(--text); border-color: var(--accent); }
+  .spacer { flex: 1; }
+  #status { color: var(--muted); font-size: .85rem; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  button, .btn {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: .4rem .75rem; font-size: .85rem; cursor: pointer;
+  }
+  button:hover, .btn:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent-dim); border-color: var(--accent); }
+  input[type=search], select {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: .4rem .6rem; font-size: .85rem;
+  }
+  input[type=search] { width: 260px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; border-right: 1px solid var(--border); }
+  .seg button:last-child { border-right: 0; }
+  .seg button.on { background: var(--accent-dim); }
+  main { flex: 1; display: flex; min-height: 0; }
+  nav {
+    width: 250px; flex: none; border-right: 1px solid var(--border); background: var(--panel);
+    overflow: auto; padding: .5rem 0;
+  }
+  nav a {
+    display: flex; justify-content: space-between; gap: .5rem; padding: .42rem .9rem;
+    color: var(--text); text-decoration: none; font-size: .88rem; border-left: 3px solid transparent;
+  }
+  nav a:hover { background: var(--panel-2); }
+  nav a.on { border-left-color: var(--accent); background: var(--panel-2); }
+  nav a .n { color: var(--muted); font-size: .78rem; }
+  nav .grp { color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; padding: .8rem .9rem .3rem; }
+  #view { flex: 1; overflow: auto; padding: 1.1rem 1.4rem 3rem; }
+  h2 { font-size: 1.25rem; margin: 0 0 .3rem; }
+  h3 { font-size: 1rem; margin: 1.4rem 0 .5rem; color: var(--accent); }
+  p.lead { color: var(--muted); margin: 0 0 1rem; max-width: 70ch; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: .7rem; margin-bottom: 1rem; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: .7rem .8rem; }
+  .card .k { color: var(--muted); font-size: .76rem; }
+  .card .v { font-size: 1.35rem; font-weight: 600; margin-top: .15rem; }
+  .card .v small { font-size: .8rem; color: var(--muted); font-weight: 400; }
+  .feat { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: .5rem; }
+  .feat div { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: .5rem .7rem; font-size: .88rem; }
+  .pill { display: inline-block; padding: .05rem .45rem; border-radius: 999px; font-size: .72rem; font-weight: 600; margin-right: .35rem; }
+  .on-p { background: #12382f; color: var(--good); }
+  .off-p { background: #262a33; color: var(--muted); }
+  .warn-p { background: #3d2f0d; color: var(--warn); }
+  .bad-p { background: var(--bad-dim); color: var(--bad); }
+  .Blue { color: var(--blue); } .Red { color: var(--red); }
+  .banner { background: var(--bad-dim); border: 1px solid var(--bad); color: #ffd7d7; border-radius: 8px; padding: .7rem .9rem; margin-bottom: 1rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .85rem; margin-bottom: .8rem; }
+  th, td { text-align: left; padding: .38rem .55rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--bg); cursor: pointer; white-space: nowrap; }
+  tr:hover td { background: var(--panel); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.muted, .muted { color: var(--muted); }
+  code, .mono { font-family: ui-monospace, Consolas, monospace; font-size: .82rem; }
+  .kv { display: grid; grid-template-columns: minmax(180px, max-content) 1fr; gap: .25rem 1rem; font-size: .87rem; margin-bottom: .8rem; }
+  .kv .k { color: var(--muted); }
+  details.tree { margin-left: .9rem; }
+  details.tree > summary { cursor: pointer; color: var(--text); font-size: .86rem; padding: .1rem 0; }
+  details.tree > summary .t { color: var(--muted); font-size: .76rem; margin-left: .35rem; }
+  .leaf { margin-left: 1.8rem; font-size: .84rem; padding: .08rem 0; }
+  .leaf .k { color: var(--muted); }
+  .s { color: #c3e88d; } .n2 { color: #f78c6c; } .b { color: #c792ea; } .z { color: var(--muted); }
+  .drop {
+    margin: 3rem auto; max-width: 640px; border: 2px dashed var(--border); border-radius: 12px;
+    padding: 2.5rem; text-align: center; color: var(--muted);
+  }
+  .drop.over { border-color: var(--accent); color: var(--text); }
+  .drop b { color: var(--text); }
+  .hit { background: #3d2f0d; }
+  .diff-add { color: var(--good); } .diff-del { color: var(--bad); } .diff-chg { color: var(--warn); }
+  @media (max-width: 820px) {
+    main { flex-direction: column; }
+    nav { width: 100%; max-height: 34vh; border-right: 0; border-bottom: 1px solid var(--border); }
+    input[type=search] { width: 100%; }
+    #view { padding: 1rem 1rem 3rem; }
+    .kv { grid-template-columns: 1fr; gap: 0 .5rem; }
+    .kv .k { margin-top: .35rem; }
+  }
+  .chips span { display: inline-block; background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px; padding: 0 .35rem; margin: .1rem .2rem .1rem 0; font-size: .78rem; }
+</style>
+</head>
+<body>
+<header class="toolbar">
+  <h1>Fowl Engine <span class="sub">— Config Viewer</span></h1>
+  <button class="primary" id="open">Open config…</button>
+  <button id="compare" disabled>Compare with…</button>
+  <input type="file" id="file" accept=".json,*" hidden>
+  <input type="file" id="file2" accept=".json,*" hidden>
+  <input type="search" id="q" placeholder="Search keys and values…" disabled>
+  <span class="seg" id="sides">
+    <button data-s="all" class="on">Both</button><button data-s="Blue">Blue</button><button data-s="Red">Red</button>
+  </span>
+  <span id="status">Nothing loaded</span>
+  <span class="spacer"></span>
+  <a class="crosslink" href="action-cfg-editor.html">Action editor</a>
+  <a class="crosslink" href="deployable-cfg-editor.html">Deployable editor</a>
+</header>
+<main>
+  <nav id="nav"></nav>
+  <section id="view">
+    <div class="drop" id="drop">
+      <p><b>Drop a campaign config here</b> (<code>LEVANT_CFG</code>, <code>ODFv2_CFG</code>, any <code>&lt;sortie&gt;_CFG</code>),<br>or use <b>Open config…</b></p>
+      <p>The file is read in this browser and goes nowhere else.</p>
+    </div>
+  </section>
+</main>
+<script>
+"use strict";
+// ---------------------------------------------------------------- state
+let CFG = null, NAME = "", OTHER = null, OTHER_NAME = "", SIDE = "all", CUR = "overview";
+
+// Top-level keys by section. Anything not listed lands in "Other", so a key
+// added to the engine later still shows up.
+const SECTIONS = [
+  ["Campaign", [
+    ["overview", "Overview", []],
+    ["general", "Server & rules", ["netidx_base", "netidx_tls", "admins", "banned", "rules", "name_filter",
+      "max_msgs_per_second", "shutdown", "auto_reset", "max_round_days", "lock_sides", "side_switches",
+      "slow_timed_events_freq", "live_weather", "under_attack", "magnetic_variation_deg", "version"]],
+    ["economy", "Points & lives", ["points", "default_lives", "life_types", "limited_lives", "threatened_distance",
+      "threatened_cooldown", "takeoff_delay_secs", "slot_leave_kill_radius_m", "weapon_target_exclusions"]],
+  ]],
+  ["What players use", [
+    ["actions", "Actions", ["actions", "artillery", "artillery_mission_range", "artillery_min_range", "alcm_mission_range"]],
+    ["deployables", "Deployables & crates", ["deployables", "max_crates", "crate_template", "c130_cargo_template",
+      "helo_cargo_template", "carrier_cargo_spawn_point", "crate_load_distance", "crate_spread"]],
+    ["troops", "Troops", ["troops", "dismount", "ground_vehicle_cargo"]],
+    ["air", "Wingmen & air life", ["air_life", "ai_air_stock", "airborne_jtacs", "airborne_ewrs", "player_recon",
+      "gci_briefing", "extra_fixed_wing_objectives", "csar"]],
+  ]],
+  ["Logistics", [
+    ["warehouse", "Warehouse & supply", ["warehouse", "repair_crate", "repair_time", "repair_supply_cost",
+      "deploy_supply_cost", "logistics_exclusion", "logi_from_scenery", "supply_alert_threshold", "factory", "emergency_repair"]],
+    ["cargo", "Cargo aircraft", ["cargo", "c130_cargo", "helo_cargo", "helo_insertion"]],
+    ["naval", "Naval", ["naval_patrols", "carrier"]],
+  ]],
+  ["The war", [
+    ["groundwar", "Ground war & HQ", ["ground_war", "smart_commander", "campaign_events", "ai_fill", "war_will",
+      "frontline", "objective_start_points", "capture_consolidation_secs"]],
+    ["story", "Story", ["story"]],
+    ["airdef", "Air defence & sensors", ["special_sam_sites", "special_sam_wake_distance", "special_sam_capture_radius_m",
+      "iadn", "elint", "radar_physics", "ground_radar_ewrs", "ewr_mode", "ewr_delay", "jtac_priority", "modern_war"]],
+    ["map", "Garrisons & map", ["garrison_layouts", "unit_cull_distance", "ground_vehicle_cull_distance", "cull_after"]],
+    ["units", "Unit data & paint", ["unit_classification", "ground_liveries"]],
+  ]],
+  ["Testing", [
+    ["testing", "Load test", ["load_test"]],
+  ]],
+];
+const OWNER = {};
+for (const [, items] of SECTIONS) for (const [id, , keys] of items) for (const k of keys) OWNER[k] = id;
+
+// ---------------------------------------------------------------- helpers
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmt = v => v === null || v === undefined ? '<span class="z">—</span>'
+  : typeof v === "boolean" ? `<span class="b">${v}</span>`
+  : typeof v === "number" ? `<span class="n2">${v.toLocaleString()}</span>`
+  : typeof v === "string" ? esc(v)
+  : `<code>${esc(JSON.stringify(v)).slice(0, 160)}</code>`;
+const secs = s => s == null ? "—" : s >= 3600 ? `${(s / 3600).toFixed(s % 3600 ? 1 : 0)} h` : s >= 60 ? `${Math.round(s / 60)} min` : `${s} s`;
+const sides = () => SIDE === "all" ? ["Blue", "Red"] : [SIDE];
+const kindOf = k => typeof k === "string" ? [k, null] : [Object.keys(k)[0], Object.values(k)[0]];
+const on = (b, txt) => `<span class="pill ${b ? "on-p" : "off-p"}">${b ? "ON" : "OFF"}</span>${txt}`;
+const get = (o, path) => path.split(".").reduce((a, k) => a == null ? a : a[k], o);
+const enabled = o => o != null && o !== false && (typeof o !== "object" || o.enabled !== false);
+
+function table(cols, rows, sortable = true) {
+  const id = "t" + Math.random().toString(36).slice(2);
+  const head = cols.map((c, i) => `<th data-i="${i}">${esc(c.h)}</th>`).join("");
+  const body = rows.map(r => `<tr>${cols.map(c => `<td class="${c.cls || ""}">${c.f(r)}</td>`).join("")}</tr>`).join("");
+  setTimeout(() => sortable && wireSort(id), 0);
+  return `<table id="${id}"><thead><tr>${head}</tr></thead><tbody>${body || `<tr><td colspan="${cols.length}" class="muted">none</td></tr>`}</tbody></table>`;
+}
+function wireSort(id) {
+  const t = document.getElementById(id); if (!t) return;
+  t.querySelectorAll("th").forEach(th => th.onclick = () => {
+    const i = +th.dataset.i, rows = [...t.tBodies[0].rows], asc = th.dataset.asc !== "1";
+    rows.sort((a, b) => {
+      const x = a.cells[i].innerText, y = b.cells[i].innerText;
+      const nx = parseFloat(x.replace(/[, ]/g, "")), ny = parseFloat(y.replace(/[, ]/g, ""));
+      const c = !isNaN(nx) && !isNaN(ny) ? nx - ny : x.localeCompare(y);
+      return asc ? c : -c;
+    });
+    th.dataset.asc = asc ? "1" : "0";
+    rows.forEach(r => t.tBodies[0].appendChild(r));
+  });
+}
+function kv(obj, skip = []) {
+  const rows = Object.entries(obj || {}).filter(([k, v]) => !skip.includes(k) && (v === null || typeof v !== "object"));
+  return rows.length ? `<div class="kv">${rows.map(([k, v]) => `<div class="k">${esc(k)}</div><div>${fmt(v)}</div>`).join("")}</div>` : "";
+}
+// A collapsible tree for anything without a custom view.
+function tree(v, key, open = false, depth = 0) {
+  if (v === null || typeof v !== "object") return `<div class="leaf"><span class="k">${esc(key)}</span>: ${fmt(v)}</div>`;
+  const isArr = Array.isArray(v), n = isArr ? v.length : Object.keys(v).length;
+  const kids = () => (isArr ? v.map((x, i) => [i, x]) : Object.entries(v)).slice(0, 400)
+    .map(([k, x]) => tree(x, k, false, depth + 1)).join("") + (n > 400 ? `<div class="leaf muted">… ${n - 400} more</div>` : "");
+  const label = isArr ? `[${n}]` : `{${n}}`;
+  const id = "d" + Math.random().toString(36).slice(2);
+  setTimeout(() => {
+    const d = document.getElementById(id);
+    if (!d) return;
+    const fill = () => { if (!d.dataset.f) { d.insertAdjacentHTML("beforeend", kids()); d.dataset.f = 1; } };
+    if (open) fill();
+    d.addEventListener("toggle", fill);
+  }, 0);
+  return `<details class="tree" id="${id}" ${open ? "open" : ""}><summary>${esc(key)}<span class="t">${label}</span></summary></details>`;
+}
+function rest(keys, done) {
+  const left = keys.filter(k => CFG[k] !== undefined && !done.includes(k));
+  if (!left.length) return "";
+  return `<h3>Everything else here</h3>` + left.map(k => {
+    const v = CFG[k];
+    return v === null || typeof v !== "object" ? `<div class="kv"><div class="k">${esc(k)}</div><div>${fmt(v)}</div></div>` : tree(v, k);
+  }).join("");
+}
+
+// ---------------------------------------------------------------- views
+const VIEWS = {};
+
+VIEWS.overview = () => {
+  const c = CFG, per = s => (c.actions?.[s] ? Object.keys(c.actions[s]).length : 0);
+  const dep = s => (c.deployables?.[s] || []).length, tr = s => (c.troops?.[s] || []).length;
+  const sams = c.special_sam_sites || [], gar = c.garrison_layouts?.groups || [];
+  const wh = c.warehouse || {}, sea = wh.sea_logistics || {}, al = c.air_life || {};
+  let h = `<h2>${esc(NAME)}</h2><p class="lead">What this config turns on, and how big it is. Pick a section on the left for the details.</p>`;
+  if (enabled(c.load_test)) h += `<div class="banner"><b>load_test is ON</b> — ${c.load_test.players_per_side ?? 30} simulated players a side will join. Test servers only; take it out of a live config.</div>`;
+  const card = (k, v) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  h += `<div class="cards">` +
+    card("Actions", `<span class="Blue">${per("Blue")}</span> <small>/</small> <span class="Red">${per("Red")}</span>`) +
+    card("Deployables", `<span class="Blue">${dep("Blue")}</span> <small>/</small> <span class="Red">${dep("Red")}</span>`) +
+    card("Troop types", `<span class="Blue">${tr("Blue")}</span> <small>/</small> <span class="Red">${tr("Red")}</span>`) +
+    card("Special SAM sites", sams.length) +
+    card("Garrison groups", gar.length) +
+    card("Story events", (c.story?.events || []).length) +
+    card("Unit types classified", Object.keys(c.unit_classification || {}).length) +
+    card("New player points", c.points?.new_player_join ?? "—") + `</div>`;
+  const F = [
+    [enabled(c.points), "Points economy", c.points ? ` — start ${c.points.new_player_join}, supply run ${c.points.logistics_transfer}` : ""],
+    [!!c.limited_lives, "Limited lives", ""],
+    [!!c.warehouse, "Warehouse logistics", wh.ticks_per_delivery ? ` — delivery every ${wh.ticks_per_delivery * (wh.tick || 10)} min` : ""],
+    [Object.keys(wh.supply_crates || {}).length > 0, "Supply crates by kind", wh.supply_crates ? ` — ${(wh.supply_crates.Blue || []).length} a side` : ""],
+    [enabled(wh.convoy) && !!wh.convoy, "Ground convoys", ""],
+    [enabled(wh.air_logistics) && !!wh.air_logistics, "Air logistics", ""],
+    [!!sea.enabled, "Naval convoys", sea.lanes ? ` — ${sea.lanes.length} sea lanes` : ""],
+    [enabled(c.naval_patrols) && !!c.naval_patrols, "Naval patrols", c.naval_patrols ? ` — ${(c.naval_patrols.patrols || []).length}` : ""],
+    [enabled(al.wingman) && !!al.wingman, "Wingmen", al.wingman?.types ? ` — ${al.wingman.types.length} types${al.wingman.clone ? " + copy of own aircraft" : ""}` : ""],
+    [enabled(al.packages) && !!al.packages, "AI packages", ""],
+    [enabled(al.civil_traffic) && !!al.civil_traffic, "Civil traffic", ""],
+    [enabled(c.ground_war) && !!c.ground_war, "Ground war", c.ground_war ? ` — ${c.ground_war.max_formations_per_side} formations a side` : ""],
+    [!!c.smart_commander, "Theatre HQ (smart commander)", ""],
+    [enabled(c.campaign_events) && !!c.campaign_events, "Campaign events", ""],
+    [enabled(c.story) && !!c.story, "Story", ""],
+    [enabled(c.war_will) && !!c.war_will, "War will", ""],
+    [enabled(c.ai_fill) && !!c.ai_fill, "AI fill", ""],
+    [enabled(c.ai_air_stock) && !!c.ai_air_stock, "AI aircraft from warehouse stock", ""],
+    [!!c.iadn, "IADN", ""], [!!c.elint, "ELINT", ""],
+    [!!c.csar, "CSAR", ""], [!!c.live_weather, "Live weather", ""],
+    [!!c.auto_reset, "Auto reset", c.auto_reset ? ` — ${esc(JSON.stringify(c.auto_reset.condition || "")).slice(0, 60)}` : ""],
+  ];
+  h += `<h3>Features</h3><div class="feat">${F.map(([b, t, x]) => `<div>${on(b, t)}<span class="muted">${x}</span></div>`).join("")}</div>`;
+  const others = Object.keys(c).filter(k => !OWNER[k]);
+  if (others.length) h += `<h3>Keys this viewer doesn't group</h3><p class="lead">Under <b>Other</b> on the left: ${others.map(esc).join(", ")}</p>`;
+  return h;
+};
+
+VIEWS.general = () => {
+  const c = CFG; let h = `<h2>Server & rules</h2>`;
+  h += kv(Object.fromEntries(SECTIONS[0][1][1][2].filter(k => c[k] !== undefined && (c[k] === null || typeof c[k] !== "object")).map(k => [k, c[k]])));
+  if (c.admins) h += `<h3>Admins (${Object.keys(c.admins).length})</h3>` + table(
+    [{ h: "Name", f: r => esc(r[1]) }, { h: "Player id", f: r => `<code>${esc(r[0])}</code>` }],
+    Object.entries(c.admins));
+  return h + rest(["banned", "rules", "auto_reset", "live_weather", "under_attack", "netidx_tls"], []);
+};
+
+VIEWS.economy = () => {
+  const c = CFG; let h = `<h2>Points & lives</h2>`;
+  if (c.points) h += `<h3>Points</h3>` + kv(c.points) + (c.points.periodic_point_gain ? `<div class="kv"><div class="k">periodic_point_gain</div><div>${c.points.periodic_point_gain[0]} points every ${secs(c.points.periodic_point_gain[1])}</div></div>` : "");
+  if (c.default_lives) {
+    const byType = {};
+    for (const [ac, lt] of Object.entries(c.life_types || {})) (byType[lt] = byType[lt] || []).push(ac);
+    h += `<h3>Lives (limited: ${fmt(!!c.limited_lives)})</h3>` + table([
+      { h: "Life type", f: r => esc(r[0]) }, { h: "Lives", f: r => r[1][0], cls: "num" }, { h: "Reset", f: r => secs(r[1][1]) },
+      { h: "Aircraft", f: r => `<span class="chips">${(byType[r[0]] || []).sort().map(a => `<span>${esc(a)}</span>`).join("")}</span>` }],
+      Object.entries(c.default_lives));
+  }
+  if (c.threatened_distance) h += `<h3>Threatened distance by aircraft</h3>` + table(
+    [{ h: "Aircraft", f: r => esc(r[0]) }, { h: "Distance (m)", f: r => fmt(r[1]), cls: "num" }],
+    Object.entries(c.threatened_distance));
+  return h + rest(["weapon_target_exclusions", "threatened_cooldown", "takeoff_delay_secs", "slot_leave_kill_radius_m"], ["threatened_cooldown"]);
+};
+
+function actionDetail(kind, cfg) {
+  if (!cfg || typeof cfg !== "object") return "";
+  const tpl = JSON.stringify(cfg).match(/"template":"([^"]+)"/);
+  const bits = [];
+  if (tpl) bits.push(`template <code>${esc(tpl[1])}</code>`);
+  for (const k of ["targets", "power", "accuracy", "strike_radius_m", "missiles_per_strike", "name", "mission", "attacks", "duration"]) {
+    const v = cfg[k] ?? cfg.plane?.[k];
+    if (v !== undefined && v !== null && typeof v !== "object") bits.push(`${k} ${esc(v)}`);
+  }
+  return bits.join(" · ");
+}
+VIEWS.actions = () => {
+  let h = `<h2>Actions</h2><p class="lead">What players buy from F10 &gt; Actions. Limit is how many can be running at once, cooldown the wait after one is called (per side).</p>`;
+  for (const s of sides()) {
+    const a = CFG.actions?.[s] || {};
+    h += `<h3 class="${s}">${s} (${Object.keys(a).length})</h3>` + table([
+      { h: "Action", f: r => esc(r[0]) },
+      { h: "Kind", f: r => esc(kindOf(r[1].kind)[0]) },
+      { h: "Cost", f: r => fmt(r[1].cost), cls: "num" },
+      { h: "Penalty", f: r => fmt(r[1].penalty), cls: "num" },
+      { h: "Limit", f: r => fmt(r[1].limit), cls: "num" },
+      { h: "Cooldown", f: r => r[1].cooldown_secs ? secs(r[1].cooldown_secs) : '<span class="z">—</span>' },
+      { h: "Where", f: r => esc(typeof r[1].geo_limit === "string" ? r[1].geo_limit : JSON.stringify(r[1].geo_limit)) },
+      { h: "Details", f: r => actionDetail(...kindOf(r[1].kind)), cls: "muted" }],
+      Object.entries(a));
+  }
+  if (CFG.artillery) h += `<h3>Artillery fire missions</h3>` + kv(CFG.artillery);
+  return h + rest(["artillery_mission_range", "artillery_min_range", "alcm_mission_range"], []);
+};
+
+VIEWS.deployables = () => {
+  let h = `<h2>Deployables & crates</h2><p class="lead">What players build from crates. Crates lists each crate × how many it takes, and its weight.</p>`;
+  for (const s of sides()) {
+    const d = CFG.deployables?.[s] || [];
+    h += `<h3 class="${s}">${s} (${d.length})</h3>` + table([
+      { h: "Category", f: r => esc(r.path.slice(0, -1).join(" › ")) },
+      { h: "Deployable", f: r => `<b>${esc(r.path[r.path.length - 1])}</b>` },
+      { h: "Cost", f: r => fmt(r.cost), cls: "num" },
+      { h: "Crates", f: r => (r.crates || []).map(c => `${esc(c.name)} ×${c.required} <span class="muted">(${c.weight} kg)</span>`).join("<br>") || '<span class="z">—</span>' },
+      { h: "Total kg", f: r => (r.crates || []).reduce((t, c) => t + c.weight * c.required, 0).toLocaleString(), cls: "num" },
+      { h: "Limit", f: r => `${fmt(r.limit)} <span class="muted">${esc(r.limit_enforce || "")}</span>` },
+      { h: "Template", f: r => { const [k, v] = kindOf(r.kind); return v?.template ? `<code>${esc(v.template)}</code>` : esc(k); } },
+      { h: "Also", f: r => ["ewr", "jtac", "gci"].filter(k => r[k]).map(k => `<span class="pill on-p">${k}</span>`).join("") + (r.repair_crate ? `<span class="pill warn-p">repair crate</span>` : "") }],
+      d);
+  }
+  return h + rest(["max_crates", "crate_template", "c130_cargo_template", "helo_cargo_template", "carrier_cargo_spawn_point", "crate_load_distance", "crate_spread"], []);
+};
+
+VIEWS.troops = () => {
+  let h = `<h2>Troops</h2>`;
+  for (const s of sides()) h += `<h3 class="${s}">${s}</h3>` + table([
+    { h: "Squad", f: r => `<b>${esc(r.name)}</b>` }, { h: "Cost", f: r => fmt(r.cost), cls: "num" },
+    { h: "Weight", f: r => fmt(r.weight), cls: "num" }, { h: "Limit", f: r => fmt(r.limit) },
+    { h: "Can capture", f: r => fmt(!!r.can_capture) }, { h: "JTAC", f: r => r.jtac ? `${r.jtac.range} m` : "—" },
+    { h: "Template", f: r => `<code>${esc(r.template)}</code>` }], CFG.troops?.[s] || []);
+  return h + rest(["dismount", "ground_vehicle_cargo"], []);
+};
+
+VIEWS.air = () => {
+  const al = CFG.air_life || {}, w = al.wingman;
+  let h = `<h2>Wingmen & air life</h2>`;
+  if (w) {
+    h += `<h3>Wingmen ${on(enabled(w), "")}</h3>` + kv(w, ["types", "clone"]);
+    if (w.types?.length) h += table([
+      { h: "Type", f: r => `<b>${esc(r.name)}</b>` }, { h: "Role", f: r => esc(r.role) }, { h: "Cost", f: r => fmt(r.cost), cls: "num" },
+      { h: "Blue aircraft", f: r => (r.templates_blue || []).map(t => `<code>${esc(t)}</code>`).join(" ") },
+      { h: "Red aircraft", f: r => (r.templates_red || []).map(t => `<code>${esc(t)}</code>`).join(" ") }], w.types);
+    if (w.clone) h += `<h3>Copy of my aircraft ${on(enabled(w.clone), "")}</h3>` + kv(w.clone) +
+      (Object.keys(w.clone.cost_by_type || {}).length ? table([{ h: "Aircraft", f: r => esc(r[0]) }, { h: "Cost", f: r => fmt(r[1]), cls: "num" }], Object.entries(w.clone.cost_by_type)) : "") +
+      (w.clone.exclude?.length ? `<p class="lead">Can't be copied: ${w.clone.exclude.map(esc).join(", ")}</p>` : "");
+  }
+  for (const k of ["packages", "civil_traffic"]) if (al[k]) h += `<h3>${k} ${on(enabled(al[k]), "")}</h3>` + kv(al[k]) + rest_obj(al[k]);
+  return h + rest(["ai_air_stock", "airborne_jtacs", "airborne_ewrs", "player_recon", "gci_briefing", "extra_fixed_wing_objectives", "csar"], []);
+};
+function rest_obj(o) { return Object.entries(o || {}).filter(([, v]) => v && typeof v === "object").map(([k, v]) => tree(v, k)).join(""); }
+
+VIEWS.warehouse = () => {
+  const w = CFG.warehouse || {};
+  let h = `<h2>Warehouse & supply</h2>`;
+  h += kv(w);
+  const sc = w.supply_crates || {};
+  if (Object.keys(sc).length) for (const s of sides()) h += `<h3 class="${s}">Supply crates, ${s}</h3>` + table([
+    { h: "Crate", f: r => `<b>${esc(r.crate.name)}</b>` }, { h: "Carries", f: r => r.carries.map(esc).join(", ") },
+    { h: "Weight", f: r => `${r.crate.weight} kg`, cls: "num" }, { h: "Moves", f: r => `${r.transfer_size ?? w.supply_transfer_size}%`, cls: "num" },
+    { h: "Model", f: r => `<code>${esc(r.crate.dcs_type || "")}</code>` }], sc[s] || []);
+  for (const [k, label] of [["supply_transfer_fuel_crate", "Fuel crate (all-purpose)"], ["supply_transfer_weapons_crate", "Weapons crate (all-purpose)"]])
+    if (w[k] && Object.keys(w[k]).length) h += `<h3>${label}</h3>` + table([{ h: "Side", f: r => esc(r[0]) }, { h: "Crate", f: r => esc(r[1].name) }, { h: "Weight", f: r => `${r[1].weight} kg` }], Object.entries(w[k]));
+  for (const k of ["convoy", "air_logistics", "materiel", "production_scaling", "captured_airframes"])
+    if (w[k]) h += `<h3>${k} ${on(enabled(w[k]), "")}</h3>` + kv(w[k]) + rest_obj(w[k]);
+  if (CFG.repair_crate) h += `<h3>Base repair kit</h3>` + table([{ h: "Side", f: r => esc(r[0]) }, { h: "Crate", f: r => esc(r[1].name) }, { h: "Weight", f: r => `${r[1].weight} kg` }], Object.entries(CFG.repair_crate));
+  return h + `<p class="lead">Sea logistics is under <a href="#" onclick="go('naval');return false">Naval</a>.</p>` + rest(["deploy_supply_cost", "logistics_exclusion", "logi_from_scenery", "supply_alert_threshold", "factory", "emergency_repair", "repair_time", "repair_supply_cost"], []) +
+    ["unlimited_objectives", "exempt_airframes", "supply_source", "carrier_repair_crate"].filter(k => w[k]).map(k => tree(w[k], "warehouse." + k)).join("");
+};
+
+VIEWS.cargo = () => `<h2>Cargo aircraft</h2>` + ["helo_cargo", "c130_cargo", "helo_insertion"].map(k => CFG[k] ? `<h3>${k}</h3>` + kv(CFG[k]) + rest_obj(CFG[k]) : "").join("") +
+  (CFG.cargo ? `<h3>What each airframe carries</h3>` + table([{ h: "Airframe", f: r => esc(r[0]) }, { h: "Troops", f: r => r[1].troop_slots, cls: "num" }, { h: "Crates", f: r => r[1].crate_slots, cls: "num" }, { h: "Total", f: r => r[1].total_slots, cls: "num" }, { h: "Pilots", f: r => r[1].pilot_slots, cls: "num" }, { h: "Spawn distance", f: r => fmt(r[1].spawn_distance), cls: "num" }], Object.entries(CFG.cargo)) : "");
+
+const pathKm = p => { let d = 0; for (let i = 1; i < p.length; i++) d += Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]); return d / 1000; };
+VIEWS.naval = () => {
+  const sea = CFG.warehouse?.sea_logistics, np = CFG.naval_patrols;
+  let h = `<h2>Naval</h2>`;
+  if (sea) {
+    h += `<h3>Naval convoys ${on(!!sea.enabled, "")}</h3>` + kv(sea, ["lanes", "ship_template"]) +
+      (sea.ship_template ? `<div class="kv">${Object.entries(sea.ship_template).map(([s, t]) => `<div class="k ${s}">${s} convoy</div><div><code>${esc(t)}</code></div>`).join("")}</div>` : "");
+    if (sea.lanes?.length) h += table([
+      { h: "From", f: r => `<b>${esc(r.from)}</b>` }, { h: "To", f: r => `<b>${esc(r.to)}</b>` },
+      { h: "Points", f: r => r.path.length, cls: "num" }, { h: "Length", f: r => `${pathKm(r.path).toFixed(0)} km`, cls: "num" },
+      { h: "At speed", f: r => sea.speed_kph ? `${(pathKm(r.path) / sea.speed_kph).toFixed(1)} h` : "—", cls: "num" }], sea.lanes);
+  }
+  if (np) {
+    h += `<h3>Naval patrols ${on(enabled(np), "")}</h3>` + kv(np);
+    h += table([
+      { h: "Patrol", f: r => `<b>${esc(r.name)}</b>` }, { h: "Base", f: r => esc(r.base) },
+      { h: "Ships", f: r => Object.entries(r.templates).map(([s, t]) => `<span class="${s}">${s}</span> <code>${esc(t)}</code>`).join("<br>") },
+      { h: "Loop", f: r => `${pathKm([...r.route, r.route[0]]).toFixed(0)} km`, cls: "num" },
+      { h: "Speed", f: r => `${r.speed_kph ?? 25} km/h`, cls: "num" }], np.patrols || []);
+  }
+  if (CFG.carrier) h += `<h3>Carriers</h3>` + kv(CFG.carrier);
+  return h;
+};
+
+VIEWS.groundwar = () => {
+  const g = CFG.ground_war; let h = `<h2>Ground war & HQ</h2>`;
+  if (g) h += `<h3>Ground war ${on(enabled(g), "")}</h3>` + kv(g) + rest_obj(g);
+  if (CFG.smart_commander) h += `<h3>Theatre HQ</h3>` + kv(CFG.smart_commander) + rest_obj(CFG.smart_commander);
+  if (CFG.campaign_events) h += `<h3>Campaign events</h3>` + kv(CFG.campaign_events) + rest_obj(CFG.campaign_events);
+  return h + rest(["ai_fill", "war_will", "frontline", "objective_start_points", "capture_consolidation_secs"], []);
+};
+
+VIEWS.story = () => {
+  const s = CFG.story; if (!s) return `<h2>Story</h2><p class="lead">No story.</p>`;
+  return `<h2>Story ${on(enabled(s), "")}</h2>` + kv(s, ["events"]) + table([
+    { h: "Id", f: r => `<code>${esc(r.id ?? "")}</code>` },
+    { h: "When", f: r => esc(JSON.stringify(r.trigger ?? r.when ?? "")).slice(0, 140), cls: "muted" },
+    { h: "Text", f: r => esc((r.title || r.text || r.message || r.headline || "")).slice(0, 220) }], s.events || []) +
+    Object.entries(s).filter(([k, v]) => k !== "events" && v && typeof v === "object").map(([k, v]) => tree(v, "story." + k)).join("");
+};
+
+VIEWS.airdef = () => {
+  const s = CFG.special_sam_sites || [];
+  let h = `<h2>Air defence & sensors</h2><h3>Special SAM sites (${s.length})</h3>`;
+  const types = x => [...new Set((x || []).map(u => u.type))];
+  h += table([
+    { h: "Site", f: r => `<b>${esc(r.name)}</b>` }, { h: "Starts", f: r => `<span class="${r.coalition}">${esc(r.coalition)}</span>` },
+    { h: "Red units", f: r => (r.red_units || []).length + (r.red_defence?.length ? ` + ${r.red_defence.length} def` : ""), cls: "num" },
+    { h: "Blue units", f: r => (r.blue_units || []).length + (r.blue_defence?.length ? ` + ${r.blue_defence.length} def` : ""), cls: "num" },
+    { h: "Red types", f: r => `<span class="chips">${types(r.red_units).map(t => `<span>${esc(t)}</span>`).join("")}</span>` }], s);
+  return h + rest(["special_sam_wake_distance", "special_sam_capture_radius_m", "iadn", "elint", "radar_physics", "ground_radar_ewrs", "ewr_mode", "ewr_delay", "jtac_priority", "modern_war"], []);
+};
+
+VIEWS.map = () => {
+  const g = CFG.garrison_layouts?.groups || [];
+  const by = {};
+  for (const x of g) { const o = (by[x.objective] = by[x.objective] || { n: 0, red: 0, blue: 0, cls: {} }); o.n++; o.red += (x.red_units || []).length; o.blue += (x.blue_units || []).length; o.cls[x.class] = (o.cls[x.class] || 0) + 1; }
+  return `<h2>Garrisons & map</h2><p class="lead">${g.length} garrison groups at ${Object.keys(by).length} objectives.</p>` + table([
+    { h: "Objective", f: r => `<b>${esc(r[0])}</b>` }, { h: "Groups", f: r => r[1].n, cls: "num" },
+    { h: "Red units", f: r => r[1].red, cls: "num" }, { h: "Blue units", f: r => r[1].blue, cls: "num" },
+    { h: "Classes", f: r => `<span class="chips">${Object.entries(r[1].cls).map(([k, v]) => `<span>${esc(k)} ${v}</span>`).join("")}</span>` }],
+    Object.entries(by)) + rest(["unit_cull_distance", "ground_vehicle_cull_distance", "cull_after"], []);
+};
+
+VIEWS.units = () => {
+  const uc = CFG.unit_classification || {}, by = {};
+  for (const [t, tags] of Object.entries(uc)) { const k = (tags || []).join(" + ") || "(none)"; (by[k] = by[k] || []).push(t); }
+  const pt = CFG.ground_liveries || {};
+  return `<h2>Unit data & paint</h2><h3>Unit classification (${Object.keys(uc).length} types)</h3>` + table([
+    { h: "Class", f: r => `<b>${esc(r[0])}</b>` }, { h: "Types", f: r => r[1].length, cls: "num" },
+    { h: "", f: r => `<span class="chips">${r[1].sort().map(t => `<span>${esc(t)}</span>`).join("")}</span>` }], Object.entries(by)) +
+    `<h3>Paint (${Object.keys(pt).length} types)</h3>` + table([{ h: "Unit type", f: r => esc(r[0]) }, { h: "Livery", f: r => esc(r[1]) }], Object.entries(pt));
+};
+
+VIEWS.testing = () => CFG.load_test
+  ? `<h2>Load test</h2>${enabled(CFG.load_test) ? `<div class="banner"><b>ON</b> — this config is for a test server only.</div>` : ""}` + kv(CFG.load_test)
+  : `<h2>Load test</h2><p class="lead">Off (no <code>load_test</code> block). That's right for a live server.</p>`;
+
+VIEWS.other = () => {
+  const keys = Object.keys(CFG).filter(k => !OWNER[k]);
+  return `<h2>Other</h2><p class="lead">Keys this viewer has no section for yet.</p>` + (keys.map(k => tree(CFG[k], k, true)).join("") || `<p class="muted">none</p>`);
+};
+
+// ---------------------------------------------------------------- search & compare
+function flatten(o, p = "", out = {}) {
+  if (o === null || typeof o !== "object") { out[p] = o; return out; }
+  const e = Array.isArray(o) ? o.map((v, i) => [i, v]) : Object.entries(o);
+  if (!e.length) out[p] = Array.isArray(o) ? "[]" : "{}";
+  for (const [k, v] of e) flatten(v, p ? `${p}.${k}` : String(k), out);
+  return out;
+}
+let FLAT = null;
+VIEWS.search = () => {
+  const q = $("#q").value.trim().toLowerCase();
+  FLAT = FLAT || flatten(CFG);
+  const hits = [];
+  for (const [k, v] of Object.entries(FLAT)) {
+    if (k.toLowerCase().includes(q) || String(v).toLowerCase().includes(q)) hits.push([k, v]);
+    if (hits.length >= 600) break;
+  }
+  return `<h2>Search: “${esc(q)}”</h2><p class="lead">${hits.length >= 600 ? "First 600 matches" : hits.length + " matches"}. Click a path's section to see it in context.</p>` + table([
+    { h: "Section", f: r => { const top = r[0].split(".")[0], s = OWNER[top] || "other"; return `<a href="#" onclick="go('${s}');return false">${esc(top)}</a>`; } },
+    { h: "Path", f: r => `<code>${esc(r[0])}</code>` }, { h: "Value", f: r => fmt(r[1]) }], hits);
+};
+VIEWS.diff = () => {
+  const a = flatten(OTHER), b = flatten(CFG), rows = [];
+  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    if (!(k in a)) rows.push(["add", k, undefined, b[k]]);
+    else if (!(k in b)) rows.push(["del", k, a[k], undefined]);
+    else if (JSON.stringify(a[k]) !== JSON.stringify(b[k])) rows.push(["chg", k, a[k], b[k]]);
+  }
+  const bySec = {};
+  for (const r of rows) { const t = r[1].split(".")[0]; bySec[t] = (bySec[t] || 0) + 1; }
+  rows.sort((x, y) => x[1].localeCompare(y[1]));
+  return `<h2>Changes</h2><p class="lead"><b>${esc(OTHER_NAME)}</b> → <b>${esc(NAME)}</b>: ${rows.length.toLocaleString()} values differ` +
+    `${rows.length > 2000 ? " (first 2,000 shown)" : ""}.</p><div class="chips">${Object.entries(bySec).sort((x, y) => y[1] - x[1]).map(([k, n]) => `<span>${esc(k)} ${n}</span>`).join("")}</div>` +
+    table([{ h: "", f: r => r[0] === "add" ? '<span class="diff-add">added</span>' : r[0] === "del" ? '<span class="diff-del">removed</span>' : '<span class="diff-chg">changed</span>' },
+      { h: "Path", f: r => `<code>${esc(r[1])}</code>` }, { h: "Was", f: r => r[0] === "add" ? "" : fmt(r[2]) }, { h: "Now", f: r => r[0] === "del" ? "" : fmt(r[3]) }], rows.slice(0, 2000));
+};
+
+// ---------------------------------------------------------------- shell
+function navHtml() {
+  let h = "";
+  for (const [grp, items] of SECTIONS) {
+    h += `<div class="grp">${esc(grp)}</div>`;
+    for (const [id, label, keys] of items) {
+      const n = keys.filter(k => CFG[k] !== undefined).length;
+      if (id !== "overview" && !n) continue;
+      h += `<a href="#" data-v="${id}" class="${CUR === id ? "on" : ""}">${esc(label)}${n ? `<span class="n">${n}</span>` : ""}</a>`;
+    }
+  }
+  const other = Object.keys(CFG).filter(k => !OWNER[k]).length;
+  if (other) h += `<a href="#" data-v="other" class="${CUR === "other" ? "on" : ""}">Other<span class="n">${other}</span></a>`;
+  if (OTHER) h += `<div class="grp">Compare</div><a href="#" data-v="diff" class="${CUR === "diff" ? "on" : ""}">Changes</a>`;
+  return h;
+}
+function go(id) {
+  CUR = id;
+  $("#nav").innerHTML = navHtml();
+  $("#nav").querySelectorAll("a[data-v]").forEach(a => a.onclick = e => { e.preventDefault(); $("#q").value = ""; go(a.dataset.v); });
+  let html;
+  try { html = (VIEWS[id] || VIEWS.overview)(); }
+  catch (e) { html = `<div class="banner">Couldn't draw this section: ${esc(e.message)}</div>` + tree(CFG, "config", true); }
+  $("#view").innerHTML = html;
+  $("#view").scrollTop = 0;
+  try { localStorage.setItem("cfgviewer.section", id); } catch (_) {}
+}
+function load(text, name, second) {
+  let c;
+  try { c = JSON.parse(text); } catch (e) { $("#status").textContent = `${name}: not valid JSON (${e.message})`; return; }
+  if (second) { OTHER = c; OTHER_NAME = name; go("diff"); return; }
+  CFG = c; NAME = name; FLAT = null;
+  $("#status").textContent = `${name} — ${(text.length / 1024).toFixed(0)} KB, ${Object.keys(c).length} sections`;
+  $("#q").disabled = false; $("#compare").disabled = false;
+  let start = "overview";
+  try { start = localStorage.getItem("cfgviewer.section") || "overview"; } catch (_) {}
+  go(VIEWS[start] && start !== "diff" && start !== "search" ? start : "overview");
+}
+function readFile(f, second) { const r = new FileReader(); r.onload = () => load(r.result, f.name, second); r.readAsText(f); }
+$("#open").onclick = () => $("#file").click();
+$("#compare").onclick = () => $("#file2").click();
+$("#file").onchange = e => e.target.files[0] && readFile(e.target.files[0], false);
+$("#file2").onchange = e => e.target.files[0] && readFile(e.target.files[0], true);
+let qt;
+$("#q").oninput = () => { clearTimeout(qt); qt = setTimeout(() => $("#q").value.trim().length >= 2 ? go("search") : go(CUR === "search" ? "overview" : CUR), 250); };
+$("#sides").querySelectorAll("button").forEach(b => b.onclick = () => {
+  SIDE = b.dataset.s;
+  $("#sides").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+  if (CFG) go(CUR);
+});
+document.addEventListener("dragover", e => { e.preventDefault(); $("#drop")?.classList.add("over"); });
+document.addEventListener("dragleave", () => $("#drop")?.classList.remove("over"));
+document.addEventListener("drop", e => {
+  e.preventDefault();
+  const f = e.dataTransfer.files[0];
+  if (f) readFile(f, !!CFG && e.shiftKey);
+});
+</script>
+</body>
+</html>

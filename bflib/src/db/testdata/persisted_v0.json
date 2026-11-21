@@ -1,0 +1,52 @@
+{
+  "groups": {},
+  "units": {},
+  "groups_by_name": {},
+  "units_by_name": {},
+  "groups_by_side": {},
+  "deployed": [],
+  "farps": [],
+  "crates": [],
+  "troops": [],
+  "jtacs": [],
+  "ewrs": [],
+  "objectives": {
+    "1": {
+      "id": 1,
+      "name": "Batumi",
+      "owner": "Blue",
+      "kind": "Airbase",
+      "groups": {},
+      "health": 100,
+      "logi": 80,
+      "threatened": false,
+      "last_threatened_ts": "2026-10-01T12:00:00Z",
+      "last_change_ts": "2026-10-01T12:00:00Z",
+      "points": 250
+    }
+  },
+  "objectives_by_name": { "Batumi": 1 },
+  "objectives_by_group": {},
+  "players": {
+    "0123456789abcdef0123456789abcdef": {
+      "name": "Test Pilot",
+      "alts": ["Test Pilot 2"],
+      "side": "Blue",
+      "side_switches": 1,
+      "lives": { "Standard": ["2026-10-01T12:00:00Z", 3] },
+      "crates": [],
+      "points": 42,
+      "sorties": 7
+    }
+  },
+  "oid": 2,
+  "gid": 10,
+  "uid": 20,
+  "migrated_v0": true,
+  "blue_treasury": 1000,
+  "red_treasury": 900,
+  "round_started": "2026-10-01T00:00:00Z",
+  "funds_seeded": ["Blue", "Red"],
+  "production_baseline": { "Blue": 12.5, "Red": 11.0 },
+  "scenery_destroyed": { "1": 2 }
+}
