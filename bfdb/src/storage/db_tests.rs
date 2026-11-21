@@ -306,6 +306,7 @@ async fn ai_captures_credit_no_pilot() {
     let by: Vec<_> =
         db.recent_captures(rid, 10).unwrap().into_iter().map(|c| c.by.to_vec()).collect();
     assert_eq!(by, vec![vec![], vec![u1]]);
+    drop(db);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
