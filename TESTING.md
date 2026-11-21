@@ -302,6 +302,10 @@ They do not cover the DCS runtime (spawns, events, F10 menus, slots), real Disco
 | 10.11 | Menu rebuild | JTAC acquires new target | `menu_dirty = true` triggers rebuild of player's JTAC submenu | |
 | 10.12 | Multiple JTACs | Two JTACs active for same side | `ContactsIter` iterates across both without overlap | |
 | 10.13 | JTAC unit destroyed | Kill the JTAC unit | JTAC removed from `by_id`; player menus updated | |
+| 10.14 | Dashboard JTAC Control | Linked player on the server opens `/cockpit?tab=jtac` on a phone, clicks a lasable contact | Laser moves to that unit (shift message in chat, auto off); the row shows LASING within a few seconds | |
+| 10.15 | Dashboard JTAC buttons | Same page: Shift, Auto, IR, Smoke, 9-line, set code 1511 | Each acts as the `-jtac` chat command does; card updates; out-of-range rows refuse to lase | |
+| 10.16 | Dashboard JTAC off server | Same page while not connected to DCS | Order refused with "join the server to command a JTAC" | |
+| 10.17 | Fighters hunt high helos | Enemy CAP up; fly a player helo at 300 ft AGL within 45 km of it, then drop to 50 ft | Log `helo hunt: <flight> after <unit>`, the flight turns on you; below 100 ft `... off (it went low)` and it goes back to its CAP. Landed helos are never attacked | |
 
 ---
 
@@ -733,6 +737,7 @@ Client side, on a player PC, flying on a campaign server. `bfcockpit/README.md` 
 | 27B.16 | DLL missing | Rename `bfcockpit_net.dll`, start DCS | Panel says `bfcockpit_net.dll is missing -- re-run the Vector Strike installer` | |
 | 27B.17 | Server unreachable | Set `api` in `Config\BFCockpit.lua` to a host that doesn't answer | Panel says it can't reach the campaign server and gives the reason | |
 | 27B.18 | Two servers | Join a second campaign server | The panel shows that server's menu | |
+| 27B.19 | JTAC tab orders | With a JTAC up, open the panel's JTAC tab: press SHIFT, AUTO, IR, SMOKE, then click a contact marked LASE > | Each order answers in chat as the `-jtac` command does; the clicked contact shows `> LASING`; out-of-range contacts aren't buttons | |
 
 ### 27C. Updates
 

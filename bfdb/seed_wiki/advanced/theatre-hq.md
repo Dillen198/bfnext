@@ -187,6 +187,11 @@ The HQ keeps score. A kind of operation that keeps failing, such as strike
 packages lost to air defence, is trusted less next time; one that keeps
 working is trusted more.
 
+Shoot down an HQ CAP, strike or SEAD package and the HQ can't send another of
+that kind for {{cfg:smart_commander.hq.limits.air_loss_cooldown_secs|900}} seconds, the same
+wait players have on their own fighter cover. Kill its CAP and the sky stays
+yours for a while.
+
 It only ever uses what your side can see. Enemy aircraft count only if your
 radars hold them, enemy ground only if your recon, JTACs or special forces
 found it.

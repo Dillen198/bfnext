@@ -31,6 +31,7 @@ use bfprotocols::{
     cfg::{ActionKind, UnitTag, Vehicle},
     db::{group::GroupId as DbGid, objective::ObjectiveId},
     perf::Perf,
+    stats::EnId,
 };
 use compact_str::format_compact;
 use dcso3::{
@@ -449,6 +450,25 @@ pub(crate) fn jtac_shift_in(
     }
     let msg = jtac_msg_shift(&ctx.db, arg.snd, jtac, &arg.fst);
     notify_jtac(ctx, arg.snd, &arg.fst, msg);
+    Ok(())
+}
+
+/// Lase the one contact the player picked from the cockpit panel's target
+/// list (`-jtac <id> lase <key>`), announced the way a shift is.
+pub(crate) fn jtac_lase_in(
+    lua: MizLua,
+    ctx: &mut Context,
+    ucid: &Ucid,
+    jtid: JtId,
+    target: &EnId,
+) -> Result<()> {
+    let jtac = get_jtac_mut(&mut ctx.jtac, &jtid)?;
+    if let Err(e) = jtac.designate(&mut ctx.db, lua, target) {
+        tell(ctx, 10, ucid, format_compact!("JTAC {jtid}: {e}"));
+        return Ok(());
+    }
+    let msg = jtac_msg_shift(&ctx.db, jtid, jtac, ucid);
+    notify_jtac(ctx, jtid, ucid, msg);
     Ok(())
 }
 

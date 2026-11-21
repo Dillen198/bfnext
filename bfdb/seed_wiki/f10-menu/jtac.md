@@ -388,6 +388,26 @@ so it stays on the map for hours. A unit that is destroyed has its marker
 removed at once, and a target that drives off moves its marker with it. This
 works for every JTAC type and needs nothing from you.
 
+## JTAC Control on the dashboard
+
+The dashboard's **JTAC CONTROL** page (`/cockpit?tab=jtac`) runs every JTAC on
+your side without the F10 menu or chat. Put it on a second screen, a tablet or
+your phone, signed in with the Discord account you linked with `-linkme`. You
+have to be on the server for it to send orders.
+
+- Each JTAC gets a card: its laser code, what it is lasing, and buttons for
+  **Shift**, **Auto**, **IR pointer**, **Smoke**, **9-line** and a new code.
+- Under that is everything it can see, the ones it can lase first. Click one
+  and the JTAC lases that one. It holds it like a shift does, until you put
+  it back on **Auto**. Greyed-out rows are out of laser range (or outside the
+  focus area); they stay listed so you keep the picture.
+- On a wide screen the cards sit side by side. Pick which JTACs to show with
+  the buttons along the top; the page remembers the pick on that device.
+- Every order is sent as your own `-jtac` command, so the answer still comes
+  up in your DCS chat. The cockpit panel's **JTAC** tab has the same buttons
+  and target list, in game. Drone moves, artillery and bombers cost points and stay
+  in F10 and chat.
+
 ## Chat commands
 
 Everything in the menu also works from chat, which is handy for Combined Arms
@@ -408,6 +428,7 @@ commanders who have no F10 menu. The id is the number in the JTAC's label.
 | `-jtac <id> filter <type>\|clear` | Add a type to the filter, e.g. `filter SAM`, or clear it |
 | `-jtac <id> code <code>` | Set a whole code, e.g. `code 1688` |
 | `-jtac <id> pointer` | Toggle the IR pointer |
+| `-jtac <id> lase <target>` | Lase one contact. The JTAC Control page sends this when you click one |
 | `-jtac <id> arty <gun id\|all> <rounds>` | Artillery on the current target |
 | `-jtac <id> bomber [mission]` | A bomber mission on the current target |
 

@@ -534,6 +534,12 @@ pub struct HqLimitsCfg {
     /// Seconds before the HQ fires on the same target again. Default 600.
     #[serde(default = "l_fires_cooldown")]
     pub fires_cooldown_secs: u32,
+    /// Seconds the HQ waits after losing a CAP, strike or SEAD package
+    /// before it flies another of the same kind. Without it a CAP that was
+    /// shot down was back within a couple of minutes, every time. Default
+    /// 900, the same as players' fighter cover actions.
+    #[serde(default = "l_air_loss_cooldown")]
+    pub air_loss_cooldown_secs: u32,
 }
 
 impl Default for HqLimitsCfg {
@@ -717,6 +723,9 @@ fn l_three() -> u32 {
 }
 fn l_fires_cooldown() -> u32 {
     600
+}
+fn l_air_loss_cooldown() -> u32 {
+    900
 }
 fn g_fade() -> u32 {
     16

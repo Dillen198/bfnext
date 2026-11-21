@@ -285,6 +285,7 @@ local function route(method, url)
         return 200, dash_reply
     end
     if path == "/api/cockpit/context" and ctx_reply then return 200, ctx_reply end
+    if path == "/api/cockpit/jtac/command" then return 200, { message = "ok" } end
     if path == "/api/cockpit/jtac" then
         if jtac_html then return 200, nil, "<!doctype html>\n<html lang=\"en\"><head></head></html>" end
         if jtac_reply then return 200, jtac_reply end
@@ -331,7 +332,7 @@ package.loaded.bfcockpit_net = {
     random_key = function() return string.rep("k", 40) end,
     request = function(method, url, body, timeout, headers)
         local id = next_id; next_id = next_id + 1
-        requests[#requests + 1] = { method = method, url = url }
+        requests[#requests + 1] = { method = method, url = url, body = body }
         local status, data, raw = route(method, url)
         answer(id, status, raw or (data and json_encode(data) or ""))
         return id
@@ -958,7 +959,11 @@ do
           ir_pointer = true, location_name = "Senaki", location_brg = 90, location_rng_m = 3000,
           target = { typ = "T-72B", lat = 42.11, lon = 42.01, elev_ft = 820, brg = 45, rng_m = 3100, lasing = true, group_size = 4 },
           contacts = { { typ = "T-72B", count = 4 }, { typ = "BTR-80", count = 2 } }, contact_count = 6,
-          nearest_friendly_m = 800, nearest_friendly_brg = 180, threats = { { typ = "SA-15", count = 1 } } },
+          nearest_friendly_m = 800, nearest_friendly_brg = 180, threats = { { typ = "SA-15", count = 1 } },
+          autoshift = false, focused = false,
+          units = { { key = "u1", typ = "T-72B", brg = 45, rng_m = 3100, lasable = true, threat = false, target = true },
+                    { key = "u7", typ = "BTR-80", brg = 50, rng_m = 3600, lasable = true, threat = false, target = false },
+                    { key = "u9", typ = "SA-15", brg = 80, rng_m = 24000, lasable = false, threat = true, target = false } } },
     } }
     for _ = 1, 60 do frame(0.1) end
     local t = all_text()
@@ -974,6 +979,39 @@ do
     local a, f = t:find("AXEMAN 1", 1, true), t:find("FAR 2", 1, true)
     check(a and f and a < f, "nearest first")
     check(t:find("FAR 2   CODE 1511   AIRBORNE", 1, true), "an airborne JTAC")
+
+    -- orders and the target list
+    check(t:find("> LASING T-72B 045° 1.7 nm", 1, true), "the target being lased: " .. t:sub(1, 900))
+    check(t:find("SA-15 080° 13.0 nm THREAT out of laser range", 1, true), "out of range, not clickable")
+    check(find_button("AUTO: OFF"), "auto shows its state")
+    local function sent(cmd)
+        for i = #requests, 1, -1 do
+            local r = requests[i]
+            if r.url:find("/api/cockpit/jtac/command", 1, true) then
+                return r.method == "POST" and r.body and r.body:find('"cmd":"' .. cmd .. '"', 1, true)
+                    and r.body:find('"jtac":"g1"', 1, true)
+            end
+        end
+    end
+    local lase = find_button("BTR%-80   050° 1%.9 nm   LASE >")
+    check(lase, "a contact in range is a button")
+    if lase then lase.action() end
+    settle()
+    check(sent("lase u7"), "clicking it sends lase <key> to that JTAC")
+    check(type(P.state.note) == 'table' and tostring(P.state.note.text):find("AXEMAN 1 lase BTR-80: sent", 1, true),
+        "says it was sent: " .. tostring(type(P.state.note) == 'table' and P.state.note.text))
+    P.select_tab("jtac")
+    settle()
+    local shift = find_button("^SHIFT$")
+    if shift then shift.action() end
+    settle()
+    check(sent("shift"), "SHIFT sends shift")
+    P.select_tab("jtac")
+    settle()
+    local smoke = find_button("^SMOKE$")
+    if smoke then smoke.action() end
+    settle()
+    check(sent("smoke"), "SMOKE sends smoke")
 
     -- the F10 button: straight to F10 > JTAC when it is built
     local b = find_button("JTAC COMMANDS IN F10")

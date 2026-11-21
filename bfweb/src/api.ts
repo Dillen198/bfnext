@@ -1169,6 +1169,42 @@ export type TacAirClass =
 export type TacTrackSource = 'groundradar' | 'awacs' | 'fused' | 'datalink'
 export type TacGroundClass =
   | 'armor' | 'airdefense' | 'artillery' | 'infantry' | 'airbase' | 'naval' | 'unknown'
+/** One contact a JTAC sees (bfprotocols `CasUnit`). `key` goes back in
+ *  `lase <key>`. */
+export interface CockpitJtacUnit {
+  key: string
+  typ: string
+  lat: number
+  lon: number
+  brg: number
+  rng_m: number
+  lasable: boolean
+  threat: boolean
+  target: boolean
+}
+
+/** One JTAC (bfprotocols `CasJtac`), the fields the JTAC tab reads. */
+export interface CockpitJtac {
+  id: string
+  callsign: string
+  lat: number
+  lon: number
+  laser_code: number
+  ir_pointer: boolean
+  location_name: string
+  target: { typ: string; lat: number; lon: number; elev_ft: number; brg: number; rng_m: number; lasing: boolean; group_size: number } | null
+  contact_count: number
+  autoshift?: boolean
+  focused?: boolean
+  units?: CockpitJtacUnit[]
+}
+
+export interface CockpitJtacs {
+  side: string
+  jtacs: CockpitJtac[]
+  me: { nearest_jtac: string | null; jtac_brg: number; jtac_rng_m: number } | null
+}
+
 export type TacGroundSource = 'recon' | 'sf' | 'awacs' | 'ewr' | 'jtac' | 'humint'
 export type TacSide = 'Blue' | 'Red' | 'Neutral'
 
@@ -2834,6 +2870,12 @@ export const api = {
     /** Click one F10 item -- fires the engine's own handler for it. */
     menuInvoke: (path: string[], playerId?: string) =>
       post<{ message: string }>(`/cockpit/menu/invoke${cockpitIdent(playerId, '?')}`, { path }),
+    /** Your side's JTACs: code, target, and every contact each one sees. */
+    jtacs: (playerId?: string) =>
+      get<CockpitJtacs>(`/cockpit/jtac${cockpitIdent(playerId, '?')}`),
+    /** One `-jtac <id> <cmd>` order, run as if typed in your chat. */
+    jtacCommand: (jtac: string, cmd: string, playerId?: string) =>
+      post<{ message: string }>(`/cockpit/jtac/command${cockpitIdent(playerId, '?')}`, { jtac, cmd }),
     /** The overlay plugin version this server ships, for the in-panel
      *  "your copy is out of date" notice. Unauthenticated -- a player needs it
      *  before anything knows who they are. */

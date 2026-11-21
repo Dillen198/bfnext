@@ -338,6 +338,27 @@ impl JtacTarget {
     }
 }
 
+/// The key the cockpit panel's target list sends back to lase one contact:
+/// `u<unit id>` for an AI unit, `p<ucid>` for an enemy player.
+pub fn contact_key(id: &EnId) -> CompactString {
+    match id {
+        EnId::Unit(uid) => format_compact!("u{uid}"),
+        EnId::Player(ucid) => format_compact!("p{ucid}"),
+    }
+}
+
+/// The reverse of `contact_key`.
+pub fn parse_contact_key(s: &str) -> Result<EnId> {
+    let s = s.trim();
+    if let Some(uid) = s.strip_prefix('u') {
+        Ok(EnId::Unit(uid.parse().map_err(|e| anyhow!("bad unit id {uid}: {e:?}"))?))
+    } else if let Some(ucid) = s.strip_prefix('p') {
+        Ok(EnId::Player(ucid.parse().map_err(|e| anyhow!("bad ucid {ucid}: {e:?}"))?))
+    } else {
+        bail!("bad target key {s}, expected u<unit id> or p<ucid>")
+    }
+}
+
 /// A designated logistics/scenery building target (from `scan_objective_scenery`).
 /// Kept separate from `JtacTarget` since buildings aren't `EnId` contacts --
 /// they don't die via unit-kill events, they're polled for destruction by
@@ -1896,6 +1917,37 @@ impl Jtac {
         self.contacts.values()
     }
 
+    /// Every contact with its id, in the JTAC's own order (the ones it can
+    /// lase first), and whether it can lase it. The cockpit panel's target
+    /// list.
+    pub fn ranked_contacts(&self) -> impl Iterator<Item = (&EnId, &Contact, bool)> {
+        let lasable = self.lasable;
+        self.contacts.iter().enumerate().map(move |(i, (id, ct))| (id, ct, i < lasable))
+    }
+
+    /// Lase one contact the player picked from the panel's target list. It
+    /// holds the way a shift does: auto stays off until it is toggled back.
+    pub fn designate(&mut self, db: &mut Db, lua: MizLua, id: &EnId) -> Result<()> {
+        let i = self
+            .contacts
+            .get_index_of(id)
+            .ok_or_else(|| anyhow!("the JTAC can no longer see that target"))?;
+        if i >= self.lasable {
+            if self.focus.is_some() {
+                bail!(
+                    "that target is outside the JTAC's focus area, clear the focus first"
+                )
+            }
+            bail!(
+                "that target is out of laser range ({:.0} km)",
+                self.lase_limit_m() / 1000.
+            )
+        }
+        self.autoshift = Some(i);
+        self.set_target(db, lua, i).context("setting target")?;
+        Ok(())
+    }
+
     pub fn nearby_alcm(&self) -> &[(GroupId, i32)] {
         &self.nearby_alcm
     }
@@ -2996,6 +3048,18 @@ impl Jtacs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contact_keys_round_trip() {
+        let unit = EnId::Unit(bfprotocols::db::group::UnitId::from(4711));
+        assert_eq!(contact_key(&unit), "u4711");
+        assert_eq!(parse_contact_key(" u4711 ").unwrap(), unit);
+        let ucid: dcso3::net::Ucid = "0123456789abcdef0123456789abcdef".parse().unwrap();
+        let player = EnId::Player(ucid);
+        assert_eq!(parse_contact_key(&contact_key(&player)).unwrap(), player);
+        assert!(parse_contact_key("4711").is_err());
+        assert!(parse_contact_key("ufoo").is_err());
+    }
 
     #[test]
     fn laser_code_validation() {

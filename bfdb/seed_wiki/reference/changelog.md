@@ -28,6 +28,33 @@ a linked page says otherwise, the later one is right.
   waypoint whose straight course leaves open water is now refused, saying how
   far out it hits land. Move it round in legs.
 
+**JTAC Control page**
+- The dashboard has a **JTAC CONTROL** page for a second screen or your phone.
+  Every JTAC on your side gets a card with its code, target and the usual
+  buttons, plus a list of everything it can see: click a contact and it lases
+  that one, no more shifting through them. The cockpit panel's JTAC tab
+  (plugin 3.7.0) has the same buttons and list in game. See
+  [JTAC System](../f10-menu/jtac.md#jtac-control-on-the-dashboard).
+
+**Shot-down AI CAP stays down**
+- When you shot down a CAP the HQ had sent up, a fresh one was back within a
+  couple of minutes, every time, and went straight for your JTAC. Now the HQ
+  waits 15 minutes after losing a CAP, strike or SEAD package before it
+  sends another of the same kind, the same as players' own fighter cover.
+
+**AI fighters hunt helos flying high**
+- AI fighters left helicopters alone completely since v3.4. Now a helo
+  flying more than {{cfg:campaign_events.cap_hunts_helos_above_ft|100}} ft
+  above the ground gets the nearest AI fighter flight sent after it. Drop
+  below that and it is called off, so on the deck or landed you are still
+  left alone.
+
+**Empty bases call for help**
+- A base whose own armour and infantry were all gone never called a quick
+  reaction force, so it was the easiest one to drive a few tanks into and
+  take. It now calls one like any other base. One still won't come if every
+  formation the side may field is already out and busy.
+
 ## v3.5 — November 15, 2026
 
 **The ordered-unit cap counts vehicles**

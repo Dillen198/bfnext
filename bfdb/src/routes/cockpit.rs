@@ -812,3 +812,46 @@ pub(crate) async fn api_cockpit_menu_invoke(
     .await?;
     Ok(warp::reply::json(&serde_json::json!({ "message": msg })))
 }
+
+#[derive(serde::Deserialize)]
+pub(crate) struct JtacCommandBody {
+    /// The JTAC's id as `/api/cockpit/jtac` lists it.
+    pub(crate) jtac: std::string::String,
+    /// One `-jtac` order: shift, autoshift, pointer, smoke, code 1688,
+    /// lase <key>, focus clear, filter <type>|clear, building, status, 9line.
+    pub(crate) cmd: std::string::String,
+}
+
+/// POST /api/cockpit/jtac/command — give one of the caller's side's JTACs an
+/// order from the dashboard's JTAC tab. The engine runs it as the caller's
+/// own `-jtac <jtac> <cmd>`, so side, rules and replies are the same as
+/// chat; the engine also refuses anything not on its list for the panel.
+pub(crate) async fn api_cockpit_jtac_command(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    body: JtacCommandBody,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
+    ip: std::net::IpAddr,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip)
+        .await?;
+    let (jtac, cmd) = (body.jtac.trim(), body.cmd.trim());
+    if jtac.is_empty() || cmd.is_empty() || jtac.len() > 32 || cmd.len() > 64 {
+        return Err(websec::bad_request("jtac and cmd are required").into());
+    }
+    use netidx::publisher::Value;
+    let msg = call_engine_rpc_str(
+        &db,
+        &inst,
+        "cockpit-jtac",
+        vec![
+            ("ucid", Value::from(ucid.to_string())),
+            ("jtac", Value::from(jtac.to_string())),
+            ("cmd", Value::from(cmd.to_string())),
+        ],
+    )
+    .await?;
+    Ok(warp::reply::json(&serde_json::json!({ "message": msg })))
+}

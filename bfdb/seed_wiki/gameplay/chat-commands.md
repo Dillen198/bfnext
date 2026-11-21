@@ -274,6 +274,7 @@ Then `-jtac <id> <command>`:
 -jtac <id> filter <type>|clear  only lase that type, e.g. filter SAM
 -jtac <id> code <code>       set the laser code (1111-1788)
 -jtac <id> pointer           toggle the IR pointer
+-jtac <id> lase <target>     lase one contact (the JTAC Control page sends this)
 -jtac <id> arty <gun|all> <n>  artillery fire mission
 -jtac <id> bomber [mission]  bomber mission
 ```

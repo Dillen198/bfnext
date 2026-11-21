@@ -187,6 +187,22 @@ position on its map, and works only on public campaigns.
 - **EWR CALLS ON/OFF** — turns the automatic EWR radio calls on or off for you.
 - **IMPERIAL / METRIC** — the units those calls and this picture use.
 
+### JTAC — your side's JTACs
+
+- Every JTAC on your side, nearest first: its laser code, what it is lasing,
+  what it can see and any air defences near its target.
+- **SHIFT**, **AUTO**, **IR**, **SMOKE** and **9-LINE** under each one do what
+  the F10 JTAC menu does, without digging through it.
+- Below that is what the JTAC can see. Click a contact that says **LASE** and
+  the JTAC lases that one; it stays on it until you put it back on **AUTO**.
+  Anything out of laser range is listed but can't be picked.
+- **JTAC COMMANDS IN F10** opens the F10 JTAC menu for laser codes, artillery
+  and bombers.
+
+The same thing is on the dashboard as the
+[JTAC Control page](../f10-menu/jtac.md#jtac-control-on-the-dashboard), for a
+second screen or your phone.
+
 ### LOG — everything the server told you
 
 ![The LOG tab: messages newest first, tagged YOU, SIDE and ALL](/api/wiki/images/05732d53-90e8-402b-9e50-f333720a706b)

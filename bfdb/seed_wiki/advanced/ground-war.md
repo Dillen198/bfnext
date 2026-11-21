@@ -169,7 +169,10 @@ the ground war is on; only the quick reaction force needs it.
   {{cfg:garrison.qrf_delay_secs|60}} s brings a **quick reaction force**: the
   nearest idle formation within {{cfg:garrison.qrf_range_m|40000}} m, or a
   new one raised at a neighbouring base. A side has at most
-  {{cfg:garrison.qrf_max|2}} out at once.
+  {{cfg:garrison.qrf_max|2}} out at once. A base with no armour or infantry
+  of its own left still calls one. None comes when every formation the side
+  may field ({{cfg:ground_war.max_formations_per_side|6}}) is already out
+  and busy, and there is none idle in reach.
 - **It moves about.** While a live base is quiet, some of its armour shifts
   to new spots inside the base every
   {{cfg:garrison.patrol_secs|480}} seconds or so. Airfields are the

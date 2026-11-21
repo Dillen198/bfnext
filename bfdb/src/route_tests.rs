@@ -588,6 +588,16 @@ async fn cockpit_jtac_needs_the_key() {
     assert_eq!(r.status(), 401);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn cockpit_jtac_command_needs_the_key() {
+    let h = harness();
+    let body = r#"{"jtac":"42","cmd":"shift"}"#;
+    let r = h.post_json("/api/cockpit/jtac/command", None, None, body).await;
+    assert_ne!(r.status(), 200);
+    let r = h.post_json("/api/cockpit/jtac/command?playerid=3", None, None, body).await;
+    assert_ne!(r.status(), 200);
+}
+
 #[test]
 fn cockpit_jtac_reply() {
     use bfprotocols::cas::{CasFlight, CasJtac, CasPicture, CasTarget};
@@ -619,6 +629,9 @@ fn cockpit_jtac_reply() {
         nearest_friendly_brg: 180,
         artillery_available: false,
         threats: vec![],
+        autoshift: false,
+        focused: false,
+        units: vec![],
     };
     let flight = |ucid: &str, near: &str| CasFlight {
         ucid: ucid.into(),

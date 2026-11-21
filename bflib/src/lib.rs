@@ -31,6 +31,7 @@ mod economy;
 mod ewr;
 mod frontline;
 mod groundwar;
+mod helohunt;
 mod hq;
 mod intel_marks;
 mod jtac;
@@ -380,6 +381,8 @@ struct Context {
     /// for the same reason as `weather_requests` (they spawn and despawn).
     carrier_requests: Vec<(PlayerId, chatcmd::CarrierCmd, Option<GroupId>)>,
     jtac_commands: Vec<(PlayerId, JtId, String)>,
+    /// AI fighters sent after helicopters flying high (`helohunt`).
+    helo_hunts: helohunt::HeloHunts,
     to_background: Option<UnboundedSender<bg::Task>>,
     recently_landed: FxHashMap<DcsOid<ClassUnit>, DateTime<Utc>>,
     recently_born: FxHashMap<DcsOid<ClassUnit>, DateTime<Utc>>,
@@ -6210,6 +6213,12 @@ fn slow_phase_3(
         // Dynamic CAP retargeting: redirect active CAP groups toward enemy aircraft.
         step(lua, ctx, "retarget_cap_groups", |ctx| {
             retarget_cap_groups(lua, ctx, start_ts)
+        });
+        // Fighters after helicopters flying above the height line.
+        step(lua, ctx, "helo hunt", |ctx| {
+            if let Err(e) = helohunt::tick(lua, ctx, start_ts) {
+                error!("helo hunt: {e:?}")
+            }
         });
     }
     Ok(AdminResult::Continue)

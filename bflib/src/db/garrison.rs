@@ -591,6 +591,11 @@ impl Db {
                     .collect();
                 bases.sort_by(|a, b| a.1.total_cmp(&b.1));
                 let mut raised = None;
+                // Why no QRF came, for the log: players notice a base nobody
+                // defends, and this used to say nothing above debug.
+                let mut why = std::string::String::from(
+                    "no friendly base in reach can spare a garrison",
+                );
                 for (b, _) in bases.into_iter().take(4) {
                     let spare = self
                         .formation_candidates(&gw, &b, side)
@@ -603,8 +608,14 @@ impl Db {
                             raised = Some(id);
                             break;
                         }
-                        Err(e) => log::debug!("garrison: raising a QRF at {b}: {e:?}"),
+                        Err(e) => why = format!("raising one at {b}: {e}"),
                     }
+                }
+                if raised.is_none() {
+                    info!(
+                        "garrison: no QRF for {oid} ({side:?}): no idle formation within {:.0} km, {why}",
+                        cfg.qrf_range_m / 1000.
+                    );
                 }
                 raised?
             }
@@ -612,7 +623,7 @@ impl Db {
         match self.order_formation(rt, lua, id, Order::Defend(oid), None, now) {
             Ok(_) => Some(id),
             Err(e) => {
-                log::debug!("garrison: QRF {id} to {oid}: {e:?}");
+                info!("garrison: QRF {id} to {oid} refused: {e:?}");
                 None
             }
         }
@@ -714,10 +725,10 @@ impl Db {
                 }
             }
             let threat = near.first().map(|(_, p)| *p);
+            // A base with no armour or infantry left still calls for a QRF:
+            // it used to skip the lot, so the emptiest base, the one a
+            // couple of tanks could drive into and take, never asked for help.
             let groups = self.sortie_groups(&oid);
-            if groups.is_empty() {
-                continue;
-            }
             let qrf_count = qrfs_out(grt, side, self);
             let st = grt.bases.entry(oid).or_default();
             if let Some(t) = threat {
@@ -733,7 +744,7 @@ impl Db {
                     || st
                         .routed_at
                         .is_none_or(|r| now - r >= Duration::seconds(REROUTE_SECS));
-                if due {
+                if due && !groups.is_empty() {
                     st.aim = Some(aim);
                     st.routed_at = Some(now);
                     st.out = true;
@@ -870,7 +881,7 @@ impl Db {
             }
             // Not at an airfield: armour wandering about there ends up on a
             // taxiway, and DCS AI won't taxi past it.
-            if !cfg.patrol || airfield {
+            if !cfg.patrol || airfield || groups.is_empty() {
                 continue;
             }
             let avg = cfg.patrol_secs.max(60) as f64;

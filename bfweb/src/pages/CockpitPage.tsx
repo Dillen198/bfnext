@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { MapContainer, TileLayer, Marker, Polyline, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
-import { api, type CarpSolution, type CockpitMenuItem } from '../api'
+import { api, type CarpSolution, type CockpitJtac, type CockpitJtacUnit, type CockpitMenuItem } from '../api'
 import { useAuth } from '../context/AuthContext'
 import { campaign } from '../config/campaign'
 
@@ -86,14 +86,21 @@ export default function CockpitPage() {
   return <Tabs />
 }
 
+type TabId = 'menu' | 'jtac' | 'ewr' | 'carp' | 'cargo'
+const TAB_IDS: TabId[] = ['menu', 'jtac', 'ewr', 'carp', 'cargo']
+// ?tab=jtac opens straight on that tab, so a second screen or a phone can
+// bookmark the JTAC page.
+const START_TAB: TabId = TAB_IDS.find(t => t === params.get('tab')) ?? 'menu'
+
 function Tabs({ playerId }: { playerId?: string }) {
-  const [tab, setTab] = useState<'menu' | 'ewr' | 'carp' | 'cargo'>('menu')
+  const [tab, setTab] = useState<TabId>(START_TAB)
   return (
     <Shell
       playerId={playerId}
       tabs={
-        <div style={{ display: 'flex', gap: '0.35rem' }}>
+        <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
           <FnKey active={tab === 'menu'} onClick={() => setTab('menu')}>MENU</FnKey>
+          <FnKey active={tab === 'jtac'} onClick={() => setTab('jtac')}>JTAC</FnKey>
           <FnKey active={tab === 'ewr'} onClick={() => setTab('ewr')}>EWR</FnKey>
           <FnKey active={tab === 'carp'} onClick={() => setTab('carp')}>CARP</FnKey>
           <FnKey active={tab === 'cargo'} onClick={() => setTab('cargo')}>CARGO</FnKey>
@@ -101,6 +108,7 @@ function Tabs({ playerId }: { playerId?: string }) {
       }
     >
       {tab === 'menu' && <MenuBody playerId={playerId} />}
+      {tab === 'jtac' && <JtacBody playerId={playerId} />}
       {tab === 'ewr' && <EwrBody playerId={playerId} />}
       {tab === 'carp' && <CarpBody playerId={playerId} />}
       {tab === 'cargo' && <CargoBody playerId={playerId} />}
@@ -642,6 +650,215 @@ function CargoBody({ playerId }: { playerId?: string }) {
         </p>
       </Glass>
     </>
+  )
+}
+
+// ─── JTAC ───────────────────────────────────────────────────────────────
+// Every JTAC on your side, side by side on a wide screen (a quad view on a
+// second monitor) and stacked on a phone. Each card has the everyday orders
+// as buttons and the contacts the JTAC sees as a list: click one it can
+// lase and it lases that, instead of shifting through the list one by one.
+// Every order runs as your own `-jtac <id> <cmd>`, so its answer also comes
+// up in your DCS chat. Nothing here spends points: drone moves, artillery
+// and bombers stay in F10 and chat, where you see the price.
+
+const JTAC_SHOWN_KEY = 'cockpit.jtac.shown'
+const JTAC_POLL_MS = 3000
+
+function nm(m: number): string {
+  return `${(m / 1852).toFixed(1)} nm`
+}
+
+function deg(b: number): string {
+  return `${String(Math.round(b) % 360).padStart(3, '0')}°`
+}
+
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : 'Request failed'
+}
+
+function readShown(): string[] {
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(JTAC_SHOWN_KEY) ?? '[]')
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function JtacBody({ playerId }: { playerId?: string }) {
+  const q = useQuery({
+    queryKey: ['cockpit-jtac', playerId],
+    queryFn: () => api.cockpit.jtacs(playerId),
+    refetchInterval: JTAC_POLL_MS,
+  })
+  // Which JTACs to show; none picked means all of them. Kept per browser so
+  // a second screen keeps its own pick.
+  const [shown, setShown] = useState<string[]>(readShown)
+  const [note, setNote] = useState<{ text: string; bad: boolean } | null>(null)
+  const order = useMutation({
+    mutationFn: ({ jtac, cmd }: { jtac: string; cmd: string; label: string }) => api.cockpit.jtacCommand(jtac, cmd, playerId),
+    onSuccess: (_r, v) => {
+      setNote({ text: `${v.label}: SENT`, bad: false })
+      // The engine runs it on its next tick; read the result back soon
+      // rather than waiting out the poll.
+      window.setTimeout(() => { void q.refetch() }, 700)
+    },
+    onError: (e, v) => setNote({ text: `${v.label}: ${errorText(e)}`, bad: true }),
+  })
+  // `what` names the order for the note under the header, e.g. "LASE T-72B".
+  const send = (j: CockpitJtac, cmd: string, what = cmd.toUpperCase()) =>
+    order.mutate({ jtac: j.id, cmd, label: `${j.callsign.toUpperCase()} ${what}` })
+
+  function pick(next: string[]) {
+    setShown(next)
+    if (next.length === 0) localStorage.removeItem(JTAC_SHOWN_KEY)
+    else localStorage.setItem(JTAC_SHOWN_KEY, JSON.stringify(next))
+  }
+
+  if (q.isLoading) return <PageEyebrow>ASKING FOR YOUR SIDE'S JTACS…</PageEyebrow>
+  if (q.error && !q.data) {
+    return <Glass corner="JTAC"><p style={{ color: 'var(--red)', fontSize: '0.72rem', margin: 0 }}>{errorText(q.error)}</p></Glass>
+  }
+  const d = q.data
+  if (!d || (d.side !== 'blue' && d.side !== 'red')) {
+    return <Glass corner="JTAC"><p style={{ fontSize: '0.72rem', margin: 0 }}>PICK A SLOT ON A SIDE TO SEE ITS JTACS.</p></Glass>
+  }
+  if (d.jtacs.length === 0) {
+    return (
+      <Glass corner="JTAC">
+        <p style={{ fontSize: '0.72rem', margin: 0 }}>
+          YOUR SIDE HAS NO JTACS IN THE FIELD. DEPLOY ONE FROM F10 &gt; ACTIONS.
+        </p>
+      </Glass>
+    )
+  }
+  // Ignore picks for JTACs that have since died, so a stale pick can't hide them all.
+  const live = shown.filter(id => d.jtacs.some(j => j.id === id))
+  const visible = live.length === 0 ? d.jtacs : d.jtacs.filter(j => live.includes(j.id))
+
+  return (
+    <>
+      <PageEyebrow>
+        JTAC — {d.jtacs.length} ON {d.side.toUpperCase()}
+        {d.me?.nearest_jtac ? ` · NEAREST ${d.me.nearest_jtac} ${deg(d.me.jtac_brg)} ${nm(d.me.jtac_rng_m)}` : ''}
+      </PageEyebrow>
+      {d.jtacs.length > 1 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.6rem' }}>
+          <FnKey active={live.length === 0} onClick={() => pick([])}>ALL</FnKey>
+          {d.jtacs.map(j => (
+            <FnKey
+              key={j.id}
+              active={live.includes(j.id)}
+              onClick={() => pick(live.includes(j.id) ? live.filter(x => x !== j.id) : [...live, j.id])}
+            >
+              {j.callsign.toUpperCase()}
+            </FnKey>
+          ))}
+        </div>
+      )}
+      {note && (
+        <p style={{
+          fontSize: '0.66rem', margin: '0 0 0.6rem', letterSpacing: '0.06em',
+          color: note.bad ? 'var(--red)' : 'var(--accent-bright)',
+        }}>
+          {note.text}
+        </p>
+      )}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 22rem), 1fr))', gap: '0.7rem' }}>
+        {visible.map(j => <JtacCard key={j.id} jtac={j} send={send} busy={order.isPending} />)}
+      </div>
+    </>
+  )
+}
+
+function JtacCard({ jtac: j, send, busy }: { jtac: CockpitJtac; send: (j: CockpitJtac, cmd: string, what?: string) => void; busy: boolean }) {
+  const [code, setCode] = useState('')
+  const codeOk = /^1[1-7][1-8][1-8]$/.test(code)
+  const t = j.target
+  return (
+    <Glass corner={`${j.id} · CODE ${j.laser_code}`}>
+      <div style={{ fontSize: '0.8rem', color: 'var(--accent-bright)', letterSpacing: '0.08em', marginBottom: '0.15rem' }}>
+        {j.callsign.toUpperCase()}
+      </div>
+      <div style={{ fontSize: '0.62rem', color: 'var(--text-dim)', marginBottom: '0.45rem' }}>
+        {j.location_name.toUpperCase()} · SEES {j.contact_count}
+        {j.focused ? ' · FOCUSED ON A MARK' : ''}
+      </div>
+      <div style={{ fontSize: '0.7rem', marginBottom: '0.55rem', color: t ? 'var(--yellow)' : 'var(--text-dim)' }}>
+        {t
+          ? `${t.lasing ? 'LASING' : 'ON'} ${t.typ.toUpperCase()}${t.group_size > 1 ? ` (${t.group_size})` : ''} · ${deg(t.brg)} ${nm(t.rng_m)} · ${t.elev_ft} FT`
+          : 'NO TARGET'}
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.5rem' }}>
+        <Button disabled={busy} onClick={() => send(j, 'shift')}>SHIFT</Button>
+        <Button disabled={busy} tone={j.autoshift ? 'accent' : 'amber'} onClick={() => send(j, 'autoshift')}>
+          AUTO {j.autoshift ? 'ON' : 'OFF'}
+        </Button>
+        <Button disabled={busy} tone={j.ir_pointer ? 'amber' : 'accent'} onClick={() => send(j, 'pointer')}>
+          IR {j.ir_pointer ? 'ON' : 'OFF'}
+        </Button>
+        <Button disabled={busy || !t} onClick={() => send(j, 'smoke')}>SMOKE</Button>
+        <Button disabled={busy || !t} onClick={() => send(j, '9line')}>9-LINE</Button>
+        {j.focused && <Button disabled={busy} onClick={() => send(j, 'focus clear')}>CLEAR FOCUS</Button>}
+      </div>
+      <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', marginBottom: '0.55rem' }}>
+        <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)' }}>CODE</span>
+        <div style={{ width: '5.5rem' }}>
+          <LskInput value={code} onChange={v => setCode(v.replace(/\D/g, '').slice(0, 4))} placeholder={String(j.laser_code)} numeric />
+        </div>
+        <Button disabled={busy || !codeOk} onClick={() => { send(j, `code ${code}`); setCode('') }}>SET</Button>
+      </div>
+      <JtacUnits units={j.units ?? []} total={j.contact_count} onLase={u => send(j, `lase ${u.key}`, `LASE ${u.typ.toUpperCase()}`)} busy={busy} />
+    </Glass>
+  )
+}
+
+function JtacUnits({ units, total, onLase, busy }: {
+  units: CockpitJtacUnit[]
+  total: number
+  onLase: (u: CockpitJtacUnit) => void
+  busy: boolean
+}) {
+  if (units.length === 0) {
+    return <div style={{ fontSize: '0.64rem', color: 'var(--text-dim)' }}>NO CONTACTS IN VIEW</div>
+  }
+  return (
+    <div style={{ maxHeight: '18rem', overflowY: 'auto', borderTop: '1px solid var(--border)' }}>
+      {units.map(u => {
+        const can = u.lasable && !u.target && !busy
+        return (
+          <button
+            key={u.key}
+            disabled={!can}
+            onClick={() => onLase(u)}
+            title={u.target ? 'Being lased' : u.lasable ? 'Lase this one' : 'Out of laser range'}
+            style={{
+              display: 'grid', gridTemplateColumns: '1fr auto auto', gap: '0.6rem', width: '100%',
+              padding: '0.32rem 0.2rem', background: u.target ? 'rgba(201,162,39,0.12)' : 'transparent',
+              border: 'none', borderBottom: '1px solid var(--border)', textAlign: 'left',
+              cursor: can ? 'pointer' : 'default', fontFamily: 'var(--font-mono)', fontSize: '0.66rem',
+              color: u.target ? 'var(--yellow)' : u.lasable ? 'var(--text)' : 'var(--text-dim)',
+              opacity: u.lasable ? 1 : 0.6,
+            }}
+          >
+            <span>
+              {u.target ? '◉ ' : ''}{u.typ.toUpperCase()}
+              {u.threat && <span style={{ color: 'var(--red)', marginLeft: '0.4rem' }}>THREAT</span>}
+            </span>
+            <span>{deg(u.brg)} {nm(u.rng_m)}</span>
+            <span style={{ minWidth: '3.2rem', textAlign: 'right' }}>
+              {u.target ? 'LASING' : u.lasable ? 'LASE ›' : 'NO LASE'}
+            </span>
+          </button>
+        )
+      })}
+      {total > units.length && (
+        <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', padding: '0.3rem 0.2rem' }}>
+          +{total - units.length} MORE, FURTHER OUT
+        </div>
+      )}
+    </div>
   )
 }
 

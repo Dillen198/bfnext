@@ -403,6 +403,14 @@ pub enum AdminCommand {
     CockpitCargo {
         ucid: Ucid,
     },
+    /// A JTAC order from the dashboard's JTAC tab: one of
+    /// `COCKPIT_JTAC_COMMANDS`, run exactly as `-jtac <jtac> <cmd>` from the
+    /// caller's chat, so the same rules and replies apply.
+    CockpitJtac {
+        ucid: Ucid,
+        jtac: std::string::String,
+        cmd: std::string::String,
+    },
     /// DCSServerBot-derived server state, pushed in from bfdb: the scheduled
     /// restart time and the current surface weather, for the F10 Info menu.
     SetServerInfo {
@@ -2839,6 +2847,29 @@ pub(crate) fn query_cas(
             }
         };
 
+        let target_id = jt.target().as_ref().map(|t| t.id);
+        let units: Vec<bfprotocols::cas::CasUnit> = jt
+            .ranked_contacts()
+            .take(bfprotocols::cas::CAS_UNITS_MAX)
+            .map(|(id, c, lasable)| {
+                let p = Vector2::new(c.pos.x, c.pos.z);
+                let (brg, rng_m) = bearing_range(loc.pos, p);
+                let (lat, lon) = to_ll(c.pos.x, c.pos.z);
+                bfprotocols::cas::CasUnit {
+                    key: crate::jtac::contact_key(id).to_string(),
+                    typ: c.typ.to_string(),
+                    lat,
+                    lon,
+                    brg,
+                    rng_m,
+                    lasable,
+                    threat: c.tags.contains(UnitTag::SAM)
+                        || c.tags.contains(UnitTag::AAA),
+                    target: target_id.as_ref() == Some(id),
+                }
+            })
+            .collect();
+
         let location_brg = loc.bearing.to_degrees().rem_euclid(360.0) as u16;
         let location_rng_m = loc.distance as u32;
 
@@ -2864,6 +2895,9 @@ pub(crate) fn query_cas(
             nearest_friendly_brg,
             artillery_available: !jt.nearby_artillery().is_empty(),
             threats: summarize(threat),
+            autoshift: jt.autoshift(),
+            focused: jt.focus().is_some(),
+            units,
         });
     }
 
@@ -3166,6 +3200,23 @@ pub(super) enum Caller {
 /// one long stall; whatever is over the budget waits for the next tick.
 const ADMIN_COMMANDS_PER_TICK: usize = 20;
 
+/// The `-jtac` commands the dashboard's JTAC tab may send. Nothing that
+/// spends points (move, arty, bomber): those stay in F10 and chat, where
+/// the player sees the price.
+const COCKPIT_JTAC_COMMANDS: &[&str] = &[
+    "shift",
+    "autoshift",
+    "pointer",
+    "smoke",
+    "code",
+    "lase",
+    "focus",
+    "filter",
+    "building",
+    "status",
+    "9line",
+];
+
 /// Log target for the admin audit trail, so it can be filtered out of (or
 /// grepped for in) the engine log, which bfdb already tails and archives.
 const AUDIT_TARGET: &str = "bflib::admin_audit";
@@ -3221,6 +3272,7 @@ impl AdminCommand {
                 | Self::CockpitMenuInvoke { .. }
                 | Self::CockpitMessages { .. }
                 | Self::CockpitCargo { .. }
+                | Self::CockpitJtac { .. }
                 | Self::SetServerInfo { .. }
                 | Self::SetCommanders { .. }
                 | Self::QueryCommand { .. }
@@ -4124,6 +4176,24 @@ fn run_admin_command(
             {
                 Ok(json) => reply_ok!("{json}"),
                 Err(e) => reply_err!("{e:?}"),
+            }
+        }
+        AdminCommand::CockpitJtac { ucid, jtac, cmd } => {
+            let cmd = cmd.trim();
+            let verb = cmd.split_whitespace().next().unwrap_or("");
+            let jtid = jtac.parse::<crate::jtac::JtId>();
+            match (ctx.connected.id_by_ucid.get(&ucid).copied(), jtid) {
+                _ if !COCKPIT_JTAC_COMMANDS.contains(&verb) => {
+                    reply_err!("the dashboard can't send the JTAC command {verb}")
+                }
+                (None, _) => reply_err!("join the server to command a JTAC"),
+                (_, Err(e)) => reply_err!("bad JTAC id {jtac}: {e:?}"),
+                (Some(id), Ok(jtid)) => {
+                    // Replies come back as the player's chat, like the command
+                    // typed by hand; the panel re-reads the JTAC for the result.
+                    ctx.jtac_commands.push((id, jtid, cmd.into()));
+                    reply_ok!("ok")
+                }
             }
         }
         AdminCommand::CockpitCargo { ucid } => {

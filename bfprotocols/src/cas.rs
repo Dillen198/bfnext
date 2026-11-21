@@ -17,6 +17,26 @@ pub struct CasContactGroup {
     pub count: u16,
 }
 
+/// One contact the JTAC sees, for the dashboard's target list: click it and
+/// the panel sends `-jtac <id> lase <key>`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CasUnit {
+    /// The engine's contact key (`u<unit id>` or `p<ucid>`).
+    pub key: String,
+    pub typ: String,
+    pub lat: f64,
+    pub lon: f64,
+    /// Bearing and range from the JTAC.
+    pub brg: u16,
+    pub rng_m: u32,
+    /// In laser range (and inside the focus area, if one is set).
+    pub lasable: bool,
+    /// A SAM or AAA piece.
+    pub threat: bool,
+    /// The one being lased now.
+    pub target: bool,
+}
+
 /// The JTAC's currently designated target.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CasTarget {
@@ -74,7 +94,21 @@ pub struct CasJtac {
     /// target — the threat line of the situation update.
     #[serde(default)]
     pub threats: Vec<CasContactGroup>,
+    /// Auto mode: the JTAC picks the top-priority target itself.
+    #[serde(default)]
+    pub autoshift: bool,
+    /// A player's focus mark is set.
+    #[serde(default)]
+    pub focused: bool,
+    /// Every contact, in the JTAC's own order (lasable first), capped at
+    /// `CAS_UNITS_MAX`.
+    #[serde(default)]
+    pub units: Vec<CasUnit>,
 }
+
+/// Most contacts listed per JTAC. A Reaper over a front line sees hundreds;
+/// the list is for picking one, the summary above already counts them all.
+pub const CAS_UNITS_MAX: usize = 60;
 
 /// A human aircraft that could be working with a JTAC.
 #[derive(Debug, Clone, Serialize, Deserialize)]

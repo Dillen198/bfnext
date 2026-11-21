@@ -68,7 +68,7 @@
 -- copy it was built with to answer /api/cockpit/plugin/version, and the panel
 -- compares that with its own to tell the player when to update. Keep the
 -- format exactly as it is.
-local BFCOCKPIT_VERSION = "3.6.1"
+local BFCOCKPIT_VERSION = "3.7.0"
 
 local net = require('net')
 
@@ -2023,9 +2023,17 @@ end
 -- Your side's JTACs from /api/cockpit/jtac (the engine's close-air-support
 -- picture, the one the voice controller reads): where each is, its laser
 -- code, what it is lasing or looking at, and the air defences near its
--- target. Nearest first when your own position is known. The commands stay
--- in F10 (JTAC > location > JTAC), which this tab opens: that menu is built
--- lazily by location, so mirroring it here would drift from the real one.
+-- target. Nearest first when your own position is known.
+--
+-- Each JTAC has the everyday orders as buttons (shift, auto, IR pointer,
+-- smoke, 9-line) and the contacts it sees as a list: click one in laser
+-- range and it lases that one. They go to /api/cockpit/jtac/command, which
+-- the engine runs as your own `-jtac <id> <cmd>`, so the answer also comes
+-- up in chat. Laser codes, artillery, bombers and drone moves stay in F10
+-- (JTAC > location > JTAC), which the button at the top opens.
+
+-- Contacts listed per JTAC; the rest are counted.
+local JTAC_UNITS_SHOWN = 10
 
 local JTAC_MENU = { "JTAC" }
 local JTAC_EXPAND = { "JTAC>>" }  -- the F10 entry before it is first opened
@@ -2055,6 +2063,71 @@ local function groups_text(groups)
     return table.concat(parts, ", ")
 end
 
+-- One order to a JTAC, as `-jtac <id> <cmd>`.
+local function jtac_order(j, cmd, what)
+    set_note("Working...", false)
+    local body = { jtac = tostring(j.id or ""), cmd = cmd }
+    api_call("POST", "/api/cockpit/jtac/command", nil, body, true, function(data, err, status)
+        on_auth_error(status)
+        if err then
+            set_note(err, true)
+        else
+            set_note(tostring(j.callsign or j.id or "JTAC"):upper() .. " " .. what .. ": sent", false)
+        end
+        -- The engine runs it on its next tick: read the JTAC back, and the
+        -- feed for its answer.
+        refresh_now()
+        state.next_feed = 0
+        redraw()
+    end)
+end
+
+-- The order buttons and the target list under one JTAC.
+local function jtac_controls(rows, j, width)
+    local third = math.floor((width - px(8)) / 3)
+    local function btn(i, same, text, cmd, what)
+        rows[#rows + 1] = { button = true, same_line = same, x = (third + px(4)) * i, w = third, skin = skins.tool,
+                            text = text, action = function() jtac_order(j, cmd, what) end }
+    end
+    rows[#rows + 1] = { text = "", h = px(3) }
+    btn(0, false, "SHIFT", "shift", "shift")
+    -- An older engine doesn't say: then the button just toggles.
+    local auto = j.autoshift == nil and "AUTO" or (j.autoshift and "AUTO: ON" or "AUTO: OFF")
+    btn(1, true, auto, "autoshift", "auto")
+    btn(2, true, j.ir_pointer and "IR: ON" or "IR: OFF", "pointer", "IR pointer")
+    if type(j.target) == 'table' then
+        btn(0, false, "SMOKE", "smoke", "smoke")
+        btn(1, true, "9-LINE", "9line", "9-line")
+        if j.focused then btn(2, true, "CLEAR FOCUS", "focus clear", "clear focus") end
+    elseif j.focused then
+        btn(0, false, "CLEAR FOCUS", "focus clear", "clear focus")
+    end
+
+    local units = list(j.units)
+    if #units == 0 then return end
+    rows[#rows + 1] = { text = "", h = px(3) }
+    add_text(rows, "Targets -- click one to lase it:", skins.label)
+    for i, u in ipairs(units) do
+        if i > JTAC_UNITS_SHOWN then
+            add_text(rows, string.format("+%d more", #units - JTAC_UNITS_SHOWN), skins.label)
+            break
+        end
+        if type(u) == 'table' then
+            local line = string.format("%s   %03d° %s%s", tostring(u.typ or "?"), tonumber(u.brg) or 0,
+                nm(u.rng_m), u.threat and "   THREAT" or "")
+            if u.target then
+                add_text(rows, "> LASING  " .. line, skins.good)
+            elseif u.lasable then
+                local key, typ = tostring(u.key or ""), tostring(u.typ or "target")
+                rows[#rows + 1] = { button = true, x = 0, w = width, skin = skins.tool, text = line .. "   LASE >",
+                                    action = function() jtac_order(j, "lase " .. key, "lase " .. typ) end }
+            else
+                add_text(rows, line .. "   out of laser range", skins.label)
+            end
+        end
+    end
+end
+
 -- MENU at F10 > JTAC, expanding it first when F10 has not built it yet.
 local function open_jtac_menu()
     local items = state.menu
@@ -2079,7 +2152,7 @@ end
 renderers.jtac = function()
     local rows = {}
     local width = content_width()
-    rows[#rows + 1] = { button = true, x = 0, w = width, skin = skins.go, text = "JTAC COMMANDS IN F10  >",
+    rows[#rows + 1] = { button = true, x = 0, w = width, skin = skins.go, text = "JTAC COMMANDS IN F10 (CODES, ARTY, BOMBERS)  >",
                         action = open_jtac_menu }
     rows[#rows + 1] = { text = "", h = px(4) }
 
@@ -2169,6 +2242,7 @@ renderers.jtac = function()
         if j.ir_pointer then extra[#extra + 1] = "IR pointer on" end
         if j.artillery_available then extra[#extra + 1] = "artillery available" end
         if #extra > 0 then add_text(rows, table.concat(extra, "  ·  "), skins.label) end
+        jtac_controls(rows, j, width)
     end
     return rows
 end

@@ -268,6 +268,9 @@ pub(crate) struct SideRt {
     /// target for `FAILED_RETRY_SECS`. Without it a side with no ships in
     /// range asked for a naval strike on eleven targets every pass.
     pub(crate) failed: FxHashMap<(OpKind, ObjectiveId), DateTime<Utc>>,
+    /// When the last CAP, strike or SEAD package of each kind was shot
+    /// down, for `limits.air_loss_cooldown_secs`.
+    pub(crate) air_lost: FxHashMap<OpKind, DateTime<Utc>>,
     pub(crate) last_request: FxHashMap<Ucid, DateTime<Utc>>,
     /// Tasking-board entries the HQ posted.
     pub(crate) tasks: Vec<TaskId>,
@@ -733,6 +736,7 @@ fn track(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
                 Handle::Package { gid, expires } => match group_gone_or_dead(ctx, gid) {
                     Some(_) => {
                         let _ = ctx.db.delete_group(gid);
+                        ctx.hq.side(side).air_lost.insert(op.kind, now);
                         finish(
                             lua,
                             ctx,

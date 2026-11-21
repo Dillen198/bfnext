@@ -2616,6 +2616,19 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(websec::with_client_ip())
         .then(api_cockpit_jtac);
 
+    // The JTAC tab's buttons and target list.
+    let cockpit_jtac_command_route = warp::path!("api" / "cockpit" / "jtac" / "command")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(cockpit_query())
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
+        .and(warp::body::json::<JtacCommandBody>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .and(websec::with_client_ip())
+        .then(api_cockpit_jtac_command);
+
     let cockpit_aar_route = warp::path!("api" / "cockpit" / "aar")
         .and(warp::get())
         .and(extract_session_cookie())
@@ -3316,6 +3329,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
             .or(cockpit_ewr_units_route)
             .or(cockpit_cargo_spawn_route)
             .or(cockpit_menu_invoke_route)
+            .or(cockpit_jtac_command_route)
             .boxed())
         .boxed()
         .or(wiki_save_route.or(wiki_delete_route).or(wiki_upload_image_route).boxed())

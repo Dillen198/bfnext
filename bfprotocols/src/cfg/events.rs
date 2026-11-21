@@ -204,6 +204,13 @@ pub struct CampaignEventsCfg {
     /// respawns on a loop. Default 45000.
     #[serde(default = "default_cap_engage_radius_m")]
     pub cap_engage_radius_m: f64,
+    /// AI fighters (fighter cover actions, the HQ's CAP and the reactive
+    /// CAP) go after an enemy player helicopter flying more than this many
+    /// feet above the ground within `cap_engage_radius_m`, and are called off
+    /// when it drops below. Lower, or on the ground, a helo is left alone:
+    /// DCS AI sees one even sitting landed. 0 never hunts helos. Default 100.
+    #[serde(default = "default_cap_hunts_helos_above_ft")]
+    pub cap_hunts_helos_above_ft: u32,
     /// If a CAP flight's side has painted no workable threat for this many
     /// seconds, it is sent home (RTB) and despawned early rather than loitering
     /// out its full `cap_duration_secs`. Keeps the air picture matched to the
@@ -531,6 +538,9 @@ pub(super) fn default_cap_max_push_m() -> f64 {
 pub(super) fn default_cap_engage_radius_m() -> f64 {
     45000.0
 }
+pub(super) fn default_cap_hunts_helos_above_ft() -> u32 {
+    100
+}
 pub(super) fn default_cap_idle_rtb_secs() -> u32 {
     240
 }
@@ -599,6 +609,7 @@ impl Default for CampaignEventsCfg {
             cap_speed_ms: default_cap_speed_ms(),
             cap_max_push_m: default_cap_max_push_m(),
             cap_engage_radius_m: default_cap_engage_radius_m(),
+            cap_hunts_helos_above_ft: default_cap_hunts_helos_above_ft(),
             cap_idle_rtb_secs: default_cap_idle_rtb_secs(),
             cap_orbit_radius_m: default_cap_orbit_radius(),
             cap_probability: default_cap_probability(),

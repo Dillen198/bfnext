@@ -38,6 +38,7 @@ import {
   Server,
   Terminal,
   Comms,
+  Crosshair,
   Aircraft,
   PlayCircle,
   type IconComponent,
@@ -79,6 +80,8 @@ const COALITION_NAV: NavItem[] = [
   { to: '/intel',    icon: ReconIntel, label: 'RECON INTEL'  },
   { to: '/hq',       icon: CommandCenter, label: 'THEATRE HQ' },
   { to: '/command',  icon: Armor,      label: 'COMMAND' },
+  // The cockpit panel's JTAC tab on its own: a second screen or a phone.
+  { to: '/cockpit?tab=jtac', icon: Crosshair, label: 'JTAC CONTROL' },
 ]
 // Stats & people.
 const STATS_NAV: NavItem[] = [

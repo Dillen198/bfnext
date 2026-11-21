@@ -134,8 +134,14 @@ The panel has eight tabs (the last, WHEEL, edits the wheel -- see below):
   you: each one's laser code, where it is working, what it is lasing (with
   the target's coordinates and elevation), what it can see, air defences near
   its target, and a danger-close warning when friendlies are within 1 km.
-  **JTAC COMMANDS IN F10** opens MENU at F10 > JTAC for smoke, 9-line, codes
-  and the rest. Needs a bfdb with `/api/cockpit/jtac`; an older one says so.
+  Under each one: **SHIFT**, **AUTO**, **IR**, **SMOKE**, **9-LINE** (and
+  **CLEAR FOCUS** when a mark is set), then its contacts, nearest first: click
+  one in laser range and it lases that one. Orders go to
+  `/api/cockpit/jtac/command`, run as the player's own `-jtac` command. The
+  list needs an engine that sends `units` (v3.6 on); without it only the
+  buttons show. **JTAC COMMANDS IN F10** opens MENU at F10 > JTAC for codes,
+  artillery, bombers and the rest. Needs a bfdb with `/api/cockpit/jtac`; an
+  older one says so.
 - **LOG** — every message the server has sent you, newest first, tagged YOU /
   SIDE / ALL. The tab counts what arrived while you were looking elsewhere.
 - **WIKI** — the player wiki, wiki.vectorstrike.org itself in DCS's built-in

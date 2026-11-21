@@ -1116,6 +1116,7 @@ const JTAC_HELP: &[&str] = &[
     " -jtac <id> filter <type>|clear: only lase that type, e.g. filter SAM (repeat to add types)",
     " -jtac <id> code <code>: a full code 1111-1788, e.g. code 1688",
     " -jtac <id> pointer: toggle the IR pointer",
+    " -jtac <id> lase <target>: lase one contact; the dashboard's JTAC tab sends this when you click one",
     " -jtac <id> arty <gun id|all> <rounds>: artillery on the current target",
     " -jtac <id> bomber [mission]: call a bomber mission on the current target",
     " A drone JTAC sees far but only lases out to 18.5 km (10 nm) -- status says when that is why it isn't lasing",
@@ -1288,6 +1289,12 @@ fn run_jtac_command(
                 .action_commands
                 .push((id, String::from(format_compact!("{name} {gid} {key}")))),
             _ => error!("your side has no drone waypoint action"),
+        }
+    } else if let Some(key) = cmd.strip_prefix("lase ") {
+        // One contact by the key the cockpit panel's target list carries.
+        match crate::jtac::parse_contact_key(key) {
+            Ok(target) => menu::jtac::jtac_lase_in(lua, ctx, &ucid, jtid, &target)?,
+            Err(e) => error!("{e}"),
         }
     } else if cmd.strip_prefix("smoke").is_some() {
         let arg = ArgTuple { fst: ucid, snd: jtid };

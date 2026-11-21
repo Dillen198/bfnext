@@ -104,6 +104,7 @@ pub struct Rpcs {
     _cockpit_menu_invoke: Proc,
     _cockpit_messages: Proc,
     _cockpit_cargo: Proc,
+    _cockpit_jtac: Proc,
     _set_server_info: Proc,
     _intel_marks: Proc,
 }
@@ -1538,6 +1539,33 @@ impl Rpcs {
             ucid: Chars = Value::Null; "The calling player's ucid"
         )?;
         let _q = Arc::clone(q);
+        let cockpit_jtac = define_rpc!(
+            publisher,
+            base.append("cockpit-jtac"),
+            "Give one of the caller's side's JTACs an order from the dashboard, as -jtac <jtac> <cmd> would",
+            |mut c: RpcCall, ucid: Chars, jtac: Chars, cmd: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                let cmd = AdminCommand::CockpitJtac {
+                    ucid,
+                    jtac: jtac.as_ref().into(),
+                    cmd: cmd.as_ref().into(),
+                };
+                _q.push((cmd, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid",
+            jtac: Chars = Value::Null; "The JTAC's id, as query-cas lists it",
+            cmd: Chars = Value::Null; "The order, e.g. shift, autoshift, pointer, smoke, code 1688, lase u123"
+        )?;
+        let _q = Arc::clone(q);
         let set_server_info = define_rpc!(
             publisher,
             base.append("set-server-info"),
@@ -1649,6 +1677,7 @@ impl Rpcs {
             _cockpit_menu_invoke: cockpit_menu_invoke,
             _cockpit_messages: cockpit_messages,
             _cockpit_cargo: cockpit_cargo,
+            _cockpit_jtac: cockpit_jtac,
             _set_server_info: set_server_info,
             _intel_marks: intel_marks,
         })

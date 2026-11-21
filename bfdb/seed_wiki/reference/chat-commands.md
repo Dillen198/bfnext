@@ -81,6 +81,7 @@ you typed it into, like any message.
 | `-jtac <id> filter <type>` / `filter clear` | Only lase that unit type, e.g. `filter SAM`; repeat to add types |
 | `-jtac <id> code <code>` | Set the laser code, 1111-1788 |
 | `-jtac <id> pointer` | Toggle the IR pointer |
+| `-jtac <id> lase <target>` | Lase one contact; the JTAC Control page sends this when you click one |
 | `-jtac <id> arty <gun id\|all> <rounds>` | Artillery on the current target |
 | `-jtac <id> bomber [mission]` | Call a bomber mission on the current target |
 

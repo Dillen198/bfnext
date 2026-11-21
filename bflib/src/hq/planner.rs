@@ -1286,6 +1286,7 @@ pub(crate) fn rank(
                     .and_then(|rt| rt.last_fired.get(&c.anchor))
                     .is_none_or(|t| now - *t >= cooldown)
         })
+        .filter(|c| !air_cooling(cfg, rt, c.kind, now))
         .map(|mut c| {
             let line = c.kind.line();
             let mut gap = line_gap(cfg, pic, gap, line);
@@ -1317,6 +1318,19 @@ pub(crate) fn rank(
     });
     debug!("hq: {side:?} {} candidate operation(s)", out.len());
     out
+}
+
+/// Is `kind` still waiting out `limits.air_loss_cooldown_secs` after the
+/// side's last package of that kind was shot down?
+pub(crate) fn air_cooling(
+    cfg: &HqCfg,
+    rt: Option<&super::SideRt>,
+    kind: OpKind,
+    now: DateTime<Utc>,
+) -> bool {
+    let wait = chrono::Duration::seconds(cfg.limits.air_loss_cooldown_secs as i64);
+    matches!(kind, OpKind::Cap | OpKind::Strike | OpKind::Sead)
+        && rt.and_then(|rt| rt.air_lost.get(&kind)).is_some_and(|t| now - *t < wait)
 }
 
 /// How many of `kind`'s line the side may still start, against the limits.
@@ -1687,6 +1701,23 @@ mod tests {
         assert!((weak[0].1 - v * 1.3).abs() < 1e-9, "{weak:?}");
         assert!((weak[1].1 - v * 0.5).abs() < 1e-9, "{weak:?}");
         assert!((weak[2].1 - v * 1.3).abs() < 1e-9, "{weak:?}");
+    }
+
+    #[test]
+    fn a_lost_cap_waits_out_the_cooldown() {
+        let cfg = HqCfg::default();
+        let now = Utc::now();
+        let mut rt = super::super::SideRt::default();
+        assert!(!air_cooling(&cfg, Some(&rt), OpKind::Cap, now));
+        rt.air_lost.insert(OpKind::Cap, now - chrono::Duration::seconds(120));
+        // shot down two minutes ago: no CAP yet, but strike and SEAD are free
+        assert!(air_cooling(&cfg, Some(&rt), OpKind::Cap, now));
+        assert!(!air_cooling(&cfg, Some(&rt), OpKind::Strike, now));
+        assert!(!air_cooling(&cfg, Some(&rt), OpKind::Recon, now));
+        let later =
+            now + chrono::Duration::seconds(cfg.limits.air_loss_cooldown_secs as i64);
+        assert!(!air_cooling(&cfg, Some(&rt), OpKind::Cap, later));
+        assert!(!air_cooling(&cfg, None, OpKind::Cap, now));
     }
 
     #[test]

@@ -82,9 +82,17 @@ and the rest of the hour depends on how hard you keep pushing.
 
 ## Helicopter patrols: helos answering helos
 
-CAP ignores helicopters on purpose. Fighters hunting a helo on the deck is
-lopsided and not much fun for anyone, and SAMs are meant to cover that job. The
-side effect was that a night where **only helo pilots showed up** got no AI
+CAP leaves helicopters on the deck alone on purpose. Fighters hunting a helo
+on the deck is lopsided and not much fun for anyone, and DCS AI sees a helo
+even sitting landed. Climb above
+{{cfg:campaign_events.cap_hunts_helos_above_ft|100}} ft over the ground,
+though, and the nearest AI fighter flight within
+{{cfg:campaign_events.cap_engage_radius_m|45000}} m (the reactive CAP, the
+HQ's CAP or a fighter cover action) is sent after you. Get back down below
+that and it is called off, so going low is your defence. A flight chases one
+helo for five minutes at most.
+
+That still left a night where **only helo pilots showed up**, low, with no AI
 response at all, on either side. Helicopter patrols fix that.
 
 They work like CAP (cold start included, so a patrol scrambled against you is
@@ -99,7 +107,7 @@ spooling up on its pad while you are still inbound) with rotary numbers:
 | Launches from | airbases only | **airbases, FARPs and FOBs** |
 | Launch delay | random, see above | at once |
 | Station altitude | {{cfg:campaign_events.cap_altitude_m|8000}} m above sea level | {{cfg:campaign_events.helo_altitude_agl_m|300}} m **above the terrain** |
-| Engages | anything in the air | helicopters and ground units |
+| Engages | jets; helicopters only above {{cfg:campaign_events.cap_hunts_helos_above_ft|100}} ft AGL | helicopters and ground units |
 | Push limit | {{cfg:campaign_events.cap_max_push_m|60000}} m | {{cfg:campaign_events.helo_max_push_m|30000}} m |
 | Engage radius | {{cfg:campaign_events.cap_engage_radius_m|45000}} m | {{cfg:campaign_events.helo_engage_radius_m|15000}} m |
 | Time up | {{cfg:campaign_events.cap_duration_secs|600}} s | {{cfg:campaign_events.helo_duration_secs|1800}} s |

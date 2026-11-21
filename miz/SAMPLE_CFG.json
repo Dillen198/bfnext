@@ -360,7 +360,7 @@
       "cost_scale": 1.0,
       "objective_funding_share": 0.5,
       "costs": { "cap": 250, "strike": 300, "sead": 300, "recon": 120, "artillery": 150, "missile_strike": 225, "ambush": 100, "convoy": 80, "helo_supply": 120, "helo_troops": 180, "reinforce": 250, "bomber": 350, "awacs": 200, "tanker": 150, "naval_strike": 250, "air_repair": 150 },
-      "limits": { "air": 3, "recon": 1, "logistics": 3, "troops": 2, "reinforce": 1, "bomber": 1, "awacs": 1, "tanker": 1, "fires_cooldown_secs": 600 },
+      "limits": { "air": 3, "recon": 1, "logistics": 3, "troops": 2, "reinforce": 1, "bomber": 1, "awacs": 1, "tanker": 1, "fires_cooldown_secs": 600, "air_loss_cooldown_secs": 900 },
       "packages": { "escort_bombers": "always", "escort_strikes": "threatened", "escort_flights": 1, "sead_with_strikes": true, "escort_engage_m": 60000 },
       "gap_fill": { "full_until_players": 2, "fade_out_players": 16, "min_factor": 0.25, "per_human_cut": 0.35 },
       "air": {
