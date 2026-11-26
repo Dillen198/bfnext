@@ -534,6 +534,93 @@ export interface DiscordCheck {
   guild_name: string | null
 }
 
+// ── AUTO-FIX (autofix.rs, deploy/autofix/autofix.py) ────────────────────────
+
+export type AutofixOutcome = 'fixed' | 'no_fix' | 'error' | 'rejected' | 'failed_checks'
+
+/** One issue the runner has worked on (its state.json `handled`). */
+export interface AutofixRun {
+  status?: string
+  outcome?: AutofixOutcome
+  branch?: string | null
+  when?: string
+  title?: string | null
+  summary?: string | null
+  tests?: string | null
+  cost_usd?: number | null
+  kind?: 'log' | 'bug'
+  boxes?: string[]
+  signature?: string
+  files?: number
+  lines?: number
+  /** What the players are told: the forum reply, the DM and the changelog line. */
+  player_note?: string | null
+  /** Why it waits for a person to publish (null: nothing waits). */
+  held?: string | null
+  published?: string | null
+  commit?: string
+}
+
+/** The runner's own settings (its config.json); the webhook comes back masked. */
+export interface AutofixRunnerSettings {
+  publish_mode?: 'auto' | 'approve'
+  discord_webhook?: string
+  max_budget_usd?: number
+  max_runs_per_day?: number
+  max_publishes_per_day?: number
+  auto_max_files?: number
+  auto_max_changed_lines?: number
+  interval_minutes?: number
+  min_count?: number
+  sources?: string[]
+  model?: string
+  publish_channel?: 'stable' | 'beta'
+  base_branch?: string
+  github_repo?: string
+  repo?: string
+}
+
+/** What manager.json keeps about it. */
+export interface AutofixManagerSettings {
+  enabled: boolean
+  repo: string | null
+  python: string | null
+  /** Server ids to watch; null = every one with a key. */
+  servers: string[] | null
+}
+
+export interface AutofixState {
+  data_dir: string
+  running: number | null
+  paused: boolean
+  settings: AutofixRunnerSettings
+  manager: AutofixManagerSettings
+  repo: string | null
+  repo_problem: string | null
+  claude: string | null
+  api_key: boolean
+  boxes: { id: string; name: string; watched: boolean; problem: string | null }[]
+  handled: Record<string, AutofixRun>
+  runs_today: number
+  publishes_today: number
+  last_pass: number | null
+  current: { id: string; kind: string; signature: string; phase: string; since: number } | null
+  queue: string[]
+  events: { t: number; text: string }[]
+}
+
+/** A /fe_bug report as a box's OPS API lists it (GET bugs). */
+export interface BugReport {
+  id: string
+  status: 'open' | 'working' | 'fixed' | 'no_fix' | 'closed'
+  trusted: boolean
+  server: string | null
+  text: string
+  reported: string
+  updated: string
+  note: string | null
+}
+
 // ── commands ─────────────────────────────────────────────────────────────────
 
 export const mgr = {
@@ -585,6 +672,13 @@ export const mgr = {
   newboxDiscordCheck: (token: string, guildId: string) =>
                       invoke<DiscordCheck>('newbox_discord_check', { token, guildId }),
   newboxDcsLogin:   (dcsDir: string, instance: string) => invoke<void>('newbox_dcs_login', { dcsDir, instance }),
+  autofixState:     () => invoke<AutofixState>('autofix_state'),
+  autofixSave:      (runner: AutofixRunnerSettings, manager: AutofixManagerSettings) =>
+                      invoke<AutofixState>('autofix_save', { runner, manager }),
+  autofixRun:       (on: boolean) => invoke<AutofixState>('autofix_run', { on }),
+  autofixCommand:   (action: 'pause' | 'resume' | 'queue' | 'approve', id: string | null = null) =>
+                      invoke<string>('autofix_command', { action, id }),
+  autofixLog:       (lines: number) => invoke<string[]>('autofix_log', { lines }),
 }
 
 // ── OPS API calls to one server box ─────────────────────────────────────────

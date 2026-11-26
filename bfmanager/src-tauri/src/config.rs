@@ -144,6 +144,9 @@ pub struct ManagerConfig {
     /// through this box's OPS API (remote.rs). Restore stays local.
     #[serde(default)]
     pub remote_backups: bool,
+    /// The auto-fix runner this PC runs (AUTO-FIX tab, autofix.rs).
+    #[serde(default)]
+    pub autofix: crate::autofix::AutofixSettings,
 }
 
 /// One server box this app controls from afar.

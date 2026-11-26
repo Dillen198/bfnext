@@ -34,6 +34,11 @@ from .cog_player import PlayerCommandsMixin
 from .cog_ops import OpsMixin
 from .cog_range import RangeMixin
 from .cog_news import NewsMixin
+from .cog_bugs import BugsMixin
+from .cog_community import CommunityMixin
+from .bugreports import BugReports
+from .community import CommunityState
+from .assistant import Assistant, AssistantConfig, Knowledge
 
 # The cog is one class, FowlEngine, assembled from mixins -- one module per
 # area, each moved out of this file unchanged:
@@ -43,6 +48,8 @@ from .cog_news import NewsMixin
 #   cog_ops.py         OpsMixin
 #   cog_range.py       RangeMixin
 #   cog_news.py        NewsMixin
+#   cog_bugs.py        BugsMixin (/fe_bug, for the auto-fix runner)
+#   cog_community.py   CommunityMixin (bug forum, changelog, the question-answering assistant)
 #   common.py          constants and bfdb helpers
 #   views.py           the Discord views (Commander Terminal, staged apply)
 # DCSServerBot loads this module (plugins.fowlengine.commands) and its setup();
@@ -52,7 +59,7 @@ from .cog_news import NewsMixin
 
 
 class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
-                 OpsMixin, RangeMixin, NewsMixin, Plugin):
+                 OpsMixin, RangeMixin, NewsMixin, BugsMixin, CommunityMixin, Plugin):
     """
     Fowl Engine plugin for DCSServerBot.
     Provides live status and objective events.
@@ -344,6 +351,12 @@ class FowlEngine(EventsMixin, CoalitionMixin, PlayerCommandsMixin,
         self.sync_update_tuning()
         self.issues = LogAnalyzer(self, self.log,
                                   os.path.join(self.bot.node.config_dir, 'fowlengine_issues.json'))
+        self.bugs = BugReports(self.log, os.path.join(self.bot.node.config_dir, 'fowlengine_bugs.json'),
+                               secrets=self.issues._secrets)
+        self.community = CommunityState(self.log, os.path.join(self.bot.node.config_dir, 'fowlengine_community.json'))
+        self.assistant = Assistant(self.log, AssistantConfig.from_yaml(cfg.get('assistant')),
+                                   Knowledge(self.log, cfg.get('api_url') or 'http://localhost:8880',
+                                             cfg.get('wiki_url') or ''))
         if self.procman.enabled:
             try:
                 await self.procman.start(self._bfdb_admin_password)

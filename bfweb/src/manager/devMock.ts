@@ -85,7 +85,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     '2026-09-26T04:15:00Z [INFO] plugin sync: 1 file(s) updated from bundle 0.1.0+5772770d025f',
     '2026-09-26T04:15:00Z [INFO] started DCSServerBot: cmd /c run.cmd in E:\\Github\\DCSServerBot (pid 9120)',
   ],
-  ops_request: (a) => opsRequest((a.server as string | null) ?? null, a.method as string, a.path as string, (a.body as string | null) ?? null),
+  ops_request: (a) => String(a.path).startsWith('bugs')
+    ? mockBugsRequest((a.server as string | null) ?? null, a.method as string, a.path as string, (a.body as string | null) ?? null)
+    : opsRequest((a.server as string | null) ?? null, a.method as string, a.path as string, (a.body as string | null) ?? null),
   save_server: (a) => {
     const s = a.server as { id: string | null; name: string; url: string; key: string | null }
     if (!/^(https?:\/\/)?(100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|[^/]+\.ts\.net|127\.)/.test(s.url) && s.id !== 'local') {
@@ -393,11 +395,89 @@ const newboxHandlers: Record<string, (args: Record<string, unknown>) => unknown>
   newbox_start: () => startMockJob('newbox'),
 }
 
+// ── AUTO-FIX ─────────────────────────────────────────────────────────────────
+const nowSecs = () => Date.now() / 1000
+const autofix = {
+  data_dir: 'C:\\Users\\Admin\\AppData\\Local\\fowl-autofix',
+  running: 18244 as number | null,
+  paused: false,
+  settings: {
+    publish_mode: 'auto', discord_webhook: '__SECRET__', max_budget_usd: 6, max_runs_per_day: 3,
+    max_publishes_per_day: 3, auto_max_files: 8, auto_max_changed_lines: 200, interval_minutes: 15,
+    sources: ['engine', 'bot', 'discord'], publish_channel: 'stable', base_branch: 'vector', repo: 'E:\\Github\\bfnext-vector',
+  } as Record<string, unknown>,
+  manager: { enabled: true, repo: 'E:\\Github\\bfnext-vector', python: null as string | null, servers: null as string[] | null },
+  repo: 'E:\\Github\\bfnext-vector',
+  repo_problem: null,
+  claude: 'C:\\Users\\Admin\\.local\\bin\\claude.exe',
+  api_key: false,
+  boxes: [
+    { id: 'campaign', name: 'Campaign', watched: true, problem: null },
+    { id: 'range', name: 'Range', watched: true, problem: null },
+  ],
+  handled: {
+    '485ae3130c5c': {
+      status: 'new', outcome: 'fixed', branch: 'autofix/485ae3130c5c', when: '2026-11-25T09:12:00+00:00',
+      title: 'Skip markup colour on a mark that is gone', summary: 'SetMarkupColor ran on a mark removed the same frame; it now checks the mark still exists first.',
+      tests: 'cargo test -p bflib: 214 passed', cost_usd: 1.84, kind: 'log', boxes: ['Campaign'], files: 2, lines: 31,
+      held: null, published: '2026-11-25T09:31:00+00:00',
+    },
+    'bug-1a2b3c4d': {
+      status: 'new', outcome: 'fixed', branch: 'autofix/bug-1a2b3c4d', when: '2026-11-25T11:02:00+00:00',
+      title: 'JTAC list survives a restart', summary: 'The JTAC registry was rebuilt before units respawned, so the menu was empty after a restart.',
+      player_note: 'The JTAC list in the F10 menu was coming up empty after a server restart. It fills in properly now.',
+      tests: 'cargo test -p bflib: 215 passed', cost_usd: 3.1, kind: 'bug', boxes: ['Campaign'], files: 11, lines: 342,
+      held: '11 files changed, over auto_max_files 8', published: null,
+    },
+    '9a0be11f02c3': {
+      status: 'new', outcome: 'no_fix', branch: null, when: '2026-11-24T22:40:00+00:00', title: null,
+      summary: 'The connection resets come from the box losing its network, not from the engine.', cost_usd: 0.42, kind: 'log', boxes: ['Range'],
+    },
+  } as Record<string, unknown>,
+  runs_today: 2,
+  publishes_today: 1,
+  last_pass: nowSecs() - 240,
+  current: { id: 'f00dfeed1234', kind: 'log', signature: 'ewr: track for unit 4410 has no group', phase: 'Claude is working on it', since: nowSecs() - 380 } as unknown,
+  queue: [] as string[],
+  events: [
+    { t: nowSecs() - 380, text: 'working on f00dfeed1234: ewr: track for unit 4410 has no group' },
+    { t: nowSecs() - 3600, text: 'bug-1a2b3c4d: fixed, held: 11 files changed, over auto_max_files 8 -- JTAC list survives a restart' },
+    { t: nowSecs() - 9000, text: '485ae3130c5c: published (published by itself (auto))' },
+  ],
+}
+const mockBugs = [
+  { id: 'bug-77aa0c01', status: 'open', trusted: false, server: null, text: 'When I sling load a crate near Kobuleti the crate vanishes and the menu says nothing is attached.',
+    reported: '2026-11-25T12:20:00+00:00', updated: '2026-11-25T12:20:00+00:00', note: null },
+]
+
+function mockBugsRequest(server: string | null, method: string, _path: string, body: string | null) {
+  if (method === 'POST') {
+    const d = JSON.parse(body ?? '{}') as { id: string; status: string }
+    const bug = mockBugs.find(x => x.id === d.id)
+    if (bug) bug.status = d.status
+    return { status: 200, content_type: 'application/json', body: JSON.stringify({ ok: true, message: `${d.id} marked ${d.status}` }) }
+  }
+  const bugs = server === 'range' ? [] : mockBugs.filter(x => x.status === 'open')
+  return { status: 200, content_type: 'application/json', body: JSON.stringify({ summary: {}, bugs }) }
+}
+
+const autofixHandlers: Record<string, (args: Record<string, unknown>) => unknown> = {
+  autofix_state: () => autofix,
+  autofix_run: (a) => { autofix.running = a.on ? 18244 : null; autofix.manager.enabled = !!a.on; if (!a.on) autofix.current = null; return autofix },
+  autofix_save: (a) => { Object.assign(autofix.settings, a.runner as object); Object.assign(autofix.manager, a.manager as object); return autofix },
+  autofix_command: (a) => {
+    if (a.action === 'pause' || a.action === 'resume') autofix.paused = a.action === 'pause'
+    if (a.action === 'queue') autofix.queue.push(String(a.id))
+    return `${a.action} ${a.id ?? ''} (mock)`
+  },
+  autofix_log: () => ['10:01:02 watching 2 box(es), publish_mode auto', '10:01:03 working on f00dfeed1234: ewr: track for unit 4410 has no group'],
+}
+
 export function installDevMock(): void {
   ;(window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
     invoke: async (cmd: string, args: Record<string, unknown>) => {
       await new Promise(r => setTimeout(r, 150))
-      const h = handlers[cmd] ?? botHandlers[cmd] ?? backupHandlers[cmd] ?? newboxHandlers[cmd]
+      const h = handlers[cmd] ?? botHandlers[cmd] ?? backupHandlers[cmd] ?? newboxHandlers[cmd] ?? autofixHandlers[cmd]
       return h ? h(args ?? {}) : 'done (mock)'
     },
     transformCallback: () => 0,

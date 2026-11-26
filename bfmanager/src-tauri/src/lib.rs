@@ -6,6 +6,7 @@
 //!   --console    the service loop in a terminal, for testing
 
 pub mod agent;
+pub mod autofix;
 pub mod autostart;
 pub mod backup;
 pub mod bot;
@@ -176,6 +177,8 @@ async fn save_config(config: ManagerConfig) -> CmdResult<()> {
         // the server list (and its keys) is only changed by save_server /
         // remove_server; what the UI sends back has no keys in it
         config.servers = saved.servers;
+        // and the AUTO-FIX settings only by autofix_save / autofix_run
+        config.autofix = saved.autofix;
         if !["stable", "beta"].contains(&config.channel.as_str()) {
             anyhow::bail!("channel must be stable or beta");
         }
@@ -423,6 +426,74 @@ async fn test_server(server: servers::ServerInput) -> CmdResult<servers::TestRes
         Ok(servers::test(&t))
     })
     .await
+}
+
+// ---- AUTO-FIX (autofix.rs) ----------------------------------------------------------------
+
+#[tauri::command]
+async fn autofix_state() -> CmdResult<serde_json::Value> {
+    blocking(|| Ok(autofix::state(&ManagerConfig::load()))).await
+}
+
+/// `runner`: changes to the runner's config.json; `manager`: repo, python and
+/// which servers to watch (manager.json).
+#[tauri::command]
+async fn autofix_save(
+    runner: serde_json::Map<String, serde_json::Value>,
+    manager: autofix::AutofixSettings,
+) -> CmdResult<serde_json::Value> {
+    blocking(move || {
+        let mut cfg = ManagerConfig::load();
+        let enabled = cfg.autofix.enabled;
+        cfg.autofix = autofix::AutofixSettings { enabled, ..manager };
+        let repo = autofix::repo_dir(&cfg.autofix)?;
+        autofix::save_runner_settings(&runner, Some(&repo))?;
+        cfg.save()?;
+        Ok(autofix::state(&cfg))
+    })
+    .await
+}
+
+/// Start (`on`) or stop the runner; the choice is kept and the runner starts
+/// with this app from then on.
+#[tauri::command]
+async fn autofix_run(on: bool) -> CmdResult<serde_json::Value> {
+    blocking(move || {
+        let mut cfg = ManagerConfig::load();
+        if on {
+            autofix::start(&cfg)?;
+        } else {
+            autofix::stop()?;
+        }
+        cfg.autofix.enabled = on;
+        cfg.save()?;
+        Ok(autofix::state(&cfg))
+    })
+    .await
+}
+
+/// pause | resume | queue <id> | approve <id>
+#[tauri::command]
+async fn autofix_command(action: String, id: Option<String>) -> CmdResult<String> {
+    blocking(move || {
+        let cfg = ManagerConfig::load();
+        let id = id.unwrap_or_default();
+        match action.as_str() {
+            "pause" | "resume" => autofix::quick(&cfg.autofix, &[action.as_str()]),
+            "queue" if !id.is_empty() => autofix::quick(&cfg.autofix, &["queue", id.as_str()]),
+            "approve" if !id.is_empty() => {
+                autofix::approve(&cfg, &id)?;
+                Ok(format!("publishing {id}: building and signing the release, which takes a while"))
+            }
+            other => anyhow::bail!("unknown auto-fix action {other}"),
+        }
+    })
+    .await
+}
+
+#[tauri::command]
+async fn autofix_log(lines: usize) -> CmdResult<Vec<String>> {
+    blocking(move || Ok(autofix::read_log(lines))).await
 }
 
 #[tauri::command]
@@ -744,6 +815,15 @@ pub fn run() {
                     eprintln!("start with Windows: {e:#}");
                 }
             });
+            // The auto-fix runner, if it was left on (AUTO-FIX tab)
+            std::thread::spawn(|| {
+                let cfg = ManagerConfig::load();
+                if cfg.autofix.enabled {
+                    if let Err(e) = autofix::start(&cfg) {
+                        eprintln!("auto-fix runner: {e:#}");
+                    }
+                }
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -797,6 +877,11 @@ pub fn run() {
             newbox_start,
             newbox_discord_check,
             newbox_dcs_login,
+            autofix_state,
+            autofix_save,
+            autofix_run,
+            autofix_command,
+            autofix_log,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Fowl Engine Manager");

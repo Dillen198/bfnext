@@ -4,6 +4,7 @@
 #
 #   .\deploy\publish-release.ps1                        # build HEAD, publish to GitHub
 #   .\deploy\publish-release.ps1 -Channel beta -Notes "try the new CAP"
+#   .\deploy\publish-release.ps1 -Changelog "- CTLD crates spawn at the FARP again"   # for the players
 #   .\deploy\publish-release.ps1 -Folder \\server\fowl-releases   # LAN folder source
 #   .\deploy\publish-release.ps1 -DryRun                # build + manifest only, publish nothing
 #   .\deploy\publish-release.ps1 -DryRun -NoSign -OutDir <d>   # build only, never touch the key
@@ -48,6 +49,9 @@ param(
     [string]$Tag,
     [ValidateSet("stable", "beta")][string]$Channel = "stable",
     [string]$Notes = "",
+    # For the players: posted to the community changelog channel when the
+    # release goes live on a box (cog_community.py). Optional.
+    [string]$Changelog = "",
     [string[]]$Files = @("bflib.dll", "bfdb.exe", "bftools.exe", "bfrange.dll", "netidx.exe"),
     # netidx.exe is the resolver procman runs. Not ours: netidx-tools from
     # crates.io, pinned to the netidx line the engine and bfdb link against
@@ -435,6 +439,7 @@ try {
         notes   = $Notes
         files   = $manifestFiles
     }
+    if ($Changelog) { $manifest["changelog"] = $Changelog }
     $manifestPath = Join-Path $OutDir "manifest.json"
     # UTF-8 without a BOM: a BOM makes some JSON readers choke. Depth: a
     # campaign pack's per-file listing sits five objects down.

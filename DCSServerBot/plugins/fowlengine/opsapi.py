@@ -68,6 +68,9 @@ while bfdb restarts -- which is exactly when an admin wants to watch.
   POST issues/status             {id | ids: [...], status: open|acknowledged|ignored|fixed, note?}
   POST issues/clear              {which: closed|all} | {ids: [...]}  -- delete
   GET  issues/report?format=md   the Markdown report (what Claude reads)
+  GET  bugs?closed=0|1           player bug reports from /fe_bug (no reporter identity)
+  POST bugs/status               {id, status: open|working|fixed|no_fix|closed, note?}
+                                 -- fixed / no_fix DM the reporter
   GET  archive                   the persistent log archive: sources x days
   GET  archive/read?source=&date=&lines=&grep=&format=json|text
   ...  console/*                 the bot console: DCSServerBot's own actions (servers, missions,
@@ -685,6 +688,8 @@ class OpsApi:
         r.add_api_route("/issues/status", self.issues_status, methods=["POST"])
         r.add_api_route("/issues/clear", self.issues_clear, methods=["POST"])
         r.add_api_route("/issues/report", self.issues_report, methods=["GET"])
+        r.add_api_route("/bugs", self.bugs_list, methods=["GET"])
+        r.add_api_route("/bugs/status", self.bugs_status, methods=["POST"])
         r.add_api_route("/archive", self.archive_index, methods=["GET"])
         r.add_api_route("/archive/read", self.archive_read, methods=["GET"])
         self.console.add_routes(r)
@@ -1557,6 +1562,31 @@ class OpsApi:
             return self._err(409, "the log analyzer is not loaded")
         text = an.report(include_closed=bool(closed), min_level=min_level, limit=max(1, min(int(limit), 200)))
         return PlainTextResponse(text, media_type="text/markdown; charset=utf-8")
+
+    # ---- player bug reports (/fe_bug) ---------------------------------------------------
+
+    async def bugs_list(self, closed: int = 0):
+        bugs = getattr(self.cog, "bugs", None)
+        if bugs is None:
+            return self._err(409, "bug reports are not loaded")
+        return {"summary": bugs.summary(), "bugs": bugs.listing(include_closed=bool(closed))}
+
+    async def bugs_status(self, request: Request):
+        bugs = getattr(self.cog, "bugs", None)
+        if bugs is None:
+            return self._err(409, "bug reports are not loaded")
+        body = await self._body(request)
+        bid, status, note = str(body.get("id") or ""), str(body.get("status") or ""), body.get("note")
+        try:
+            found = bugs.set_status(bid, status, note)
+        except ValueError as ex:
+            return self._err(400, str(ex))
+        if not found:
+            return self._err(404, "no such bug report")
+        tell = getattr(self.cog, "tell_bug_reporter", None)
+        if tell is not None:
+            asyncio.create_task(tell(bid, status, note))
+        return self._ok(f"{bid} marked {status}")
 
     async def archive_index(self):
         an = self._an()

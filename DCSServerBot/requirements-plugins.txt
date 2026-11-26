@@ -20,6 +20,10 @@ davey==0.1.7
 # plugins/smartmod -- Gemini scam check (keyword-only without it).
 google-genai==2.33.0
 
+# plugins/fowlengine/assistant.py -- the Discord assistant and changelog
+# writer (Claude API). Without it they stay off.
+anthropic==2.14.0
+
 # plugins/fowlengine/minisign.py -- faster Ed25519 for signed updates. Without
 # it the pure-Python verifier is used, which gives the same answer.
 cryptography==50.0.2

@@ -74,7 +74,7 @@ def test_loops_started_in_cog_load_exist_and_are_cancelled():
 EXPECTED_COMMANDS = {
     "fe_ban", "fe_briefing", "fe_card", "fe_commander", "fe_commanders", "fe_dashboard", "fe_gci",
     "fe_objective", "fe_repair_all", "fe_rotation", "fe_rotation_advance", "fe_rotation_vote", "fe_side_switch",
-    "fe_terminal", "fe_unban",
+    "fe_terminal", "fe_unban", "fe_bug", "fe_community_channels", "fe_community_setup",
 }
 EXPECTED_GROUPS = {
     "feops": {"bfdb_restart", "briefing_lock", "campaign_apply", "campaign_keep", "db_restore", "fresh_db",

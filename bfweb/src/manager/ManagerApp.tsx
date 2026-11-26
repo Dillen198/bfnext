@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState } from 'react'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import { Admin, Server, Activity, Config, Terminal, Download, Shield, FolderCog, Save, Rocket, Layers, Play } from '@icons'
+import { Admin, Server, Activity, Config, Terminal, Download, Shield, FolderCog, Save, Rocket, Layers, Play, RefreshCw } from '@icons'
 import { mgr, inTauri, type ServerView } from './tauri'
 import { Dot, Pill, Btn, Note, ServerTag } from './ui'
 import logo from './logo.png'
@@ -16,6 +16,7 @@ import RemoteBackup from './RemoteBackup'
 import NewBox from './NewBox'
 import Servers from './Servers'
 import Dcs from './Dcs'
+import AutoFix from './AutoFix'
 import { ErrorBoundary } from '@shared/web/ErrorBoundary'
 import { OpsTargetContext } from '../context/OpsTarget'
 
@@ -35,7 +36,7 @@ function opsClient(id: string): QueryClient {
   return c
 }
 
-type Tab = 'servers' | 'dcs' | 'ops' | 'bot' | 'logs' | 'backup' | 'botconfig' | 'overview' | 'setup' | 'newbox' | 'settings'
+type Tab = 'servers' | 'dcs' | 'ops' | 'bot' | 'logs' | 'backup' | 'botconfig' | 'overview' | 'autofix' | 'setup' | 'newbox' | 'settings'
 
 // The first group acts on the server picked at the top; the second is this PC.
 const SERVER_TABS: { key: Tab; label: string; icon: typeof Server }[] = [
@@ -49,6 +50,7 @@ const SERVER_TABS: { key: Tab; label: string; icon: typeof Server }[] = [
 ]
 const PC_TABS: { key: Tab; label: string; icon: typeof Server }[] = [
   { key: 'overview', label: 'OVERVIEW', icon: Activity },
+  { key: 'autofix', label: 'AUTO-FIX', icon: RefreshCw },
   { key: 'setup', label: 'SETUP', icon: Shield },
   { key: 'newbox', label: 'NEW BOX', icon: Rocket },
   { key: 'settings', label: 'SETTINGS', icon: Config },
@@ -240,6 +242,7 @@ export default function ManagerApp() {
           {current === 'setup' && state && <Setup state={state} onDone={() => setTab('overview')} onRestore={() => setTab('backup')}
                                                   onNewBox={() => setTab('newbox')} onController={() => setTab('servers')} />}
           {current === 'newbox' && <NewBox />}
+          {current === 'autofix' && <AutoFix />}
           {current === 'settings' && state && <Settings state={state} />}
         </div>
         <footer style={{ padding: '5px 14px', borderTop: '1px solid var(--border)', fontSize: '0.58rem', color: 'var(--text-dim)',

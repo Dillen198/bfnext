@@ -44,6 +44,7 @@ which also writes manifest.json.sig; deploy/auto-update.md has the key setup):
     "built": "2026-09-26T14:12:00Z",
     "channel": "stable",               # stable | beta
     "notes": "free text",
+    "changelog": "what changed, for the players (optional)",
     "files": {
       "bflib.dll": {"sha256": "...", "size": 123, "git": "a1b2c3d4e5f6"},
       "bfdb.exe":  {"sha256": "...", "size": 456, "git": "a1b2c3d4e5f6"},
@@ -110,6 +111,10 @@ __all__ = [
 # Sidecar `source:` values. upload.py writes none (a human uploaded it).
 AUTOUPDATE_SOURCE = "autoupdate"
 ROLLBACK_SOURCE = "rollback"
+
+# History events that mean part of a release is now running on this box: the
+# first of them for a tag posts that release's changelog (cog_community.py).
+LIVE_EVENTS = ("applied", "probation_start", "bot_plugin", "campaign_applied")
 
 # Every file a release may carry, and what it is.
 ENGINE_FILES = ("bflib.dll", "bfrange.dll", "bfdb.exe", "bftools.exe", "netidx.exe")
@@ -349,6 +354,8 @@ def parse_manifest(doc: Any) -> dict:
         "commit_time": (str(doc.get("commit_time")) if doc.get("commit_time") else None),
         "channel": ch if ch in ("stable", "beta") else "stable",
         "notes": str(doc.get("notes") or "")[:4000],
+        # for the players: posted to the changelog channel when it goes live
+        "changelog": str(doc.get("changelog") or "")[:2000],
         "files": clean_files,
     }
 
@@ -707,6 +714,10 @@ class Updater:
         h.append({"ts": _utc_now(), "event": event, "detail": plain(detail), **extra})
         self.state["history"] = h[-HISTORY_KEEP:]
         self._save_state()
+        if event in LIVE_EVENTS and extra.get("tag") and not str(detail).startswith("skipped"):
+            went_live = getattr(self.cog, "release_went_live", None)
+            if went_live is not None:
+                went_live(extra["tag"])
 
     @property
     def bad(self) -> set:

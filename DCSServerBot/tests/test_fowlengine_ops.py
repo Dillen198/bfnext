@@ -58,11 +58,12 @@ if PKG.exists():
 PKG.mkdir()
 (PKG / "__init__.py").write_text("")
 for name in ("autoupdate.py", "opsapi.py", "console.py", "botconfig.py", "loganalyzer.py", "procman.py", "upload.py", "rangefeed.py",
-             "minisign.py", "icons.py", "heartbeat.py"):
+             "minisign.py", "icons.py", "heartbeat.py", "bugreports.py"):
     shutil.copy(PLUGIN / name, PKG / name)
 sys.path.insert(0, str(HERE))
 
 from fe import autoupdate as au  # noqa: E402
+from fe import bugreports as br  # noqa: E402
 from fe import heartbeat as hb  # noqa: E402
 from fe import loganalyzer as la  # noqa: E402
 from fe import minisign as ms  # noqa: E402
@@ -319,6 +320,21 @@ def test_parse_manifest_rejects_bad():
         au.parse_manifest({"files": {}})
     m = au.parse_manifest({"tag": "t", "files": {"bflib.dll": {"sha256": "a" * 64}, "weird.bin": {}}})
     assert list(m["files"]) == ["bflib.dll"]
+
+
+def test_manifest_keeps_the_players_changelog_and_a_release_going_live_is_reported(world):
+    m = au.parse_manifest({"tag": "t", "changelog": "JTAC list shows again", "files": {"bflib.dll": {"sha256": "a" * 64}}})
+    assert m["changelog"] == "JTAC list shows again"
+    assert au.parse_manifest({"tag": "t", "files": {"bflib.dll": {"sha256": "a" * 64}}})["changelog"] == ""
+    seen = []
+    world.cog.release_went_live = seen.append
+    upd = au.Updater(world.cog, log, str(world.tmp / "config" / "upd.json"))
+    upd._history("found", "release engine-a", tag="engine-a")          # found is not live
+    upd._history("bot_plugin", "skipped: older", tag="engine-b")      # nor a skipped plugin
+    upd._history("applied", "bfdb.exe", tag="engine-c")
+    upd._history("probation_start", "bflib.dll on vs1", tag="engine-d")
+    upd._history("applied", "bftools.exe None", tag=None)              # a hand upload has no release
+    assert seen == ["engine-c", "engine-d"]
 
 
 def test_pick_github_release():
@@ -2710,3 +2726,74 @@ def test_log_read_token_reaches_bfdb_through_its_environment(world, monkeypatch)
     assert pm._bfdb_env()["BFDB_LOG_READ_TOKEN"] == "tok-123"
     assert "tok-123" not in " ".join(pm._build_args("pw", False))
     assert oa.is_secret_key("log_read_token")
+
+
+# ---- player bug reports (/fe_bug -> OPS bugs -> the auto-fix runner) ----------------
+
+
+def test_bug_reports_are_scrubbed_rate_limited_and_anonymous(tmp_path):
+    bugs = br.BugReports(log, str(tmp_path / "bugs.json"), secrets=lambda: ["hunter2-secret"])
+    with pytest.raises(ValueError):
+        bugs.add(user_id="1", text="too short", trusted=False)
+    b = bugs.add(user_id="1", text="F10 menu freezes at 10.0.0.12 when I pick JTAC hunter2-secret", trusted=False,
+                 now=1000)
+    assert b["id"].startswith("bug-") and b["status"] == "open" and b["trusted"] is False
+    assert "10.0.0.12" not in b["text"] and "hunter2-secret" not in b["text"]
+    assert not any(k.startswith("_") for k in b)          # no reporter identity leaves the box
+    for i in range(2):
+        bugs.add(user_id="1", text=f"another long enough report {i}", trusted=False, now=1001 + i)
+    with pytest.raises(ValueError, match="last hour"):
+        bugs.add(user_id="1", text="a fourth report inside the hour", trusted=False, now=1100)
+    bugs.add(user_id="1", text="a fourth report after the hour", trusted=False, now=5000)
+    assert bugs.reporter(b["id"]) == "1"
+    assert bugs.set_status(b["id"], "fixed", "shipped") and not bugs.set_status("bug-nope", "fixed")
+    with pytest.raises(ValueError):
+        bugs.set_status(b["id"], "bogus")
+    assert b["id"] not in [x["id"] for x in bugs.listing()]
+    assert b["id"] in [x["id"] for x in bugs.listing(include_closed=True)]
+    again = br.BugReports(log, str(tmp_path / "bugs.json"))  # survives a bot restart
+    assert again.summary() == {"open": 3, "trusted_open": 0, "total": 4}
+
+
+def test_a_bug_report_tracks_its_forum_post_and_the_reporters_follow_ups(tmp_path):
+    bugs = br.BugReports(log, str(tmp_path / "bugs.json"), secrets=lambda: ["hunter2-secret"])
+    b = bugs.add(user_id="7", text="CTLD crates vanish at the FARP after a restart", trusted=False, now=1000)
+    bugs.set_thread(b["id"], 555)
+    assert bugs.thread(b["id"]) == 555 and bugs.by_thread(555)["id"] == b["id"] and bugs.by_thread(1) is None
+    assert "_thread" not in bugs.by_thread(555)                         # stays on the box
+    assert not bugs.add_detail(b["id"], "8", "someone else chiming in")  # only the reporter adds to it
+    assert bugs.add_detail(b["id"], "7", "on vs1 in the Hornet, ~1900Z, key hunter2-secret")
+    text = bugs.by_thread(555)["text"]
+    assert "More from the reporter: on vs1 in the Hornet" in text and "hunter2-secret" not in text
+    bugs.set_status(b["id"], "fixed")
+    assert not bugs.add_detail(b["id"], "7", "more after it was closed")
+    assert br.BugReports(log, str(tmp_path / "bugs.json")).thread(b["id"]) == 555
+
+
+def test_ops_api_serves_bug_reports(world):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    world.cog.bugs = br.BugReports(log, str(world.tmp / "config" / "bugs.json"))
+    told = []
+
+    async def tell(bid, status, note):
+        told.append((bid, status, note))
+    world.cog.tell_bug_reporter = tell
+    bug = world.cog.bugs.add(user_id="42", text="the carrier menu says no carrier near me", trusted=True)
+    api = oa.OpsApi(world.cog)
+    app = FastAPI()
+    api.mount(app)
+    c = TestClient(app)
+    base = "/stats/fowlengine/ops"
+    H = {"X-API-Key": "KEY123"}
+    assert c.get(f"{base}/bugs").status_code == 403
+    got = c.get(f"{base}/bugs", headers=H).json()
+    assert got["summary"]["trusted_open"] == 1 and got["bugs"][0]["id"] == bug["id"]
+    assert "_user" not in got["bugs"][0]
+    assert c.post(f"{base}/bugs/status", headers=H, json={"id": "bug-nope", "status": "fixed"}).status_code == 404
+    assert c.post(f"{base}/bugs/status", headers=H, json={"id": bug["id"], "status": "bogus"}).status_code == 400
+    r = c.post(f"{base}/bugs/status", headers=H, json={"id": bug["id"], "status": "fixed", "note": "in engine-x"})
+    assert r.status_code == 200, r.text
+    assert c.get(f"{base}/bugs", headers=H).json()["bugs"] == []
+    assert told == [(bug["id"], "fixed", "in engine-x")]

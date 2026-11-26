@@ -641,6 +641,67 @@ DEFAULT:
     campaign_backups_keep: 5       # per server, in <instance home>\_fowl_campaign_backups
 
   # ---------------------------------------------
+  # Player bug reports: /fe_bug  (bugreports.py, cog_bugs.py)
+  # ---------------------------------------------
+  # Players with the DCS role report a bug in Discord; it is kept on this box
+  # (scrubbed of IPs, UCIDs and secrets, reporter identity never leaves it) and
+  # the auto-fix runner (deploy/autofix, Fowl Engine Manager → AUTO-FIX) reads it
+  # over the OPS API. A report from a trusted reporter goes straight to Claude
+  # and, in the runner's "auto" mode, can be released with nobody looking;
+  # anyone else's waits in the Manager until an admin sends it. The reporter
+  # gets a DM when it is fixed or turns out not to be an engine bug.
+  bugs:
+    enabled: true
+    trusted_roles: []              # Discord role names; DCS Admin always counts
+
+  # ---------------------------------------------
+  # Community channels  (cog_community.py, community.py)
+  # ---------------------------------------------
+  # bug_forum          a FORUM channel. Every report (/fe_bug, or a post a
+  #                    player makes there) is a post, tagged Open / Being fixed
+  #                    / Fixed / Not an engine bug / Closed as the auto-fixer
+  #                    reports back, with a short reply in the post each time.
+  #                    The reporter's replies are added to their report.
+  # changelog_channel  a text channel. When a release goes live on this box,
+  #                    its changelog is posted once (the auto-fixer's note for
+  #                    the players, or the release notes rewritten by the
+  #                    assistant below). With two boxes on one Discord, set it
+  #                    on ONE box only, or each posts it.
+  # questions          channels (text or forum) where the assistant answers.
+  # Instead of IDs here, an admin can pick them in Discord with
+  # /fe_community_channels, or have the bot make them with
+  # /fe_community_setup; a pick made in Discord wins over this block.
+  # The bot needs: Send Messages, Send Messages in Threads, Create Posts,
+  # Manage Threads (to tag posts) and, for the setup command and the tags,
+  # Manage Channels. Answering in channels needs the Message Content intent
+  # (Developer Portal -> Bot), which DCSServerBot already asks for.
+  community:
+    bug_forum: null
+    changelog_channel: null
+    questions: []
+
+  # ---------------------------------------------
+  # Assistant: answers players' questions  (assistant.py)
+  # ---------------------------------------------
+  # Answers in the `questions` channels above and wherever it is @mentioned,
+  # in a pilot's voice, from the server's wiki (bfdb /api/wiki/pages) and live
+  # settings (/api/wiki/facts). It says it's a bot if asked. In a questions
+  # channel it stays quiet when players are just talking. It also writes the
+  # changelog for releases that come without one.
+  # Needs `pip install -r requirements-plugins.txt` (the anthropic package) and
+  # a Claude API key (console.anthropic.com), here or as ANTHROPIC_API_KEY in
+  # the bot's environment. Each answer is one Claude call; the limits below
+  # cap the bill.
+  assistant:
+    enabled: false
+    api_key: ""
+    model: claude-opus-5-5
+    effort: low                    # low | medium | high: more thinking, slower and dearer
+    answer_mentions: true          # answer an @mention (or a reply to it) in any channel
+    per_user_per_hour: 8
+    per_day: 400
+
+  # ---------------------------------------------
   # Log analyzer + persistent log archive  (loganalyzer.py)
   # ---------------------------------------------
   # Reads every log (engine bfnext.txt / bfrange.txt, DCS dcs.log script
