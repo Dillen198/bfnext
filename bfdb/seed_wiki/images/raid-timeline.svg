@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 440" width="800" height="440" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect x="0" y="0" width="800" height="440" fill="#0d1009"/>
+  <text x="400" y="32" fill="#cdd4be" font-size="16" font-weight="bold" text-anchor="middle">How a drone and missile raid plays out</text>
+  <text x="400" y="54" fill="#7d8a6a" font-size="13" text-anchor="middle">Numbers are engine defaults; each server can change them.</text>
+
+  <!-- Stage boxes -->
+  <g font-size="13" fill="#cdd4be">
+    <rect x="20" y="74" width="140" height="156" rx="6" fill="#141910" stroke="#262e1d" stroke-width="1.5"/>
+    <text x="90" y="98" fill="#8ec83f" font-size="14" font-weight="bold" text-anchor="middle">1 LAUNCH</text>
+    <text x="30" y="124">Target: the best of</text>
+    <text x="30" y="142">factory, hub, airbase</text>
+    <text x="30" y="160">or naval base</text>
+    <text x="30" y="184">Drones take off</text>
+    <text x="30" y="202">from a rear base;</text>
+    <text x="30" y="220">launchers fire</text>
+
+    <rect x="175" y="74" width="140" height="156" rx="6" fill="#141910" stroke="#262e1d" stroke-width="1.5"/>
+    <text x="245" y="98" fill="#8ec83f" font-size="14" font-weight="bold" text-anchor="middle">2 IN FLIGHT</text>
+    <text x="185" y="124">About 2 min to get</text>
+    <text x="185" y="142">airborne, then low:</text>
+    <text x="185" y="160">400 m above ground</text>
+    <text x="185" y="184">SAMs, AAA and you</text>
+    <text x="185" y="202">can shoot them</text>
+    <text x="185" y="220">down</text>
+
+    <rect x="330" y="74" width="140" height="156" rx="6" fill="#141910" stroke="#262e1d" stroke-width="1.5"/>
+    <text x="400" y="98" fill="#8ec83f" font-size="14" font-weight="bold" text-anchor="middle">3 MISSILES LAND</text>
+    <text x="340" y="124">A minute or more</text>
+    <text x="340" y="142">after launch</text>
+    <text x="340" y="166">35% intercept per</text>
+    <text x="340" y="184">defence site within</text>
+    <text x="340" y="202">40 km (max 85%);</text>
+    <text x="340" y="220">2 SAMs spent each</text>
+
+    <rect x="485" y="74" width="140" height="156" rx="6" fill="#141910" stroke="#262e1d" stroke-width="1.5"/>
+    <text x="555" y="98" fill="#8ec83f" font-size="14" font-weight="bold" text-anchor="middle">4 DRONES ARRIVE</text>
+    <text x="495" y="124">Within 1.2 km of</text>
+    <text x="495" y="142">the target: it</text>
+    <text x="495" y="160">detonates</text>
+    <text x="495" y="184">Shot down or</text>
+    <text x="495" y="202">overdue: no effect</text>
+
+    <rect x="640" y="74" width="140" height="156" rx="6" fill="#141910" stroke="#262e1d" stroke-width="1.5"/>
+    <text x="710" y="98" fill="#8ec83f" font-size="14" font-weight="bold" text-anchor="middle">5 DAMAGE</text>
+    <text x="650" y="124">Every hit:</text>
+    <text x="650" y="142">stores cut 5%</text>
+    <text x="650" y="160">factory halted</text>
+    <text x="650" y="178">for 30 min</text>
+    <text x="650" y="202">Report when the</text>
+    <text x="650" y="220">last weapon is in</text>
+  </g>
+
+  <!-- Arrows between boxes -->
+  <g stroke="#6aab1f" stroke-width="2" fill="#6aab1f">
+    <line x1="160" y1="152" x2="171" y2="152"/><polygon points="175,152 168,147 168,157"/>
+    <line x1="315" y1="152" x2="326" y2="152"/><polygon points="330,152 323,147 323,157"/>
+    <line x1="470" y1="152" x2="481" y2="152"/><polygon points="485,152 478,147 478,157"/>
+    <line x1="625" y1="152" x2="636" y2="152"/><polygon points="640,152 633,147 633,157"/>
+  </g>
+
+  <!-- Time axis -->
+  <line x1="20" y1="250" x2="770" y2="250" stroke="#262e1d" stroke-width="2"/>
+  <polygon points="780,250 770,245 770,255" fill="#262e1d"/>
+  <text x="776" y="270" fill="#7d8a6a" font-size="13" text-anchor="end">time</text>
+
+  <!-- Message lanes -->
+  <g font-size="13">
+    <rect x="20" y="284" width="320" height="62" rx="6" fill="#141910" stroke="#6aab1f" stroke-width="1.2"/>
+    <text x="30" y="304" fill="#8ec83f" font-weight="bold">Raiding side reads</text>
+    <text x="30" y="322" fill="#cdd4be">Strike launched on &lt;target&gt;: 4 one-way</text>
+    <text x="30" y="338" fill="#cdd4be">attack drones and 4 ballistic missiles.</text>
+
+    <rect x="460" y="284" width="320" height="62" rx="6" fill="#141910" stroke="#6aab1f" stroke-width="1.2"/>
+    <text x="470" y="304" fill="#8ec83f" font-weight="bold">Raiding side reads</text>
+    <text x="470" y="322" fill="#cdd4be">Strike on &lt;target&gt;: 2/4 drones got</text>
+    <text x="470" y="338" fill="#cdd4be">through, 1/4 missiles hit. stores cut 15%.</text>
+
+    <rect x="20" y="360" width="320" height="62" rx="6" fill="#141910" stroke="#c9a227" stroke-width="1.2"/>
+    <text x="30" y="380" fill="#c9a227" font-weight="bold">Target side reads</text>
+    <text x="30" y="398" fill="#cdd4be">AIR RAID WARNING: ... inbound toward &lt;target&gt;.</text>
+    <text x="30" y="414" fill="#cdd4be">Drones expected in about 38 minutes.</text>
+
+    <rect x="460" y="360" width="320" height="62" rx="6" fill="#141910" stroke="#c9a227" stroke-width="1.2"/>
+    <text x="470" y="380" fill="#c9a227" font-weight="bold">Target side reads</text>
+    <text x="470" y="398" fill="#cdd4be">Raid on &lt;target&gt; is over: 2/4 drones got</text>
+    <text x="470" y="414" fill="#cdd4be">through, 1/4 missiles hit. stores cut 15%.</text>
+  </g>
+  <text x="400" y="322" fill="#7d8a6a" font-size="13" text-anchor="middle">your window</text>
+  <text x="400" y="340" fill="#7d8a6a" font-size="13" text-anchor="middle">to intercept</text>
+</svg>

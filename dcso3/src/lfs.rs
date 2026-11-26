@@ -20,8 +20,8 @@ use std::ops::Deref;
 
 wrapped_table!(Lfs, None);
 
-impl<'lua> Lfs<'lua> {
-    pub fn singleton<L: LuaEnv<'lua>>(lua: L) -> Result<Self> {
+impl Lfs {
+    pub fn singleton<'lua, L: LuaEnv<'lua>>(lua: L) -> Result<Self> {
         Ok(lua.inner().globals().raw_get("lfs")?)
     }
 

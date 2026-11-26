@@ -1,0 +1,34 @@
+{
+  "Aircraft": "A10",
+  "Upload": {
+    "Waypoints": false,
+    "Radios": false
+  },
+  "Waypoints": {
+    "Waypoints": []
+  },
+  "WaypointsCapture": {
+    "NavPointsMode": 0,
+    "TgtPointsMode": 0,
+    "NavPointsRangeFrom": 1,
+    "TgtPointsRangeFrom": 1
+  },
+  "Radios": {
+    "Radio1": {
+      "Presets": null,
+      "SelectedFrequency": null,
+      "SelectedPreset": null,
+      "EnableGuard": false,
+      "Mode": 0
+    },
+    "Radio2": {
+      "Presets": null,
+      "SelectedFrequency": null,
+      "SelectedPreset": null,
+      "EnableGuard": false,
+      "Mode": 0
+    }
+  },
+  "Version": 2,
+  "KneeboardNotes": null
+}

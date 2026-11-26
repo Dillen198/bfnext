@@ -19,9 +19,13 @@ use dcso3::{
     coalition::Side,
     env::miz::{GroupId, UnitId},
     net::{Net, PlayerId},
-    trigger::{Action, ArrowSpec, CircleSpec, MarkId, QuadSpec, RectSpec, SideFilter, TextSpec},
+    trigger::{
+        Action, ArrowSpec, CircleSpec, LineSpec, MarkId, PolylineSpec, QuadSpec,
+        RectSpec, SideFilter, TextSpec,
+    },
 };
-use log::error;
+use fxhash::FxHashMap;
+use log::{error, warn};
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Copy)]
@@ -33,7 +37,6 @@ pub enum PanelDest {
 }
 
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub enum MarkDest {
     All,
     Side(Side),
@@ -43,21 +46,11 @@ pub enum MarkDest {
 #[derive(Debug, Clone)]
 pub enum MsgTyp {
     Chat(Option<PlayerId>),
-    Panel {
-        to: PanelDest,
-        display_time: i64,
-        clear_view: bool,
-    },
-    Mark {
-        id: MarkId,
-        to: MarkDest,
-        position: LuaVec3,
-        read_only: bool,
-    },
+    Panel { to: PanelDest, display_time: i64, clear_view: bool },
+    Mark { id: MarkId, to: MarkDest, position: LuaVec3, read_only: bool },
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum Msg {
     Message {
         typ: MsgTyp,
@@ -92,6 +85,19 @@ pub enum Msg {
         spec: ArrowSpec,
         message: Option<String>,
     },
+    Line {
+        id: MarkId,
+        to: SideFilter,
+        spec: LineSpec,
+        message: Option<String>,
+    },
+    /// A connected multi-point shape drawn as ONE mark (markupToAll shapeId 7).
+    Freeform {
+        id: MarkId,
+        to: SideFilter,
+        spec: PolylineSpec,
+        message: Option<String>,
+    },
     SetMarkupColor {
         id: MarkId,
         color: Color,
@@ -120,25 +126,315 @@ pub enum Cmd {
     DeleteMark(MarkId),
 }
 
-#[derive(Debug, Clone)]
-pub struct MsgQ(Vec<VecDeque<Cmd>>);
+impl Cmd {
+    /// The mark this command draws or mutates. `DeleteMark` is deliberately
+    /// not included: a delete is never itself cancelled by a later delete.
+    fn mark_id(&self) -> Option<MarkId> {
+        match self {
+            Cmd::DeleteMark(_) => None,
+            Cmd::Send(msg) => match msg {
+                Msg::Message { typ: MsgTyp::Mark { id, .. }, .. } => Some(*id),
+                Msg::Message { .. } => None,
+                Msg::Circle { id, .. }
+                | Msg::Rect { id, .. }
+                | Msg::Quad { id, .. }
+                | Msg::Text { id, .. }
+                | Msg::Arrow { id, .. }
+                | Msg::Line { id, .. }
+                | Msg::Freeform { id, .. }
+                | Msg::SetMarkupColor { id, .. }
+                | Msg::SetMarkupFillColor { id, .. }
+                | Msg::SetMarkupText { id, .. }
+                | Msg::SetMarkupStart { id, .. }
+                | Msg::SetMarkupEnd { id, .. } => Some(*id),
+            },
+        }
+    }
 
-impl Default for MsgQ {
-    fn default() -> Self {
-        MsgQ(vec![
-            VecDeque::default(),
-            VecDeque::default(),
-            VecDeque::default(),
-        ])
+    /// Does this command create the mark (as opposed to mutating one)?
+    fn is_create(&self) -> bool {
+        match self {
+            Cmd::Send(Msg::Message { typ: MsgTyp::Mark { .. }, .. })
+            | Cmd::Send(Msg::Circle { .. })
+            | Cmd::Send(Msg::Rect { .. })
+            | Cmd::Send(Msg::Quad { .. })
+            | Cmd::Send(Msg::Text { .. })
+            | Cmd::Send(Msg::Arrow { .. })
+            | Cmd::Send(Msg::Line { .. })
+            | Cmd::Send(Msg::Freeform { .. }) => true,
+            Cmd::Send(_) | Cmd::DeleteMark(_) => false,
+        }
+    }
+
+    fn mut_kind(&self) -> Option<MutKind> {
+        match self {
+            Cmd::Send(Msg::SetMarkupColor { .. }) => Some(MutKind::Color),
+            Cmd::Send(Msg::SetMarkupFillColor { .. }) => Some(MutKind::FillColor),
+            Cmd::Send(Msg::SetMarkupText { .. }) => Some(MutKind::Text),
+            Cmd::Send(Msg::SetMarkupStart { .. }) => Some(MutKind::Start),
+            Cmd::Send(Msg::SetMarkupEnd { .. }) => Some(MutKind::End),
+            _ => None,
+        }
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum MutKind {
+    Color,
+    FillColor,
+    Text,
+    Start,
+    End,
+}
+
+#[derive(Debug, Clone)]
+struct Queued {
+    /// global issue order, across all three queues
+    seq: u64,
+    cmd: Cmd,
+}
+
+/// The F10 command queue: three priorities (chat/panels, marks, markup).
+///
+/// Deleting a mark cancels everything still queued for it, and a markup
+/// mutation replaces the one still queued for the same mark. Both used to be
+/// done by scanning the queues -- `retain` over all three for every delete,
+/// a linear search of the markup queue for every mutation -- which went
+/// quadratic exactly when it mattered, with thousands of commands backed up.
+/// Now a delete leaves a tombstone (entries for that mark issued before it are
+/// skipped when they reach the front) and pending mutations are found through
+/// an index, so both are O(1).
+/// Who a text message was addressed to, kept for the feed below.
+#[derive(Debug, Clone, Copy)]
+pub enum FeedTo {
+    All,
+    Side(Side),
+    Group(GroupId),
+    Unit(UnitId),
+    /// A chat line; `None` is chat to everyone.
+    Chat(Option<PlayerId>),
+}
+
+/// One text message as it was queued for DCS.
+#[derive(Debug, Clone)]
+pub struct FeedMsg {
+    pub seq: u64,
+    pub at: chrono::DateTime<chrono::Utc>,
+    pub to: FeedTo,
+    pub text: String,
+}
+
+/// The most chat/panel messages kept waiting for DCS. Text is the one kind
+/// of command that is safe to lose: dropping a mark create or delete would
+/// leave the F10 map wrong, and markup mutations already collapse to one per
+/// mark. When a backlog passes this, the oldest text goes first -- by then it
+/// is minutes stale. (The cockpit feed keeps every message regardless.)
+const MAX_QUEUED_TEXT: usize = 1000;
+
+/// Mark and markup commands backed up past this are worth a warning: the F10
+/// map is that far behind. They are never dropped.
+const MARK_BACKLOG_WARN: usize = 20_000;
+
+/// How many recent messages the feed keeps. Enough for a minute or two of a
+/// busy server -- the cockpit panel polls every few seconds.
+const FEED_LEN: usize = 400;
+
+#[derive(Debug, Clone, Default)]
+pub struct MsgQ {
+    /// Every panel and chat message sent, newest last, with who it was for.
+    /// F10 handlers answer the player in these messages ("3 more crates
+    /// needed", "you must land to spawn crates"), and the in-DCS cockpit panel
+    /// has no other way to see them -- it reads them from here (see
+    /// cockpit::messages). Never sent anywhere by itself.
+    feed: VecDeque<FeedMsg>,
+    feed_seq: u64,
+    q: [VecDeque<Queued>; 3],
+    /// entries ever pushed to / popped from each queue; an entry's position
+    /// is its per-queue sequence number minus `popped`
+    pushed: [u64; 3],
+    popped: [u64; 3],
+    seq: u64,
+    /// queued, not cancelled, commands per mark
+    live: FxHashMap<MarkId, u32>,
+    /// cancelled commands still sitting in the queues, per mark
+    dead_by_id: FxHashMap<MarkId, u32>,
+    /// total cancelled commands still sitting in the queues
+    dead: usize,
+    /// mark -> `seq` of its latest delete. Queued commands for the mark with
+    /// a lower `seq` are cancelled.
+    deleted: FxHashMap<MarkId, u64>,
+    /// creates not yet sent to DCS: mark -> `seq`
+    pending_create: FxHashMap<MarkId, u64>,
+    /// mutations not yet sent: (mark, kind) -> (per-queue sequence, `seq`)
+    pending_mut: FxHashMap<(MarkId, MutKind), (u64, u64)>,
+    /// text messages dropped since the last warning (`MAX_QUEUED_TEXT`)
+    dropped_text: u64,
+    /// when the last overflow warning was logged
+    overflow_warned: Option<chrono::DateTime<chrono::Utc>>,
+}
+
 impl MsgQ {
+    fn is_dead(&self, e: &Queued) -> bool {
+        match e.cmd.mark_id() {
+            None => false,
+            Some(id) => self.deleted.get(&id).map(|d| e.seq < *d).unwrap_or(false),
+        }
+    }
+
+    fn push(&mut self, p: usize, cmd: Cmd) {
+        let seq = self.seq;
+        self.seq += 1;
+        let qseq = self.pushed[p];
+        self.pushed[p] += 1;
+        if let Some(id) = cmd.mark_id() {
+            *self.live.entry(id).or_default() += 1;
+            if cmd.is_create() {
+                self.pending_create.insert(id, seq);
+            }
+            if let Some(kind) = cmd.mut_kind() {
+                self.pending_mut.insert((id, kind), (qseq, seq));
+            }
+        }
+        self.q[p].push_back(Queued { seq, cmd });
+        if p == 0
+            && self.q[0].len() > MAX_QUEUED_TEXT
+            && self.q[0].front().is_some_and(|e| e.cmd.mark_id().is_none())
+        {
+            // text has no mark id, so nothing indexes it: dropping it only
+            // has to keep the queue's pop counter in step
+            self.q[0].pop_front();
+            self.popped[0] += 1;
+            self.dropped_text += 1;
+            self.warn_overflow();
+        } else if p != 0 && self.q[1].len() + self.q[2].len() > MARK_BACKLOG_WARN {
+            self.warn_overflow();
+        }
+    }
+
+    /// At most once a minute, say the queue is overflowing and by how much.
+    fn warn_overflow(&mut self) {
+        let now = chrono::Utc::now();
+        if self.overflow_warned.is_some_and(|t| now - t < chrono::Duration::seconds(60)) {
+            return;
+        }
+        self.overflow_warned = Some(now);
+        let dropped = std::mem::take(&mut self.dropped_text);
+        let (depth, by_kind) = self.depth_report();
+        warn!(
+            "[MSGQ] backlog: {dropped} stale chat/panel messages dropped since the last              warning (cap {MAX_QUEUED_TEXT}); queued text={} marks={} markup={} ({by_kind})",
+            depth[0], depth[1], depth[2]
+        );
+    }
+
+    /// Pop the next command of priority `p` that hasn't been cancelled.
+    fn pop(&mut self, p: usize) -> Option<Cmd> {
+        loop {
+            let e = self.q[p].pop_front()?;
+            let qseq = self.popped[p];
+            self.popped[p] += 1;
+            let Some(id) = e.cmd.mark_id() else {
+                return Some(e.cmd);
+            };
+            if let Some(kind) = e.cmd.mut_kind()
+                && self.pending_mut.get(&(id, kind)) == Some(&(qseq, e.seq))
+            {
+                self.pending_mut.remove(&(id, kind));
+            }
+            if self.is_dead(&e) {
+                self.dead = self.dead.saturating_sub(1);
+                let gone = match self.dead_by_id.get_mut(&id) {
+                    Some(n) => {
+                        *n = n.saturating_sub(1);
+                        *n == 0
+                    }
+                    None => true,
+                };
+                if gone {
+                    // nothing older than the delete is left, the tombstone
+                    // has done its job
+                    self.dead_by_id.remove(&id);
+                    self.deleted.remove(&id);
+                }
+                continue;
+            }
+            if let Some(n) = self.live.get_mut(&id) {
+                *n = n.saturating_sub(1);
+                if *n == 0 {
+                    self.live.remove(&id);
+                }
+            }
+            if self.pending_create.get(&id) == Some(&e.seq) {
+                self.pending_create.remove(&id);
+            }
+            return Some(e.cmd);
+        }
+    }
+
+    /// Replace a markup mutation that is still sitting in the queue for the
+    /// same mark, instead of queueing a second one behind it.
+    ///
+    /// Every one of these means "make mark N look like this now", so only the
+    /// last one for a given mark carries any information -- the ones in front
+    /// of it just spend the per-second budget replaying states the campaign
+    /// has already moved past. That is what produced labels contradicting
+    /// themselves (a base reading "Health: 100" and ">> CAPTURABLE" at once,
+    /// from two different renders) once the queue got behind. Collapsing them
+    /// also stops a backlog from growing without bound: the queue holds at
+    /// most one pending update per mark per kind.
+    fn coalesce(&mut self, cmd: Cmd) {
+        let (Some(id), Some(kind)) = (cmd.mark_id(), cmd.mut_kind()) else {
+            return self.push(2, cmd);
+        };
+        if let Some(&(qseq, seq)) = self.pending_mut.get(&(id, kind)) {
+            let cancelled = self.deleted.get(&id).map(|d| seq < *d).unwrap_or(false);
+            if !cancelled && qseq >= self.popped[2] {
+                let i = (qseq - self.popped[2]) as usize;
+                if let Some(e) = self.q[2].get_mut(i)
+                    && e.seq == seq
+                {
+                    e.cmd = cmd;
+                    return;
+                }
+            }
+        }
+        self.push(2, cmd)
+    }
+
     fn send_with_priority<S: Into<String>>(&mut self, p: usize, typ: MsgTyp, text: S) {
-        self.0[p].push_back(Cmd::Send(Msg::Message {
-            typ,
-            text: text.into(),
-        }))
+        let text = text.into();
+        let to = match &typ {
+            MsgTyp::Panel { to, .. } => Some(match to {
+                PanelDest::All => FeedTo::All,
+                PanelDest::Side(s) => FeedTo::Side(*s),
+                PanelDest::Group(g) => FeedTo::Group(*g),
+                PanelDest::Unit(u) => FeedTo::Unit(*u),
+            }),
+            MsgTyp::Chat(to) => Some(FeedTo::Chat(*to)),
+            MsgTyp::Mark { .. } => None,
+        };
+        if let Some(to) = to {
+            self.feed_seq += 1;
+            self.feed.push_back(FeedMsg {
+                seq: self.feed_seq,
+                at: chrono::Utc::now(),
+                to,
+                text: text.clone(),
+            });
+            while self.feed.len() > FEED_LEN {
+                self.feed.pop_front();
+            }
+        }
+        self.push(p, Cmd::Send(Msg::Message { typ, text }))
+    }
+
+    /// Sequence number of the newest feed message (0 before the first).
+    pub fn feed_seq(&self) -> u64 {
+        self.feed_seq
+    }
+
+    /// Feed messages newer than `since`, oldest first.
+    pub fn feed_since(&self, since: u64) -> impl Iterator<Item = &FeedMsg> {
+        self.feed.iter().filter(move |m| m.seq > since)
     }
 
     pub fn send<S: Into<String>>(&mut self, typ: MsgTyp, text: S) {
@@ -146,41 +442,23 @@ impl MsgQ {
     }
 
     pub fn delete_mark(&mut self, did: MarkId) {
-        let mut push = true;
-        let mut remove = |pri: usize| {
-            self.0[pri].retain(|cmd| match cmd {
-                Cmd::DeleteMark(_) => true,
-                Cmd::Send(msg) => match msg {
-                    Msg::Message { .. } => true,
-                    Msg::Circle { id, .. }
-                    | Msg::Rect { id, .. }
-                    | Msg::Quad { id, .. }
-                    | Msg::Text { id, .. }
-                    | Msg::Arrow { id, .. } => {
-                        if *id == did {
-                            push = false;
-                            false
-                        } else {
-                            true
-                        }
-                    }
-                    Msg::SetMarkupColor { id, .. }
-                    | Msg::SetMarkupFillColor { id, .. }
-                    | Msg::SetMarkupText { id, .. }
-                    | Msg::SetMarkupStart { id, .. }
-                    | Msg::SetMarkupEnd { id, .. } => *id != did,
-                },
-            })
-        };
-        remove(0);
-        remove(1);
-        remove(2);
-        if push {
-            self.0[1].push_back(Cmd::DeleteMark(did))
+        // A create that has not drained yet is pointless once the same mark is
+        // being deleted -- cancel BOTH. Without this a re-dropped pin left a
+        // dead create and a dead delete in the queue behind it, which is how
+        // pin churn doubled its own cost.
+        let unsent = self.pending_create.remove(&did).is_some();
+        if let Some(n) = self.live.remove(&did) {
+            // everything still queued for this mark is now cancelled
+            self.dead += n as usize;
+            *self.dead_by_id.entry(did).or_default() += n;
+            self.deleted.insert(did, self.seq);
+            self.seq += 1;
+        }
+        if !unsent {
+            self.push(1, Cmd::DeleteMark(did))
         }
     }
 
-    #[allow(dead_code)]
     pub fn mark_to_all<S: Into<String>>(
         &mut self,
         position: Vector2,
@@ -222,7 +500,6 @@ impl MsgQ {
         id
     }
 
-    #[allow(dead_code)]
     pub fn mark_to_group<S: Into<String>>(
         &mut self,
         group: GroupId,
@@ -244,15 +521,15 @@ impl MsgQ {
         id
     }
 
-    #[allow(dead_code)]
-    pub fn panel_to_all<S: Into<String>>(&mut self, display_time: i64, clear_view: bool, text: S) {
+    pub fn panel_to_all<S: Into<String>>(
+        &mut self,
+        display_time: i64,
+        clear_view: bool,
+        text: S,
+    ) {
         self.send_with_priority(
             0,
-            MsgTyp::Panel {
-                to: PanelDest::All,
-                display_time,
-                clear_view,
-            },
+            MsgTyp::Panel { to: PanelDest::All, display_time, clear_view },
             text,
         )
     }
@@ -266,11 +543,7 @@ impl MsgQ {
     ) {
         self.send_with_priority(
             0,
-            MsgTyp::Panel {
-                to: PanelDest::Side(side),
-                display_time,
-                clear_view,
-            },
+            MsgTyp::Panel { to: PanelDest::Side(side), display_time, clear_view },
             text,
         )
     }
@@ -284,11 +557,7 @@ impl MsgQ {
     ) {
         self.send_with_priority(
             0,
-            MsgTyp::Panel {
-                to: PanelDest::Group(group),
-                display_time,
-                clear_view,
-            },
+            MsgTyp::Panel { to: PanelDest::Group(group), display_time, clear_view },
             text,
         )
     }
@@ -302,11 +571,7 @@ impl MsgQ {
     ) {
         self.send_with_priority(
             0,
-            MsgTyp::Panel {
-                to: PanelDest::Unit(unit),
-                display_time,
-                clear_view,
-            },
+            MsgTyp::Panel { to: PanelDest::Unit(unit), display_time, clear_view },
             text,
         )
     }
@@ -318,15 +583,9 @@ impl MsgQ {
         spec: CircleSpec,
         message: Option<String>,
     ) {
-        self.0[2].push_back(Cmd::Send(Msg::Circle {
-            id,
-            to,
-            spec,
-            message,
-        }))
+        self.push(2, Cmd::Send(Msg::Circle { id, to, spec, message }))
     }
 
-    #[allow(dead_code)]
     pub fn rect_to_all(
         &mut self,
         to: SideFilter,
@@ -334,12 +593,7 @@ impl MsgQ {
         spec: RectSpec,
         message: Option<String>,
     ) {
-        self.0[2].push_back(Cmd::Send(Msg::Rect {
-            id,
-            to,
-            spec,
-            message,
-        }))
+        self.push(2, Cmd::Send(Msg::Rect { id, to, spec, message }))
     }
 
     pub fn quad_to_all(
@@ -349,16 +603,27 @@ impl MsgQ {
         spec: QuadSpec,
         message: Option<String>,
     ) {
-        self.0[2].push_back(Cmd::Send(Msg::Quad {
-            id,
-            to,
-            spec,
-            message,
-        }))
+        self.push(2, Cmd::Send(Msg::Quad { id, to, spec, message }))
     }
 
+    /// Text markup goes in the markup queue, not the mark queue, even though it
+    /// reads like a label. It has to: `set_markup_text` and friends queue the
+    /// *mutations* of a text mark at priority 2, and a mutation that overtakes
+    /// its own create addresses a mark DCS hasn't drawn yet -- the update is
+    /// lost and the label sits on whatever text it was created with. Keeping
+    /// the create and its mutations in one queue keeps them in issue order.
     pub fn text_to_all(&mut self, to: SideFilter, id: MarkId, spec: TextSpec) {
-        self.0[1].push_back(Cmd::Send(Msg::Text { id, to, spec }))
+        self.push(2, Cmd::Send(Msg::Text { id, to, spec }))
+    }
+
+    pub fn line_to_all(
+        &mut self,
+        to: SideFilter,
+        id: MarkId,
+        spec: LineSpec,
+        message: Option<String>,
+    ) {
+        self.push(2, Cmd::Send(Msg::Line { id, to, spec, message }))
     }
 
     pub fn arrow_to(
@@ -368,64 +633,155 @@ impl MsgQ {
         spec: ArrowSpec,
         message: Option<String>,
     ) {
-        self.0[2].push_back(Cmd::Send(Msg::Arrow {
-            id,
-            to,
-            spec,
-            message,
-        }))
+        self.push(2, Cmd::Send(Msg::Arrow { id, to, spec, message }))
+    }
+
+    /// Queue a connected multi-point shape. Priority 2, same as every other
+    /// markup draw, so it shares the objective-markup budget rather than
+    /// competing with group pins.
+    pub fn freeform_to_all(
+        &mut self,
+        to: SideFilter,
+        id: MarkId,
+        spec: PolylineSpec,
+        message: Option<String>,
+    ) {
+        self.push(2, Cmd::Send(Msg::Freeform { id, to, spec, message }))
     }
 
     pub fn set_markup_color(&mut self, id: MarkId, color: Color) {
-        self.0[2].push_back(Cmd::Send(Msg::SetMarkupColor { id, color }))
+        self.coalesce(Cmd::Send(Msg::SetMarkupColor { id, color }))
     }
 
-    #[allow(dead_code)]
     pub fn set_markup_fill_color(&mut self, id: MarkId, color: Color) {
-        self.0[2].push_back(Cmd::Send(Msg::SetMarkupFillColor { id, color }))
+        self.coalesce(Cmd::Send(Msg::SetMarkupFillColor { id, color }))
     }
 
     pub fn set_markup_text(&mut self, id: MarkId, text: String) {
-        self.0[2].push_back(Cmd::Send(Msg::SetMarkupText { id, text }))
+        self.coalesce(Cmd::Send(Msg::SetMarkupText { id, text }))
     }
 
     pub fn set_markup_pos_start(&mut self, id: MarkId, pos: LuaVec3) {
-        self.0[2].push_back(Cmd::Send(Msg::SetMarkupStart { id, pos }))
+        self.coalesce(Cmd::Send(Msg::SetMarkupStart { id, pos }))
     }
 
     pub fn set_markup_pos_end(&mut self, id: MarkId, pos: LuaVec3) {
-        self.0[2].push_back(Cmd::Send(Msg::SetMarkupEnd { id, pos }))
+        self.coalesce(Cmd::Send(Msg::SetMarkupEnd { id, pos }))
     }
 
+    /// Commands still to be sent (cancelled ones don't count).
     pub fn len(&self) -> usize {
-        self.0.iter().fold(0, |acc, q| acc + q.len())
+        self.q.iter().fold(0usize, |acc, q| acc + q.len()).saturating_sub(self.dead)
+    }
+
+    /// Queue depth per priority (chat/panels, marks, markup) plus a breakdown
+    /// by command kind, biggest first. The depth on its own only says the F10
+    /// map is behind; this says what is holding it up, which is the difference
+    /// between raising the rate and stopping whatever keeps redrawing itself.
+    pub fn depth_report(&self) -> ([usize; 3], std::string::String) {
+        use std::fmt::Write;
+        let mut counts: Vec<(&'static str, usize)> = vec![];
+        let mut depth = [0usize; 3];
+        for (p, q) in self.q.iter().enumerate() {
+            for e in q {
+                if self.is_dead(e) {
+                    continue;
+                }
+                depth[p] += 1;
+                let kind = Self::kind(&e.cmd);
+                match counts.iter_mut().find(|(k, _)| *k == kind) {
+                    Some((_, n)) => *n += 1,
+                    None => counts.push((kind, 1)),
+                }
+            }
+        }
+        counts.sort_by_key(|a| std::cmp::Reverse(a.1));
+        let mut by_kind = std::string::String::new();
+        for (kind, n) in counts.iter().take(6) {
+            if !by_kind.is_empty() {
+                by_kind.push_str(", ");
+            }
+            let _ = write!(by_kind, "{kind}={n}");
+        }
+        (depth, by_kind)
+    }
+
+    fn kind(cmd: &Cmd) -> &'static str {
+        match cmd {
+            Cmd::DeleteMark(_) => "DeleteMark",
+            Cmd::Send(Msg::Message { typ: MsgTyp::Mark { .. }, .. }) => "Mark",
+            Cmd::Send(Msg::Message { typ: MsgTyp::Chat(_), .. }) => "Chat",
+            Cmd::Send(Msg::Message { typ: MsgTyp::Panel { .. }, .. }) => "Panel",
+            Cmd::Send(Msg::Circle { .. }) => "Circle",
+            Cmd::Send(Msg::Rect { .. }) => "Rect",
+            Cmd::Send(Msg::Quad { .. }) => "Quad",
+            Cmd::Send(Msg::Text { .. }) => "Text",
+            Cmd::Send(Msg::Arrow { .. }) => "Arrow",
+            Cmd::Send(Msg::Line { .. }) => "Line",
+            Cmd::Send(Msg::Freeform { .. }) => "Freeform",
+            Cmd::Send(Msg::SetMarkupColor { .. }) => "SetMarkupColor",
+            Cmd::Send(Msg::SetMarkupFillColor { .. }) => "SetMarkupFillColor",
+            Cmd::Send(Msg::SetMarkupText { .. }) => "SetMarkupText",
+            Cmd::Send(Msg::SetMarkupStart { .. }) => "SetMarkupStart",
+            Cmd::Send(Msg::SetMarkupEnd { .. }) => "SetMarkupEnd",
+        }
+    }
+
+    /// The commands of one drain pass of `max_rate`, in send order.
+    fn take_batch(&mut self, max_rate: usize) -> Vec<Cmd> {
+        // Draining in strict priority order starves the markup queue. Chat,
+        // panels and group pins (priorities 0 and 1) are produced continuously
+        // -- every event sends a panel, every vehicle under way re-pins itself
+        // -- so while those are drained first and without limit, the F10 markup
+        // behind them never gets a turn and the map's labels, rings and supply
+        // arrows stop tracking the campaign altogether. Reserve a share of
+        // every pass for the markup queue so it always makes progress.
+        //
+        // A budget of one leaves nothing to split -- reserving it would starve
+        // chat and panels instead, which is the worse trade.
+        // (Cancelled entries in the markup queue only cost a skip inside
+        // `pop`, and when nothing real is left in it the budget falls back to
+        // the other two.)
+        let reserved =
+            if self.q[2].is_empty() || max_rate < 2 { 0 } else { (max_rate / 3).max(1) };
+        let urgent_budget = max_rate.saturating_sub(reserved);
+        let mut urgent = 0;
+        let mut batch = Vec::with_capacity(max_rate.min(64));
+        for _ in 0..max_rate {
+            let cmd = if urgent < urgent_budget {
+                match self.pop(0).or_else(|| self.pop(1)) {
+                    Some(cmd) => {
+                        urgent += 1;
+                        Some(cmd)
+                    }
+                    None => self.pop(2),
+                }
+            } else {
+                match self.pop(2) {
+                    Some(cmd) => Some(cmd),
+                    None => self.pop(0).or_else(|| self.pop(1)),
+                }
+            };
+            match cmd {
+                Some(cmd) => batch.push(cmd),
+                None => break,
+            }
+        }
+        batch
     }
 
     pub fn process(&mut self, max_rate: usize, net: &Net, act: &Action) {
-        for _ in 0..max_rate {
-            let cmd = match self.0[0].pop_front() {
-                Some(cmd) => cmd,
-                None => match self.0[1].pop_front() {
-                    Some(cmd) => cmd,
-                    None => match self.0[2].pop_front() {
-                        Some(cmd) => cmd,
-                        None => return,
-                    },
-                },
-            };
+        for cmd in self.take_batch(max_rate) {
+            let kind = Self::kind(&cmd);
             let res = match cmd {
                 Cmd::DeleteMark(id) => act.remove_mark(id),
                 Cmd::Send(Msg::Message { typ, text }) => match typ {
-                    MsgTyp::Mark {
-                        id,
-                        to,
-                        position,
-                        read_only,
-                    } => match to {
-                        MarkDest::All => act.mark_to_all(id, text, position, read_only, None),
-                        MarkDest::Side(side) => {
-                            act.mark_to_coalition(id, text, position, side, read_only, None)
+                    MsgTyp::Mark { id, to, position, read_only } => match to {
+                        MarkDest::All => {
+                            act.mark_to_all(id, text, position, read_only, None)
                         }
+                        MarkDest::Side(side) => act
+                            .mark_to_coalition(id, text, position, side, read_only, None),
                         MarkDest::Group(group) => {
                             act.mark_to_group(id, text, position, group, read_only, None)
                         }
@@ -434,61 +790,169 @@ impl MsgQ {
                         None => net.send_chat(text, true),
                         Some(id) => net.send_chat_to(text, id, Some(PlayerId::from(1))),
                     },
-                    MsgTyp::Panel {
-                        to,
-                        display_time,
-                        clear_view,
-                    } => match to {
+                    MsgTyp::Panel { to, display_time, clear_view } => match to {
                         PanelDest::All => act.out_text(text, display_time, clear_view),
                         PanelDest::Group(gid) => {
                             act.out_text_for_group(gid, text, display_time, clear_view)
                         }
-                        PanelDest::Side(side) => {
-                            act.out_text_for_coalition(side, text, display_time, clear_view)
-                        }
+                        PanelDest::Side(side) => act.out_text_for_coalition(
+                            side,
+                            text,
+                            display_time,
+                            clear_view,
+                        ),
                         PanelDest::Unit(uid) => {
                             act.out_text_for_unit(uid, text, display_time, clear_view)
                         }
                     },
                 },
-                Cmd::Send(Msg::Circle {
-                    id,
-                    to,
-                    spec,
-                    message,
-                }) => act.circle_to_all(to, id, spec, message),
-                Cmd::Send(Msg::Rect {
-                    id,
-                    to,
-                    spec,
-                    message,
-                }) => act.rect_to_all(to, id, spec, message),
-                Cmd::Send(Msg::Quad {
-                    id,
-                    to,
-                    spec,
-                    message,
-                }) => act.quad_to_all(to, id, spec, message),
+                Cmd::Send(Msg::Circle { id, to, spec, message }) => {
+                    act.circle_to_all(to, id, spec, message)
+                }
+                Cmd::Send(Msg::Rect { id, to, spec, message }) => {
+                    act.rect_to_all(to, id, spec, message)
+                }
+                Cmd::Send(Msg::Quad { id, to, spec, message }) => {
+                    act.quad_to_all(to, id, spec, message)
+                }
                 Cmd::Send(Msg::Text { id, to, spec }) => act.text_to_all(to, id, spec),
-                Cmd::Send(Msg::Arrow {
-                    id,
-                    to,
-                    spec,
-                    message,
-                }) => act.arrow_to_all(to, id, spec, message),
-                Cmd::Send(Msg::SetMarkupColor { id, color }) => act.set_markup_color(id, color),
+                Cmd::Send(Msg::Arrow { id, to, spec, message }) => {
+                    act.arrow_to_all(to, id, spec, message)
+                }
+                Cmd::Send(Msg::Line { id, to, spec, message }) => {
+                    act.line_to_all(to, id, spec, message)
+                }
+                Cmd::Send(Msg::Freeform { id, to, spec, message }) => {
+                    act.freeform_to_all(to, id, spec, message)
+                }
+                Cmd::Send(Msg::SetMarkupColor { id, color }) => {
+                    act.set_markup_color(id, color)
+                }
                 Cmd::Send(Msg::SetMarkupFillColor { id, color }) => {
                     act.set_markup_fill_color(id, color)
                 }
                 Cmd::Send(Msg::SetMarkupStart { id, pos }) => {
                     act.set_markup_position_start(id, pos)
                 }
-                Cmd::Send(Msg::SetMarkupEnd { id, pos }) => act.set_markup_position_end(id, pos),
-                Cmd::Send(Msg::SetMarkupText { id, text }) => act.set_markup_text(id, text),
+                Cmd::Send(Msg::SetMarkupEnd { id, pos }) => {
+                    act.set_markup_position_end(id, pos)
+                }
+                Cmd::Send(Msg::SetMarkupText { id, text }) => {
+                    act.set_markup_text(id, text)
+                }
             };
             if let Err(e) = res {
-                error!("could not send message {:?}", e)
+                error!("could not send message ({kind}) {:?}", e)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pin(q: &mut MsgQ, text: &str) -> MarkId {
+        q.mark_to_all(Vector2::new(0., 0.), true, text)
+    }
+
+    fn texts(cmds: &[Cmd]) -> Vec<std::string::String> {
+        cmds.iter()
+            .map(|c| match c {
+                Cmd::DeleteMark(_) => "delete".into(),
+                Cmd::Send(Msg::Message { text, .. }) => text.as_str().into(),
+                Cmd::Send(Msg::SetMarkupText { text, .. }) => {
+                    format!("set:{}", text.as_str())
+                }
+                _ => "other".into(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn msgq_delete_before_drain_cancels_create_and_delete() {
+        let mut q = MsgQ::default();
+        let a = pin(&mut q, "a");
+        let _b = pin(&mut q, "b");
+        q.delete_mark(a);
+        assert_eq!(q.len(), 1);
+        let out = q.take_batch(10);
+        assert_eq!(texts(&out), vec!["b"]);
+        assert_eq!(q.len(), 0);
+        // the tombstone is gone once the cancelled entry drained
+        assert!(q.deleted.is_empty() && q.dead_by_id.is_empty() && q.dead == 0);
+    }
+
+    #[test]
+    fn msgq_delete_after_drain_queues_delete_and_cancels_mutations() {
+        let mut q = MsgQ::default();
+        let a = pin(&mut q, "a");
+        assert_eq!(q.take_batch(10).len(), 1);
+        q.set_markup_text(a, "one".into());
+        q.delete_mark(a);
+        assert_eq!(texts(&q.take_batch(10)), vec!["delete"]);
+    }
+
+    #[test]
+    fn msgq_mutations_coalesce() {
+        let mut q = MsgQ::default();
+        let a = pin(&mut q, "a");
+        q.take_batch(10);
+        q.set_markup_text(a, "one".into());
+        q.set_markup_text(a, "two".into());
+        q.set_markup_text(a, "three".into());
+        assert_eq!(q.len(), 1);
+        assert_eq!(texts(&q.take_batch(10)), vec!["set:three"]);
+        // once sent, a new mutation queues again
+        q.set_markup_text(a, "four".into());
+        assert_eq!(texts(&q.take_batch(10)), vec!["set:four"]);
+    }
+
+    #[test]
+    fn msgq_mutation_after_delete_is_kept() {
+        let mut q = MsgQ::default();
+        let a = pin(&mut q, "a");
+        q.take_batch(10);
+        q.set_markup_text(a, "old".into());
+        q.delete_mark(a);
+        // issued after the delete: not cancelled by it, and not folded into
+        // the cancelled one either
+        q.set_markup_text(a, "new".into());
+        assert_eq!(q.len(), 2);
+        assert_eq!(texts(&q.take_batch(10)), vec!["delete", "set:new"]);
+    }
+
+    #[test]
+    fn msgq_text_overflow_drops_oldest_text_only() {
+        let mut q = MsgQ::default();
+        let a = pin(&mut q, "pin");
+        for i in 0..MAX_QUEUED_TEXT + 5 {
+            q.panel_to_all(10, false, format!("m{i}"));
+        }
+        q.set_markup_text(a, "label".into());
+        assert_eq!(q.len(), MAX_QUEUED_TEXT + 2);
+        let out = texts(&q.take_batch(MAX_QUEUED_TEXT + 10));
+        // the five oldest messages went, everything else is in order
+        assert_eq!(out.first().map(|s| s.as_str()), Some("m5"));
+        assert_eq!(out.iter().filter(|t| t.starts_with('m')).count(), MAX_QUEUED_TEXT);
+        assert!(out.contains(&"pin".to_string()));
+        assert!(out.contains(&"set:label".to_string()));
+        // the feed still has every message
+        assert_eq!(q.feed_since(0).count(), FEED_LEN.min(MAX_QUEUED_TEXT + 5));
+    }
+
+    #[test]
+    fn msgq_coalesce_survives_partial_drain() {
+        let mut q = MsgQ::default();
+        let a = pin(&mut q, "a");
+        let b = pin(&mut q, "b");
+        q.take_batch(10);
+        q.set_markup_text(a, "a1".into());
+        q.set_markup_text(b, "b1".into());
+        // drain only the first mutation, then update the second in place
+        let first = q.pop(2).unwrap();
+        assert_eq!(texts(&[first]), vec!["set:a1"]);
+        q.set_markup_text(b, "b2".into());
+        assert_eq!(texts(&q.take_batch(10)), vec!["set:b2"]);
     }
 }

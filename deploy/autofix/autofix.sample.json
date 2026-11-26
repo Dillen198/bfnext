@@ -1,0 +1,24 @@
+{
+  "_comment": "Copy to %LOCALAPPDATA%\\fowl-autofix\\config.json. Fowl Engine Manager's AUTO-FIX tab writes this file for you and passes the boxes (its SERVERS list) itself; fill `boxes` only to run autofix.py by hand. Claude Code uses ANTHROPIC_API_KEY if set, else the Claude account it is logged in to.",
+  "discord_webhook": "<webhook URL of a private ops channel>",
+  "boxes": [
+    {"name": "campaign", "url": "http://100.x.y.z:9876/stats/fowlengine/ops", "key": "<the box's OPS API key>"}
+  ],
+
+  "publish_mode": "auto",
+  "auto_max_files": 8,
+  "auto_max_changed_lines": 200,
+  "max_publishes_per_day": 3,
+  "publish_channel": "stable",
+
+  "repo": "E:\\Github\\bfnext-vector",
+  "base_branch": "vector",
+  "model": "claude-opus-5-5",
+  "max_budget_usd": 6.0,
+  "max_runs_per_day": 3,
+  "min_count": 3,
+  "levels": ["ERROR", "CRASH"],
+  "sources": ["engine", "bot", "discord"],
+  "interval_minutes": 15,
+  "cargo_target_dir": "C:\\cargo-target\\fowl-autofix"
+}

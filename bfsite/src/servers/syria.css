@@ -1,0 +1,182 @@
+/* Levant Ablaze: desert combat. Battlefield art at dusk, sand and rust on
+   charred dark, heavy condensed type, strips of tape for labels and a film of
+   dust over everything. Dark in either site theme, like the art. */
+
+.srv-desert { position: relative; }
+/* dust: a grain film over the whole page */
+.srv-desert::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 0; opacity: 0.07; mix-blend-mode: screen;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+.srv-desert > * { position: relative; z-index: 1; }
+.srv-desert ::selection { background: rgba(200,100,47,0.45); color: #fff; }
+
+/* ── tape ── */
+.ds-tape {
+  display: inline-block; padding: 3px 12px 2px; transform: rotate(-1.2deg);
+  font-family: var(--ds-label); font-weight: 700; font-size: 0.78rem; letter-spacing: 0.16em; text-transform: uppercase; line-height: 1.4;
+  color: #1d150c; background: var(--tape, #d8c7a0);
+  clip-path: polygon(2% 0, 98% 4%, 100% 50%, 97% 100%, 1% 96%, 0 52%);
+}
+.ds-tape.rust { --tape: var(--rust); color: #1a0d05; }
+.ds-tape.b { --tape: var(--blue); color: #08131f; }
+.ds-tape.r { --tape: var(--red); color: #1f0805; }
+
+/* ── hero ── */
+.ds-hero { position: relative; overflow: hidden; min-height: min(92vh, 820px); display: flex; flex-direction: column; justify-content: flex-end; padding-top: 120px; }
+.ds-hero-img { position: absolute; inset: 0; background: url(/media/hero.jpg) center 40% / cover no-repeat; transform: scale(1.04); filter: saturate(1.1) contrast(1.05); }
+.ds-hero-scrim {
+  position: absolute; inset: 0;
+  background:
+    linear-gradient(180deg, rgba(21,17,12,0.35) 0%, rgba(21,17,12,0.1) 30%, rgba(21,17,12,0.75) 70%, var(--char) 100%),
+    linear-gradient(90deg, rgba(21,17,12,0.88) 0%, rgba(21,17,12,0.35) 55%, transparent 100%),
+    radial-gradient(ellipse at 80% 30%, rgba(224,122,63,0.25), transparent 55%);
+}
+.ds-hero-body { position: relative; padding-bottom: 28px; }
+.ds-title {
+  margin: 16px 0 0; font-family: var(--ds-display); font-weight: 700; text-transform: uppercase;
+  font-size: clamp(3.4rem, 13vw, 9rem); line-height: 0.84; letter-spacing: 0.01em; color: var(--sand);
+  text-shadow: 0 4px 30px rgba(0,0,0,0.6);
+}
+.ds-title span { display: block; color: var(--rust-bright); }
+.ds-lede { margin: 22px 0 0; max-width: 54ch; font-size: 1.1rem; line-height: 1.6; color: var(--sand); text-shadow: 0 1px 12px rgba(0,0,0,0.7); }
+.ds-sides { display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px; margin-top: 22px; }
+.ds-side { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: rgba(21,17,12,0.78); border: 1px solid var(--line); border-top: 3px solid var(--side); min-width: 0; }
+.ds-side > div { display: grid; gap: 4px; min-width: 0; }
+.ds-flag { width: 64px; height: 43px; object-fit: cover; flex-shrink: 0; border: 1px solid var(--line); filter: saturate(0.85); }
+.ds-members { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 3px 4px; }
+.ds-members li { font-family: var(--ds-label); font-weight: 700; font-size: 0.78rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--sand); padding: 0 6px; border: 1px solid color-mix(in srgb, var(--side) 55%, transparent); background: color-mix(in srgb, var(--side) 14%, transparent); }
+.ds-sides .b { --side: var(--blue); } .ds-sides .r { --side: var(--red); }
+.ds-sides strong { font-family: var(--ds-display); font-weight: 600; font-size: 1.45rem; letter-spacing: 0.04em; line-height: 1; color: var(--side); }
+.ds-sides span { font-family: var(--ds-label); font-size: 0.8rem; color: var(--sand-2); letter-spacing: 0.04em; }
+.ds-sides .vs { align-self: center; font-family: var(--ds-display); font-size: 1rem; color: var(--sand-dim); text-transform: uppercase; }
+.ds-ctas { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
+.ds-btn {
+  display: inline-flex; align-items: center; gap: 8px; padding: 11px 20px;
+  font-family: var(--ds-display); font-weight: 600; font-size: 1.05rem; letter-spacing: 0.1em; text-transform: uppercase; text-decoration: none;
+  color: #1a0d05; background: var(--rust); border: 2px solid var(--rust);
+}
+.ds-btn:hover { background: var(--rust-bright); border-color: var(--rust-bright); }
+.ds-btn.ghost { color: var(--sand); background: rgba(21,17,12,0.5); border-color: var(--sand-2); }
+.ds-btn.ghost:hover { background: var(--sand); color: var(--char); }
+
+.ds-toc { position: relative; display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.ds-toc::-webkit-scrollbar { display: none; }
+.ds-toc a { flex-shrink: 0; padding: 12px 16px; font-family: var(--ds-label); font-weight: 600; font-size: 0.9rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sand-2); text-decoration: none; background: rgba(21,17,12,0.8); border-top: 3px solid var(--line); }
+.ds-toc a:hover, .ds-toc a:focus-visible { color: var(--sand); border-top-color: var(--rust); outline: none; }
+
+/* ── sections ── */
+.ds-section { padding: 64px 0; border-top: 1px solid var(--line); scroll-margin-top: 72px; }
+@media (min-width: 768px) { .ds-section { padding: 88px 0; } }
+.ds-band { background: var(--char-2); }
+.ds-h { display: flex; align-items: baseline; gap: 14px; margin: 0 0 22px; font-family: var(--ds-display); font-weight: 700; font-size: clamp(2rem, 5vw, 3.2rem); line-height: 0.95; text-transform: uppercase; letter-spacing: 0.01em; color: var(--sand); }
+.ds-h span { font-family: var(--ds-label); font-weight: 700; font-size: 0.42em; letter-spacing: 0.1em; color: var(--rust); }
+.ds-sub { margin: -8px 0 26px; max-width: 64ch; color: var(--sand-2); line-height: 1.65; }
+.ds-k { font-family: var(--ds-label); font-weight: 600; font-size: 0.76rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--sand-dim); }
+.ds-note { margin: 14px 0 0; font-family: var(--ds-label); font-size: 0.9rem; color: var(--sand-dim); }
+.ds-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 16px; font-family: var(--ds-label); font-weight: 700; font-size: 0.95rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--rust-bright); text-decoration: none; border-bottom: 1px solid currentColor; }
+.ds-link:hover { color: var(--sand); }
+
+/* ── sitrep ── */
+.ds-sitrep { border-top: none; padding: 28px 0 48px; }
+.ds-readouts { display: grid; gap: 2px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 14px; }
+@media (min-width: 900px) { .ds-readouts { grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 2fr); } }
+.ds-readouts > div { display: grid; gap: 10px; align-content: start; padding: 16px 18px; background: var(--char-2); border-left: 3px solid var(--coyote); min-width: 0; }
+.ds-readouts > .wide { grid-column: 1 / -1; }
+@media (min-width: 900px) { .ds-readouts > .wide { grid-column: auto; } }
+.ds-v { font-family: var(--ds-display); font-weight: 600; font-size: 2rem; line-height: 1; color: var(--sand); font-variant-numeric: tabular-nums; }
+.ds-v small { font-family: var(--ds-label); font-weight: 500; font-size: 0.82rem; color: var(--sand-dim); margin-left: 8px; letter-spacing: 0.06em; }
+
+/* ── situation ── */
+.ds-flash { margin: 0 0 30px; padding: 18px 22px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 16px; background: var(--char-2); border-left: 4px solid var(--red); font-family: var(--ds-label); font-weight: 600; font-size: 1.15rem; line-height: 1.5; letter-spacing: 0.03em; color: var(--sand); }
+.ds-sit { display: grid; gap: 32px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 960px) { .ds-sit { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); align-items: start; } }
+.ds-prose { display: grid; gap: 16px; max-width: 68ch; }
+.ds-prose p { margin: 0; font-size: 1.04rem; line-height: 1.75; color: var(--sand-2); }
+.ds-prose b { color: var(--sand); font-weight: 600; }
+.ds-side-col { display: grid; gap: 22px; }
+.ds-photo { margin: 0; position: relative; border: 1px solid var(--line); box-shadow: 0 18px 40px -20px rgba(0,0,0,0.8); transform: rotate(0.8deg); }
+.ds-photo img { display: block; width: 100%; height: auto; aspect-ratio: 16 / 10; object-fit: cover; filter: sepia(0.15) saturate(1.05); }
+.ds-photo figcaption { position: absolute; left: 14px; bottom: -10px; }
+.ds-glance { background: var(--char-2); border: 1px solid var(--line); padding: 18px 20px; }
+.ds-glance dl { margin: 0; display: grid; gap: 10px; }
+.ds-glance dl > div { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 10px; padding-bottom: 10px; border-bottom: 1px dashed var(--line); }
+.ds-glance dl > div:last-child { border-bottom: none; padding-bottom: 0; }
+.ds-glance dt { font-family: var(--ds-label); font-weight: 600; font-size: 0.78rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--sand-dim); padding-top: 2px; }
+.ds-glance dd { margin: 0; font-size: 0.92rem; line-height: 1.5; }
+.ds-glance .b { color: var(--blue); } .ds-glance .r { color: var(--red); }
+
+/* ── orders ── */
+.ds-orders { display: grid; gap: 28px 20px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); }
+.ds-order { position: relative; padding: 26px 24px 22px; background: var(--char); border: 1px solid var(--line); border-top: 4px solid var(--side); }
+.ds-order.b { --side: var(--blue); } .ds-order.r { --side: var(--red); }
+.ds-order > .ds-tape { position: absolute; top: -14px; left: 18px; }
+.ds-order h3 { margin: 6px 0 16px; font-family: var(--ds-display); font-weight: 700; font-size: 1.9rem; line-height: 1; text-transform: uppercase; color: var(--sand); }
+.ds-order ol { margin: 0 0 14px; padding-left: 24px; display: grid; gap: 12px; color: var(--sand-2); line-height: 1.6; }
+.ds-order ol b { color: var(--sand); font-weight: 600; }
+.ds-order li::marker { font-family: var(--ds-display); font-weight: 700; color: var(--side); }
+.ds-closing { margin: 10px 0 0; padding-top: 12px; border-top: 1px dashed var(--line); font-family: var(--ds-label); font-weight: 600; font-size: 1.05rem; letter-spacing: 0.02em; color: var(--sand); }
+
+/* ── fronts ── */
+.ds-fronts { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
+.ds-front { padding: 20px 22px; background: var(--char-2); border: 1px solid var(--line); border-bottom: 4px solid var(--heat); }
+.ds-front.hot { --heat: var(--rust); } .ds-front.warm { --heat: var(--yellow); } .ds-front.cold { --heat: var(--coyote); }
+.ds-front-head { display: flex; align-items: center; justify-content: space-between; }
+.ds-code { font-family: var(--ds-display); font-weight: 700; font-size: 3rem; line-height: 0.9; color: var(--heat); }
+.ds-front h3 { margin: 12px 0 6px; font-family: var(--ds-display); font-weight: 600; font-size: 1.35rem; line-height: 1.1; text-transform: uppercase; }
+.ds-front p { margin: 0; color: var(--sand-2); line-height: 1.6; }
+
+/* ── order of battle ── */
+.ds-oob { display: grid; gap: 36px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) { .ds-oob { grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); align-items: start; } }
+.ds-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.ds-table th { text-align: left; padding: 8px 10px; font-family: var(--ds-label); font-weight: 700; font-size: 0.82rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--sand-dim); border-bottom: 2px solid var(--line); }
+.ds-table th.b { color: var(--blue); } .ds-table th.r { color: var(--red); }
+.ds-table td { padding: 11px 10px; border-bottom: 1px solid var(--line); }
+.ds-table td.b, .ds-table td.r { position: relative; width: 32%; font-family: var(--ds-display); font-weight: 600; font-size: 1.1rem; }
+.ds-bar { position: absolute; left: 0; top: 50%; height: 64%; transform: translateY(-50%); opacity: 0.22; }
+.ds-table td.b .ds-bar { background: var(--blue); } .ds-table td.r .ds-bar { background: var(--red); }
+.ds-sams { position: relative; padding: 26px 22px 22px; background: var(--char); border: 1px solid var(--line); }
+.ds-sams > .ds-tape { position: absolute; top: -12px; left: 16px; }
+.ds-samrow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 6px 0 14px; }
+.ds-samrow > div { display: grid; gap: 2px; }
+.ds-big { font-family: var(--ds-display); font-weight: 700; font-size: 3.6rem; line-height: 0.9; }
+.ds-samrow .b .ds-big { color: var(--blue); } .ds-samrow .r .ds-big { color: var(--red); }
+.ds-samrow span:not(.ds-big) { font-family: var(--ds-label); font-weight: 700; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.12em; }
+.ds-samrow small { font-size: 0.85rem; color: var(--sand-2); }
+.ds-sams p { margin: 0; color: var(--sand-2); line-height: 1.6; }
+
+/* ── turning points ── */
+.ds-events { display: grid; gap: 24px 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr)); margin-top: 8px; }
+.ds-ev { position: relative; display: grid; gap: 8px; align-content: start; padding: 24px 18px 18px; background: var(--char-2); border: 1px solid var(--line); }
+.ds-ev > .ds-tape { position: absolute; top: -11px; left: 14px; font-size: 0.7rem; }
+.ds-ev h3 { margin: 0; font-family: var(--ds-display); font-weight: 600; font-size: 1.5rem; line-height: 1; text-transform: uppercase; color: var(--sand); }
+.ds-when { font-family: var(--ds-label); font-weight: 600; font-size: 0.92rem; color: var(--rust-bright); letter-spacing: 0.02em; }
+.ds-when span { color: var(--sand-dim); text-transform: uppercase; letter-spacing: 0.14em; margin-right: 6px; font-size: 0.8em; }
+.ds-ev p { margin: 0; font-size: 0.95rem; line-height: 1.6; color: var(--sand-2); }
+.ds-by { display: inline-block; padding: 0 6px; margin: 0 1px; font-family: var(--ds-label); font-weight: 700; font-size: 0.78rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--char); background: var(--sand); line-height: 1.5; }
+
+/* story effects and the end of the war */
+.ds-effs { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.ds-effs li { font-family: var(--ds-label); font-weight: 600; font-size: 0.78rem; letter-spacing: 0.02em; padding: 1px 7px; border: 1px dashed var(--border-light); color: var(--sand-2); }
+.ds-ends { display: grid; gap: 28px; grid-template-columns: minmax(0, 1fr); margin: 40px 0 8px; }
+@media (min-width: 960px) { .ds-ends { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; } }
+.ds-h3 { margin: 0; font-family: var(--ds-display); font-weight: 700; font-size: 1.7rem; text-transform: uppercase; color: var(--sand); }
+.ds-will caption { text-align: left; padding-bottom: 8px; font-family: var(--ds-label); font-weight: 700; font-size: 0.82rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--rust-bright); }
+.ds-will td { padding: 8px 10px 8px 0; font-size: 0.92rem; color: var(--sand-2); }
+.ds-cost { text-align: right; font-family: var(--ds-display); font-weight: 600; color: var(--red) !important; white-space: nowrap; }
+
+/* ── fly ── */
+.ds-fly-band { background: linear-gradient(180deg, rgba(21,17,12,0.9), rgba(21,17,12,0.96)), url(/media/cas.jpg) center / cover no-repeat; }
+.ds-fly { display: grid; gap: 28px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) { .ds-fly { grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.7fr); align-items: end; } }
+.ds-links { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.ds-links a { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 16px; background: var(--char-2); border-left: 3px solid var(--rust); color: var(--sand); text-decoration: none; font-family: var(--ds-display); font-weight: 500; font-size: 1.1rem; letter-spacing: 0.06em; text-transform: uppercase; }
+.ds-links a:hover { background: var(--char-3); color: var(--rust-bright); }
+
+.ds-others { padding-top: 56px; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .ds-hero-img { animation: ds-drift 30s ease-in-out infinite alternate; }
+}
+@keyframes ds-drift { to { transform: scale(1.1) translateX(-1.5%); } }

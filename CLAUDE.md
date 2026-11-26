@@ -64,22 +64,55 @@ mdbook serve  # View at http://localhost:3000
 
 ### Testing
 
-The project has limited test coverage. Available tests:
+CI (`.github/workflows/build.yml`) runs these jobs on every push and PR:
+
+| Job | Runner | What |
+|---|---|---|
+| `check` | Windows | `cargo check` + `cargo test --workspace --locked` (about 450 Rust tests), `cargo check` of bftools |
+| `rust-lint` | Windows | `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings`. Blocking: the tree is clean, and style lints the code does not follow are allowed (with reasons) in `[workspace.lints.clippy]` |
+| `manager` | Windows | `cargo test` for `bfmanager/src-tauri` (own Cargo.lock), after staging a placeholder `bfmanager/dist` and the bundled resources |
+| `frontend` | Ubuntu | bfweb, bfsite, bfwiki, bfrange-web, bfrsr-web: `npm ci --ignore-scripts`, then `typecheck`/`lint`/`test`/`build` (each `--if-present`), Node 22 |
+| `bot` | Windows | `compileall` over `DCSServerBot/`, then pytest in `DCSServerBot/tests` |
+
+Locally:
 
 ```bash
-# Run bfdb test binary
-cargo run --bin test --package=bfdb
+cargo check --workspace --locked
+cargo test --workspace --locked
+cargo check --locked --manifest-path bftools/Cargo.toml
+cargo test --locked --manifest-path bfmanager/src-tauri/Cargo.toml   # see notes
+npm --prefix bfweb test        # vitest
+npm --prefix bfrange-web test  # vitest
+pip install -r DCSServerBot/tests/requirements.txt && python -m pytest -q   # in DCSServerBot/tests
 ```
+
+Notes:
+- The test binaries link `lua.dll` dynamically, so the repo root must be on
+  `PATH` (CI adds `$GITHUB_WORKSPACE`; locally, source `setup-build.ps1`).
+- bfdb embeds `bfweb/dist` and `bfsite/dist` with RustEmbed and will not
+  compile if they are missing. Build the frontends first, or create empty
+  directories (CI stubs both).
+- bfmanager's build needs `bfmanager/dist` (any `index.html` will do for
+  tests) and the bundles from `node bfmanager/scripts/stage-bot.mjs` and
+  `stage-range.mjs`. `tauri build` makes them all for real.
+- The bot tests' requirements leave out discord.py on purpose: the icon
+  tests check the plain-unicode fallback. With discord.py installed,
+  `test_fowlengine_cog_wiring.py` also imports the real cog.
+- No test needs DCS, a netidx resolver or the network.
+
+Gameplay is still verified in DCS: `TESTING.md` is the in-game checklist.
 
 ## Workspace Architecture
 
-This is a Cargo workspace with 5 main crates:
+The root `Cargo.toml` workspace has 11 members: `dcso3`, `dcso3-core`,
+`livewx`, `fowlbg`, `bflib`, `bfrange`, `bfdb`, `bfprotocols`, `yats`,
+`bfcockpit/installer` and `bfcockpit/net`. `bftools` is excluded and builds on its own (own
+`Cargo.lock`, vendored Lua).
 
-### 1. **dcso3** - DCS Lua API Bindings
+### dcso3 - DCS Lua API Bindings
 - **Purpose**: Minimal, safe Rust binding to DCS's Lua scripting API
-- **Type**: Library (published crate)
+- **Type**: Library (published crate, docs at https://docs.rs/dcso3)
 - **License**: MIT
-- **Key concept**: Provides direct translation of DCS Lua API with Rust safety features
 - **Location**: `dcso3/src/`
 - **Modules**:
   - `env/`: Mission environment and miz file handling
@@ -92,81 +125,101 @@ This is a Cargo workspace with 5 main crates:
   - `world.rs`, `land.rs`: World queries
   - `mission_commands.rs`: F10 radio menu system
 
-### 2. **bflib** - Campaign Mission Script
-- **Purpose**: Main campaign logic, loaded as DLL into DCS Lua environment
-- **Type**: cdylib (shared library)
+### livewx - Live Weather
+- **Purpose**: Real-world weather and time for a .miz: fetches METAR (CheckWX)
+  and open-meteo and rewrites the mission before it next loads
+- **Type**: Library, shared by bflib and bfrange
+- **License**: MIT
+
+### fowlbg - Mission DLL Background Plumbing
+- **Purpose**: What bflib and bfrange both need off the DCS thread: the
+  background thread and its tokio runtime (optionally supervised), the logger
+  feeding it (`RUST_LOG`, netidx noise filter, fallback log), log/JSONL
+  rotation and sinks, and the netidx client config and publisher with bind
+  retry. Also the opt-in netidx TLS block (`netidx::Tls`, `deploy/netidx-tls.md`),
+  which bfprotocols and bfdb use with `default-features = false`
+- **Type**: Library; each DLL keeps its own task enum and `Handler`
+- **License**: MIT (`fowlbg/LICENSE`)
+- **Location**: `fowlbg/src/`
+
+### bflib - Campaign Mission Script
+- **Purpose**: Main campaign logic, loaded as a DLL into the DCS Lua environment
+- **Type**: cdylib
 - **License**: AGPL v3
-- **Build output**: DLL loaded via Lua `require()` statement in DCS mission
 - **Location**: `bflib/src/`
 - **Key modules**:
   - `lib.rs`: Entry point, event handlers, main game loop
-  - `db/`: Campaign state management
-    - `player.rs`: Player registration, slot authorization, lives
-    - `objective.rs`: Objectives and territory control
-    - `group.rs`: Unit spawning and management
-    - `logistics.rs`: Supply and logistics system
-    - `cargo.rs`: Cargo transport mechanics
-    - `actions.rs`: Player-triggered actions (deployments, missions)
-  - `menu/`: F10 radio menu implementations
-    - `action.rs`: Actions menu (deploy units, call missions)
-    - `jtac.rs`: JTAC targeting system
-    - `cargo.rs`: Cargo transport menu
-    - `troop.rs`: Troop movement menu
-    - `ewr.rs`: Early Warning Radar reports
-  - `bg/`: Background tasks (async runtime integration)
-    - `net.rs`: Netidx networking
-    - `logpub.rs`: Log publishing
-    - `statspub.rs`: Stats publishing
-    - `rpcs.rs`: RPC handlers
-  - `jtac.rs`: Joint Terminal Attack Controller system
-  - `chatcmd.rs`: Chat command processing
-  - `admin.rs`: Admin commands
-  - `spawnctx.rs`: Unit spawn context management
-  - `shots.rs`: Shot/kill tracking
-  - `ewr.rs`: EWR implementation
-  - `msgq.rs`: Message queue system
+  - `db/`: Campaign state (players, objectives, groups, logistics, cargo, actions)
+  - `menu/`: F10 radio menus (actions, JTAC, cargo, troops, EWR, ...)
+  - `bg/`: Background tasks (saves, netidx stats/log publishing, RPCs) on fowlbg's thread
+  - `groundwar/`, `hq/`, `commander.rs`, `modern_war/`: AI ground war and commander
+  - `jtac.rs`, `ewr.rs`, `atis.rs`, `navaids.rs`, `cockpit.rs`: player-facing systems
+  - `chatcmd.rs`, `admin.rs`, `command/`: chat and admin commands
+  - `spawnctx.rs`, `shots.rs`, `msgq.rs`, `unitdb.rs`: spawning, kill tracking,
+    message queue, unit data
 
-### 3. **bfdb** - Database & Web Server
-- **Purpose**: Stats database, web interface, and persistence layer
-- **Type**: Binary (with multiple entry points)
-- **License**: N/A (internal)
+### bfrange - Training Range Mission Script
+- **Purpose**: Vector Strike training range engine. Scores bombing, strafing,
+  carrier passes, AAR, missile defence, anti-ship, helicopter and
+  combined-arms drills
+- **Type**: cdylib (`bfrange.dll`)
+- **License**: `bfrange/LICENSE` (all rights reserved)
+- **Location**: `bfrange/src/`; the range mission is built by
+  `bfrange/mission/build_range_miz.py` into `bfrange/mission/dist/`
+
+### bfdb - Database & Web Server
+- **Purpose**: Stats database, persistence and the HTTP/websocket backend for
+  every web app (warp). Embeds the `bfweb` and `bfsite` builds
+- **Type**: Binary `bfdb` (server). The old `test` and `migrate` helper
+  binaries were removed
 - **Location**: `bfdb/src/`
-- **Binaries**:
-  - `bfdb`: Main web server for stats and campaign UI
-  - `test`: Database testing utility
-  - `migrate`: Database migration tool
-- **Key files**:
-  - `db.rs`: Main database implementation using Sled
-  - `db_id.rs`: Database ID types
+- **Key files**: `main.rs` (routes), `db.rs` (Sled database), `db_id.rs`,
+  `range/` (training range API), `news*.rs`, `gci.rs`, `milatc/`, `voice/`, `replay/`
 
-### 4. **bfprotocols** - Shared Protocol Types
-- **Purpose**: Common data structures and protocols shared across crates
+### bfprotocols - Shared Protocol Types
+- **Purpose**: Data structures shared by bflib, bfrange and bfdb
 - **Type**: Library
 - **Location**: `bfprotocols/src/`
-- **Contents**:
-  - `cfg/`: Campaign configuration types
-  - `db/`: Database schemas for objectives, groups
-  - `perf.rs`: Performance monitoring types
-  - `stats.rs`: Statistics types
-  - `shots.rs`: Shot tracking types
+- **Contents**: `cfg/` (campaign config), `db/` (objective/group schemas),
+  `range/`, `stats.rs`, `shots.rs`, `perf.rs`, `situation.rs`, `api.rs`, ...
 
-### 5. **yats** - Yet Another Typed Sled
-- **Purpose**: Type-safe wrapper around Sled embedded database
+### yats - Yet Another Typed Sled
+- **Purpose**: Type-safe wrapper around the Sled embedded database
 - **Type**: Library
 - **Location**: `yats/src/`
-- **Features**:
-  - Big-endian number encoding for proper ordering
-  - Tuple-based prefix iteration
-  - Error handling via anyhow (no panics on serialization errors)
+- **Features**: Big-endian number encoding for ordering, tuple-based prefix
+  iteration, errors via anyhow (no panics on serialization errors)
 
-### Excluded: **bftools** - Mission File Generator
-- **Purpose**: CLI tool to generate final DCS mission (.miz) files from templates
-- **Type**: Binary (standalone, not in workspace)
+### bfcockpit/installer and bfcockpit/net - Cockpit Plugin
+- **Purpose**: Client-side DCS plugin: an in-game panel for the F10 menu,
+  player status and the EWR picture. The Lua lives in `bfcockpit/Scripts`
+  and `bfcockpit/Mods`
+- `installer`: Win32 GUI and CLI installer (`bfcockpit-install`,
+  `bfcockpit-install-cli`)
+- `net`: cdylib giving the plugin HTTPS from DCS's GUI Lua state
+
+### Excluded: bftools - Mission File Generator
+- **Purpose**: CLI that builds the final DCS mission (.miz) from templates
+- **Type**: Binary, not in the workspace
 - **Location**: `bftools/`
 - **Usage**:
   ```bash
   bftools.exe miz --output final.miz --base base.miz --weapon weapons.miz --options options.miz --warehouse warehouse.miz
   ```
+
+## Apps
+
+| Path | What it is |
+|------|------------|
+| `bfweb/` | Campaign dashboard (React + Vite). Also builds the Manager UI (`build:manager`) |
+| `bfsite/` | Public Vector Strike website (React + Vite), embedded in bfdb |
+| `bfwiki/` | Player wiki (React + Vite); content lives in bfdb, seeded from `bfdb/seed_wiki/` |
+| `bfrange-web/` | Training range dashboard (React + Vite) |
+| `bfrsr-web/` | Red Storm Rising campaign dashboard (React + Vite): started from bfweb and redesigned for the 1985 campaign; serves bfweb's `public/images` and `public/models` instead of copying them |
+| `bfmanager/` | Fowl Engine Manager: Tauri installer, Windows service and auto-updater for a server box |
+| `DCSServerBot/plugins/fowlengine/` | DCSServerBot plugin: Discord status, alerts, ops commands, binary staging and auto-update. The cog is `commands.py` plus `cog_*.py` mixins (layout in its README). Related extensions are in `DCSServerBot/extensions/`; optional pip deps in `DCSServerBot/requirements-plugins.txt` |
+| `user-guide/` | Player guide (mdBook) |
+| `deploy/` | Deployment docs (server setup, auto-update, multi-instance, range, `backups/`, `monitoring.md`, `signing-keys.md`, `manager-remote.md`: controlling the boxes from another PC over Tailscale), Caddy config and `publish-release.ps1` |
 
 ## Data Flow
 
@@ -199,6 +252,6 @@ This is a Cargo workspace with 5 main crates:
 
 - **Lua linking**: Always use release builds for bflib due to mlua's linking requirements
 - **DCS compatibility**: When DCS updates, verify Lua version compatibility
-- **Licenses**: dcso3 is MIT, bflib is AGPL v3
+- **Licenses**: dcso3, livewx and fowlbg are MIT, bflib is AGPL v3, bfrange has its own `bfrange/LICENSE`
 - **Netidx**: Campaign uses netidx for RPC and stats - requires netidx infrastructure
-- **No traditional tests**: Limited unit testing; testing primarily done in DCS
+- **Tests**: Unit tests cover the Rust crates (see Testing); gameplay is still verified in DCS

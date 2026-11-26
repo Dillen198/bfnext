@@ -3,7 +3,7 @@ macro_rules! db_id {
     ($name:ident) => {
         paste::paste! {
             #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-            pub struct $name(u64);
+            pub struct $name(pub u64);
 
             impl std::str::FromStr for $name {
                 type Err = anyhow::Error;
@@ -49,12 +49,8 @@ macro_rules! db_id {
             }
 
             impl $name {
-                pub fn new(db: &sled::Db) -> anyhow::Result<Self> {
+                pub fn new(db: &yats::Db) -> anyhow::Result<Self> {
                     Ok(Self(db.generate_id()?))
-                }
-
-                pub fn inner(&self) -> u64 {
-                    self.0
                 }
             }
         }

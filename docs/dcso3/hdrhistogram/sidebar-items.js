@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["errors","iterators","serialization","sync"],"struct":["Histogram"],"trait":["Counter"]};

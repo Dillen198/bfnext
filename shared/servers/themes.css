@@ -1,0 +1,84 @@
+/* Each server's palette and type, shared by its page on the site and its
+   field guide in the wiki. Besides the theme's own colours, each block
+   maps the names both apps already use (--bg, --text, --accent, ...) and
+   the generic --th-display / --th-label / --th-body faces. */
+
+.srv-desert {
+  --char: #15110c; --char-2: #1d1812; --char-3: #262017;
+  --sand: #e3d2ad; --sand-2: #c4b08a; --sand-dim: #8f7f63;
+  --rust: #c8642f; --rust-bright: #e07a3f; --coyote: #8a6a45; --line: #3a2f22;
+  --ds-display: 'Oswald', 'Bebas Neue', sans-serif;
+  --ds-label: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+  --ds-body: 'Barlow', system-ui, sans-serif;
+  /* the site's own components (status tag, territory bar, browser name) */
+  --bg: var(--char); --bg-alt: var(--char-2); --bg-card: var(--char-2); --bg-card-solid: var(--char-2); --bg-elevated: var(--char-3);
+  --text: var(--sand); --text-muted: var(--sand-2); --text-dim: var(--sand-dim);
+  --border: var(--line); --border-light: #4a3c2b;
+  --accent: var(--rust); --accent-bright: var(--rust-bright); --accent-glow: rgba(200,100,47,0.12); --accent-border: rgba(200,100,47,0.45); --accent-fg: #1a0f07;
+  --blue: #6aa6dc; --red: #d9493b; --yellow: #e0b04a;
+  --font-mono: var(--ds-label);
+  background: var(--char);
+  color: var(--sand);
+  font-family: var(--ds-body);
+  --th-display: var(--ds-display); --th-label: var(--ds-label); --th-body: var(--ds-body);
+}
+
+.srv-redstorm {
+  --paper: #efe6cd; --paper-2: #e6dab9; --folder: #d9c79a; --folder-edge: #b9a573;
+  --ink: #2a251c; --ink-2: #4a4234; --muted-ink: #6b604b; --rule: #c9b98f;
+  --nato: #1f4f9a; --ussr: #a3271f; --stamp: #a3271f; --olive: #4d5a2a;
+  --rs-stencil: 'Stardos Stencil', 'Bebas Neue', sans-serif;
+  --rs-type: 'Courier Prime', 'Courier New', monospace;
+  --rs-cond: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+  /* the site's own components (status tag, territory bar, browser name) */
+  --bg: var(--paper); --bg-card-solid: var(--paper); --bg-elevated: var(--paper-2);
+  --text: var(--ink); --text-muted: var(--ink-2); --text-dim: var(--muted-ink);
+  --border: var(--rule); --border-light: var(--rule);
+  --accent: var(--olive); --accent-bright: #3a4420; --accent-glow: rgba(77,90,42,0.12); --accent-border: rgba(77,90,42,0.45); --accent-fg: #fff;
+  --blue: var(--nato); --red: var(--ussr); --yellow: #8a6a10;
+  --font-mono: var(--rs-type);
+  background: #e4dabc;
+  background-image: radial-gradient(rgba(90,70,30,0.07) 1px, transparent 1px);
+  background-size: 6px 6px;
+  color: var(--ink);
+  font-family: var(--rs-type);
+  --th-display: var(--rs-stencil); --th-label: var(--rs-cond); --th-body: var(--rs-type);
+}
+
+:root[data-theme="dark"] .srv-redstorm {
+  --paper: #1f1d17; --paper-2: #26231b; --folder: #2c2920; --folder-edge: #45402f;
+  --ink: #e8dec5; --ink-2: #cfc3a6; --muted-ink: #a3977a; --rule: #403a2c;
+  --nato: #86aef0; --ussr: #f0705f; --stamp: #e0584a; --olive: #a8b878;
+  --accent-bright: #c2d08f; --accent-fg: #14130f;
+  background: #12110d;
+  background-image: radial-gradient(rgba(232,222,197,0.035) 1px, transparent 1px);
+}
+.srv-redstorm .nato { color: var(--nato); }
+.srv-redstorm .ussr { color: var(--ussr); }
+
+.srv-range {
+  --chart: #f4f2ea; --sheet: #fbfaf5; --sea: #cfe3ea; --sea-ink: #2b6f8a;
+  --ink: #13212c; --ink-2: #33434f; --muted-ink: #5d6c78; --rule: #cfd6d8;
+  --magenta: #a0307a;
+  --k-ag: #d98a00; --k-cas: #c4a800; --k-threat: #c8322a; --k-gunnery: #b08a5a; --k-helo: #6aa51f; --k-aa: #1aa3b8;
+  --k-bvr: #2c63c9; --k-tanker: #2e8b57; --k-carrier: #8a97a3; --k-ship: #7b4bc4; --k-hot: #ff2d2d; --k-ew: #138a7e;
+  --rg-display: 'Big Shoulders Stencil', 'Bebas Neue', sans-serif;
+  --rg-body: 'Archivo', system-ui, sans-serif;
+  --rg-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  /* the site's own components */
+  --bg: var(--chart); --bg-card-solid: var(--sheet); --bg-elevated: var(--sheet);
+  --text: var(--ink); --text-muted: var(--ink-2); --text-dim: var(--muted-ink);
+  --border: var(--rule); --border-light: var(--rule);
+  --accent: var(--sea-ink); --accent-bright: #0b5873; --accent-glow: rgba(43,111,138,0.10); --accent-border: rgba(43,111,138,0.4); --accent-fg: #fff;
+  --red: var(--k-threat); --yellow: #a07400; --blue: var(--k-bvr);
+  --font-mono: var(--rg-mono);
+  background: var(--chart); color: var(--ink); font-family: var(--rg-body);
+  --th-display: var(--rg-display); --th-label: var(--rg-mono); --th-body: var(--rg-body);
+}
+
+:root[data-theme="dark"] .srv-range {
+  --chart: #0b1520; --sheet: #0f1c28; --sea: #0d2633; --sea-ink: #6cc4dc;
+  --ink: #e3ecf2; --ink-2: #c0ccd5; --muted-ink: #8796a3; --rule: #1f3242;
+  --magenta: #e07ac0; --k-carrier: #c9d3dc; --k-bvr: #6c9cf0; --k-ship: #a685ec;
+  --accent-bright: #9adcef; --accent-fg: #06121a;
+}

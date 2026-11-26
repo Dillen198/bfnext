@@ -1,0 +1,17 @@
+{
+  "Aircraft": "F14BU",
+  "Upload": {
+    "Waypoints": false
+  },
+  "Waypoints": {
+    "Waypoints": []
+  },
+  "WaypointsCapture": {
+    "NavPointsMode": 0,
+    "TgtPointsMode": 0,
+    "NavPointsRangeFrom": 1,
+    "TgtPointsRangeFrom": 1
+  },
+  "Version": 2,
+  "KneeboardNotes": null
+}

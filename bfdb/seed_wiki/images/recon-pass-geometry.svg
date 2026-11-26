@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" width="800" height="500" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect x="0" y="0" width="800" height="500" fill="#0d1009"/>
+  <text x="24" y="34" fill="#cdd4be" font-size="16" font-weight="bold">Recon pass, seen from above</text>
+
+  <!-- recon range ring around the objective -->
+  <circle cx="300" cy="270" r="200" fill="#141910" stroke="#6aab1f" stroke-width="2" stroke-dasharray="10 6"/>
+  <text x="300" y="62" fill="#8ec83f" font-size="13" text-anchor="middle">recon range: start and stay inside (default 25 km)</text>
+
+  <!-- scan circle -->
+  <circle cx="300" cy="270" r="96" fill="#1c1410" stroke="#cc4444" stroke-width="2"/>
+  <text x="300" y="386" fill="#cc4444" font-size="13" text-anchor="middle">scan radius around the objective (default 12 km)</text>
+
+  <!-- objective -->
+  <rect x="290" y="260" width="20" height="20" fill="#cc4444"/>
+  <text x="300" y="300" fill="#cdd4be" font-size="13" text-anchor="middle">enemy objective</text>
+
+  <!-- ridge -->
+  <path d="M352 196 Q372 236 366 300" stroke="#c9a227" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <text x="384" y="214" fill="#c9a227" font-size="13">ridge</text>
+
+  <!-- units: visible -->
+  <circle cx="258" cy="232" r="6" fill="#cc4444"/>
+  <circle cx="240" cy="300" r="6" fill="#cc4444"/>
+  <circle cx="320" cy="214" r="6" fill="#cc4444"/>
+  <!-- units hidden behind ridge -->
+  <circle cx="380" cy="262" r="6" fill="none" stroke="#cc4444" stroke-width="2"/>
+  <circle cx="374" cy="300" r="6" fill="none" stroke="#cc4444" stroke-width="2"/>
+  <!-- unit outside scan radius -->
+  <circle cx="452" cy="380" r="6" fill="none" stroke="#7d8a6a" stroke-width="2" stroke-dasharray="2 2"/>
+
+  <!-- aircraft orbit -->
+  <ellipse cx="200" cy="180" rx="64" ry="36" fill="none" stroke="#4a8fd4" stroke-width="2" stroke-dasharray="6 4"/>
+  <polygon points="200,136 210,152 190,152" fill="#4a8fd4"/>
+  <text x="200" y="128" fill="#4a8fd4" font-size="13" text-anchor="middle">your orbit</text>
+
+  <!-- line of sight -->
+  <line x1="200" y1="150" x2="258" y2="232" stroke="#4a8fd4" stroke-width="1.5" stroke-dasharray="3 3"/>
+  <line x1="200" y1="150" x2="320" y2="214" stroke="#4a8fd4" stroke-width="1.5" stroke-dasharray="3 3"/>
+  <line x1="200" y1="150" x2="364" y2="238" stroke="#7d8a6a" stroke-width="1.5" stroke-dasharray="3 3"/>
+
+  <!-- legend -->
+  <rect x="530" y="140" width="250" height="230" rx="6" fill="#141910" stroke="#262e1d"/>
+  <text x="546" y="166" fill="#cdd4be" font-size="14" font-weight="bold">Legend</text>
+  <circle cx="556" cy="190" r="6" fill="#cc4444"/>
+  <text x="572" y="195" fill="#cdd4be" font-size="13">revealed: in the scan circle</text>
+  <text x="572" y="212" fill="#cdd4be" font-size="13">and in your line of sight</text>
+  <circle cx="556" cy="238" r="6" fill="none" stroke="#cc4444" stroke-width="2"/>
+  <text x="572" y="243" fill="#cdd4be" font-size="13">hidden: terrain blocks the view</text>
+  <circle cx="556" cy="268" r="6" fill="none" stroke="#7d8a6a" stroke-width="2" stroke-dasharray="2 2"/>
+  <text x="572" y="273" fill="#cdd4be" font-size="13">not scanned: outside the circle</text>
+  <text x="546" y="304" fill="#7d8a6a" font-size="13">Hold station for the dwell time</text>
+  <text x="546" y="322" fill="#7d8a6a" font-size="13">(default 120 s). Fly another pass</text>
+  <text x="546" y="340" fill="#7d8a6a" font-size="13">from a different side to see</text>
+  <text x="546" y="358" fill="#7d8a6a" font-size="13">behind the ridge.</text>
+</svg>

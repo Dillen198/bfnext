@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["GroupCategory","Owner"],"struct":["ClassGroup","Group"]};

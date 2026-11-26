@@ -1,2 +1,2 @@
-pub mod objective;
 pub mod group;
+pub mod objective;
