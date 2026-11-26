@@ -12,6 +12,11 @@ The player-facing Discord channels around the auto-fixer:
                 without one, the release notes rewritten by the assistant.
   * questions   the assistant (assistant.py) answers players there, and
                 anywhere it is @mentioned, from the server's wiki.
+  * feedback    channels the bot watches for bugs posted in the wrong place.
+                A new post that carries a "Bug" tag, or that the assistant
+                reads as a bug, becomes a report with its own post in the bug
+                forum, and the bot replies under the original with a link.
+                /fe_bug_this does the same by hand, for any post.
 
 /fe_community_channels picks the channels, /fe_community_setup creates any
 that are missing. Both are DCS Admin only.
@@ -28,8 +33,9 @@ from discord.ext import commands
 from core import utils, command
 
 from .assistant import AssistantConfig, clean_player_note, clean_reply
-from .community import (DEFAULT_NAMES, STATUS_TAGS, changelog_post, new_report_line, status_line,
-                        thread_title)
+from .community import (DEFAULT_NAMES, STATUS_TAGS, changelog_post, is_bug_tag, moved_line, new_report_line,
+                        status_line, thread_title)
+from .bugreports import MIN_TEXT
 from .icons import icon, icon_emoji
 
 NO_MENTIONS = discord.AllowedMentions.none()
@@ -41,7 +47,8 @@ class CommunityMixin:
     def _community_channels(self) -> dict:
         cfg = (self.get_config() or {}).get("community") or {}
         state = getattr(self, "community", None)
-        return state.channels(cfg) if state else {"bug_forum": None, "changelog_channel": None, "questions": []}
+        return state.channels(cfg) if state else {"bug_forum": None, "changelog_channel": None, "questions": [],
+                                                  "feedback": []}
 
     def _live_assistant(self):
         """The assistant with fowlengine.yaml's current settings, or None when it is off."""
@@ -81,7 +88,8 @@ class CommunityMixin:
 
     async def _tag_thread(self, thread, status: str) -> None:
         forum = thread.parent
-        if not isinstance(forum, discord.ForumChannel):
+        # Only the bug forum gets the status tags; a feedback forum keeps its own.
+        if not isinstance(forum, discord.ForumChannel) or forum.id != self._community_channels()["bug_forum"]:
             return
         tags = await self._status_tags(forum)
         if status not in tags:
@@ -159,6 +167,96 @@ class CommunityMixin:
         await self.notify_ops(f"{icon('warning')} Bug report `{bug['id']}`{' (trusted)' if trusted else ''} "
                               f"in {thread.mention}: {bug['text'][:300]}")
 
+    # ---- bugs posted in the feedback channels ---------------------------------------------
+
+    def _bugs_on(self):
+        bugs = getattr(self, "bugs", None)
+        if bugs is None or ((self.get_config() or {}).get("bugs") or {}).get("enabled") is False:
+            return None
+        return bugs
+
+    async def _feedback_post(self, message: discord.Message) -> bool:
+        """A message in a feedback channel. True when it was taken as a bug
+        report, or as more detail for one."""
+        bugs = self._bugs_on()
+        if bugs is None:
+            return False
+        channel = message.channel
+        in_thread = isinstance(channel, discord.Thread)
+        if in_thread and message.id != channel.id:
+            # A reply in the post: the reporter adding to a report that stayed here
+            # (no bug forum to move it to).
+            bug = bugs.by_thread(channel.id)
+            if bug and bugs.add_detail(bug["id"], str(message.author.id), message.clean_content):
+                try:
+                    await message.add_reaction(icon_emoji("good"))
+                except discord.HTTPException:
+                    pass
+                return True
+            return False
+        if message.reference is not None or (in_thread and bugs.by_thread(channel.id)):
+            return False
+        title = channel.name if in_thread else ""
+        if len(f"{title} {message.clean_content}".strip()) < MIN_TEXT:
+            return False
+        tagged = in_thread and any(is_bug_tag(t.name) for t in getattr(channel, "applied_tags", None) or [])
+        if not tagged:
+            a = self._live_assistant()
+            if a is None or a.client() is None:
+                return False
+            why_not = a.allow(f"feedback:{message.author.id}")
+            if why_not:
+                self.log.info(f"FowlEngine/community: not sorting a feedback post ({why_not})")
+                return False
+            if not await a.is_bug_report(title, message.clean_content):
+                return False
+        try:
+            await self._log_as_bug(message, title)
+        except ValueError as ex:        # rate limit, too short: leave it as feedback
+            self.log.info(f"FowlEngine/community: feedback post not logged as a bug: {ex}")
+            return False
+        return True
+
+    async def _log_as_bug(self, message: discord.Message, title: str = "") -> dict:
+        """Log a message posted somewhere other than the bug forum as a report.
+        With a bug forum it gets its own post there, and the bot replies under
+        the original with a link; without one it is tracked where it is.
+        Raises ValueError when the report is refused (bugreports.add)."""
+        bugs = self._bugs_on()
+        if bugs is None:
+            raise ValueError("bug reports are switched off on this server")
+        text = f"{title}: {message.clean_content}" if title else message.clean_content
+        if message.attachments:
+            text += f" ({len(message.attachments)} attachment(s) in the original post)"
+        trusted = self._bug_trusted(message.author)
+        bug = bugs.add(user_id=str(message.author.id), text=text, trusted=trusted)
+        moved = None
+        forum = await self._channel(self._community_channels()["bug_forum"])
+        if isinstance(forum, discord.ForumChannel) and getattr(message.channel, "parent_id", None) != forum.id:
+            tags = await self._status_tags(forum)
+            try:
+                made = await forum.create_thread(
+                    name=thread_title(title or bug["text"]),
+                    content=(f"{bug['text'][:1700]}\n-# Moved from {message.jump_url} · posted by "
+                             f"{message.author.mention} · `{bug['id']}`"),
+                    applied_tags=[tags["open"]] if "open" in tags else [],
+                    allowed_mentions=NO_MENTIONS)
+                bugs.set_thread(bug["id"], made.thread.id)
+                await made.thread.send(new_report_line(bug["id"], trusted), allowed_mentions=NO_MENTIONS)
+                moved = made.thread
+            except discord.HTTPException as ex:
+                self.log.warning(f"FowlEngine/community: can't post {bug['id']} in #{forum.name}: {ex}")
+        if moved is None and isinstance(message.channel, discord.Thread):
+            bugs.set_thread(bug["id"], message.channel.id)
+        reply = moved_line(bug["id"], moved.mention) if moved else new_report_line(bug["id"], trusted)
+        try:
+            await message.reply(reply, mention_author=False, allowed_mentions=NO_MENTIONS)
+        except discord.HTTPException as ex:
+            self.log.warning(f"FowlEngine/community: can't reply under the post of {bug['id']}: {ex}")
+        await self.notify_ops(f"{icon('warning')} Bug report `{bug['id']}`{' (trusted)' if trusted else ''} "
+                              f"from {message.jump_url}: {bug['text'][:300]}")
+        return bug
+
     # ---- changelog ---------------------------------------------------------------------
 
     def release_went_live(self, tag: Optional[str]) -> None:
@@ -206,6 +304,9 @@ class CommunityMixin:
             if ch["bug_forum"] and parent == ch["bug_forum"]:
                 await self._forum_bug_post(message)
                 return
+            if ch["feedback"] and (message.channel.id in ch["feedback"] or parent in ch["feedback"]):
+                if await self._feedback_post(message):
+                    return
             await self._maybe_answer(message, ch)
         except Exception as ex:  # noqa: BLE001 -- a listener must never take the cog down
             self.log.exception(f"FowlEngine/community: message handler error: {ex}")
@@ -265,6 +366,7 @@ class CommunityMixin:
                  f"off ({a.unavailable})" if a else "off (`assistant.enabled` in fowlengine.yaml)")
         return (f"Bug forum: {show(ch['bug_forum'])}\nChangelog: {show(ch['changelog_channel'])}\n"
                 f"Questions: {', '.join(show(c) for c in ch['questions']) or 'not set'}\n"
+                f"Feedback (watched for bugs): {', '.join(show(c) for c in ch['feedback']) or 'not set'}\n"
                 f"Assistant: {state}")
 
     @command(description='Pick the bug forum, changelog and questions channels (admin).')
@@ -272,21 +374,60 @@ class CommunityMixin:
     @app_commands.describe(bug_forum='Forum channel: each bug report is a post there.',
                            changelog='Text channel for the update notes.',
                            questions='Channel (text or forum) where the bot answers questions.',
+                           feedback='Feedback channel (text or forum): bugs posted there are moved to the bug forum.',
                            reset='Forget the picks made here and use fowlengine.yaml again.')
     @utils.app_has_role('DCS Admin')
     async def fe_community_channels(self, interaction: discord.Interaction,
                                     bug_forum: Optional[discord.ForumChannel] = None,
                                     changelog: Optional[discord.TextChannel] = None,
                                     questions: Optional[Union[discord.TextChannel, discord.ForumChannel]] = None,
+                                    feedback: Optional[Union[discord.TextChannel, discord.ForumChannel]] = None,
                                     reset: bool = False):
         if reset:
-            self.community.pick(bug_forum=0, changelog_channel=0, questions=0)
+            self.community.pick(bug_forum=0, changelog_channel=0, questions=0, feedback=0)
         self.community.pick(bug_forum=bug_forum.id if bug_forum else None,
                             changelog_channel=changelog.id if changelog else None,
-                            questions=[questions.id] if questions else None)
+                            questions=[questions.id] if questions else None,
+                            feedback=[feedback.id] if feedback else None)
         if bug_forum:
             await self._status_tags(bug_forum)
         await interaction.response.send_message(self._channels_summary(interaction.guild), ephemeral=True)
+
+    @command(description='Log a post as a bug report and move it to the bug forum (admin).')
+    @app_commands.guild_only()
+    @app_commands.describe(message_link='Link to the message (right-click it, Copy Message Link). '
+                                        'Leave empty inside a forum post to log the post itself.')
+    @utils.app_has_role('DCS Admin')
+    async def fe_bug_this(self, interaction: discord.Interaction, message_link: Optional[str] = None):
+        await interaction.response.defer(ephemeral=True)
+        channel = interaction.channel
+        try:
+            if message_link:
+                ids = [int(p) for p in message_link.strip().rstrip("/").split("/")[-2:]]
+                src = await self._channel(ids[0])
+                message = await src.fetch_message(ids[1]) if src is not None else None
+            elif isinstance(channel, discord.Thread):
+                message = channel.starter_message or await channel.fetch_message(channel.id)
+            else:
+                message = None
+        except (ValueError, IndexError, AttributeError, discord.HTTPException):
+            message = None
+        if message is None or message.author.bot:
+            await interaction.followup.send("Give me a message link, or run this inside the forum post.")
+            return
+        bugs = self._bugs_on()
+        in_thread = isinstance(message.channel, discord.Thread) and message.id == message.channel.id
+        if bugs is not None and in_thread and bugs.by_thread(message.channel.id):
+            await interaction.followup.send("That post is already a bug report.")
+            return
+        try:
+            bug = await self._log_as_bug(message, message.channel.name if in_thread else "")
+        except ValueError as ex:
+            await interaction.followup.send(f"Not logged: {ex}.")
+            return
+        await interaction.followup.send(f"{icon('good')} Logged as `{bug['id']}`"
+                                        + ("" if bug.get("trusted") else
+                                           ". It's from a player, so it waits for Send to Claude in the Manager."))
 
     @command(description='Create the bug forum, changelog and questions channels that are missing (admin).')
     @app_commands.guild_only()

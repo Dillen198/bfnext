@@ -1,6 +1,7 @@
 """
 The community channels (cog_community.py): which Discord channels are the bug
-forum, the changelog and the question channels, which releases have had their
+forum, the changelog, the question channels and the feedback channels the bot
+watches for bugs posted in the wrong place, which releases have had their
 changelog posted, and the wording the bot uses in them.
 
 Channels come from fowlengine.yaml (`community:`) unless an admin picked them
@@ -14,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 from typing import Optional
 
 # Forum tags for a bug report's state. Moderated: only people who can manage
@@ -67,8 +69,9 @@ class CommunityState:
     # ---- channels ----------------------------------------------------------------
 
     def channels(self, yaml_cfg: Optional[dict]) -> dict:
-        """{bug_forum: id|None, changelog_channel: id|None, questions: [ids]}:
-        an admin's pick in Discord, else fowlengine.yaml's community block."""
+        """{bug_forum: id|None, changelog_channel: id|None, questions: [ids],
+        feedback: [ids]}: an admin's pick in Discord, else fowlengine.yaml's
+        community block."""
         y = yaml_cfg or {}
         picked = self.state.get("channels") or {}
 
@@ -78,16 +81,20 @@ class CommunityState:
                 return int(v) if v else None
             except (TypeError, ValueError):
                 return None
-        qs = picked.get("questions", y.get("questions"))
-        if qs and not isinstance(qs, list):
-            qs = [qs]
-        out_q = []
-        for v in qs or []:
-            try:
-                out_q.append(int(v))
-            except (TypeError, ValueError):
-                pass
-        return {"bug_forum": one("bug_forum"), "changelog_channel": one("changelog_channel"), "questions": out_q}
+
+        def many(key: str) -> list[int]:
+            vs = picked.get(key, y.get(key))
+            if vs and not isinstance(vs, list):
+                vs = [vs]
+            out = []
+            for v in vs or []:
+                try:
+                    out.append(int(v))
+                except (TypeError, ValueError):
+                    pass
+            return out
+        return {"bug_forum": one("bug_forum"), "changelog_channel": one("changelog_channel"),
+                "questions": many("questions"), "feedback": many("feedback")}
 
     def pick(self, **chosen) -> None:
         """Keep an admin's choice. A value of 0 clears that pick (back to the YAML)."""
@@ -155,6 +162,27 @@ _NO_NOTE = {
     "no_fix": "It doesn't look like something in the Fowl Engine itself, so there's nothing to change on "
               "our side for now.",
 }
+
+
+# The reply under a feedback post that turned out to be a bug, once it has its
+# own post in the bug forum.
+_MOVED = (
+    "Sounds like a bug to me, so I've logged it as `{id}` and put it in {where} where it gets tracked. "
+    "Updates land there, and add anything else you remember (server, airframe, time in Zulu) there too.",
+    "This one reads like a bug rather than feedback, so it's logged as `{id}` over in {where}. "
+    "Follow it there; that's where the fix updates go.",
+    "Thanks for this. It looks like a bug, so I've copied it to {where} as `{id}` to get it tracked. "
+    "Any extra details (server, airframe, rough Zulu time, a Tacview) are best added over there.",
+)
+
+
+def is_bug_tag(name: str) -> bool:
+    """A feedback forum's own tag that marks a post as a bug ("Bug", "Bug report", "bugs")."""
+    return bool(re.search(r"\bbugs?\b", name or "", re.IGNORECASE))
+
+
+def moved_line(bid: str, where: str, rnd: Optional[random.Random] = None) -> str:
+    return (rnd or random).choice(_MOVED).format(id=bid, where=where)
 
 
 def new_report_line(bid: str, trusted: bool, rnd: Optional[random.Random] = None) -> str:

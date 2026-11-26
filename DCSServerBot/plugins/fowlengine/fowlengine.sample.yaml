@@ -668,6 +668,13 @@ DEFAULT:
   #                    assistant below). With two boxes on one Discord, set it
   #                    on ONE box only, or each posts it.
   # questions          channels (text or forum) where the assistant answers.
+  # feedback           channels (text or forum) the bot watches for bugs posted
+  #                    in the wrong place. A new post with a "Bug" tag, or that
+  #                    the assistant reads as a bug, becomes a report with its
+  #                    own post in the bug forum, and the bot replies under the
+  #                    original with a link. Suggestions are left alone. Without
+  #                    the assistant only "Bug"-tagged posts are caught; admins
+  #                    can move any post with /fe_bug_this.
   # Instead of IDs here, an admin can pick them in Discord with
   # /fe_community_channels, or have the bot make them with
   # /fe_community_setup; a pick made in Discord wins over this block.
@@ -679,6 +686,7 @@ DEFAULT:
     bug_forum: null
     changelog_channel: null
     questions: []
+    feedback: []
 
   # ---------------------------------------------
   # Assistant: answers players' questions  (assistant.py)

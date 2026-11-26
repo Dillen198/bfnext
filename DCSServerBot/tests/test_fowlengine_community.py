@@ -169,6 +169,18 @@ def test_the_changelog_writer():
     assert asyncio.run(a.write_changelog("")) is None and len(fake.calls) == 2
 
 
+def test_a_feedback_post_is_sorted_into_bug_or_not():
+    a, fake = _assistant(["BUG", "NOT", "**Bug.**", "maybe?", RuntimeError("down")])
+    assert asyncio.run(a.is_bug_report("Crates gone", "CTLD crates vanish at the FARP after a restart")) is True
+    assert fake.calls[0]["system"] == asst.TRIAGE_PROMPT
+    assert "Crates gone\nCTLD crates vanish" in fake.calls[0]["messages"][0]["content"]
+    assert asyncio.run(a.is_bug_report("", "please add the F-4 to the campaign")) is False
+    assert asyncio.run(a.is_bug_report("", "x")) is True                # tolerant of markdown
+    assert asyncio.run(a.is_bug_report("", "x")) is None                # neither word: leave it be
+    assert asyncio.run(a.is_bug_report("", "x")) is None                # the call failed
+    assert asyncio.run(a.is_bug_report("", "  ")) is None and len(fake.calls) == 5
+
+
 def test_a_player_note_is_made_safe():
     assert asst.clean_player_note("Fixed <@123> see https://x.y/z ```code``` @everyone") == "Fixed see code everyone"
 
@@ -177,13 +189,15 @@ def test_a_player_note_is_made_safe():
 
 def test_a_pick_in_discord_wins_over_the_yaml_until_reset(tmp_path):
     st = comm.CommunityState(log, str(tmp_path / "c.json"))
-    yaml_cfg = {"bug_forum": 11, "changelog_channel": "22", "questions": 33}
-    assert st.channels(yaml_cfg) == {"bug_forum": 11, "changelog_channel": 22, "questions": [33]}
-    st.pick(bug_forum=44, questions=[55, 66])
+    yaml_cfg = {"bug_forum": 11, "changelog_channel": "22", "questions": 33, "feedback": ["77", "x"]}
+    assert st.channels(yaml_cfg) == {"bug_forum": 11, "changelog_channel": 22, "questions": [33], "feedback": [77]}
+    st.pick(bug_forum=44, questions=[55, 66], feedback=[88])
     again = comm.CommunityState(log, str(tmp_path / "c.json"))         # survives a restart
-    assert again.channels(yaml_cfg) == {"bug_forum": 44, "changelog_channel": 22, "questions": [55, 66]}
-    again.pick(bug_forum=0, changelog_channel=0, questions=0)
-    assert again.channels(yaml_cfg)["bug_forum"] == 11 and again.channels(None)["questions"] == []
+    assert again.channels(yaml_cfg) == {"bug_forum": 44, "changelog_channel": 22, "questions": [55, 66],
+                                        "feedback": [88]}
+    again.pick(bug_forum=0, changelog_channel=0, questions=0, feedback=0)
+    assert again.channels(yaml_cfg)["bug_forum"] == 11 and again.channels(yaml_cfg)["feedback"] == [77]
+    assert again.channels(None)["questions"] == [] and again.channels(None)["feedback"] == []
 
 
 def test_each_release_is_posted_once(tmp_path):
@@ -209,6 +223,10 @@ def test_forum_titles_and_lines():
     assert "Fowl Engine" in comm.status_line("no_fix", "", rnd)          # a default when there's no note
     assert comm.status_line("open", None) is None
     assert set(comm.STATUS_TAGS) == {"open", "working", "fixed", "no_fix", "closed"}
+    moved = comm.moved_line("bug-2", "<#99>", rnd)
+    assert "`bug-2`" in moved and "<#99>" in moved
+    tags = ("Bug", "bug report", "Bugs", "Debug", "Suggestion", "")
+    assert [comm.is_bug_tag(t) for t in tags] == [True, True, True, False, False, False]
 
 
 def test_a_wiki_that_cant_be_read_is_retried_after_a_pause(monkeypatch):
